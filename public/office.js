@@ -13,8 +13,8 @@ const DESKS = [
 const seatOf = (d) => ({ x: d.x + 32, y: d.y + 3, corr: d.y - 12 });
 const BOARD_SPOTS = [{ x: 118, y: 58 }, { x: 154, y: 58 }];
 const LOUNGE = [
-  { x: 266, y: 182 }, { x: 282, y: 182 }, { x: 298, y: 182 }, { x: 294, y: 66 },
-  { x: 268, y: 74 }, { x: 302, y: 112 }, { x: 262, y: 124 }, { x: 286, y: 146 },
+  { x: 266, y: 182 }, { x: 282, y: 182 }, { x: 298, y: 182 }, { x: 302, y: 112 },
+  { x: 262, y: 124 }, { x: 286, y: 146 }, { x: 270, y: 156 }, { x: 304, y: 146 },
 ];
 
 const SKIN = ['#f1c7a3', '#e0ac85', '#c68863', '#8d5a3b', '#f6d5bd'];
@@ -145,8 +145,8 @@ export class Office {
       items.push({ y: d.y + 14, draw: () => this.drawDesk(d, owner, now) });
       items.push({ y: d.y - 1, draw: () => this.drawChair(d) });
     });
-    items.push({ y: 77, draw: () => this.drawBookshelf(262, 56) });
-    items.push({ y: 99, draw: () => this.drawFloorLamp(250, 98, now) });
+    items.push({ y: 67, draw: () => this.drawBookshelf(266, 46) });
+    items.push({ y: 141, draw: () => this.drawFloorLamp(312, 140, now) });
     items.push({ y: 172, draw: () => this.drawSofaBack(now) });
     items.push({ y: 196, draw: () => this.drawSofaFront() });
     items.push({ y: 112, draw: () => this.drawPlant(306, 108) });
@@ -157,6 +157,7 @@ export class Office {
     });
     items.sort((p, q) => p.y - q.y).forEach((it) => it.draw());
 
+    this.labelBoxes = [];
     this.agents.forEach((a) => { const c = this.chars.get(a.id); if (c && now >= c.enterAt) this.drawLabels(a, c, now); });
   }
 
@@ -197,8 +198,8 @@ export class Office {
     }
     // Cuadros y reloj
     this.px(66, 12, 14, 16, '#1f2937'); this.px(68, 14, 10, 12, '#c4b5fd'); this.px(70, 22, 6, 2, '#7c3aed');
-    this.px(212, 13, 16, 14, '#1f2937'); this.px(214, 15, 12, 10, '#fed7aa'); this.px(216, 20, 8, 1, '#fb923c');
-    this.px(230, 16, 12, 12, '#1f2937'); this.px(232, 18, 8, 8, '#f8fafc'); this.px(236, 20, 1, 4, '#111827'); this.px(236, 23, 3, 1, '#111827');
+    this.px(181, 13, 12, 12, '#1f2937'); this.px(183, 15, 8, 8, '#f8fafc'); this.px(187, 17, 1, 4, '#111827'); this.px(187, 20, 3, 1, '#111827');
+    this.px(260, 13, 16, 14, '#1f2937'); this.px(262, 15, 12, 10, '#fed7aa'); this.px(264, 20, 8, 1, '#fb923c');
     // Pizarra con el tablero de tareas en directo
     this.drawWhiteboard();
     // Puerta
@@ -361,9 +362,12 @@ export class Office {
     // Piernas
     if (!sitting) {
       if (face === 'left' || face === 'right') {
-        this.px(x - 2, y - 6, 4, 6, outline);
-        this.px(x - 1 + (step ? -1 : 1), y - 5, 2, 5, '#2d3142');
-        this.px(x - 2 + (step ? -1 : 1), y - 1, 4, 1, outline);
+        const stride = step ? -1 : 1;
+        this.px(x - 3, y - 6, 5, 6, outline);
+        this.px(x - 2, y - 5, 2, 5, '#2d3142');
+        this.px(x + stride, y - 5, 2, 4, '#374151');
+        this.px(x - 3, y - 1, 4, 1, outline);
+        this.px(x + stride - 1, y - 1.5, 5, 1, outline);
       } else {
         this.px(x - 4, y - 6, 3, 6, outline);
         this.px(x + 1, y - 6, 3, 6, outline);
@@ -375,10 +379,18 @@ export class Office {
     }
     const by = y - (sitting ? 3 : 0) + bob;
     // Cuerpo y brazos
-    this.px(x - 5, by - 12, 10, 8, outline);
-    this.px(x - 4, by - 11, 8, 6, shirt);
-    this.px(x - 3, by - 10, 2, 4, hi);
-    this.px(x + 2, by - 11, 2, 6, shade);
+    if (face === 'left' || face === 'right') {
+      const s = face === 'right' ? 1 : -1;
+      this.px(x - 4, by - 12, 8, 8, outline);
+      this.px(x - 3, by - 11, 6, 6, shirt);
+      this.px(x - 2, by - 10, 2, 4, hi);
+      this.px(x + s, by - 11, 2, 6, shade);
+    } else {
+      this.px(x - 5, by - 12, 10, 8, outline);
+      this.px(x - 4, by - 11, 8, 6, shirt);
+      this.px(x - 3, by - 10, 2, 4, hi);
+      this.px(x + 2, by - 11, 2, 6, shade);
+    }
     if (typing) {
       const k = Math.floor(now / 160) % 2;
       this.px(x - 6, by - 10, 2, 4, outline);
@@ -389,12 +401,22 @@ export class Office {
       this.px(x + 1, by - 7 - (1 - k) * 0.6, 3, 1.5, skin);
     } else {
       const sw = c.moving ? (step ? 0.8 : -0.8) : 0;
-      this.px(x - 6, by - 11 + sw, 2, 6, outline);
-      this.px(x + 4, by - 11 - sw, 2, 6, outline);
-      this.px(x - 5, by - 11 + sw, 1.5, 5, shade);
-      this.px(x + 3.5, by - 11 - sw, 1.5, 5, shade);
-      this.px(x - 5, by - 6 + sw, 1.5, 1.2, skin);
-      this.px(x + 3.5, by - 6 - sw, 1.5, 1.2, skin);
+      if (face === 'left' || face === 'right') {
+        const s = face === 'right' ? 1 : -1;
+        this.px(x - s * 4, by - 11 - sw, 2, 6, outline);
+        this.px(x - s * 3.5, by - 11 - sw, 1.5, 5, shade);
+        this.px(x - s * 3.5, by - 6 - sw, 1.5, 1.2, skin);
+        this.px(x + s * 3, by - 10 + sw, 2, 5, outline);
+        this.px(x + s * 2, by - 10 + sw, 1.5, 4, shade);
+        this.px(x + s * 2, by - 6 + sw, 1.5, 1.2, skin);
+      } else {
+        this.px(x - 6, by - 11 + sw, 2, 6, outline);
+        this.px(x + 4, by - 11 - sw, 2, 6, outline);
+        this.px(x - 5, by - 11 + sw, 1.5, 5, shade);
+        this.px(x + 3.5, by - 11 - sw, 1.5, 5, shade);
+        this.px(x - 5, by - 6 + sw, 1.5, 1.2, skin);
+        this.px(x + 3.5, by - 6 - sw, 1.5, 1.2, skin);
+      }
     }
     // Cabeza
     this.px(x - 4, by - 18, 8, 8, outline);
@@ -404,9 +426,13 @@ export class Office {
       this.px(x - 3, by - 15, 6, 3, hair);
     } else if (face === 'left' || face === 'right') {
       const s = face === 'right' ? 1 : -1;
-      this.px(x - 3, by - 18, 7, 3, hair);
-      this.px(x - 3, by - 16, 2, 4, hair);
-      this.px(x + s * 2, by - 15, 2, 2, skin);
+      this.px(x - 4, by - 18, 8, 5, outline);
+      this.px(x - 3, by - 17, 6, 6, skin);
+      this.px(x - 4, by - 19, 8, 4, hair);
+      this.px(x - s * 4, by - 16, 3, 5, hair);
+      this.px(x + s * 3, by - 15, 2, 2, skin);
+      this.px(x + s * 3, by - 13, 1, 1, shadeColor(skin, -25));
+      this.px(x - s * 1, by - 18, 3, 1, shadeColor(hair, 24));
     } else {
       this.px(x - 3.5, by - 18.5, 7, 2.8, hair);
       this.px(x - 3.5, by - 16, 1, 2.5, hair);
@@ -419,7 +445,8 @@ export class Office {
       this.px(x - 1.8 + look, by - 14.5, 1, 1, '#1f2937');
       this.px(x + 0.8 + look, by - 14.5, 1, 1, '#1f2937');
     }
-    if (face !== 'up') this.px(x - 0.5 + look, by - 12.5, 2, 0.7, '#9f5f46');
+    if (face === 'left' || face === 'right') this.px(x + (face === 'right' ? 2 : -3), by - 12.5, 1.5, 0.7, '#9f5f46');
+    else if (face !== 'up') this.px(x - 0.5 + look, by - 12.5, 2, 0.7, '#9f5f46');
     // Accesorio de cada rol
     if (a.role === 'po') { this.px(x - 0.5, by - 11, 1, 4, '#e11d48'); this.px(x - 1.5, by - 7, 3, 1, '#be123c'); }
     if (a.role === 'back') { this.px(x - 4, by - 16, 1, 3, '#111827'); this.px(x + 3, by - 16, 1, 3, '#111827'); this.px(x - 3.5, by - 18.6, 7, 0.8, '#111827'); }
@@ -474,7 +501,15 @@ export class Office {
     const w = Math.min(W * S - 8, ctx.measureText(t).width + 27);
     const h = 8.5 * S;
     const bx = Math.max(4, Math.min(W * S - w - 4, X - w / 2));
-    const by = Math.max(4, Y - h);
+    let by = Math.max(4, Y - h);
+    const boxes = this.labelBoxes || (this.labelBoxes = []);
+    for (let tries = 0; tries < 5; tries++) {
+      const hit = boxes.some((b) => bx < b.x + b.w + 3 && bx + w + 3 > b.x && by < b.y + b.h + 2 && by + h + 8 > b.y);
+      if (!hit || by <= 4) break;
+      by -= h + 3;
+    }
+    by = Math.max(4, by);
+    boxes.push({ x: bx, y: by, w, h: h + 8 });
     const style = {
       work: ['#ffffff', '#1f2937', '#cbd5e1'],
       plan: ['#f5f3ff', '#4c1d95', '#a78bfa'],
