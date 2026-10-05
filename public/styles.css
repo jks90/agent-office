@@ -131,6 +131,8 @@ dialog select[multiple].tall { height: 160px; }
 .skill-group.collapsed::before { transform: rotate(-90deg); }
 .skill-group.collapsed ~ .skill[data-group] { display: none; }
 .team-head h3 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+#bench { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--s-2); padding-bottom: 2px; }
+.member.bench { opacity: .85; }
 #team { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--s-2); padding-bottom: 2px; }
 #view-agents { overflow: auto; }
 .member { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--s-3); cursor: pointer; transition: transform .16s ease, border-color .16s ease, background .16s ease; }

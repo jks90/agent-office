@@ -54,7 +54,9 @@ es.addEventListener('log', (e) => {
 });
 
 const project = () => S.projects.find((p) => p.id === projectId);
-const team = () => S.agents.filter((a) => a.projectId === projectId);
+const team = () => { const ids = new Set(project()?.team || []); return S.agents.filter((a) => ids.has(a.id)); };
+const bench = () => { const ids = new Set(project()?.team || []); return S.agents.filter((a) => !ids.has(a.id)); };
+const projectsOf = (agentId) => S.projects.filter((p) => (p.team || []).includes(agentId) && p.id !== projectId).map((p) => p.name);
 const tasks = () => S.tasks.filter((t) => t.projectId === projectId);
 const roleChip = (role) => `<span class="chip" style="--c:${S.roles[role]?.color}">${esc(S.roles[role]?.label || role)}</span>`;
 
@@ -151,14 +153,29 @@ function renderTeam() {
       <div class="member-foot">${roleChip(a.role)}<span class="state ${a.status}"><span class="dot ${a.status}"></span>${a.status === 'working' ? 'Trabajando' : 'Descansando'}</span></div>
       ${task ? `<div class="task">▶ #${task.id} ${esc(task.title)}</div>` : ''}
       <div class="meta"><span>${done} entregadas</span>${cost ? `<span>≈ ${cost.toFixed(2)} $</span>` : ''}${r?.custom ? `<span title="${esc(r.description || '')}">rol de fichero · ${esc(r.source)}</span>` : ''}</div>
+      ${projectsOf(a.id).length ? `<div class="meta"><span>también en: ${projectsOf(a.id).map(esc).join(', ')}</span></div>` : ''}
       <div class="acts">
         <button class="small ghost" data-agent="${a.id}">Registro</button>
         <button class="small ghost" data-agent-edit="${a.id}" title="Nombre, rol, motor y modelo">✎ Editar</button>
         ${a.status === 'working' ? `<button class="small danger" data-stop="${a.id}">⏹ Parar</button>` : ''}
-        <button class="small danger" data-fire="${a.id}">Despedir</button>
+        <button class="small ghost" data-bench="${a.id}" title="Sale de la plantilla de este proyecto; sigue en la empresa">↓ Al banquillo</button>
       </div>
     </div>`;
-  }).join('') || '<p class="empty">Sin agentes todavía. Contrata a alguien para empezar.</p>';
+  }).join('') || '<p class="empty">Sin plantilla. Ficha agentes del banquillo o contrata a alguien nuevo.</p>';
+  renderBench();
+}
+
+function renderBench() {
+  const list = bench();
+  $('#bench-summary').textContent = `${list.length} en la empresa sin fichar aquí`;
+  $('#bench').innerHTML = list.map((a) => {
+    const r = S.roles[a.role];
+    return `<div class="member bench" style="--c:${r?.color || '#999'}">
+      <div class="top" data-agent="${a.id}"><span class="avatar">${esc(a.name).charAt(0).toUpperCase()}</span><div class="member-main"><b>${esc(a.name)}</b><div class="act">${a.status === 'working' ? esc(a.activity) : (projectsOf(a.id).length ? 'en ' + projectsOf(a.id).map(esc).join(', ') : 'disponible')}</div></div><span class="eng">${esc(a.engine)}${a.model ? ' · ' + esc(a.model) : ''}</span></div>
+      <div class="member-foot">${roleChip(a.role)}<span class="state ${a.status}"><span class="dot ${a.status}"></span>${a.status === 'working' ? 'Trabajando' : 'Libre'}</span></div>
+      <div class="acts"><button class="small" data-sign="${a.id}">↑ Fichar</button><button class="small ghost" data-agent-edit="${a.id}">✎</button><button class="small danger" data-fire="${a.id}" title="Baja definitiva de la empresa">Despedir</button></div>
+    </div>`;
+  }).join('') || '<p class="empty">Nadie en el banquillo: todos los agentes de la empresa están fichados aquí.</p>';
 }
 
 const short = (p) => String(p || '').replace(/^\/home\/[^/]+/, '~');
@@ -698,13 +715,15 @@ document.addEventListener('click', async (e) => {
   if (d.close !== undefined) return closeDrawer();
   if (d.stop) return api('POST', `/api/agents/${d.stop}/stop`);
   if (d.fire) {
-    if (confirm('¿Despedir a este agente?')) { await api('DELETE', `/api/agents/${d.fire}`); closeDrawer(); }
+    if (confirm('¿Despedir a este agente de la empresa? (baja definitiva; para quitarlo solo de este proyecto usa «Al banquillo»)')) { await api('DELETE', `/api/agents/${d.fire}`); closeDrawer(); }
     return;
   }
   if (d.approve) return api('POST', `/api/tasks/${d.approve}/approve`).then(() => toast('Tarea aprobada ✓'));
   if (d.ready) return api('PATCH', `/api/tasks/${d.ready}`, { status: 'todo' });
   if (d.edit) return editTask(d.edit);
   if (d.repoEdit !== undefined) return editRepo(d.repoEdit);
+  if (d.bench) return api('PATCH', `/api/projects/${projectId}/team`, { remove: [d.bench] }).then(() => toast('Al banquillo'));
+  if (d.sign) return api('PATCH', `/api/projects/${projectId}/team`, { add: [d.sign] }).then(() => toast('Fichado para este proyecto'));
   if (d.repoDel !== undefined) { if (confirm(`¿Quitar el repo «${d.repoDel}» del proyecto? (no toca el disco)`)) saveRepos((project()?.repos || []).filter((r) => r.key !== d.repoDel)); return; }
   if (d.roleEdit) return editRole(d.roleEdit);
   if (d.roleDup) return editRole(d.roleDup, true);

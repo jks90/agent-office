@@ -31,6 +31,16 @@ function load() {
     // Los procesos no sobreviven a un reinicio: lo que estaba en curso vuelve a la cola.
     for (const t of s.tasks) if (t.status === 'doing') { t.status = 'todo'; t.agentId = null; }
     for (const a of s.agents) { a.status = 'idle'; a.taskId = null; a.activity = ''; }
+    // Esquema 2: los agentes son de la empresa (globales); cada proyecto ficha a los suyos en project.team y el resto
+    // espera en el banquillo. Los equipos por defecto que se crearon por carpeta (duplicados sin tareas) se eliminan.
+    if (!s.schema || s.schema < 2) {
+      const keep = new Set(s.projects.filter((p) => s.tasks.some((t) => t.projectId === p.id)).map((p) => p.id));
+      s.agents = s.agents.filter((a) => !a.projectId || keep.has(a.projectId));
+      for (const p of s.projects) p.team = s.agents.filter((a) => a.projectId === p.id).map((a) => a.id);
+      for (const a of s.agents) { a.projects = undefined; delete a.projectId; }
+      s.schema = 2;
+    }
+    for (const p of s.projects) if (!Array.isArray(p.team)) p.team = [];
     for (const p of s.projects) if (p.board?.job?.running) { p.board.job.running = false; p.board.job.lastError = 'Exportación interrumpida (reinicio)'; }
     return s;
   } catch {

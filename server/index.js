@@ -99,6 +99,7 @@ const routes = [
   ['POST', /^\/api\/tasks\/(\w+)\/reject$/, gated(([id], b) => team.reject(id, b.feedback, b.images))],
   ['GET', /^\/api\/tasks\/(\w+)\/diff$/, async ([id]) => ({ diff: await team.taskDiff(id) })],
   ['POST', /^\/api\/agents$/, (_, b) => team.hire(b)],
+  ['PATCH', /^\/api\/projects\/(\w+)\/team$/, ([id], b) => team.setTeam(id, b)],
   ['PATCH', /^\/api\/agents\/(\w+)$/, ([id], b) => team.updateAgent(id, b)],
   ['DELETE', /^\/api\/agents\/(\w+)$/, ([id]) => team.fire(id)],
   ['POST', /^\/api\/agents\/(\w+)\/stop$/, ([id]) => team.stopAgent(id)],

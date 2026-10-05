@@ -43,6 +43,8 @@ const DEFAULT_TEAM = [
   { name: 'Frida', role: 'front' },
   { name: 'Quique', role: 'qa' },
 ];
+// Plantilla de un proyecto = agentes fichados (project.team). Los demás están en el banquillo, disponibles para cualquier proyecto.
+export const teamOf = (p) => { const ids = new Set(p?.team || []); return get().agents.filter((a) => ids.has(a.id)); };
 
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const findOr404 = (list, id, what) => list.find((x) => x.id === id) || (() => { throw fail(404, `${what} no encontrado`); })();
@@ -91,9 +93,9 @@ export async function syncWorkspace() {
   for (const [folder, n] of counts) {
     let p = s.projects.find((x) => x.folder === folder);
     if (!p) {
-      p = { id: newId(), name: folder === 'default' ? 'default' : folder, folder, repos: [], repoPath: null, baseBranch: null, running: false, createdAt: Date.now() };
+      p = { id: newId(), name: folder === 'default' ? 'default' : folder, folder, repos: [], repoPath: null, baseBranch: null, running: false, team: [], createdAt: Date.now() };
       s.projects.push(p);
-      DEFAULT_TEAM.forEach((m) => s.agents.push(newAgent(p.id, { ...m, engine: 'auto' })));
+      if (!s.agents.length) DEFAULT_TEAM.forEach((m) => { const a = newAgent({ ...m, engine: 'auto' }); s.agents.push(a); p.team.push(a.id); }); // primer arranque: equipo base
       created++;
     }
     p.flows = n;
@@ -131,9 +133,9 @@ export async function createProject({ name, repoPath, repos, engine = 'demo', fo
   const list = await resolveRepos({ repos, repoPath });
   if (!ENGINE_IDS.includes(engine)) engine = 'auto';
   const s = get();
-  const project = { id: newId(), name: name.trim(), folder: folder || null, repos: list, repoPath: list[0]?.path || null, baseBranch: list[0]?.baseBranch || null, running: false, createdAt: Date.now() };
+  const project = { id: newId(), name: name.trim(), folder: folder || null, repos: list, repoPath: list[0]?.path || null, baseBranch: list[0]?.baseBranch || null, running: false, team: [], createdAt: Date.now() };
   s.projects.push(project);
-  DEFAULT_TEAM.forEach((m) => s.agents.push(newAgent(project.id, { ...m, engine })));
+  if (!s.agents.length) DEFAULT_TEAM.forEach((m) => { const a = newAgent({ ...m, engine }); s.agents.push(a); project.team.push(a.id); });
   changed();
   return project;
 }
@@ -154,9 +156,9 @@ export async function updateProject(id, patch) {
 export function deleteProject(id) {
   const s = get();
   findOr404(s.projects, id, 'Proyecto');
-  for (const a of s.agents.filter((a) => a.projectId === id)) jobs.get(a.id)?.stop();
-  s.projects = s.projects.filter((p) => p.id !== id);
-  s.agents = s.agents.filter((a) => a.projectId !== id);
+  const p = s.projects.find((x) => x.id === id);
+  for (const a of teamOf(p)) if (jobs.get(a.id)?.taskId && s.tasks.find((t) => t.id === jobs.get(a.id).taskId)?.projectId === id) jobs.get(a.id).stop();
+  s.projects = s.projects.filter((x) => x.id !== id); // los agentes se quedan en el banquillo
   s.tasks = s.tasks.filter((t) => t.projectId !== id);
   changed();
 }
@@ -175,20 +177,33 @@ export function repoOfTask(p, t) {
 }
 
 // ── Agentes ────────────────────────────────────────────────────────────────
-function newAgent(projectId, { name, role, engine = 'demo', model = '' }) {
-  return { id: newId(), projectId, name, role, engine, model: model || roleOf(role)?.model || '', status: 'idle', activity: '', taskId: null, createdAt: Date.now() };
+function newAgent({ name, role, engine = 'auto', model = '' }) {
+  return { id: newId(), name, role, engine, model: model || roleOf(role)?.model || '', status: 'idle', activity: '', taskId: null, createdAt: Date.now() };
 }
 
-export function hire({ projectId, name, role, engine, model }) {
+// Contratar = alta en la empresa (y, si se indica proyecto, fichaje directo en su plantilla).
+export function hire({ projectId = null, name, role, engine, model }) {
   const s = get();
-  findOr404(s.projects, projectId, 'Proyecto');
+  const p = projectId ? findOr404(s.projects, projectId, 'Proyecto') : null;
   if (!roleOf(role)) throw fail(400, 'Rol desconocido');
   if (!name?.trim()) throw fail(400, 'El agente necesita un nombre');
-  if (s.agents.filter((a) => a.projectId === projectId).length >= 8) throw fail(400, 'La oficina tiene 8 mesas: no caben más agentes');
-  const agent = newAgent(projectId, { name: name.trim(), role, engine: ENGINE_IDS.includes(engine) ? engine : 'auto', model: model || '' });
+  if (p && p.team.length >= 8) throw fail(400, 'La oficina tiene 8 mesas: no caben más agentes en este proyecto');
+  const agent = newAgent({ name: name.trim(), role, engine: ENGINE_IDS.includes(engine) ? engine : 'auto', model: model || '' });
   s.agents.push(agent);
+  if (p) p.team.push(agent.id);
   changed();
   return agent;
+}
+
+// Fichar / mandar al banquillo (no borra al agente).
+export function setTeam(projectId, { add = [], remove = [] }) {
+  const s = get();
+  const p = findOr404(s.projects, projectId, 'Proyecto');
+  for (const id of add) { findOr404(s.agents, id, 'Agente'); if (!p.team.includes(id)) { if (p.team.length >= 8) throw fail(400, 'La oficina tiene 8 mesas'); p.team.push(id); } }
+  p.team = p.team.filter((id) => !remove.includes(id));
+  changed();
+  tick();
+  return p.team;
 }
 
 export function updateAgent(id, patch) {
@@ -278,7 +293,7 @@ export function updateTask(id, patch) {
 export function planGoal(projectId, goal) {
   if (!goal?.trim()) throw fail(400, 'Escribe un objetivo');
   const s = get();
-  const planner = s.agents.find((a) => a.projectId === projectId && roleOf(a.role)?.kind === 'planner');
+  const planner = teamOf(s.projects.find((p) => p.id === projectId)).find((a) => roleOf(a.role)?.kind === 'planner');
   if (!planner) throw fail(400, 'El equipo no tiene PO/orquestador: contrata uno para planificar');
   return createTask({ projectId, kind: 'plan', goal: goal.trim(), role: planner.role, title: `Planificar: ${goal.trim().slice(0, 80)}`, description: goal.trim() });
 }
@@ -420,7 +435,7 @@ export function tick() {
   if (!suiteOk()) return; // sin flow-test vigente, el equipo no arranca nada
   for (const p of s.projects) {
     if (!p.running) continue;
-    const team = s.agents.filter((a) => a.projectId === p.id);
+    const team = teamOf(p);
     let slots = (s.settings.maxParallel || 4) - team.filter((a) => jobs.has(a.id)).length;
     const todo = s.tasks.filter((t) => t.projectId === p.id && t.status === 'todo').sort((a, b) => a.createdAt - b.createdAt);
     for (const t of todo) {
@@ -435,7 +450,7 @@ export function tick() {
 }
 setInterval(tick, 1500).unref();
 
-const teamRoles = (p) => [...new Set(get().agents.filter((a) => a.projectId === p.id && roleOf(a.role)?.kind !== 'planner').map((a) => a.role))];
+const teamRoles = (p) => [...new Set(teamOf(p).filter((a) => roleOf(a.role)?.kind !== 'planner').map((a) => a.role))];
 
 function buildPrompt(p, agent, t) {
   if (t.kind === 'plan') {
