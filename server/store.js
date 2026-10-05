@@ -31,6 +31,7 @@ function load() {
     // Los procesos no sobreviven a un reinicio: lo que estaba en curso vuelve a la cola.
     for (const t of s.tasks) if (t.status === 'doing') { t.status = 'todo'; t.agentId = null; }
     for (const a of s.agents) { a.status = 'idle'; a.taskId = null; a.activity = ''; }
+    for (const p of s.projects) if (p.board?.job?.running) { p.board.job.running = false; p.board.job.lastError = 'Exportación interrumpida (reinicio)'; }
     return s;
   } catch {
     return empty();

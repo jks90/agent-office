@@ -139,6 +139,9 @@ export async function alignColumns(project) {
   return { columns: AO_COLUMNS, placed };
 }
 
+const exportJobs = new Map(); // projectId -> { cancelled }
+export function cancelExport(project) { const j = exportJobs.get(project.id); if (j) j.cancelled = true; if (project.board?.job) { project.board.job.running = false; project.board.job.lastError = 'Cancelada'; store.changed(); } }
+
 export function exportAll(project) {
   const { kind, cfg, sec } = ctx(project);
   if (project.board.job?.running) throw fail(409, 'Ya hay una exportación en marcha');
@@ -146,11 +149,14 @@ export function exportAll(project) {
   const pending = store.get().tasks.filter((t) => t.projectId === project.id && t.source?.kind !== kind.id && t.kind !== 'plan');
   const job = { running: true, total: pending.length, done: 0, failed: 0, startedAt: Date.now(), lastError: null };
   project.board.job = job; store.changed();
+  const ctl = { cancelled: false }; exportJobs.set(project.id, ctl);
   (async () => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     for (const t of pending) {
+      if (ctl.cancelled) break;
       let attempt = 0;
       for (;;) {
+        if (ctl.cancelled) break;
         try {
           const r = await call(kind, 'create', cfg, sec, { title: t.title, description: t.description, status: t.status === 'failed' ? 'todo' : t.status });
           t.source = { ...(t.source || {}), kind: kind.id, id: r.id, url: r.url, remoteStatus: t.status, pushedStatus: t.status };
@@ -162,7 +168,8 @@ export function exportAll(project) {
             attempt++;
             const wait = Math.min(15 * 60000, 60000 * 2 ** (attempt - 1)); // 1, 2, 4, 8, 15, 15 min
             job.waitingUntil = Date.now() + wait; job.lastError = `GitHub frena (rate limit): reintento en ${Math.round(wait / 60000)} min`; store.changed();
-            await sleep(wait); job.waitingUntil = null;
+            for (let w = 0; w < wait && !ctl.cancelled; w += 1000) await sleep(1000);
+            job.waitingUntil = null;
             continue;
           }
           job.failed++; job.lastError = `«${t.title.slice(0, 60)}»: ${msg.slice(0, 200)}`;

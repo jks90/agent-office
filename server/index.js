@@ -74,6 +74,7 @@ const routes = [
   ['POST', /^\/api\/projects\/(\w+)\/board$/, ([id], b) => boards.saveBoard(store.get().projects.find((p) => p.id === id), b)],
   ['POST', /^\/api\/projects\/(\w+)\/board\/create$/, ([id], b) => boards.createBoard(store.get().projects.find((p) => p.id === id), b)],
   ['POST', /^\/api\/projects\/(\w+)\/board\/align$/, gated(([id]) => boards.alignColumns(store.get().projects.find((p) => p.id === id)))],
+  ['POST', /^\/api\/projects\/(\w+)\/board\/export\/cancel$/, ([id]) => boards.cancelExport(store.get().projects.find((p) => p.id === id))],
   ['POST', /^\/api\/projects\/(\w+)\/board\/export$/, gated(([id]) => boards.exportAll(store.get().projects.find((p) => p.id === id)))],
   ['POST', /^\/api\/projects\/(\w+)\/board\/test$/, ([id]) => boards.testBoard(store.get().projects.find((p) => p.id === id))],
   ['POST', /^\/api\/projects\/(\w+)\/board\/sync$/, gated(([id]) => team.syncBoard(id))],
