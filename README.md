@@ -163,6 +163,19 @@ El **Guide Agent** es la capa de conversación, contexto, supervisión y navegac
 Cada agente elige motor y modelo desde su panel (clic en el personaje o en su ficha).
 Variables: `AO_PORT` (7420), `AO_HOST` (127.0.0.1), `AO_DATA_DIR`, `AO_CLAUDE_BIN`, `AO_CODEX_BIN`.
 
+## DesktopProvider (FT-20)
+
+`server/desktop/` abstrae el escritorio del usuario (ventana activa, lista de ventanas, captura). `getProvider()` elige por `process.platform`: `linux` → `linux.js`; darwin/win32 → provider `unsupported` (error 501 «aún no disponible en <so>»); `AO_DESKTOP=fake` → `fake.js` con ventanas y captura fijas para pruebas. Contrato (cabecera de `index.js`): `{ id, session, available(): {ok, missing[]}, getActive(): {id, title, app, pid}, list(): [{id, title, app, pid, active}], capture(opts) }`.
+
+`linux.js` detecta la sesión en tiempo de ejecución (`XDG_SESSION_TYPE`/`WAYLAND_DISPLAY`/`DISPLAY`):
+
+- **X11**: `xdotool getactivewindow getwindowname getwindowpid` + `wmctrl -lp`; captura con `import` (ImageMagick), `scrot` o `gnome-screenshot`.
+- **Wayland GNOME**: `gdbus` a `org.gnome.Shell` (`Eval`, o la extensión «Window Calls» si Eval está bloqueado); captura con `grim` o `gnome-screenshot`. Otros compositores Wayland → 501.
+
+El nombre de la app sale de `/proc/<pid>/comm`. `available()` indica qué herramienta falta (`missing`). Sin dependencias npm; `execFile` con timeout de 3 s. Decisión (sin respuesta del cliente): se soportan ambas sesiones.
+
+Prueba: `node -e "import('./server/desktop/index.js').then(async m=>{const p=m.getProvider();console.log(p.session,p.available(),await p.getActive(),(await p.list()).length)})"`.
+
 ## Estructura
 
 ```
@@ -174,6 +187,7 @@ server/guide/       Guide Agent: tools + política + auditoría (FT-4), chats, p
 server/engines/allowlist.js  lista blanca de shell compartida por el motor Claude y terminal.execute (FT-10)
 bin/ao-mcp.mjs      servidor MCP stdio del Guide (FT-4)
 bin/stt-whisper.py  STT local con faster-whisper (FT-9)
+server/desktop/     DesktopProvider: ventana activa/lista/captura, linux X11+Wayland GNOME, fake (FT-20)
 server/git.js       worktrees, commit, diff, merge
 server/engines/     demo · claude · codex (+ describe.js: herramienta → frase del bocadillo)
 public/office.js    la oficina: pixel art en canvas, rutas por pasillos, bocadillos
