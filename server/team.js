@@ -415,6 +415,7 @@ export async function approve(id) {
     const repo = repoOfTask(p, t);
     // Si la rama ya no existe es que se fusionó y limpió en un intento anterior (p. ej. un reinicio perdió el estado): solo falta marcarla.
     if (await git.branchExists(repo, t.branch)) {
+      await syncWithBase(p, repo, t, { onConflict: 'reject' }); // FT-19: desfasada → se actualiza con la base antes de fusionar; si choca, vuelve al agente
       try { await git.merge(repo, t); } catch (e) { throw fail(409, e.message); }
       await git.cleanup(p, repo, t);
     } else log(t.agentId, `ℹ ${t.code || t.id}: la rama ${t.branch} ya estaba fusionada`);
@@ -423,6 +424,7 @@ export async function approve(id) {
   t.updatedAt = Date.now();
   events.emit('TaskReviewed', events.ctxOf(t), { decision: 'approved', merged: !!t.branch });
   changed();
+  refreshReviews().catch(() => {}); // FT-19: la base avanzó: las demás ramas en revisión pueden haberse desfasado
   reflect(t, `✅ Aprobada en AgentOffice${t.summary ? `\n\n${t.summary.slice(0, 1500)}` : ''}`);
   tick();
 }
@@ -436,10 +438,89 @@ export async function reject(id, feedback = '', images = [], attachments = []) {
   t.feedbackImages = copyImages(t, images);
   events.emit('TaskReviewed', events.ctxOf(t), { decision: 'rejected', feedback: feedback.trim().slice(0, 500) });
   if (feedback.trim()) events.emit('UserInstructionAdded', events.ctxOf(t), { kind: 'feedback', text: feedback.trim().slice(0, 500) });
-  Object.assign(t, { status: 'todo', agentId: null, diffStat: '', error: null, updatedAt: Date.now() });
+  Object.assign(t, { status: 'todo', agentId: null, diffStat: '', error: null, behind: 0, conflicts: [], mergeKey: null, updatedAt: Date.now() });
   changed();
   reflect(t, feedback.trim() ? `↩ Devuelta en AgentOffice: ${feedback.trim().slice(0, 1000)}` : undefined);
   tick();
+}
+
+// ── Fusión sin conflictos a mano (FT-19) ───────────────────────────────────
+// Comprobación previa: cuántos commits de la base le faltan a la rama en revisión y si la fusión chocaría (solo rutas).
+// Se recalcula en segundo plano (no en cada snapshot) y solo cuando cambia la base o la rama; el resultado viaja en la tarea por SSE.
+export async function refreshMergeState(t) {
+  const p = projectOf(t);
+  const repo = p && repoOfTask(p, t);
+  if (!repo || !t.branch || t.status !== 'review') return false;
+  let st;
+  try { st = await git.mergeState(repo, t); } catch { st = null; } // rama ya fusionada/borrada o repo ilocalizable: sin datos
+  if (t.mergeKey === st?.key) return false;
+  const was = JSON.stringify([t.behind, t.conflicts]);
+  Object.assign(t, st ? { mergeKey: st.key, behind: st.behind, conflicts: st.conflicts } : { mergeKey: null, behind: 0, conflicts: [] });
+  return JSON.stringify([t.behind, t.conflicts]) !== was || !!st;
+}
+let refreshing = false;
+async function refreshReviews() {
+  if (refreshing) return;
+  refreshing = true;
+  try {
+    let any = false;
+    for (const t of get().tasks.filter((x) => x.status === 'review' && x.branch)) any = (await refreshMergeState(t)) || any;
+    if (any) changed();
+  } finally { refreshing = false; }
+}
+setInterval(refreshReviews, 10_000).unref();
+
+const CONFLICT_MARK = 'Tu rama choca con';
+const conflictText = (base, files) => `${CONFLICT_MARK} ${base} en: ${files.join(', ')}; haz \`git merge ${base}\` en tu worktree, resuelve los conflictos conservando lo de ambos lados, verifica y vuelve a confirmar.`;
+
+// Mete la base en la rama de la tarea (merge dentro de su worktree). → { updated, behind } o, con conflicto, { conflicts } sin tocar el worktree.
+async function mergeBaseInto(p, repo, t) {
+  const dir = git.worktreeDir(p, t);
+  if (!fs.existsSync(dir)) throw fail(409, `La tarea ${t.code || t.id} no tiene su worktree (${dir}): no se puede actualizar la rama`);
+  const behind = Number(await git.git(repo.path, 'rev-list', '--count', `${t.branch}..${repo.baseBranch}`));
+  if (!behind) return { updated: false, behind: 0, conflicts: [] };
+  const r = await git.updateFromBase(dir, repo.baseBranch);
+  if (r.conflicts.length) {
+    events.emit('TaskConflict', events.ctxOf(t), { base: repo.baseBranch, files: r.conflicts.slice(0, 50), behind });
+    return { updated: false, behind, conflicts: r.conflicts };
+  }
+  events.emit('TaskUpdatedFromBase', events.ctxOf(t), { base: repo.baseBranch, behind });
+  return { updated: true, behind, conflicts: [] };
+}
+
+// Antes de fusionar o desde «Actualizar con main»: rama al día → no hace nada; desfasada → merge de la base; choca → (onConflict 'reject') vuelve al agente.
+async function syncWithBase(p, repo, t, { onConflict = 'reject' } = {}) {
+  const r = await mergeBaseInto(p, repo, t);
+  if (r.conflicts.length && onConflict === 'reject') {
+    const msg = conflictText(repo.baseBranch, r.conflicts);
+    await reject(t.id, msg);
+    throw Object.assign(fail(409, `${t.code || t.id} choca con ${repo.baseBranch} en ${r.conflicts.join(', ')}: devuelta al agente para que lo resuelva`), { conflicts: r.conflicts });
+  }
+  if (r.updated) {
+    t.diffStat = await git.diffStat(repo, t);
+    t.mergeKey = null; // se recalcula
+    await refreshMergeState(t);
+    t.updatedAt = Date.now();
+    changed();
+  }
+  return r;
+}
+
+// «Actualizar con main» (tarjeta y tool del Guide task.updateFromBase): entra limpio → lista para aprobar; choca → vuelve al agente con el feedback automático.
+export async function updateFromBase(id) {
+  const t = findOr404(get().tasks, id, 'Tarea');
+  if (t.status !== 'review') throw fail(409, 'La tarea no está en revisión');
+  if (!t.branch) throw fail(409, 'La tarea no tiene rama propia (motor demo): no hay nada que actualizar');
+  const p = projectOf(t);
+  const repo = repoOfTask(p, t);
+  if (!(await git.branchExists(repo, t.branch))) throw fail(409, `La rama ${t.branch} ya no existe`);
+  const base = repo.baseBranch;
+  let r;
+  try { r = await syncWithBase(p, repo, t, { onConflict: 'reject' }); } catch (e) {
+    if (e.conflicts) return { task: t.id, code: t.code, updated: false, returned: true, conflicts: e.conflicts || [], message: e.message };
+    throw e;
+  }
+  return { task: t.id, code: t.code, updated: r.updated, returned: false, behind: r.behind, conflicts: [], message: r.updated ? `Rama actualizada con ${base} (${r.behind} commits): lista para aprobar` : `La rama ya estaba al día con ${base}` };
 }
 
 // Imágenes adjuntas (capturas, referencias): se copian a data/ para que el agente las vea (codex --image, claude con Read).
@@ -608,6 +689,7 @@ function buildPrompt(p, agent, t) {
     clientBlock(t),
     done.length ? `\nTrabajo previo del equipo (ya fusionado):\n${done.map((d) => `- ${d.title}: ${d.summary}`).join('\n')}` : '',
     t.feedback ? `\nComentarios de la revisión anterior (corrígelos):\n${t.feedback}` : '',
+    t.baseConflict ? `\nOJO: ${t.baseConflict}` : '',
     t.feedbackImages?.length ? `\nImágenes adjuntas (míralas con atención antes de cambiar nada; también están en ${t.feedbackImages.join(', ')}).` : '',
     t.files?.length ? `\nFicheros adjuntos (léelos antes de empezar): ${t.files.join(', ')}` : '',
     '',
@@ -654,8 +736,16 @@ async function runTask(p, agent, t) {
       cwd = wt.path;
       t.branch = wt.branch;
       t.reused = !!wt.reused;
-      if (wt.reused) log(agent.id, `↺ Sigue sobre su intento anterior en ${wt.branch}`);
-      else log(agent.id, `🌿 Rama ${wt.branch} en el repo ${repo.key}`);
+      t.baseConflict = null;
+      if (wt.reused) {
+        log(agent.id, `↺ Sigue sobre su intento anterior en ${wt.branch}`);
+        // FT-19: si la base avanzó, se actualiza antes de arrancar; si choca, el conflicto va en el prompt (salvo que ya esté en el feedback de la devolución)
+        try {
+          const r = await mergeBaseInto(p, repo, t);
+          if (r.updated) log(agent.id, `⬆ Rama actualizada con ${repo.baseBranch} (${r.behind} commits)`);
+          if (r.conflicts.length) { log(agent.id, `⚠ La rama choca con ${repo.baseBranch} en ${r.conflicts.join(', ')}`); if (!(t.feedback || '').includes(CONFLICT_MARK)) t.baseConflict = conflictText(repo.baseBranch, r.conflicts); }
+        } catch (e) { log(agent.id, `⚠ No pude actualizar con ${repo.baseBranch}: ${e.message}`); }
+      } else log(agent.id, `🌿 Rama ${wt.branch} en el repo ${repo.key}`);
       if (engineId === 'claude' && role.skills?.length) { const linked = linkSkillsInto(cwd, role.skills); if (linked.length) log(agent.id, `🧩 Skills: ${linked.join(', ')}`); }
     }
     if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true });

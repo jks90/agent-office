@@ -166,6 +166,7 @@ const routes = [
   ['POST', /^\/api\/tasks\/draft$/, gated((_, b) => draftTask(b))],
   ['DELETE', /^\/api\/tasks\/([\w-]+)$/, ([id]) => team.deleteTask(id)],
   ['POST', /^\/api\/tasks\/([\w-]+)\/approve$/, ([id]) => team.approve(id)],
+  ['POST', /^\/api\/tasks\/([\w-]+)\/update-from-base$/, ([id]) => team.updateFromBase(id)], // FT-19
   ['POST', /^\/api\/tasks\/([\w-]+)\/reject$/, gated(([id], b) => team.reject(id, b.feedback, b.images, b.attachments))],
   ['GET', /^\/api\/tasks\/([\w-]+)\/diff$/, async ([id]) => ({ diff: await team.taskDiff(id) })],
   ['POST', /^\/api\/agents$/, (_, b) => team.hire(b)],

@@ -152,6 +152,8 @@ export const tools = [
     ({ code }) => briefAgent(team.resumeAgent(doingAgent(code)))),
   T('task.stop', 'Detiene al agente que trabaja en la tarea (mata su proceso; la tarea queda fallida y se puede reintentar).', obj({ code: str('Código de la tarea') }, ['code']), 'execute',
     ({ code }) => { team.stopAgent(doingAgent(code)); return { stopped: true }; }),
+  T('task.updateFromBase', 'Actualiza con la rama base (main) la rama de una tarea en revisión: si entra limpia queda lista para aprobar; si choca, la tarea vuelve al agente con el feedback del conflicto (FT-19).', obj({ code: str('Código de la tarea') }, ['code']), 'execute',
+    async ({ code }) => team.updateFromBase(findTask(code).id)),
   T('task.addConstraint', 'Añade una restricción persistente a la tarea: se incluye siempre en el prompt del agente, también tras Devolver.', obj({ code: str('Código de la tarea'), text: str('Restricción, p. ej. «no toques server/index.js»') }, ['code', 'text']), 'write',
     ({ code, text }) => brief(team.addConstraint(findTask(code).id, text, 'guide'))),
   T('agent.message', 'Envía una instrucción a un agente que está trabajando (Claude: en caliente; Codex/demo: reencola la tarea con el mensaje). constraint=true la guarda además como restricción de la tarea.', obj({ agentId: str('Id o nombre del agente'), message: str('Mensaje'), constraint: { type: 'boolean', description: 'Guardarla como restricción persistente de la tarea' } }, ['agentId', 'message']), 'write',

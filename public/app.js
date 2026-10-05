@@ -663,6 +663,13 @@ $('#board').addEventListener('drop', (e) => {
   e.preventDefault(); const id = dragId; dragId = null; col.classList.remove('drop-over');
   moveTask(id, col.dataset.col);
 });
+// FT-19: estado de la rama en revisión respecto a la base (lo calcula el servidor): desfasada N commits / conflicto en ficheros.
+const baseOf = (t) => { const rs = S.projects.find((p) => p.id === t.projectId)?.repos || []; return (rs.find((r) => r.key === t.repo) || rs[0])?.baseBranch || 'main'; };
+const mergeChips = (t) => t.status !== 'review' || !t.branch ? '' : [
+  t.behind ? `<span class="merge-chip behind" title="A la rama le faltan ${t.behind} commits de ${esc(baseOf(t))}: «Actualizar con ${esc(baseOf(t))}» los trae (al aprobar se hace solo)">desfasada ${t.behind} commit${t.behind === 1 ? '' : 's'}</span>` : '',
+  (t.conflicts || []).length ? `<span class="merge-chip conflict" title="${esc(t.conflicts.join('\n'))}">⚠ conflicto en ${esc(t.conflicts.slice(0, 2).join(', '))}${t.conflicts.length > 2 ? ` +${t.conflicts.length - 2}` : ''}</span>` : '',
+].join(' ');
+const updateBtn = (t) => t.status === 'review' && t.branch && t.behind ? `<button class="small ghost" data-update="${t.id}" title="Fusiona ${esc(baseOf(t))} en la rama de la tarea; si choca, vuelve al agente con el conflicto">⬆ Actualizar con ${esc(baseOf(t))}</button>` : '';
 
 function card(t) {
   const agent = S.agents.find((a) => a.id === t.agentId);
@@ -673,6 +680,7 @@ function card(t) {
   const acts = [];
   if (t.status === 'review') {
     acts.push(`<button class="small ghost" data-diff="${t.id}">Ver cambios</button>`);
+    if (updateBtn(t)) acts.push(updateBtn(t));
     acts.push(`<button class="small ok" data-approve="${t.id}">✓ Aprobar${t.branch ? ' y fusionar' : ''}</button>`);
     acts.push(`<button class="small ghost" data-reject="${t.id}">↩ Devolver</button>`);
   }
@@ -690,6 +698,7 @@ function card(t) {
     <div class="meta">${agent ? `<span>👤 ${esc(agent.name)}</span>` : ''}${deps ? `<span>depende de ${deps}</span>` : ''}${t.costUsd ? ` <span>💲${t.costUsd.toFixed(3)}</span>` : ''}</div>
     ${t.status === 'doing' && agent ? `<div class="live">● ${esc(agent.activity)}</div>` : ''}
     ${t.summary && t.status !== 'doing' ? `<div class="sum">${esc(t.summary)}</div>` : ''}
+    ${mergeChips(t) ? `<div class="merge-row">${mergeChips(t)}</div>` : ''}
     ${t.error ? `<div class="err">${esc(t.error)}</div>` : ''}
     <button class="small ghost expand" data-open="${t.id}">🔍 Ver la tarea</button>
     ${acts.length ? `<div class="acts">${acts.join('')}</div>` : ''}
@@ -1259,7 +1268,7 @@ function openTask(id) {
   if (t.status !== 'doing') acts.push(`<button class="small ghost" data-edit="${t.id}">✎ Editar</button>`);
   if (t.status === 'backlog') acts.push(`<button class="small" data-ready="${t.id}">→ Por hacer</button>`);
   if (t.status === 'todo') acts.push(`<button class="small ghost" data-park="${t.id}">← Backlog</button>`);
-  if (t.status === 'review') acts.push(`<button class="small ghost" data-diff="${t.id}">Ver cambios</button><button class="small ok" data-approve="${t.id}">✓ Aprobar${t.branch ? ' y fusionar' : ''}</button><button class="small ghost" data-reject="${t.id}">↩ Devolver</button>`);
+  if (t.status === 'review') acts.push(`<button class="small ghost" data-diff="${t.id}">Ver cambios</button>${updateBtn(t)}<button class="small ok" data-approve="${t.id}">✓ Aprobar${t.branch ? ' y fusionar' : ''}</button><button class="small ghost" data-reject="${t.id}">↩ Devolver</button>`);
   if (t.status === 'failed') acts.push(`<button class="small" data-reject="${t.id}">↻ Reintentar</button>`);
   dialog(`
     <div class="task-head">${roleChip(t.role)} <b>${esc(tcode(t))}</b>${repoKey ? ` <span>📁 ${esc(repoKey)}</span>` : ''} <span class="st">${STATUS[t.status] || t.status}</span>${agent ? ` <span>👤 ${esc(agent.name)}</span>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}${t.costUsd ? ` <span>≈ ${t.costUsd.toFixed(2)} $</span>` : ''}${t.source?.url ? ` <a href="${esc(t.source.url)}" target="_blank" rel="noopener" style="color:#93c5fd">🔗 ${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} ${esc(t.source.id)}</a>` : ''}<div class="spacer"></div><span>${new Date(t.createdAt).toLocaleString()}</span></div>
@@ -1272,6 +1281,7 @@ function openTask(id) {
     ${(t.constraints || []).length ? `<div class="task-sec constraints"><h4>Restricciones del cliente</h4><ul>${t.constraints.map((c) => `<li>${esc(c.text)} <small>· ${new Date(c.at).toLocaleString()} · ${esc(c.origin)}</small></li>`).join('')}</ul></div>` : ''}
     ${t.feedback ? `<div class="task-sec"><h4>Comentarios de revisión</h4><div class="md">${md(t.feedback)}</div></div>` : ''}
     ${t.summary ? `<div class="task-sec"><h4>Resumen del agente</h4><div class="md">${md(t.summary)}</div></div>` : ''}
+    ${mergeChips(t) ? `<div class="task-sec"><h4>Estado frente a ${esc(baseOf(t))}</h4><div>${mergeChips(t)}</div>${(t.conflicts || []).length ? `<ul>${t.conflicts.map((f) => `<li><code>${esc(f)}</code></li>`).join('')}</ul>` : ''}</div>` : ''}
     ${t.diffStat ? `<div class="task-sec"><h4>Cambios en la rama ${esc(t.branch || '')}</h4><pre class="md">${esc(t.diffStat)}</pre></div>` : ''}
     ${t.error ? `<div class="task-sec"><h4>Error</h4><div class="md bad">${esc(t.error)}</div></div>` : ''}
     <div class="task-acts">${acts.join('')}<div class="spacer"></div><button class="ghost" value="cancel">Cerrar</button></div>`, null, 'task');
@@ -1332,6 +1342,7 @@ document.addEventListener('click', async (e) => {
     if (confirm('¿Despedir a este agente de la empresa? (baja definitiva; para quitarlo solo de este proyecto usa «Al banquillo»)')) { await api('DELETE', `/api/agents/${d.fire}`); closeDrawer(); }
     return;
   }
+  if (d.update) return api('POST', `/api/tasks/${d.update}/update-from-base`).then((r) => toast(r.message));
   if (d.approve) return api('POST', `/api/tasks/${d.approve}/approve`).then(() => toast('Tarea aprobada ✓'));
   if (d.open) return openTask(d.open);
   if (d.ready) return api('PATCH', `/api/tasks/${d.ready}`, { status: 'todo' });

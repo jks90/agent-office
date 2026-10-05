@@ -9,6 +9,7 @@ export const TYPES = [
   'TaskCreated', 'TaskAssigned', 'AgentStarted', 'AgentProgress', 'AgentToolStarted', 'AgentToolFinished',
   'AgentFileModified', 'AgentArtifactCreated', 'AgentBlocked', 'UserInstructionAdded',
   'AgentPaused', 'AgentResumed', 'AgentFailed', 'AgentCompleted', 'TaskReviewed',
+  'TaskUpdatedFromBase', 'TaskConflict', // FT-19
 ];
 
 const MAX_BUFFER = 2000;

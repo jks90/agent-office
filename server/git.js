@@ -65,6 +65,52 @@ export const diff = (repo, task) => git(repo.path, 'diff', `${repo.baseBranch}..
 
 export const branchExists = async (repo, branch) => { try { await git(repo.path, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`); return true; } catch { return false; } };
 
+// ── Fusión sin conflictos a mano (FT-19) ────────────────────────────────────
+// Estado de la rama de la tarea respecto a la base: commits de la base que no tiene (behind) y rutas que chocarían al fusionar (conflicts).
+// `merge-tree --write-tree` (git ≥ 2.38) no toca índice ni worktrees; en git antiguo se usa el `merge-tree` clásico (solo lectura también).
+export async function mergeState(repo, task) {
+  const key = `${await git(repo.path, 'rev-parse', repo.baseBranch)}..${await git(repo.path, 'rev-parse', `refs/heads/${task.branch}`)}`;
+  const behind = Number(await git(repo.path, 'rev-list', '--count', `${task.branch}..${repo.baseBranch}`));
+  return { key, behind, conflicts: behind ? await conflictsOf(repo.path, repo.baseBranch, task.branch) : [] };
+}
+
+async function conflictsOf(cwd, base, branch) {
+  try {
+    await git(cwd, 'merge-tree', '--write-tree', '--name-only', '--no-messages', base, branch);
+    return [];
+  } catch (e) {
+    if (e.code === 1 && typeof e.stdout === 'string') return [...new Set(e.stdout.split('\n\n')[0].split('\n').slice(1).map((l) => l.trim()).filter(Boolean))].sort();
+    // git < 2.38 (opción desconocida): merge-tree clásico contra el ancestro común; conflicto = sección con marcas «<<<<<<<»
+    const mb = await git(cwd, 'merge-base', base, branch);
+    const out = await git(cwd, 'merge-tree', mb, base, branch);
+    const files = new Set();
+    let file = null, sectionConflict = false;
+    const close = () => { if (file && sectionConflict) files.add(file); };
+    for (const l of out.split('\n')) {
+      if (/^(changed|added|removed|merged) in /.test(l) || /^(added|removed) in (remote|local)/.test(l)) { close(); file = null; sectionConflict = false; continue; }
+      const m = l.match(/^  (?:base|our|their)\s+\d+ [0-9a-f]+ (.+)$/);
+      if (m) file = m[1];
+      else if (l.startsWith('+<<<<<<<')) sectionConflict = true;
+    }
+    close();
+    return [...files].sort();
+  }
+}
+
+// Fusiona la base dentro de la rama, en el worktree de la tarea. → { conflicts: [] } si entró limpio (o ya estaba al día);
+// con conflicto aborta el merge (el worktree queda como estaba) y devuelve las rutas en conflicto.
+export async function updateFromBase(dir, base) {
+  try {
+    await exec('git', ['-C', dir, '-c', 'user.name=AgentOffice', '-c', 'user.email=agent-office@local', 'merge', '--no-edit', base], { maxBuffer: 50e6 });
+    return { conflicts: [] };
+  } catch (e) {
+    const conflicts = (await git(dir, 'diff', '--name-only', '--diff-filter=U').catch(() => '')).split('\n').filter(Boolean);
+    try { await git(dir, 'merge', '--abort'); } catch { /* no había merge en curso */ }
+    if (!conflicts.length) throw new Error(`No pude actualizar la rama con ${base}: ${e.stderr || e.message}`);
+    return { conflicts };
+  }
+}
+
 export async function merge(repo, task) {
   const current = await git(repo.path, 'rev-parse', '--abbrev-ref', 'HEAD');
   if (current !== repo.baseBranch) {

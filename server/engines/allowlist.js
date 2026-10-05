@@ -7,6 +7,7 @@ export const BASH_RULES = [
   'du *', 'file *', 'stat *', 'date *', 'echo *', 'printf *', 'true', 'sleep *',
   'mkdir *', 'cp *', 'mv *', 'touch *', 'cd *', 'pwd',
   'git status*', 'git diff*', 'git log*', 'git show*', 'git add*', 'git commit*', 'git branch*',
+  'git merge *', // FT-19: el agente resuelve los conflictos con la base en su worktree (sin rebase)
   'git rm *', 'git mv *', 'git restore *', // borrar/mover/deshacer ficheros del worktree (reversible por git; sin `rm` genérico)
   'mvn *', './mvnw *', 'gradle *', './gradlew *', 'make *', // compilar/probar proyectos Java y otros (GL-2: el agente no podía ejecutar Maven)
 ];
