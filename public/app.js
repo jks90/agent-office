@@ -72,7 +72,7 @@ function modelSelect(name, engine, current) {
   const known = groups.flatMap((g) => MODELS[g] || []).some((m) => m.id === current);
   return `<select name="${name}" class="model-select" data-engine="${engine}">
     <option value="" ${!current ? 'selected' : ''}>por defecto del rol / motor</option>
-    ${groups.map((g) => `<optgroup label="${g === 'claude' ? 'Claude Code' : 'Codex'}">${(MODELS[g] || []).map((m) => `<option value="${esc(m.id)}" ${m.id === current ? 'selected' : ''} ${m.available ? '' : 'disabled'}>${esc(m.label)}${m.available ? '' : ' — ' + esc(m.note || 'no disponible')}</option>`).join('')}</optgroup>`).join('')}
+    ${groups.map((g) => `<optgroup label="${g === 'claude' ? 'Claude Code' : 'Codex'}">${(MODELS[g] || []).map((m) => `<option value="${esc(m.id)}" ${m.id === current ? 'selected' : ''} ${m.available ? '' : 'disabled'}>${esc(m.label)}${m.available ? (m.note ? ' (' + esc(m.note) + ')' : '') : ' — ' + esc(m.note || 'no disponible')}</option>`).join('')}</optgroup>`).join('')}
     <option value="__other" ${current && !known ? 'selected' : ''}>otro… (escribir id)</option>
   </select><input name="${name}_other" class="model-other" placeholder="id del modelo" value="${current && !known ? esc(current) : ''}" style="${current && !known ? '' : 'display:none'}" />`;
 }

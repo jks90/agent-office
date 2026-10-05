@@ -100,7 +100,8 @@ export async function enginesModels() {
   try {
     const cache = JSON.parse(fs.readFileSync(path.join(process.env.HOME, '.codex', 'models_cache.json'), 'utf8'));
     const list = cache.models || cache.data || cache;
-    codex = (Array.isArray(list) ? list : []).map((m) => (typeof m === 'string' ? m : m.slug || m.id || m.model)).filter((x) => x && !/review/i.test(x)).map((id) => ({ id, label: id, available: true }));
+    // La caché no dice qué modelos admite el plan (ChatGPT rechaza algunos, p. ej. gpt-6.1-sol): solo gpt-5.5 está comprobado.
+    codex = (Array.isArray(list) ? list : []).filter((m) => typeof m === 'object' && m.visibility !== 'hide').map((m) => ({ id: m.slug, label: `${m.display_name || m.slug}${m.slug === 'gpt-5.5' ? ' — comprobado con tu cuenta' : ''}`, available: true, note: m.slug === 'gpt-5.5' ? '' : 'sin comprobar con tu plan de ChatGPT' })).filter((m) => m.id && !/review/i.test(m.id));
   } catch { /* sin caché */ }
   if (!codex.some((m) => m.id === 'gpt-5.5')) codex.push({ id: 'gpt-5.5', label: 'gpt-5.5', available: true });
   return { claude, codex, claudeVersion: v };
