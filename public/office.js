@@ -14,9 +14,12 @@ const DESKS = [
 ];
 const seatOf = (d) => ({ x: d.x + 24, y: d.y + 16, corr: d.y + 48 });
 const BOARD_SPOTS = [{ x: 112, y: 64 }, { x: 160, y: 64 }];
+const RUG = { x: 240, y: 128 };
+const SOFA = { x: 256, y: 160 };
+const ROUND_TABLE = { x: 256, y: 96 };
 const LOUNGE = [
-  { x: 256, y: 176 }, { x: 288, y: 176 }, { x: 304, y: 144 }, { x: 256, y: 128 },
-  { x: 272, y: 112 }, { x: 304, y: 112 }, { x: 240, y: 160 }, { x: 288, y: 144 },
+  { x: 264, y: 184 }, { x: 280, y: 184 }, { x: 296, y: 184 }, { x: 248, y: 112 },
+  { x: 288, y: 112 }, { x: 232, y: 160 }, { x: 224, y: 184 }, { x: 304, y: 144 },
 ];
 
 const SKIN_ROWS = [0, 1, 2];
@@ -195,7 +198,7 @@ export class Office {
     // Suelo de tarima
     this.drawFloorOnly();
     // Alfombra de la zona de descanso
-    if (this.assetsReady) this.drawRug(240, 112);
+    if (this.assetsReady) this.drawRug(RUG.x, RUG.y);
     // Pared
     this.px(0, 0, W, WALL, '#596076');
     this.px(0, 0, W, 3, '#3b4057');
@@ -238,20 +241,20 @@ export class Office {
       this.tile(this.indoor, 13, 14, 256, 44);
       this.tile(this.indoor, 13, 15, 256, 60);
       this.tile(this.indoor, 13, 16, 256, 76);
-      this.tile(this.indoor, 0, 12, 272, 60);
-      this.tile(this.indoor, 0, 13, 272, 76);
-      this.tile(this.indoor, 14, 14, 288, 60);
-      this.tile(this.indoor, 14, 15, 288, 76);
-      this.tile(this.indoor, 1, 12, 304, 60);
-      this.tile(this.indoor, 1, 13, 304, 76);
+      this.tile(this.indoor, 14, 14, 272, 44);
+      this.tile(this.indoor, 14, 15, 272, 60);
+      this.tile(this.indoor, 1, 12, 288, 44);
+      this.tile(this.indoor, 1, 13, 288, 60);
+      this.tile(this.indoor, 0, 12, 304, 44);
+      this.tile(this.indoor, 0, 13, 304, 60);
     } else {
       this.px(266, 36, 50, 8, '#6b7280');
       this.px(296, 20, 14, 16, '#1f2937');
     }
-    this.px(278, 62, 5, 6, '#e5e7eb');
-    this.px(284, 64, 4, 4, '#fde68a');
+    this.px(278, 46, 5, 6, '#e5e7eb');
+    this.px(284, 48, 4, 4, '#fde68a');
     const steam = Math.floor(now / 260) % 3;
-    for (let i = 0; i < 3; i++) this.px(279 + i * 3, 57 - ((steam + i) % 3) * 2, 1, 3, 'rgba(255,255,255,.55)');
+    for (let i = 0; i < 3; i++) this.px(279 + i * 3, 41 - ((steam + i) % 3) * 2, 1, 3, 'rgba(255,255,255,.55)');
   }
 
   drawFloorOnly() {
@@ -359,15 +362,15 @@ export class Office {
   }
 
   drawSofaBack(now) {
-    this.px(254, 176, 50, 5, 'rgba(0,0,0,.18)');
-    this.tile(this.indoor, 16, 8, 256, 160);
-    this.tile(this.indoor, 17, 8, 272, 160);
-    this.tile(this.indoor, 18, 8, 288, 160);
+    this.px(SOFA.x - 2, SOFA.y + 16, 50, 5, 'rgba(0,0,0,.18)');
+    this.tile(this.indoor, 16, 8, SOFA.x, SOFA.y);
+    this.tile(this.indoor, 17, 8, SOFA.x + 16, SOFA.y);
+    this.tile(this.indoor, 18, 8, SOFA.x + 32, SOFA.y);
   }
   drawSofaFront() {
-    this.tile(this.indoor, 16, 9, 256, 176);
-    this.tile(this.indoor, 17, 9, 272, 176);
-    this.tile(this.indoor, 18, 9, 288, 176);
+    this.tile(this.indoor, 16, 9, SOFA.x, SOFA.y + 16);
+    this.tile(this.indoor, 17, 9, SOFA.x + 16, SOFA.y + 16);
+    this.tile(this.indoor, 18, 9, SOFA.x + 32, SOFA.y + 16);
   }
   drawPlant(x, y) {
     this.px(x + 3, y + 14, 10, 2, 'rgba(0,0,0,.16)');
@@ -375,21 +378,17 @@ export class Office {
   }
 
   drawStaticSprites(items, now) {
-    items.push({ y: 78, draw: () => this.drawBookshelf(272, 46) });
-    items.push({ y: 78, draw: () => this.drawBookshelf(224, 46) });
-    items.push({ y: 160, draw: () => this.drawFloorLamp(304, 144, now) });
-    items.push({ y: 176, draw: () => this.drawSofaBack(now) });
-    items.push({ y: 196, draw: () => this.drawSofaFront() });
+    items.push({ y: 78, draw: () => this.drawBookshelf(192, 46) });
     items.push({ y: 112, draw: () => this.drawPlant(224, 112) });
-    items.push({ y: 208, draw: () => this.drawPlant(240, 176) });
-    items.push({ y: 144, draw: () => this.drawRoundTable(272, 128) });
+    items.push({ y: 144, draw: () => this.drawRoundTable(ROUND_TABLE.x, ROUND_TABLE.y) });
+    items.push({ y: SOFA.y + 16, draw: () => this.drawSofaBack(now) });
+    items.push({ y: 176, draw: () => this.drawPlant(224, 176) });
+    items.push({ y: SOFA.y + 17, draw: () => this.drawSofaFront() });
   }
 
   drawRoundTable(x, y) {
-    this.tile(this.indoor, 1, 2, x, y - 16);
-    this.tile(this.indoor, 0, 2, x, y + 16);
-    this.tile(this.indoor, 2, 2, x - 16, y);
-    this.tile(this.indoor, 3, 2, x + 32, y);
+    this.tile(this.indoor, 3, 2, x - 16, y);
+    this.tile(this.indoor, 2, 2, x + 32, y);
     this.tile(this.indoor, 3, 0, x, y);
     this.tile(this.indoor, 4, 0, x + 16, y);
     this.tile(this.indoor, 3, 1, x, y + 16);
