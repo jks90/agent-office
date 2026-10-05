@@ -1,0 +1,12 @@
+{
+  "name": "agent-office",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Oficina 2D de agentes de IA (Claude Code / Codex) que trabajan en equipo sobre tus proyectos",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "engines": { "node": ">=20" }
+}

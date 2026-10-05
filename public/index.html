@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AgentOffice</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏢</text></svg>" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">🏢 <b>AgentOffice</b></div>
+    <select id="project"></select>
+    <button data-action="new-project" class="ghost">＋ Proyecto</button>
+    <span id="repo" class="muted"></span>
+    <div class="spacer"></div>
+    <button id="run" data-action="toggle-run"></button>
+    <button data-action="settings" class="ghost" title="Ajustes">⚙</button>
+  </header>
+
+  <main>
+    <section class="left">
+      <div class="office-wrap"><canvas id="office"></canvas></div>
+      <div class="team-head">
+        <h3>Equipo</h3>
+        <button data-action="hire" class="ghost small">＋ Contratar</button>
+      </div>
+      <div id="team"></div>
+    </section>
+
+    <section class="right">
+      <form id="goal-form" class="goal">
+        <textarea id="goal" rows="2" placeholder="🎯 Objetivo para el PO: p. ej. «Alta de clientes con email y verificación»"></textarea>
+        <div class="row">
+          <button type="submit">Encargar al PO</button>
+          <button type="button" data-action="new-task" class="ghost">＋ Tarea a mano</button>
+        </div>
+      </form>
+      <div id="board"></div>
+    </section>
+  </main>
+
+  <aside id="drawer" hidden></aside>
+  <dialog id="dialog"></dialog>
+  <div id="toasts"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
