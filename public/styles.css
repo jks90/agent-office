@@ -222,6 +222,13 @@ dialog label { display: block; margin: var(--s-3) 0 var(--s-1); font-size: 12px;
 dialog input, dialog select, dialog textarea { width: 100%; }
 dialog .row { display: flex; justify-content: flex-end; gap: var(--s-2); margin-top: var(--s-4); }
 .model-other { margin-top: 6px; }
+.attach { border: 1px dashed var(--line); border-radius: 8px; padding: 8px 10px; font-size: 12px; color: var(--muted); margin-top: 4px; }
+.attach.drag { border-color: var(--accent); background: rgba(250,204,21,.05); }
+.attach .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.attach .chip-file { background: var(--panel2); border: 1px solid var(--line); border-radius: 99px; padding: 2px 8px; color: var(--text); display: inline-flex; gap: 6px; align-items: center; }
+.attach .chip-file button { background: none; border: 0; color: var(--err); padding: 0; cursor: pointer; }
+.attach input[type=file] { display: none; }
+.attach .pick { color: #93c5fd; cursor: pointer; text-decoration: underline; }
 dialog .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
 dialog select[multiple] { width: 100%; }
 dialog textarea.code { font: 12px/1.45 ui-monospace, monospace; min-height: 360px; }

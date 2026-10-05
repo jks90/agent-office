@@ -10,6 +10,8 @@ import { checkSuite, suiteInfo } from './suite.js';
 import * as auth from './engines/auth.js';
 import * as boards from './boards/index.js';
 import * as skills from './skills.js';
+import { draftTask } from './ai-draft.js';
+import crypto2 from 'node:crypto';
 import { saveRole, deleteRole } from './roles.js';
 
 const PORT = Number(process.env.AO_PORT || 7420);
@@ -43,8 +45,9 @@ setInterval(() => { for (const p of store.get().projects) if (p.board?.autoSync)
 const snapshot = () => ({ ...store.get(), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo() });
 
 async function readBody(req) {
+  const limit = req.url.startsWith('/api/upload') ? 40e6 : 1e6; // adjuntos en base64 (≈30 MB de ficheros)
   let raw = '';
-  for await (const chunk of req) { raw += chunk; if (raw.length > 1e6) throw Object.assign(new Error('Cuerpo demasiado grande'), { status: 413 }); }
+  for await (const chunk of req) { raw += chunk; if (raw.length > limit) throw Object.assign(new Error('Cuerpo demasiado grande'), { status: 413 }); }
   return raw ? JSON.parse(raw) : {};
 }
 
@@ -95,9 +98,20 @@ const routes = [
   ['POST', /^\/api\/projects\/(\w+)\/run$/, gated(([id], b) => team.setRunning(id, b.running))],
   ['POST', /^\/api\/projects\/(\w+)\/goal$/, gated(([id], b) => team.planGoal(id, b.goal))],
   ['POST', /^\/api\/tasks$/, gated((_, b) => team.createTask(b))],
+  ['POST', /^\/api\/upload$/, (_, b) => {
+    const dir = path.join(store.DATA_DIR, 'uploads', crypto2.randomBytes(6).toString('hex'));
+    fs.mkdirSync(dir, { recursive: true });
+    return (b.files || []).slice(0, 10).map((f) => {
+      const name = String(f.name || 'adjunto').replace(/[^\w.\-áéíóúñÁÉÍÓÚÑ ]+/g, '_').slice(0, 120) || 'adjunto';
+      const dest = path.join(dir, name);
+      fs.writeFileSync(dest, Buffer.from(String(f.data || '').replace(/^data:[^;]+;base64,/, ''), 'base64'));
+      return { name, path: dest, size: fs.statSync(dest).size };
+    });
+  }],
+  ['POST', /^\/api\/tasks\/draft$/, gated((_, b) => draftTask(b))],
   ['DELETE', /^\/api\/tasks\/(\w+)$/, ([id]) => team.deleteTask(id)],
   ['POST', /^\/api\/tasks\/(\w+)\/approve$/, ([id]) => team.approve(id)],
-  ['POST', /^\/api\/tasks\/(\w+)\/reject$/, gated(([id], b) => team.reject(id, b.feedback, b.images))],
+  ['POST', /^\/api\/tasks\/(\w+)\/reject$/, gated(([id], b) => team.reject(id, b.feedback, b.images, b.attachments))],
   ['GET', /^\/api\/tasks\/(\w+)\/diff$/, async ([id]) => ({ diff: await team.taskDiff(id) })],
   ['POST', /^\/api\/agents$/, (_, b) => team.hire(b)],
   ['PATCH', /^\/api\/projects\/(\w+)\/team$/, ([id], b) => team.setTeam(id, b)],

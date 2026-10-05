@@ -231,7 +231,9 @@ export function stopAgent(id) {
 }
 
 // ── Tareas ─────────────────────────────────────────────────────────────────
-export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], status = 'todo', source = null }) {
+export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null }) {
+  // attachments (subidos): imágenes → images (las ve el agente), el resto → files (se citan en el prompt)
+  for (const a of attachments) { if (/\.(png|jpe?g|webp)$/i.test(a.path)) images = [...images, a.path]; else files = [...files, a.path]; }
   const s = get();
   const p = findOr404(s.projects, projectId, 'Proyecto');
   if (!title?.trim()) throw fail(400, 'La tarea necesita un título');
@@ -241,7 +243,7 @@ export function createTask({ projectId, title, description = '', role, repo = nu
     id: newId(), projectId, kind, goal, title: title.trim(), description: String(description || '').trim(), role, repo: repo || null,
     dependsOn: (Array.isArray(dependsOn) ? dependsOn : []).filter((d) => s.tasks.some((t) => t.id === d)),
     status: ['backlog', 'todo', 'review', 'done'].includes(status) ? status : 'todo',
-    agentId: null, branch: null, summary: '', diffStat: '', error: null, feedback: '', source,
+    agentId: null, branch: null, summary: '', diffStat: '', error: null, feedback: '', source, files: files.filter((f) => fs.existsSync(f)),
     costUsd: null, attempts: 0, createdAt: Date.now(), updatedAt: Date.now(),
   };
   task.feedbackImages = copyImages(task, images);
@@ -325,8 +327,9 @@ export async function approve(id) {
   tick();
 }
 
-export async function reject(id, feedback = '', images = []) {
+export async function reject(id, feedback = '', images = [], attachments = []) {
   const t = findOr404(get().tasks, id, 'Tarea');
+  for (const a of attachments) { if (/\.(png|jpe?g|webp)$/i.test(a.path)) images = [...images, a.path]; else t.files = [...(t.files || []), a.path]; }
   if (!['review', 'failed'].includes(t.status)) throw fail(409, 'Solo se devuelven tareas en revisión o fallidas');
   // La rama y el worktree se conservan: el agente corrige sobre su intento anterior.
   if (feedback.trim()) t.feedback = [t.feedback, feedback.trim()].filter(Boolean).join('\n');
@@ -479,6 +482,7 @@ function buildPrompt(p, agent, t) {
     done.length ? `\nTrabajo previo del equipo (ya fusionado):\n${done.map((d) => `- ${d.title}: ${d.summary}`).join('\n')}` : '',
     t.feedback ? `\nComentarios de la revisión anterior (corrígelos):\n${t.feedback}` : '',
     t.feedbackImages?.length ? `\nImágenes adjuntas (míralas con atención antes de cambiar nada; también están en ${t.feedbackImages.join(', ')}).` : '',
+    t.files?.length ? `\nFicheros adjuntos (léelos antes de empezar): ${t.files.join(', ')}` : '',
     '',
     p.folder ? `Carpeta del proyecto en el workspace de flow-test: «${p.folder}/» (ahí viven sus flows y su documentación; guarda ahí lo que generes con flow-test).` : '',
     `Trabajas en una copia aislada del repo (git worktree) en la rama ${t.branch}. No cambies de rama ni hagas push.`,

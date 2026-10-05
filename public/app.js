@@ -361,7 +361,7 @@ function card(t) {
   if (t.status === 'todo') acts.push(`<button class="small ghost" data-park="${t.id}">← Backlog</button>`);
   if (['todo', 'failed', 'done'].includes(t.status)) acts.push(`<button class="small danger" data-del="${t.id}">Borrar</button>`);
   return `<div class="card ${t.status}" style="--c:${S.roles[t.role]?.color}">
-    <div class="card-head">${roleChip(t.role)} <span class="task-id">#${t.id}</span>${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? ` <span class="repo-chip">📁 ${esc(t.repo || '?')}</span>` : ''}${t.source?.flow ? ` <span title="Importada del tablero «${esc(t.source.flow)}» · columna ${esc(t.source.column)}">🗂</span>` : ''}${t.source?.url ? ` <a class="ext" href="${esc(t.source.url)}" target="_blank" rel="noopener" title="${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} · ${esc(t.source.id)}${t.source.remoteStatus ? ' · fuera: ' + esc(t.source.remoteStatus) : ''}">🔗 ${esc(t.source.id)}</a>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}</div>
+    <div class="card-head">${roleChip(t.role)} <span class="task-id">#${t.id}</span>${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? ` <span class="repo-chip">📁 ${esc(t.repo || '?')}</span>` : ''}${t.source?.flow ? ` <span title="Importada del tablero «${esc(t.source.flow)}» · columna ${esc(t.source.column)}">🗂</span>` : ''}${(t.feedbackImages?.length || t.files?.length) ? ` <span title="${esc([...(t.feedbackImages || []), ...(t.files || [])].map((f) => f.split('/').pop()).join(', '))}">📎${(t.feedbackImages?.length || 0) + (t.files?.length || 0)}</span>` : ''}${t.source?.url ? ` <a class="ext" href="${esc(t.source.url)}" target="_blank" rel="noopener" title="${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} · ${esc(t.source.id)}${t.source.remoteStatus ? ' · fuera: ' + esc(t.source.remoteStatus) : ''}">🔗 ${esc(t.source.id)}</a>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}</div>
     <div class="t">${esc(t.title)}</div>
     <div class="meta">${agent ? `<span>👤 ${esc(agent.name)}</span>` : ''}${deps ? `<span>depende de ${deps}</span>` : ''}${t.costUsd ? ` <span>💲${t.costUsd.toFixed(3)}</span>` : ''}</div>
     ${t.status === 'doing' && agent ? `<div class="live">● ${esc(agent.activity)}</div>` : ''}
@@ -485,14 +485,15 @@ Pasos, convenciones y ejemplos…</textarea>
     <label>Motor</label><select name="engine">${engineOptions('auto')}</select>
     <label>Modelo (opcional)</label>${modelSelect('model', 'auto', '')}
     ${buttons('Contratar')}`, (f) => api('POST', '/api/agents', { ...f, model: pickModel(f), projectId })),
-  'new-task': () => dialog(`
+  'new-task': () => { pendingAttachments = []; dialog(`
     <h3>Nueva tarea</h3>
-    <label>Título</label><input name="title" required autofocus />
-    <label>Descripción</label><textarea name="description" rows="4" placeholder="Qué hay que hacer y cómo saber que está bien"></textarea>
+    <label>Título <span class="muted">(con «Redactar con IA» puedes dejarlo vacío)</span></label><input name="title" autofocus />
+    <label>Descripción <span class="muted">(a mano, o en bruto para que la IA la redacte)</span></label><textarea name="description" rows="5" placeholder="Qué hay que hacer y cómo saber que está bien. Con ✨ basta con contarlo a tu manera: la IA lo convierte en una tarea completa."></textarea>
+    ${attachArea()}
     <label>Rol</label><select name="role">${roleOptions('back', true)}</select>
     ${(project()?.repos || []).length > 1 ? `<label>Repositorio</label><select name="repo"><option value="">(el que diga el rol)</option>${project().repos.map((r) => `<option value="${r.key}">${esc(r.key)} — ${esc(r.path)}</option>`).join('')}</select>` : ''}
     <label>Estado inicial</label><select name="status"><option value="todo">Por hacer (el equipo la coge en cuanto pueda)</option><option value="backlog">Backlog (esperar)</option></select>
-    ${buttons('Crear')}`, (f) => api('POST', '/api/tasks', { ...f, projectId })),
+    <div class="row"><button type="button" class="ghost" data-ai-draft title="Pasa tu texto y los adjuntos por la IA (Claude), que redacta título, descripción con criterios de «hecho cuando», rol y repo, y crea la tarea en Backlog para que la revises">✨ Redactar con IA y crear</button><div class="spacer"></div><button class="ghost" value="cancel">Cancelar</button><button>Crear</button></div>`, (f) => { if (!f.title?.trim()) { toast('Pon un título o usa «Redactar con IA»', 'error'); throw new Error('sin título'); } return api('POST', '/api/tasks', { ...f, projectId, attachments: pendingAttachments }); }); },
   settings: () => dialog(`
     <h3>Ajustes</h3>
     <div class="section-title">🧠 Motores de IA — las inteligencias que llevan la empresa</div>
@@ -672,6 +673,34 @@ document.addEventListener('click', (e) => {
   }
 });
 
+// Adjuntos de una tarea (imágenes y ficheros): se suben al servidor al elegirlos (o al pegar/arrastrar) y se guardan
+// como rutas; las imágenes las ve el agente (codex --image / Read), el resto se citan en el prompt.
+let pendingAttachments = [];
+const attachArea = () => `<div class="attach" id="attach">📎 Adjuntos: <span class="pick" data-pick>elegir ficheros…</span>, arrastrar aquí o pegar una captura (Ctrl+V)<input type="file" multiple /><div class="chips"></div></div>`;
+async function uploadFiles(fileList) {
+  const files = [...fileList].slice(0, 10);
+  if (!files.length) return;
+  const toB64 = (f) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
+  const payload = [];
+  for (const f of files) { if (f.size > 25e6) { toast(`${f.name}: demasiado grande (máx. 25 MB)`, 'error'); continue; } payload.push({ name: f.name || `captura-${Date.now()}.png`, data: await toB64(f) }); }
+  const up = await api('POST', '/api/upload', { files: payload });
+  pendingAttachments.push(...up);
+  renderChips();
+}
+function renderChips() {
+  const el = $('#attach .chips');
+  if (el) el.innerHTML = pendingAttachments.map((a, i) => `<span class="chip-file">${/\.(png|jpe?g|webp|gif)$/i.test(a.name) ? '🖼' : '📄'} ${esc(a.name)} <span class="muted">${(a.size / 1024).toFixed(0)} KB</span><button type="button" data-unattach="${i}" title="Quitar">✕</button></span>`).join('');
+}
+document.addEventListener('click', (e) => {
+  if (e.target.closest('[data-pick]')) { $('#attach input[type=file]')?.click(); return; }
+  const u = e.target.closest('[data-unattach]'); if (u) { pendingAttachments.splice(Number(u.dataset.unattach), 1); renderChips(); }
+});
+document.addEventListener('change', (e) => { if (e.target.matches('#attach input[type=file]')) uploadFiles(e.target.files).then(() => { e.target.value = ''; }); });
+document.addEventListener('paste', (e) => { if (!$('#attach')) return; const files = [...(e.clipboardData?.files || [])]; if (files.length) { e.preventDefault(); uploadFiles(files); } });
+document.addEventListener('dragover', (e) => { const a = e.target.closest?.('#attach'); if (a) { e.preventDefault(); a.classList.add('drag'); } });
+document.addEventListener('dragleave', (e) => { e.target.closest?.('#attach')?.classList.remove('drag'); });
+document.addEventListener('drop', (e) => { const a = e.target.closest?.('#attach'); if (a) { e.preventDefault(); a.classList.remove('drag'); uploadFiles(e.dataTransfer.files); } });
+
 // Editar un agente desde su tarjeta (nombre, rol, motor, modelo).
 function editAgent(id) {
   const a = S.agents.find((x) => x.id === id);
@@ -741,6 +770,19 @@ document.addEventListener('click', async (e) => {
   if (d.approve) return api('POST', `/api/tasks/${d.approve}/approve`).then(() => toast('Tarea aprobada ✓'));
   if (d.ready) return api('PATCH', `/api/tasks/${d.ready}`, { status: 'todo' });
   if (d.edit) return editTask(d.edit);
+  if (d.aiDraft !== undefined) {
+    const form = $('#dialog form');
+    const text = [form.title?.value, form.description?.value].filter((x) => x?.trim()).join('\n\n');
+    if (!text.trim() && !pendingAttachments.length) return toast('Cuenta qué quieres que se haga (o adjunta algo)', 'error');
+    el.disabled = true; el.textContent = '✨ Redactando…';
+    try {
+      const draft = await api('POST', '/api/tasks/draft', { projectId, text, attachments: pendingAttachments });
+      const t = await api('POST', '/api/tasks', { projectId, title: draft.title, description: draft.description, role: draft.role, repo: draft.repo, status: 'backlog', attachments: pendingAttachments });
+      $('#dialog').close();
+      toast(`Tarea #${t.id} creada en Backlog por la IA (${draft.role}${draft.repo ? ' · ' + draft.repo : ''})${draft.costUsd ? ` · ≈ ${draft.costUsd.toFixed(2)} $` : ''}`);
+    } catch { el.disabled = false; el.textContent = '✨ Redactar con IA y crear'; }
+    return;
+  }
   if (d.repoEdit !== undefined) return editRepo(d.repoEdit);
   if (d.bench) return api('PATCH', `/api/projects/${projectId}/team`, { remove: [d.bench] }).then(() => toast('Al banquillo'));
   if (d.sign) return api('PATCH', `/api/projects/${projectId}/team`, { add: [d.sign] }).then(() => toast('Fichado para este proyecto'));
@@ -755,12 +797,14 @@ document.addEventListener('click', async (e) => {
   if (d.park) return api('PATCH', `/api/tasks/${d.park}`, { status: 'backlog' });
   if (d.del) { if (confirm('¿Borrar la tarea?')) api('DELETE', `/api/tasks/${d.del}`); return; }
   if (d.reject) {
+    pendingAttachments = [];
     const t = S.tasks.find((x) => x.id === d.reject);
     return dialog(`
       <h3>${t.status === 'failed' ? 'Reintentar' : 'Devolver'} #${t.id}</h3>
       <p class="muted">${esc(t.title)}</p>
       <label>Comentarios para el agente (opcional)</label><textarea name="feedback" rows="4" autofocus></textarea>
-      ${buttons(t.status === 'failed' ? 'Reintentar' : 'Devolver')}`, (f) => api('POST', `/api/tasks/${t.id}/reject`, f));
+      ${attachArea()}
+      ${buttons(t.status === 'failed' ? 'Reintentar' : 'Devolver')}`, (f) => api('POST', `/api/tasks/${t.id}/reject`, { ...f, attachments: pendingAttachments }));
   }
   if (d.diff) {
     const { diff } = await api('GET', `/api/tasks/${d.diff}/diff`);
