@@ -10,6 +10,9 @@ const pending = new Map(); // id → { id, taskId, agentId, projectId, question,
 const MAX_OPEN_PER_TASK = 1;
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
 
+const CONFIRM_TIMEOUT_MS = 10 * 60_000; // sin respuesta a una confirmación del Guide = «No»
+const MAX_OPEN_CONFIRMS = 5;
+
 export const list = () => [...pending.values()].map(({ waiters, ...q }) => q);
 
 export function ask({ taskId, question, options = [], allowCustom = true, context = '' }) {
@@ -51,11 +54,11 @@ function settle(q, answer) {
   pending.delete(q.id);
   const s = store.get();
   const t = s.tasks.find((x) => x.id === q.taskId);
-  if (t) { (t.questions ||= []).push({ id: q.id, question: q.question, options: q.options, answer, askedAt: q.createdAt, answeredAt: Date.now() }); t.updatedAt = Date.now(); }
+  if (t && q.kind !== 'confirm') { (t.questions ||= []).push({ id: q.id, question: q.question, options: q.options, answer, askedAt: q.createdAt, answeredAt: Date.now() }); t.updatedAt = Date.now(); }
   const agent = s.agents.find((a) => a.id === q.agentId);
   if (agent?.taskId === q.taskId) agent.activity = answer == null ? 'Sigue trabajando' : `💬 Respondido: ${String(answer).slice(0, 60)} · sigue trabajando`;
   const ctx = { projectId: q.projectId, taskId: q.taskId, taskCode: q.taskCode, agentId: q.agentId };
-  if (answer != null) events.emit('UserInstructionAdded', ctx, { kind: 'answer', questionId: q.id, text: String(answer).slice(0, 500) });
+  if (answer != null && q.taskId) events.emit('UserInstructionAdded', ctx, { kind: 'answer', questionId: q.id, text: String(answer).slice(0, 500) });
   if (agent?.taskId === q.taskId) events.emit('AgentResumed', ctx, { reason: answer == null ? 'question-cancelled' : 'answered', questionId: q.id });
   const res = answer == null ? { status: 'cancelled' } : { status: 'answered', answer };
   for (const w of q.waiters) w(res);
@@ -63,12 +66,31 @@ function settle(q, answer) {
   store.changed();
 }
 
+// Confirmación del Guide Agent (FT-4): pregunta Sí/No sin respuesta libre y sin tarea asociada (kind:'confirm').
+// Resuelve true solo si el usuario contesta «Sí»; «Más tarde» no la cancela, pero tras 10 min sin respuesta cuenta como «No».
+export function confirm({ question, context = '' }) {
+  if ([...pending.values()].filter((q) => q.kind === 'confirm').length >= MAX_OPEN_CONFIRMS) throw fail(429, 'Hay demasiadas confirmaciones pendientes: resuélvelas antes');
+  const q = {
+    id: store.newId(), kind: 'confirm', taskId: null, taskCode: null, agentId: null, agentName: 'Guide', projectId: null,
+    question: String(question).trim().slice(0, 500), options: ['Sí', 'No'], allowCustom: false,
+    context: String(context || '').trim().slice(0, 4000), createdAt: Date.now(), waiters: [],
+  };
+  pending.set(q.id, q);
+  store.changed();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { if (pending.has(q.id)) settle(q, null); }, CONFIRM_TIMEOUT_MS);
+    timer.unref?.();
+    q.waiters.push((r) => { clearTimeout(timer); resolve(r.status === 'answered' && r.answer === 'Sí'); });
+  });
+}
+
 export function answer(id, text) {
   const q = pending.get(id);
   if (!q) throw fail(404, 'Esa pregunta ya no está pendiente');
   const a = String(text ?? '').trim();
   if (!a) throw fail(400, 'La respuesta está vacía');
-  store.log(q.agentId, `💬 Tu respuesta a ${q.taskCode || q.taskId}: ${a}`);
+  if (!q.allowCustom && q.options.length && !q.options.includes(a)) throw fail(400, 'Respuesta no válida para esta pregunta');
+  if (q.agentId) store.log(q.agentId, `💬 Tu respuesta a ${q.taskCode || q.taskId}: ${a}`);
   settle(q, a.slice(0, 4000));
   return { ok: true };
 }

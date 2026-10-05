@@ -1,0 +1,194 @@
+// Tool Registry tipado del Guide Agent (FT-4). El Guide no es un worker: es una capa por encima del orquestador, así que
+// cada tool delega en lo que YA existe (team.js, context.js, events.js, git.js). Registro:
+//   { name, description, input (JSON Schema), policy: read|navigate|execute|write|irreversible, handler(args, ctx), pending? }
+// `pending` = registrada pero aún sin implementación (la traerá otra tarea): responde 501 sin pedir confirmación.
+// `run()` es lo único que se expone (POST /api/guide/tool y bin/ao-mcp.mjs): valida → política → handler → auditoría.
+import * as store from '../store.js';
+import * as team from '../team.js';
+import * as git from '../git.js';
+import * as context from '../context.js';
+import * as activity from '../events.js';
+import { prefixOf } from '../codes.js';
+import { gate, audit, summarize, POLICIES } from './policy.js';
+
+const fail = (status, msg) => Object.assign(new Error(msg), { status });
+const VIEWS = ['office', 'tasks', 'agents', 'settings'];
+const str = (description) => ({ type: 'string', description });
+const obj = (properties = {}, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
+
+// ── Búsquedas sobre el estado ───────────────────────────────────────────────
+const findTask = (ref) => {
+  const k = String(ref || '').trim();
+  const t = k && store.get().tasks.find((x) => x.id === k || (x.code && x.code === k.toUpperCase()));
+  if (!t) throw fail(404, `Tarea no encontrada: ${k || '(sin código)'}`);
+  return t;
+};
+const findAgent = (ref) => {
+  const k = String(ref || '').trim();
+  const a = k && store.get().agents.find((x) => x.id === k || x.name.toLowerCase() === k.toLowerCase());
+  if (!a) throw fail(404, `Agente no encontrado: ${k || '(sin id)'}`);
+  return a;
+};
+const findProject = (ref) => {
+  const k = String(ref || '').trim();
+  const p = k && store.get().projects.find((x) => x.id === k || x.name.toLowerCase() === k.toLowerCase() || prefixOf(x) === k.toUpperCase());
+  if (!p) throw fail(404, `Proyecto no encontrado: ${k || '(sin id)'}`);
+  return p;
+};
+const projectOf = (t) => store.get().projects.find((p) => p.id === t.projectId);
+const agentOfTask = (t) => store.get().agents.find((a) => a.id === t.agentId);
+
+const brief = (t) => ({
+  id: t.id, code: t.code, title: t.title, status: t.status, kind: t.kind, role: t.role, repo: t.repo, projectId: t.projectId,
+  agentId: t.agentId || t.assignedAgentId || null, branch: t.branch || null, dependsOn: t.dependsOn.map((d) => store.get().tasks.find((x) => x.id === d)?.code || d), updatedAt: t.updatedAt,
+});
+const briefAgent = (a) => ({ id: a.id, name: a.name, role: a.role, engine: a.engine, model: a.model, status: a.status, activity: a.activity || '', taskId: a.taskId || null });
+
+// Tarea a partir de {code} o, si se da {agentId}, la que el agente lleva ahora o la última que hizo.
+const taskFrom = ({ code, agentId }) => {
+  if (code) return findTask(code);
+  const a = findAgent(agentId);
+  const mine = store.get().tasks.filter((t) => t.agentId === a.id).sort((x, y) => y.updatedAt - x.updatedAt);
+  const t = mine.find((x) => x.status === 'doing') || mine[0];
+  if (!t) throw fail(404, `${a.name} no tiene tareas`);
+  return t;
+};
+const lastActions = (agentId, limit = 20) => {
+  const n = Math.max(1, Math.min(100, Number(limit) || 20));
+  return (store.allLogs()[agentId] || []).slice(-n).map((l) => ({ ts: l.ts, line: l.line }));
+};
+
+// Comandos para la UI (navegar, abrir, enseñar): salen por el bus → SSE `event: ui`. Van al cliente que el usuario
+// tiene delante (el del último contexto publicado) o a todos si no hay ninguno. Nunca capturas: son órdenes estructuradas.
+function ui(cmd, ctx) {
+  const client = ctx?.client || context.get().client || null;
+  store.bus.emit('ui', { ...cmd, client, at: Date.now() });
+  return { sent: true, client };
+}
+
+const gitFiles = async (t) => {
+  const p = projectOf(t);
+  const repo = p && team.repoOfTask(p, t);
+  if (!t.branch || !repo) return { files: [], note: t.branch ? 'La tarea no tiene repo' : 'La tarea no tiene rama (motor demo o sin empezar)' };
+  const out = await git.git(repo.path, 'diff', '--name-only', `${repo.baseBranch}...${t.branch}`);
+  return { files: out ? out.split('\n') : [], base: repo.baseBranch, branch: t.branch };
+};
+
+// ── Registro ────────────────────────────────────────────────────────────────
+const T = (name, description, input, policy, handler, extra = {}) => ({ name, description, input, policy, handler, ...extra });
+const later = (name, description, input, policy, who = 'FT-5') =>
+  T(name, `${description} (aún no disponible: lo implementa ${who}; responde 501)`, input, policy, () => { throw fail(501, `${name} aún no está implementado (${who})`); }, { pending: true });
+
+export const tools = [
+  // — App / navegación —
+  T('app.getContext', 'Qué está viendo el usuario ahora: vista, proyecto, tarea abierta, agente seleccionado, últimos eventos y contexto de flow-test.', obj({ client: str('Id de cliente (opcional; por defecto el más reciente)') }), 'read',
+    ({ client }) => context.get(client)),
+  T('app.navigate', 'Lleva la UI a una vista (office|tasks|agents|settings) y, si se indica, a un proyecto.', obj({ view: { type: 'string', enum: VIEWS }, projectId: str('Id o nombre del proyecto (opcional)') }, ['view']), 'navigate',
+    ({ view, projectId }, ctx) => ({ ...ui({ type: 'navigate', view, projectId: projectId ? findProject(projectId).id : null }, ctx), view }) ),
+  T('app.openTask', 'Abre en la UI el modal de una tarea.', obj({ code: str('Código de la tarea, p. ej. FT-4') }, ['code']), 'navigate',
+    ({ code }, ctx) => { const t = findTask(code); return { ...ui({ type: 'openTask', taskId: t.id, projectId: t.projectId }, ctx), task: t.code || t.id }; }),
+  T('app.selectAgent', 'Abre en la UI el panel de un agente.', obj({ agentId: str('Id o nombre del agente') }, ['agentId']), 'navigate',
+    ({ agentId }, ctx) => { const a = findAgent(agentId); return { ...ui({ type: 'selectAgent', agentId: a.id }, ctx), agent: a.name }; }),
+  T('app.openArtifact', 'Abre la tarea en la UI y devuelve su diff (rama base...rama de la tarea).', obj({ code: str('Código de la tarea') }, ['code']), 'navigate',
+    async ({ code }, ctx) => { const t = findTask(code); ui({ type: 'openTask', taskId: t.id, projectId: t.projectId }, ctx); return { task: t.code || t.id, diff: (await team.taskDiff(t.id)).slice(0, 20_000) }; }),
+  T('flowtest.show', 'Pide a flow-test (host, FT-3) que muestre un flow y, opcionalmente, un nodo. Solo tiene efecto con AgentOffice embebido en flow-test.', obj({ flow: str('Ruta o nombre del flow'), node: str('Id del nodo (opcional)') }, ['flow']), 'navigate',
+    ({ flow, node }, ctx) => ({ ...ui({ type: 'flowtest.show', flow, node: node || null }, ctx), flow, node: node || null })),
+
+  // — Proyectos y tareas —
+  T('project.list', 'Lista los proyectos (id, nombre, prefijo, repos, si están en marcha, tareas por estado).', obj(), 'read',
+    () => store.get().projects.map((p) => ({ id: p.id, name: p.name, prefix: prefixOf(p), running: !!p.running, repos: (p.repos || []).map((r) => r.key), team: p.team,
+      tasks: store.get().tasks.filter((t) => t.projectId === p.id).reduce((m, t) => ((m[t.status] = (m[t.status] || 0) + 1), m), {}) }))),
+  T('task.list', 'Lista tareas, filtradas por proyecto y/o estado.', obj({ projectId: str('Id o nombre del proyecto'), status: { type: 'string', enum: team.STATUSES } }), 'read',
+    ({ projectId, status }) => { const pid = projectId ? findProject(projectId).id : null; return store.get().tasks.filter((t) => (!pid || t.projectId === pid) && (!status || t.status === status)).map(brief); }),
+  T('task.get', 'Detalle de una tarea: descripción, resumen del agente, diffStat, error, preguntas y respuestas.', obj({ code: str('Código de la tarea') }, ['code']), 'read',
+    ({ code }) => { const t = findTask(code); return { ...brief(t), description: t.description, summary: t.summary, diffStat: t.diffStat, error: t.error, feedback: t.feedback, questions: t.questions || [], costUsd: t.costUsd, attempts: t.attempts, createdAt: t.createdAt }; }),
+  T('task.create', 'Crea una tarea en un proyecto (entra en la cola del equipo con su código).', obj({
+    projectId: str('Id o nombre del proyecto'), title: str('Título'), description: str('Descripción / criterios de aceptación'), role: str('Rol que la hará (back, front, qa, po…)'),
+    repo: str('Clave del repo (opcional)'), dependsOn: { type: 'array', items: { type: 'string' }, description: 'Códigos de tareas de las que depende' }, status: { type: 'string', enum: ['backlog', 'todo'] },
+  }, ['projectId', 'title', 'role']), 'write',
+  ({ projectId, title, description, role, repo, dependsOn = [], status }) => {
+    const t = team.createTask({ projectId: findProject(projectId).id, title, description, role, repo: repo || null, dependsOn: dependsOn.map((c) => findTask(c).id), status: status || 'todo' });
+    return brief(t);
+  }),
+  T('task.update', 'Edita una tarea que no esté en curso (título, descripción, rol, repo, estado backlog/todo, dependencias).', obj({
+    code: str('Código de la tarea'), title: str('Título'), description: str('Descripción'), role: str('Rol'), repo: str('Clave del repo'),
+    status: { type: 'string', enum: ['backlog', 'todo'] }, dependsOn: { type: 'array', items: { type: 'string' }, description: 'Códigos de dependencias' },
+  }, ['code']), 'write',
+  ({ code, dependsOn, ...patch }) => brief(team.updateTask(findTask(code).id, { ...patch, ...(dependsOn ? { dependsOn: dependsOn.map((c) => findTask(c).id) } : {}) })) ),
+  T('task.assign', 'Fija qué agente hará una tarea que aún no ha empezado (debe estar fichado en el proyecto). agentId vacío = volver a elegir por rol.', obj({ code: str('Código de la tarea'), agentId: str('Id o nombre del agente') }, ['code']), 'write',
+    ({ code, agentId }) => brief(team.assignTask(findTask(code).id, agentId ? findAgent(agentId).id : null))),
+  T('task.getStatus', 'Estado de una tarea con sus últimas acciones (log del agente) y eventos del Activity Stream.', obj({ code: str('Código de la tarea'), limit: { type: 'integer', description: 'Máx. de acciones/eventos (20 por defecto)' } }, ['code']), 'read',
+    ({ code, limit }) => { const t = findTask(code); return { ...brief(t), activity: agentOfTask(t)?.activity || '', error: t.error, lastActions: t.agentId ? lastActions(t.agentId, limit) : [], events: activity.list({ taskId: t.id, limit: Number(limit) || 20 }) }; }),
+  later('task.pause', 'Pausa la tarea en curso.', obj({ code: str('Código de la tarea') }, ['code']), 'execute'),
+  later('task.resume', 'Reanuda una tarea pausada.', obj({ code: str('Código de la tarea') }, ['code']), 'execute'),
+  later('task.stop', 'Detiene la tarea en curso.', obj({ code: str('Código de la tarea') }, ['code']), 'execute'),
+  later('agent.message', 'Envía una instrucción a un agente que está trabajando.', obj({ agentId: str('Id o nombre del agente'), message: str('Mensaje') }, ['agentId', 'message']), 'write'),
+
+  // — Agentes —
+  T('agent.list', 'Lista los agentes de la empresa (rol, motor, estado, actividad actual).', obj({ projectId: str('Solo la plantilla de este proyecto (opcional)') }), 'read',
+    ({ projectId }) => { const ids = projectId ? new Set(findProject(projectId).team) : null; return store.get().agents.filter((a) => !ids || ids.has(a.id)).map(briefAgent); }),
+  T('agent.status', 'Estado de un agente y la tarea que lleva.', obj({ agentId: str('Id o nombre del agente') }, ['agentId']), 'read',
+    ({ agentId }) => { const a = findAgent(agentId); const t = store.get().tasks.find((x) => x.agentId === a.id && x.status === 'doing'); return { ...briefAgent(a), task: t ? brief(t) : null }; }),
+  T('agent.getLastActions', 'Últimas acciones de un agente: líneas de su log y eventos recientes.', obj({ agentId: str('Id o nombre del agente'), limit: { type: 'integer', description: 'Máx. (20 por defecto)' } }, ['agentId']), 'read',
+    ({ agentId, limit }) => { const a = findAgent(agentId); return { agent: a.name, log: lastActions(a.id, limit), events: activity.list({ agentId: a.id, limit: Number(limit) || 20 }) }; }),
+  T('agent.getModifiedFiles', 'Ficheros que ha modificado una tarea/agente (git diff --name-only base...rama).', obj({ code: str('Código de la tarea'), agentId: str('Alternativa: agente (su tarea actual o la última)') }), 'read',
+    async (a) => { const t = taskFrom(a); return { task: t.code || t.id, ...(await gitFiles(t)) }; }),
+  T('agent.getArtifacts', 'Artefactos de una tarea/agente: diffStat, resumen y commits de la rama.', obj({ code: str('Código de la tarea'), agentId: str('Alternativa: agente (su tarea actual o la última)') }), 'read',
+    async (a) => {
+      const t = taskFrom(a);
+      const p = projectOf(t), repo = p && team.repoOfTask(p, t);
+      let commits = [];
+      if (t.branch && repo) { const out = await git.git(repo.path, 'log', '--format=%h %s', `${repo.baseBranch}..${t.branch}`); commits = out ? out.split('\n') : []; }
+      return { task: t.code || t.id, branch: t.branch || null, summary: t.summary, diffStat: t.diffStat, commits };
+    }),
+
+  // — Ejecución y borrado —
+  T('project.run', 'Pone a trabajar (running=true) o pausa (false) al equipo del proyecto.', obj({ projectId: str('Id o nombre del proyecto'), running: { type: 'boolean' } }, ['projectId', 'running']), 'execute',
+    ({ projectId, running }) => { const p = findProject(projectId); team.setRunning(p.id, running); return { projectId: p.id, running: !!p.running }; }),
+  T('task.delete', 'Borra una tarea y su rama/worktree. No se puede deshacer.', obj({ code: str('Código de la tarea') }, ['code']), 'irreversible',
+    async ({ code }) => { const t = findTask(code); await team.deleteTask(t.id); return { deleted: t.code || t.id }; }),
+  later('flowtest.deleteFlow', 'Borra un fichero de flow de la carpeta del proyecto en flow-test. No se puede deshacer.', obj({ flow: str('Ruta del flow') }, ['flow']), 'irreversible', 'una tarea posterior: flow-test aún no expone el borrado a AgentOffice'),
+];
+
+const byName = new Map(tools.map((t) => [t.name, t]));
+for (const t of tools) if (!POLICIES.includes(t.policy)) throw new Error(`Política inválida en ${t.name}`);
+
+export const describe = () => tools.map(({ name, description, input, policy, pending }) => ({ name, description, input, policy, ...(pending ? { pending: true } : {}) }));
+
+// Validación mínima de JSON Schema (object/required/type/enum/additionalProperties) para no depender de nada.
+function validate(schema, args, where = 'args') {
+  const typeOk = (t, v) => (t === 'integer' ? Number.isInteger(v) : t === 'array' ? Array.isArray(v) : t === 'object' ? v && typeof v === 'object' && !Array.isArray(v) : typeof v === t);
+  if (schema.type && !typeOk(schema.type, args)) throw fail(400, `${where}: se esperaba ${schema.type}`);
+  if (schema.enum && !schema.enum.includes(args)) throw fail(400, `${where}: debe ser uno de ${schema.enum.join(', ')}`);
+  if (schema.type === 'array' && schema.items) args.forEach((v, i) => validate(schema.items, v, `${where}[${i}]`));
+  if (schema.type === 'object' && schema.properties) {
+    for (const k of schema.required || []) if (args[k] === undefined || args[k] === null || args[k] === '') throw fail(400, `Falta «${k}»`);
+    for (const [k, v] of Object.entries(args)) {
+      if (!schema.properties[k]) { if (schema.additionalProperties === false) throw fail(400, `Argumento desconocido: «${k}»`); continue; }
+      if (v !== undefined && v !== null) validate(schema.properties[k], v, k);
+    }
+  }
+}
+
+// Ejecuta una tool con política y auditoría. ctx: { client, via }.
+export async function run(name, args = {}, ctx = {}) {
+  const tool = byName.get(name);
+  if (!tool) throw fail(404, `Tool desconocida: ${name}`);
+  const t0 = Date.now();
+  const entry = { ts: t0, tool: name, args: summarize(args), policy: tool.policy, mode: null, confirmed: null, via: ctx.via || 'api', client: ctx.client || null };
+  const done = (result, extra = {}) => audit({ ...entry, result, ms: Date.now() - t0, ...extra });
+  try {
+    if (!args || typeof args !== 'object' || Array.isArray(args)) throw fail(400, 'args debe ser un objeto');
+    validate(tool.input, args);
+    if (tool.pending) return tool.handler(args, ctx);
+    const g = await gate(tool, args);
+    Object.assign(entry, g);
+    if (g.confirmed === false) throw fail(403, `El usuario rechazó «${name}»`);
+    const out = await tool.handler(args, ctx);
+    done('ok');
+    return out ?? { ok: true };
+  } catch (e) {
+    done(entry.confirmed === false ? 'denied' : 'error', { status: e.status || 500, error: String(e.message).slice(0, 300) });
+    throw e;
+  }
+}
