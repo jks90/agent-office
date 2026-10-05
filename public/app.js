@@ -365,7 +365,7 @@ function card(t) {
     <div class="t">${esc(t.title)}</div>
     <div class="meta">${agent ? `<span>👤 ${esc(agent.name)}</span>` : ''}${deps ? `<span>depende de ${deps}</span>` : ''}${t.costUsd ? ` <span>💲${t.costUsd.toFixed(3)}</span>` : ''}</div>
     ${t.status === 'doing' && agent ? `<div class="live">● ${esc(agent.activity)}</div>` : ''}
-    ${t.summary && t.status !== 'doing' && !expanded.has(t.id) ? `<div class="sum">${esc(t.summary)}</div>` : ''}
+    ${t.summary && t.status !== 'doing' ? `<div class="sum">${esc(t.summary)}</div>` : ''}
     ${t.error ? `<div class="err">${esc(t.error)}</div>` : ''}
     <button class="small ghost expand" data-open="${t.id}">🔍 Ver la tarea</button>
     ${acts.length ? `<div class="acts">${acts.join('')}</div>` : ''}
