@@ -13,6 +13,7 @@ import { draftTask } from '../ai-draft.js';
 import { cleanContext } from '../task-context.js';
 import * as integ from './integrations.js';
 import { getProvider } from '../desktop/index.js';
+import * as vision from './vision.js';
 import { gate, audit, summarize, POLICIES } from './policy.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
@@ -196,6 +197,15 @@ export const tools = [
     obj({ target: { type: 'string', enum: ['screen', 'window'], description: 'screen (por defecto) o window' }, windowId: str('Id de ventana (opcional, con target=window)') }), 'read',
     async ({ target, windowId }) => { const r = await getProvider().capture({ target: target || 'screen', windowId }); return { path: r.path, width: r.width, height: r.height, bytes: r.bytes, tool: r.tool, ts: r.ts }; },
     { confirmOnce: true, precheck: outsideOnly }),
+  // FT-23: describe la pantalla con el proveedor multimodal del Guide. Último recurso: antes window.getActive / app.getContext.
+  T('screen.describe', 'ÚLTIMO RECURSO: describe con el modelo multimodal lo que hay en pantalla (hace una captura o usa «capturePath» de una anterior). Antes usa window.getActive (y app.getContext si el usuario está en flow-test/AgentOffice): solo llama a esto si no basta. Pide confirmación la primera vez por sesión. Si la ventana activa es flow-test/AgentOffice responde {inside:true}. Con claude-cli responde 501 (no admite imágenes).',
+    obj({ question: str('Qué quieres saber de la pantalla (opcional)'), capturePath: str('Ruta de una captura previa de data/desktop/captures/ (opcional; si no, captura ahora)') }), 'read',
+    async ({ question, capturePath }) => {
+      const file = capturePath ? vision.resolveCapture(capturePath) : (await getProvider().capture({ target: 'screen' })).path;
+      const { description, provider, model } = await vision.describeImage(file, question);
+      return { description, capturePath: file, provider, ...(model ? { model } : {}) };
+    },
+    { confirmOnce: true, precheck: async () => { vision.assertSupported(); return outsideOnly(); } }),
 
   // — Ejecución y borrado —
   T('project.run', 'Pone a trabajar (running=true) o pausa (false) al equipo del proyecto.', obj({ projectId: str('Id o nombre del proyecto'), running: { type: 'boolean' } }, ['projectId', 'running']), 'execute',
