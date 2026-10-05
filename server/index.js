@@ -7,6 +7,7 @@ import * as store from './store.js';
 import * as team from './team.js';
 import { allRoles } from './roles.js';
 import { checkSuite, suiteInfo } from './suite.js';
+import * as auth from './engines/auth.js';
 
 const PORT = Number(process.env.AO_PORT || 7420);
 const HOST = process.env.AO_HOST || '127.0.0.1'; // lanza procesos con tus permisos: solo local
@@ -49,6 +50,12 @@ const gated = (fn) => async (m, b) => {
 
 const routes = [
   ['GET', /^\/api\/state$/, () => snapshot()],
+  // Cuentas de los motores de IA (login OAuth/clave API, logout)
+  ['GET', /^\/api\/engines$/, () => auth.enginesStatus()],
+  ['POST', /^\/api\/engines\/(claude|codex)\/login$/, async ([e], b) => (b.apiKey ? (await auth.loginWithApiKey(e, b.apiKey), { ok: true }) : auth.startLogin(e, { mode: b.mode }))],
+  ['POST', /^\/api\/engines\/(claude|codex)\/code$/, ([e], b) => auth.submitCode(e, b.code)],
+  ['POST', /^\/api\/engines\/(claude|codex)\/cancel$/, ([e]) => auth.cancelLogin(e)],
+  ['POST', /^\/api\/engines\/(claude|codex)\/logout$/, ([e]) => auth.logout(e)],
   ['GET', /^\/api\/suite$/, () => checkSuite(true).then((suite) => { store.changed(); return suite; })],
   ['POST', /^\/api\/projects$/, (_, b) => team.createProject(b)],
   ['DELETE', /^\/api\/projects\/(\w+)$/, ([id]) => team.deleteProject(id)],

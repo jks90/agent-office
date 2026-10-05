@@ -9,14 +9,14 @@ const unwrap = (cmd) => {
   return m ? m[2] : String(cmd ?? '');
 };
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, images = [], onActivity, onLog }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, images = [], env: extraEnv = {}, onActivity, onLog }) {
   const args = ['exec', '--json', '--skip-git-repo-check', '-C', cwd, '-s', mode === 'plan' ? 'read-only' : 'workspace-write'];
   if (model) args.push('-m', model);
   if (mcpUrl && mode !== 'plan') args.push('-c', `mcp_servers.flow_test.url="${mcpUrl}"`);
   for (const img of images) args.push(`--image=${img}`); // con «=» para que -i (variádico) no se trague el «-»
   args.push('-'); // el prompt va por stdin
 
-  const child = spawn(process.env.AO_CODEX_BIN || 'codex', args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.env.AO_CODEX_BIN || 'codex', args, { cwd, env: { ...process.env, ...extraEnv, BROWSER: 'true' }, stdio: ['pipe', 'pipe', 'pipe'] });
   child.stdin.end(`${system}\n\n${prompt}`);
 
   let lastMessage = '';

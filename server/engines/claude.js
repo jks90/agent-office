@@ -15,7 +15,7 @@ const WORK_TOOLS = [
 ];
 const PLAN_TOOLS = ['Read', 'Glob', 'Grep'];
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, onActivity, onLog }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv = {}, onActivity, onLog }) {
   const tools = [...(mode === 'plan' ? PLAN_TOOLS : WORK_TOOLS)];
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--append-system-prompt', system];
   args.push('--model', model || 'sonnet'); // nunca heredar el modelo por defecto de la sesión del usuario (puede no estar disponible en -p)
@@ -28,7 +28,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, onActivity, on
   args.push('--strict-mcp-config', '--mcp-config', JSON.stringify({ mcpServers }));
   args.push('--allowedTools', ...tools);
 
-  const env = { ...process.env };
+  const env = { ...process.env, ...extraEnv, BROWSER: 'true' };
   delete env.CLAUDECODE; // si el servidor se lanzó desde una sesión de Claude Code
   const child = spawn(process.env.AO_CLAUDE_BIN || 'claude', args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
   child.stdin.end(prompt);

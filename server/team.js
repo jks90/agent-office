@@ -9,6 +9,7 @@ import * as demo from './engines/demo.js';
 import * as claude from './engines/claude.js';
 import * as codex from './engines/codex.js';
 import { suiteOk, mcpUrl, flowTestUrl } from './suite.js';
+import { engineEnv } from './engines/auth.js';
 
 const ENGINES = { demo, claude, codex };
 export const ENGINE_IDS = Object.keys(ENGINES);
@@ -407,6 +408,7 @@ async function runTask(p, agent, t) {
       system: role.system,
       model: agent.model || role.model || '',
       mcpUrl: role.kind === 'qa' ? mcpUrl() : null,
+      env: engineEnv(agent.engine),
       onActivity: (text) => { agent.activity = text; changed(); },
       onLog: (line) => log(agent.id, line),
     });

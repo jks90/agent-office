@@ -1,0 +1,139 @@
+// Cuentas de los motores de IA (Claude Code y Codex): estado, login OAuth sin navegador integrado
+// (la URL/código se muestran en el panel y el usuario los completa en su navegador), clave API y logout.
+//   claude: `claude auth status --json` · `claude auth login [--console]` (imprime URL y pide pegar el código) · `claude auth logout`
+//   codex:  `codex login status` · `codex login --device-auth` (URL fija + código de un solo uso) · `codex login --with-api-key` · `codex logout`
+// La clave API de Claude se guarda en <data>/.ai-keys.json (0600) y se inyecta como ANTHROPIC_API_KEY al lanzar agentes.
+import { spawn, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import fs from 'node:fs';
+import path from 'node:path';
+import * as store from '../store.js';
+
+const exec = promisify(execFile);
+const BIN = { claude: process.env.AO_CLAUDE_BIN || 'claude', codex: process.env.AO_CODEX_BIN || 'codex' };
+const KEYS_FILE = () => path.join(store.DATA_DIR, '.ai-keys.json');
+const strip = (s) => String(s).replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '');
+const mask = (k) => (k ? `…${String(k).slice(-4)}` : null);
+
+// ── Claves API (solo Claude las guardamos nosotros; Codex guarda la suya en su auth.json) ──
+function readKeys() { try { return JSON.parse(fs.readFileSync(KEYS_FILE(), 'utf8')) || {}; } catch { return {}; } }
+function writeKeys(k) { fs.mkdirSync(store.DATA_DIR, { recursive: true }); fs.writeFileSync(KEYS_FILE(), JSON.stringify(k, null, 2), { mode: 0o600 }); }
+export function setApiKey(engine, key) {
+  const k = readKeys();
+  if (key) k[engine] = String(key).trim(); else delete k[engine];
+  writeKeys(k);
+}
+// Variables de entorno extra para lanzar un agente con ese motor.
+export function engineEnv(engine) {
+  const k = readKeys();
+  if (engine === 'claude' && k.claude) return { ANTHROPIC_API_KEY: k.claude };
+  return {};
+}
+
+// ── Estado ──────────────────────────────────────────────────────────────────
+async function claudeStatus() {
+  const keys = readKeys();
+  try {
+    const { stdout } = await exec(BIN.claude, ['auth', 'status', '--json'], { timeout: 15000, env: { ...process.env, BROWSER: 'true' } });
+    const j = JSON.parse(stdout);
+    const oauth = !!j.loggedIn;
+    return {
+      installed: true, loggedIn: oauth || !!keys.claude,
+      method: keys.claude ? 'api-key' : oauth ? (j.authMethod === 'claude.ai' ? 'claude.ai' : j.authMethod || 'oauth') : null,
+      account: j.email || null, plan: j.subscriptionType || null, org: j.orgName || null,
+      apiKey: mask(keys.claude), oauthAlso: !!(keys.claude && oauth),
+      billing: keys.claude ? 'api' : (j.subscriptionType ? 'suscripción' : oauth ? 'api' : null),
+    };
+  } catch (e) {
+    return { installed: !/ENOENT/.test(e.message), loggedIn: !!keys.claude, method: keys.claude ? 'api-key' : null, apiKey: mask(keys.claude), error: /ENOENT/.test(e.message) ? 'No encuentro el CLI `claude`' : null };
+  }
+}
+async function codexStatus() {
+  try {
+    const { stdout, stderr } = await exec(BIN.codex, ['login', 'status'], { timeout: 15000, env: { ...process.env, BROWSER: 'true' } });
+    const txt = strip(stdout + stderr).trim();
+    const loggedIn = /logged in/i.test(txt) && !/not logged in/i.test(txt);
+    const method = !loggedIn ? null : /api key/i.test(txt) ? 'api-key' : /chatgpt/i.test(txt) ? 'chatgpt' : 'oauth';
+    return { installed: true, loggedIn, method, text: txt.split('\n')[0], billing: method === 'api-key' ? 'api' : loggedIn ? 'suscripción' : null };
+  } catch (e) {
+    const txt = strip((e.stdout || '') + (e.stderr || '')).trim();
+    if (/not logged in/i.test(txt)) return { installed: true, loggedIn: false, method: null, text: txt.split('\n')[0] };
+    return { installed: !/ENOENT/.test(e.message), loggedIn: false, method: null, error: /ENOENT/.test(e.message) ? 'No encuentro el CLI `codex`' : (txt || e.message) };
+  }
+}
+export async function enginesStatus() {
+  const [claude, codex] = await Promise.all([claudeStatus(), codexStatus()]);
+  return { claude: { ...claude, login: publicLogin('claude') }, codex: { ...codex, login: publicLogin('codex') } };
+}
+
+// ── Logins en curso ─────────────────────────────────────────────────────────
+const logins = new Map(); // engine -> { proc, state, url, code, output, error, startedAt, mode }
+const publicLogin = (engine) => {
+  const l = logins.get(engine);
+  return l ? { state: l.state, url: l.url, code: l.code, mode: l.mode, error: l.error, startedAt: l.startedAt } : null;
+};
+
+export function startLogin(engine, { mode = 'oauth' } = {}) {
+  if (!BIN[engine]) throw Object.assign(new Error('Motor desconocido'), { status: 404 });
+  if (logins.get(engine)?.proc) throw Object.assign(new Error('Ya hay un login en curso: cancélalo o complétalo'), { status: 409 });
+  const args = engine === 'claude' ? ['auth', 'login', ...(mode === 'console' ? ['--console'] : [])] : ['login', '--device-auth'];
+  const proc = spawn(BIN[engine], args, { env: { ...process.env, BROWSER: 'true', NO_COLOR: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const l = { proc, state: 'starting', url: null, code: null, output: '', error: null, startedAt: Date.now(), mode };
+  logins.set(engine, l);
+  const onData = (d) => {
+    l.output = (l.output + strip(d)).slice(-8000);
+    const url = l.output.match(/https?:\/\/\S+/);
+    if (url && !l.url) l.url = url[0].replace(/[),.]+$/, '');
+    if (engine === 'codex') {
+      const code = l.output.match(/\b([A-Z0-9]{4}-[A-Z0-9]{4,6})\b/);
+      if (code) l.code = code[1];
+      if (l.url && l.code) l.state = 'waiting_browser';
+    } else if (/paste code here/i.test(l.output) || l.url) {
+      l.state = 'waiting_code';
+    }
+  };
+  proc.stdout.on('data', onData);
+  proc.stderr.on('data', onData);
+  proc.on('error', (e) => { l.state = 'error'; l.error = e.message; l.proc = null; });
+  proc.on('close', (code) => {
+    l.proc = null;
+    if (l.state === 'cancelled') return;
+    if (code === 0) { l.state = 'done'; setTimeout(() => { if (logins.get(engine) === l) logins.delete(engine); }, 60000); }
+    else { l.state = 'error'; l.error = l.error || (l.output.trim().split('\n').pop() || `terminó con código ${code}`); }
+  });
+  setTimeout(() => { if (l.proc) { l.error = 'Tiempo agotado (15 min)'; l.state = 'error'; l.proc.kill(); } }, 15 * 60 * 1000).unref();
+  return new Promise((resolve) => setTimeout(() => resolve(publicLogin(engine)), 1500));
+}
+
+export function submitCode(engine, code) {
+  const l = logins.get(engine);
+  if (!l?.proc) throw Object.assign(new Error('No hay un login esperando código'), { status: 409 });
+  l.proc.stdin.write(String(code).trim() + '\n');
+  l.state = 'verifying';
+  return new Promise((resolve) => setTimeout(() => resolve(publicLogin(engine)), 2500));
+}
+
+export function cancelLogin(engine) {
+  const l = logins.get(engine);
+  if (l?.proc) { l.state = 'cancelled'; l.proc.kill('SIGTERM'); }
+  logins.delete(engine);
+}
+
+export async function logout(engine) {
+  cancelLogin(engine);
+  if (engine === 'claude') { setApiKey('claude', null); await exec(BIN.claude, ['auth', 'logout'], { timeout: 15000 }).catch(() => {}); }
+  else await exec(BIN.codex, ['logout'], { timeout: 15000 }).catch(() => {});
+}
+
+export async function loginWithApiKey(engine, key) {
+  if (!key?.trim()) throw Object.assign(new Error('Pega una clave API'), { status: 400 });
+  if (engine === 'claude') { setApiKey('claude', key); return; }
+  // Codex guarda la clave en su propio auth.json
+  await new Promise((resolve, reject) => {
+    const p = spawn(BIN.codex, ['login', '--with-api-key'], { env: { ...process.env, BROWSER: 'true' }, stdio: ['pipe', 'pipe', 'pipe'] });
+    let err = '';
+    p.stderr.on('data', (d) => { err += d; });
+    p.on('close', (c) => (c === 0 ? resolve() : reject(Object.assign(new Error(strip(err).trim() || `codex login terminó con código ${c}`), { status: 400 }))));
+    p.stdin.end(key.trim() + '\n');
+  });
+}

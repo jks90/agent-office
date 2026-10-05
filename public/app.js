@@ -271,6 +271,9 @@ const actions = {
     ${buttons('Crear')}`, (f) => api('POST', '/api/tasks', { ...f, projectId })),
   settings: () => dialog(`
     <h3>Ajustes</h3>
+    <div class="section-title">🧠 Motores de IA — las inteligencias que llevan la empresa</div>
+    <div id="engines" class="engines"><p class="muted">Comprobando cuentas…</p></div>
+    <div class="section-title">🧪 Suite</div>
     <label>URL de flow-test (la suite; su MCP se usa para el QA)</label><input name="flowTestUrl" value="${esc(S.settings.flowTestUrl)}" placeholder="http://localhost:9998" />
     <label>Agentes trabajando a la vez (máx.)</label><input name="maxParallel" type="number" min="1" max="8" value="${S.settings.maxParallel}" />
     <hr style="border-color:var(--line);margin:16px 0" />
@@ -288,8 +291,69 @@ const actions = {
   }),
 };
 // Tras abrir Ajustes, rellenar el selector de flows con los del flow-test conectado.
+let enginesTimer = null;
+async function refreshEngines() {
+  const el = $('#engines');
+  if (!el || !el.isConnected) { clearInterval(enginesTimer); enginesTimer = null; return; }
+  try { renderEngines(await api('GET', '/api/engines')); } catch { /* el toast ya avisó */ }
+}
+const ENGINE_META = {
+  claude: { name: 'Claude Code', vendor: 'Anthropic', oauthLabel: 'Entrar con Claude (suscripción)', consoleLabel: 'Entrar con Console (pago por uso)', keyHint: 'sk-ant-…' },
+  codex: { name: 'Codex', vendor: 'OpenAI', oauthLabel: 'Entrar con ChatGPT', keyHint: 'sk-…' },
+};
+function renderEngines(st) {
+  const el = $('#engines');
+  if (!el) return;
+  const keep = {}; // no perder lo que el usuario está escribiendo
+  el.querySelectorAll('input').forEach((i) => { keep[i.dataset.keep] = i.value; });
+  el.innerHTML = Object.entries(ENGINE_META).map(([id, m]) => {
+    const s = st[id] || {};
+    const l = s.login;
+    let status, actions = '', flow = '';
+    if (!s.installed) status = `<span class="bad">● CLI «${id}» no encontrado</span>`;
+    else if (s.loggedIn) {
+      const how = s.method === 'api-key' ? `clave API ${esc(s.apiKey || '')}` : s.method === 'claude.ai' ? `suscripción claude.ai${s.plan ? ' · ' + esc(s.plan.toUpperCase()) : ''}` : s.method === 'chatgpt' ? 'cuenta ChatGPT' : esc(s.method || 'sesión');
+      status = `<span class="ok">● Conectado</span> · ${how}${s.account ? ' · ' + esc(s.account) : ''}${s.oauthAlso ? ' <span class="muted">(también hay sesión OAuth; manda la clave API)</span>' : ''}`;
+      actions = `<button class="small ghost" data-eng-logout="${id}">Salir</button>`;
+    } else status = `<span class="muted">○ Sin cuenta</span>${s.error ? ` <span class="bad">· ${esc(s.error)}</span>` : ''}`;
+    if (s.installed && !l && !s.loggedIn) {
+      actions = `<button class="small" data-eng-login="${id}:oauth">${m.oauthLabel}</button>` +
+        (m.consoleLabel ? ` <button class="small ghost" data-eng-login="${id}:console">${m.consoleLabel}</button>` : '') +
+        ` <button class="small ghost" data-eng-key="${id}">Usar clave API…</button>`;
+    } else if (s.installed && !l && s.loggedIn && s.method !== 'api-key') {
+      actions += ` <button class="small ghost" data-eng-key="${id}">Cambiar a clave API…</button>`;
+    }
+    if (l && !['done', 'cancelled'].includes(l.state)) {
+      const step = id === 'codex'
+        ? (l.url ? `<ol><li>Abre <a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.url)}</a> e inicia sesión.</li><li>Escribe este código: <b class="code">${esc(l.code || '…')}</b></li><li>Vuelve aquí: se conecta solo al terminar.</li></ol>` : '<p class="muted">Arrancando el login…</p>')
+        : (l.url ? `<ol><li>Abre <a href="${esc(l.url)}" target="_blank" rel="noopener">la página de login de Anthropic</a> y autoriza.</li><li>Pega aquí el código que te da:</li></ol><div class="row"><input data-keep="code-${id}" id="code-${id}" placeholder="código de autorización" value="${esc(keep['code-' + id] || '')}" /><button class="small" data-eng-code="${id}">Conectar</button></div>` : '<p class="muted">Arrancando el login…</p>');
+      flow = `<div class="login-flow">${l.state === 'verifying' ? '<p class="muted">Verificando el código…</p>' : step}${l.state === 'error' ? `<p class="bad">${esc(l.error || 'Error')}</p>` : ''}<button class="small danger" data-eng-cancel="${id}">Cancelar</button></div>`;
+    }
+    if (l?.state === 'done') flow = '<p class="ok">✓ Conectado</p>';
+    return `<div class="engine"><div class="top"><b>${m.name}</b> <span class="muted">${m.vendor}</span><div class="spacer"></div>${actions}</div><div class="status">${status}</div>${flow}</div>`;
+  }).join('');
+}
+
+document.addEventListener('click', async (e) => {
+  const el = e.target.closest('[data-eng-login],[data-eng-key],[data-eng-code],[data-eng-cancel],[data-eng-logout]');
+  if (!el) return;
+  const d = el.dataset;
+  try {
+    if (d.engLogin) { const [eng, mode] = d.engLogin.split(':'); await api('POST', `/api/engines/${eng}/login`, { mode }); }
+    if (d.engKey) {
+      const key = prompt(`Clave API de ${ENGINE_META[d.engKey].name} (${ENGINE_META[d.engKey].keyHint}). Se guarda en este equipo y no sale del servidor.`);
+      if (key?.trim()) { await api('POST', `/api/engines/${d.engKey}/login`, { apiKey: key.trim() }); toast('Clave guardada'); }
+    }
+    if (d.engCode) { const code = $(`#code-${d.engCode}`)?.value.trim(); if (!code) return toast('Pega el código', 'error'); await api('POST', `/api/engines/${d.engCode}/code`, { code }); }
+    if (d.engCancel) await api('POST', `/api/engines/${d.engCancel}/cancel`);
+    if (d.engLogout) { if (confirm('¿Cerrar la sesión de este motor? Los agentes que lo usen dejarán de funcionar hasta volver a entrar.')) { await api('POST', `/api/engines/${d.engLogout}/logout`); toast('Sesión cerrada'); } }
+  } catch { /* toast */ }
+  refreshEngines();
+});
+
 document.addEventListener('click', (e) => {
   if (e.target.closest('[data-action="settings"]')) {
+    setTimeout(() => { refreshEngines(); clearInterval(enginesTimer); enginesTimer = setInterval(refreshEngines, 2500); }, 50);
     api('GET', '/api/flows').then((flows) => {
       const sel = $('#import-flow');
       if (sel) sel.innerHTML = '<option value="">— elegir flow —</option>' + flows.map((f) => `<option value="${esc(f.path)}">${esc(f.name)} — ${esc(f.path)}</option>`).join('');
