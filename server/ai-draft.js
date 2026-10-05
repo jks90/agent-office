@@ -3,10 +3,11 @@
 import { spawn } from 'node:child_process';
 import * as store from './store.js';
 import { allRoles } from './roles.js';
+import { describeContext } from './task-context.js';
 import { teamOf } from './team.js';
 import { engineEnv } from './engines/auth.js';
 
-export async function draftTask({ projectId, text, attachments = [], model = '' }) {
+export async function draftTask({ projectId, text, attachments = [], model = '', context = null }) {
   const p = store.get().projects.find((x) => x.id === projectId);
   if (!p) throw Object.assign(new Error('Proyecto no encontrado'), { status: 404 });
   if (!text?.trim()) throw Object.assign(new Error('Escribe qué quieres que se haga'), { status: 400 });
@@ -21,6 +22,7 @@ export async function draftTask({ projectId, text, attachments = [], model = '' 
     repos.length ? `Repositorios: ${repos.map((r) => `«${r.key}» = ${r.path}${r.roles?.length ? ` (roles: ${r.roles.join(', ')})` : ''}`).join(' · ')}.` : 'Sin repositorios.',
     `Roles disponibles en la plantilla: ${roleIds.map((r) => `${r} — ${roles[r].description || roles[r].label}`).join(' · ')}.`,
     '',
+    context ? `Contexto del que nace la petición (lo que el usuario tenía delante): ${describeContext(context)}. Úsalo para resolver «esto», «esta pantalla», «este nodo».` : '',
     'Petición del usuario, tal cual:',
     '"""', text.trim(), '"""',
     images.length ? `\nImágenes adjuntas (míralas; están en: ${images.map((a) => a.path).join(', ')}).` : '',
@@ -28,7 +30,7 @@ export async function draftTask({ projectId, text, attachments = [], model = '' 
     '',
     'Redacta UNA tarea para un agente de IA que trabajará solo en un worktree del repo. Responde SOLO con JSON:',
     '```json',
-    '{"title": "imperativo, concreto, ≤ 80 caracteres", "description": "contexto necesario, qué hacer paso a paso, qué NO tocar, y una lista «Hecho cuando:» con criterios verificables; en español; markdown ligero", "role": "uno de los roles disponibles", "repo": "clave de repo o null"}',
+    '{"title": "imperativo, concreto, ≤ 80 caracteres", "description": "contexto necesario, qué hacer paso a paso, qué NO tocar, y una lista «Hecho cuando:» con criterios verificables; en español; markdown ligero", "role": "uno de los roles disponibles (documentar → el de documentación; si no está claro, el primero de la lista)", "repo": "clave de repo o null", "skills": ["skills del rol que ayudan; opcional"]}',
     '```',
   ].join('\n');
   const args = ['-p', '--output-format', 'json', '--model', model || 'sonnet', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--allowedTools', 'Read', '--append-system-prompt', 'Eres el PO del proyecto: conviertes peticiones informales en tareas claras y acotadas para agentes de IA. No ejecutes nada; solo redacta.'];
@@ -53,5 +55,7 @@ export async function draftTask({ projectId, text, attachments = [], model = '' 
   try { draft = JSON.parse(fenced ? fenced[1] : txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1)); } catch { throw Object.assign(new Error('La IA no devolvió la tarea en JSON: ' + txt.slice(0, 200)), { status: 502 }); }
   const role = roleIds.includes(draft.role) ? draft.role : (roleIds[0] || 'back');
   const repo = repos.some((r) => r.key === draft.repo) ? draft.repo : null;
-  return { title: String(draft.title || '').slice(0, 160), description: String(draft.description || ''), role, repo, costUsd: res.total_cost_usd ?? null };
+  const roleSkills = roles[role]?.skills || [];
+  const skills = (Array.isArray(draft.skills) ? draft.skills : []).filter((k) => roleSkills.includes(k)); // solo skills que el rol ya tiene
+  return { title: String(draft.title || '').slice(0, 160), description: String(draft.description || ''), role, repo, skills, costUsd: res.total_cost_usd ?? null };
 }

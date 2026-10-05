@@ -172,6 +172,10 @@ dialog select[multiple].tall { height: 160px; }
 .card .t { font-weight: 800; font-size: 14px; line-height: 1.25; margin: 8px 0 5px; word-break: break-word; }
 .card .meta { color: var(--muted); font-size: 11px; display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; overflow: hidden; white-space: nowrap; }
 .card .meta span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.born { color: #93c5fd; font-size: 11px; text-decoration: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+a.born:hover { text-decoration: underline; }
+.task-born { margin: 2px 0 6px; }
+.task-born .born { font-size: 12px; white-space: normal; }
 .card .sum { font-size: 12px; color: #cfd5e6; margin-top: var(--s-2); max-height: 70px; overflow: hidden; white-space: pre-wrap; }
 .card .err { font-size: 12px; color: #ffb6b6; margin-top: var(--s-2); white-space: pre-wrap; max-height: 70px; overflow: hidden; }
 .embed-only { display: none; align-items: center; gap: 6px; }

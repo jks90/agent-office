@@ -85,6 +85,25 @@ const team = () => { const ids = new Set(project()?.team || []); return S.agents
 const bench = () => { const ids = new Set(project()?.team || []); return S.agents.filter((a) => !ids.has(a.id)); };
 const projectsOf = (agentId) => S.projects.filter((p) => (p.team || []).includes(agentId) && p.id !== projectId).map((p) => p.name);
 const tasks = () => S.tasks.filter((t) => t.projectId === projectId);
+// «Nació de: flow X · nodo Y» (FT-7): el contexto que el usuario tenía delante al pedir la tarea. El enlace pide a flow-test
+// (flowtest.show) que lo enseñe; sin flow-test cae a la tarea/agente/vista de AgentOffice.
+const bornFrom = (t) => {
+  const c = t.context, h = c?.host;
+  if (!c) return '';
+  if (h?.flow || h?.filePath) {
+    const name = h.flow || h.filePath;
+    return `<a class="born" href="#" data-born="${esc(h.filePath || h.flow)}" data-born-node="${esc(h.node || '')}" title="Abrir en flow-test${h.consoleTail?.length ? ' · consola: ' + esc(h.consoleTail.slice(-3).join(' ⏎ ')) : ''}">↗ Nació de: flow ${esc(name)}${h.node ? ` · nodo ${esc(h.nodeLabel || h.node)}` : ''}</a>`;
+  }
+  const what = c.taskCode ? `tarea ${c.taskCode}` : c.agentId ? `agente ${S.agents.find((a) => a.id === c.agentId)?.name || c.agentId}` : c.view ? `vista ${c.view}` : '';
+  return what ? `<span class="born" title="Contexto de AgentOffice al crearla">Nació de: ${esc(what)}</span>` : '';
+};
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('[data-born]');
+  if (!a) return;
+  e.preventDefault();
+  fetch(BASE + 'api/guide/tool', { method: 'POST', headers: { 'content-type': 'application/json', 'x-ao-client': CLIENT_ID }, body: JSON.stringify({ name: 'flowtest.show', args: { flow: a.dataset.born, ...(a.dataset.bornNode ? { node: a.dataset.bornNode } : {}) } }) })
+    .then(() => { if (!EMBEDDED) toast('Ábrelo desde flow-test (Config ▸ Agentes) para que lo enseñe'); }).catch(() => {});
+});
 const roleChip = (role) => `<span class="chip" style="--c:${S.roles[role]?.color}">${esc(S.roles[role]?.label || role)}</span>`;
 
 // ── Guía 🧭 (FT-6) ──────────────────────────────────────────────────────────
@@ -519,6 +538,7 @@ function card(t) {
   return `<div class="card ${t.status}" style="--c:${S.roles[t.role]?.color}">
     <div class="card-head">${roleChip(t.role)} <span class="task-id" title="Código de la tarea (rama ao/${t.code || t.id}; cítalo en commits y docs)">${esc(tcode(t))}</span>${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? ` <span class="repo-chip">📁 ${esc(t.repo || '?')}</span>` : ''}${t.source?.flow ? ` <span title="Importada del tablero «${esc(t.source.flow)}» · columna ${esc(t.source.column)}">🗂</span>` : ''}${(t.feedbackImages?.length || t.files?.length) ? ` <span title="${esc([...(t.feedbackImages || []), ...(t.files || [])].map((f) => f.split('/').pop()).join(', '))}">📎${(t.feedbackImages?.length || 0) + (t.files?.length || 0)}</span>` : ''}${t.source?.url ? ` <a class="ext" href="${esc(t.source.url)}" target="_blank" rel="noopener" title="${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} · ${esc(t.source.id)}${t.source.remoteStatus ? ' · fuera: ' + esc(t.source.remoteStatus) : ''}">🔗 ${esc(t.source.id)}</a>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}</div>
     <div class="t">${esc(t.title)}</div>
+    ${t.context ? `<div class="meta">${bornFrom(t)}</div>` : ''}
     <div class="meta">${agent ? `<span>👤 ${esc(agent.name)}</span>` : ''}${deps ? `<span>depende de ${deps}</span>` : ''}${t.costUsd ? ` <span>💲${t.costUsd.toFixed(3)}</span>` : ''}</div>
     ${t.status === 'doing' && agent ? `<div class="live">● ${esc(agent.activity)}</div>` : ''}
     ${t.summary && t.status !== 'doing' ? `<div class="sum">${esc(t.summary)}</div>` : ''}
@@ -1004,6 +1024,7 @@ function openTask(id) {
   dialog(`
     <div class="task-head">${roleChip(t.role)} <b>${esc(tcode(t))}</b>${repoKey ? ` <span>📁 ${esc(repoKey)}</span>` : ''} <span class="st">${STATUS[t.status] || t.status}</span>${agent ? ` <span>👤 ${esc(agent.name)}</span>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}${t.costUsd ? ` <span>≈ ${t.costUsd.toFixed(2)} $</span>` : ''}${t.source?.url ? ` <a href="${esc(t.source.url)}" target="_blank" rel="noopener" style="color:#93c5fd">🔗 ${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} ${esc(t.source.id)}</a>` : ''}<div class="spacer"></div><span>${new Date(t.createdAt).toLocaleString()}</span></div>
     <div class="task-title" tabindex="-1" autofocus>${esc(t.title)}</div>
+    ${t.context ? `<div class="task-born">${bornFrom(t)}</div>` : ''}
     <div class="task-sec"><h4>${t.kind === 'plan' ? 'Encargo al PO' : 'Qué va a hacer'}</h4><div class="md">${md(t.description)}</div></div>
     ${att.length ? `<div class="task-sec"><h4>Adjuntos</h4><div class="task-attach">${att.map((f) => /\.(png|jpe?g|webp|gif)$/i.test(f) ? `<a href="${fileUrl(f)}" target="_blank" rel="noopener"><img src="${fileUrl(f)}" alt="" /></a>` : `<a href="${fileUrl(f)}" target="_blank" rel="noopener">📄 ${esc(f.split('/').pop())}</a>`).join('')}</div></div>` : ''}
     ${(t.questions || []).length ? `<div class="task-sec task-qa"><h4>Conversación con el agente</h4>${t.questions.map((q) => `<div class="qa"><div class="q">❓ ${esc(q.question)}</div><div class="a">${q.answer == null ? '<span class="muted">sin respuesta (se decidió solo)</span>' : '💬 ' + esc(q.answer)}</div></div>`).join('')}</div>` : ''}
