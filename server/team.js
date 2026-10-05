@@ -149,11 +149,21 @@ export async function approve(id) {
   tick();
 }
 
-export async function reject(id, feedback = '') {
+export async function reject(id, feedback = '', images = []) {
   const t = findOr404(get().tasks, id, 'Tarea');
   if (!['review', 'failed'].includes(t.status)) throw fail(409, 'Solo se devuelven tareas en revisión o fallidas');
   // La rama y el worktree se conservan: el agente corrige sobre su intento anterior.
   if (feedback.trim()) t.feedback = [t.feedback, feedback.trim()].filter(Boolean).join('\n');
+  // Capturas de la revisión: se copian a data/ para que el agente las vea (codex -i, claude con Read).
+  t.feedbackImages = [];
+  const dir = path.join(store.DATA_DIR, 'feedback', t.id);
+  for (const [i, src] of (Array.isArray(images) ? images : []).slice(0, 6).entries()) {
+    if (!/\.(png|jpe?g|webp)$/i.test(src) || !fs.existsSync(src)) throw fail(400, `No encuentro la imagen ${src}`);
+    fs.mkdirSync(dir, { recursive: true });
+    const dest = path.join(dir, `${t.attempts}-${i + 1}${path.extname(src).toLowerCase()}`);
+    fs.copyFileSync(src, dest);
+    t.feedbackImages.push(dest);
+  }
   Object.assign(t, { status: 'todo', agentId: null, diffStat: '', error: null, updatedAt: Date.now() });
   changed();
   tick();
@@ -213,6 +223,7 @@ function buildPrompt(p, agent, t) {
     t.description,
     done.length ? `\nTrabajo previo del equipo (ya fusionado):\n${done.map((d) => `- ${d.title}: ${d.summary}`).join('\n')}` : '',
     t.feedback ? `\nComentarios de la revisión anterior (corrígelos):\n${t.feedback}` : '',
+    t.feedbackImages?.length ? `\nCapturas de la revisión (míralas antes de cambiar nada; también están en ${t.feedbackImages.join(', ')}).` : '',
     '',
     `Trabajas en una copia aislada del repo (git worktree) en la rama ${t.branch}. No cambies de rama ni hagas push.`,
     t.reused ? 'En esta rama ya está tu intento anterior (mira `git log` y `git diff` contra la rama base): parte de él y corrige lo que pide la revisión, sin rehacer lo que ya estaba bien.' : '',
@@ -247,6 +258,7 @@ async function runTask(p, agent, t) {
     const job = engine.start({
       agent, task: t, project: p, cwd, mode: t.kind === 'plan' ? 'plan' : 'work', goal: t.goal, roles,
       prompt: buildPrompt(p, agent, t),
+      images: t.kind === 'plan' ? [] : (t.feedbackImages || []).filter((f) => fs.existsSync(f)),
       system: ROLES[agent.role].system,
       model: agent.model,
       mcpUrl: agent.role === 'qa' ? s.settings.flowTestMcpUrl : null,
