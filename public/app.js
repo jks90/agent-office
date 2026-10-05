@@ -71,6 +71,19 @@ function showTab(tab) {
   if (tab === 'agents') renderSkills();
 }
 $('#sidebar').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) showTab(b.dataset.tab); });
+// Secciones plegables de la pantalla Agentes (cabecera = plegar/desplegar; los botones de la cabecera siguen funcionando).
+const collapsed = (() => { try { return JSON.parse(localStorage.getItem('ao:collapsed') || '{}'); } catch { return {}; } })();
+const applyCollapsed = () => document.querySelectorAll('[data-section]').forEach((h) => h.classList.toggle('collapsed', !!collapsed[h.dataset.section]));
+applyCollapsed();
+document.addEventListener('click', (e) => {
+  if (e.target.closest('button, a, input, select')) return;
+  const h = e.target.closest('[data-section]');
+  if (h) { collapsed[h.dataset.section] = !collapsed[h.dataset.section]; safeSet('ao:collapsed', JSON.stringify(collapsed)); applyCollapsed(); return; }
+  const box = e.target.closest('.skills-box h4');
+  if (box) { box.parentElement.classList.toggle('collapsed'); return; }
+  const g = e.target.closest('.skill-group');
+  if (g) { g.classList.toggle('collapsed'); collapsed['skills:' + g.dataset.group] = g.classList.contains('collapsed'); safeSet('ao:collapsed', JSON.stringify(collapsed)); }
+});
 showTab(activeTab);
 // Menú lateral plegable (solo iconos), recordado por navegador.
 const setCollapsed = (c) => { $('#sidebar').classList.toggle('collapsed', c); safeSet('ao:sidebar', c ? 'collapsed' : 'open'); requestAnimationFrame(() => window.dispatchEvent(new Event('resize'))); };
@@ -185,7 +198,7 @@ async function renderSkills(reload = false) {
   for (const s of inventory) (groups[s.sourceLabel] = groups[s.sourceLabel] || []).push(s);
   el.innerHTML = `<div class="skills-wrap">
     <div class="skills-box"><h4>Catálogo central (lo que pueden usar los roles)</h4>${catalog.length ? catalog.map((s) => `<div class="skill"><span class="nm">${esc(s.name)}</span><span class="ds" title="${esc(s.description)}">${esc(s.description)}</span><span class="src" title="${esc(s.target)}">${s.broken ? '⚠ roto' : '→ ' + esc(short(s.target))}</span><button class="small ghost" data-skill-edit="${esc(s.target)}" title="Editar SKILL.md">✎</button><button class="small danger" data-skill-del="${esc(s.name)}" title="Quitar del catálogo (no borra la skill)">✕</button></div>`).join('') : '<p class="muted">Vacío. Añade skills desde el inventario →</p>'}</div>
-    <div class="skills-box"><h4>Inventario del PC</h4>${Object.entries(groups).map(([g, list]) => `<div class="muted" style="margin:8px 0 4px;font-weight:600">${esc(g)} <span class="muted">(${list.length})</span></div>${list.map((s) => `<div class="skill"><span class="nm">${esc(s.name)}</span><span class="ds" title="${esc(s.description)}">${esc(s.description)}</span><button class="small ghost" data-skill-edit="${esc(s.dir)}" title="Editar SKILL.md">✎</button>${s.central ? `<span class="src">✓ en catálogo${s.central !== s.name ? ' como ' + esc(s.central) : ''}</span>` : `<button class="small ghost" data-skill-add="${esc(s.dir)}" title="${esc(s.dir)}">→ Catálogo</button>`}</div>`).join('')}`).join('')}</div>
+    <div class="skills-box"><h4>Inventario del PC</h4>${Object.entries(groups).map(([g, list]) => `<div class="muted skill-group ${collapsed['skills:' + g] === false ? '' : 'collapsed'}" data-group="${esc(g)}" style="margin:8px 0 4px;font-weight:600">${esc(g)} <span class="muted">(${list.length}${list.filter((s) => s.central).length ? ` · ${list.filter((s) => s.central).length} en catálogo` : ''})</span></div>${list.map((s) => `<div class="skill" data-group="${esc(g)}"><span class="nm">${esc(s.name)}</span><span class="ds" title="${esc(s.description)}">${esc(s.description)}</span><button class="small ghost" data-skill-edit="${esc(s.dir)}" title="Editar SKILL.md">✎</button>${s.central ? `<span class="src">✓ en catálogo${s.central !== s.name ? ' como ' + esc(s.central) : ''}</span>` : `<button class="small ghost" data-skill-add="${esc(s.dir)}" title="${esc(s.dir)}">→ Catálogo</button>`}</div>`).join('')}`).join('')}</div>
   </div>`;
 }
 

@@ -117,6 +117,19 @@ dialog select[multiple].tall { height: 160px; }
 #office { width: 100%; aspect-ratio: 320 / 208; image-rendering: pixelated; display: block; border-radius: var(--r-sm); }
 
 .team-head { display: flex; align-items: center; justify-content: space-between; margin: var(--s-4) 0 var(--s-2); }
+.team-head[data-section] { cursor: pointer; user-select: none; }
+.team-head[data-section] h3::before { content: '▾'; display: inline-block; width: 14px; color: var(--muted); transition: transform .15s; }
+.team-head[data-section].collapsed h3::before { transform: rotate(-90deg); }
+.team-head[data-section].collapsed + .section-body { display: none; }
+.team-head[data-section] button { cursor: pointer; }
+.skills-box h4 { cursor: pointer; user-select: none; }
+.skills-box h4::before { content: '▾'; display: inline-block; width: 14px; }
+.skills-box.collapsed h4::before { transform: rotate(-90deg); }
+.skills-box.collapsed > *:not(h4) { display: none; }
+.skill-group { cursor: pointer; user-select: none; }
+.skill-group::before { content: '▾'; display: inline-block; width: 12px; }
+.skill-group.collapsed::before { transform: rotate(-90deg); }
+.skill-group.collapsed ~ .skill[data-group] { display: none; }
 .team-head h3 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
 #team { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--s-2); padding-bottom: 2px; }
 #view-agents { overflow: auto; }
