@@ -59,6 +59,7 @@ const routes = [
   ['GET', /^\/api\/state$/, () => snapshot()],
   // Cuentas de los motores de IA (login OAuth/clave API, logout)
   ['GET', /^\/api\/engines$/, () => auth.enginesStatus()],
+  ['GET', /^\/api\/engines\/models$/, () => auth.enginesModels()],
   ['POST', /^\/api\/engines\/(claude|codex)\/login$/, async ([e], b) => (b.apiKey ? (await auth.loginWithApiKey(e, b.apiKey), { ok: true }) : auth.startLogin(e, { mode: b.mode }))],
   ['POST', /^\/api\/engines\/(claude|codex)\/code$/, ([e], b) => auth.submitCode(e, b.code)],
   ['POST', /^\/api\/engines\/(claude|codex)\/cancel$/, ([e]) => auth.cancelLogin(e)],

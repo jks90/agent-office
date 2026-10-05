@@ -74,6 +74,38 @@ export async function enginesStatus() {
   return { claude: { ...claude, login: publicLogin('claude') }, codex: { ...codex, login: publicLogin('codex') } };
 }
 
+// ── Modelos disponibles por motor ──────────────────────────────────────────
+// Claude: alias + ids de la familia 5 (Fable/Opus/Sonnet 5.x necesitan Claude Code ≥ 2.1.251). Codex: caché de modelos de la cuenta.
+let cliVersionCache = { at: 0, v: null };
+async function claudeVersion() {
+  if (Date.now() - cliVersionCache.at < 600000) return cliVersionCache.v;
+  try { const { stdout } = await exec(BIN.claude, ['--version'], { timeout: 10000 }); cliVersionCache = { at: Date.now(), v: (stdout.match(/(\d+\.\d+\.\d+)/) || [])[1] || null }; }
+  catch { cliVersionCache = { at: Date.now(), v: null }; }
+  return cliVersionCache.v;
+}
+const verGte = (a, b) => { if (!a) return false; const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return true; };
+export async function enginesModels() {
+  const v = await claudeVersion();
+  const new5 = verGte(v, '2.1.251');
+  const claude = [
+    { id: 'opus', label: 'Opus (alias → el Opus más reciente que admita el CLI)', available: true },
+    { id: 'sonnet', label: 'Sonnet (alias)', available: true },
+    { id: 'haiku', label: 'Haiku (alias)', available: true },
+    { id: 'claude-fable-5-1', label: 'Fable 5.1', available: new5, note: new5 ? '' : `requiere Claude Code ≥ 2.1.251 (tienes ${v || '?'}): ejecuta «claude update»` },
+    { id: 'claude-opus-5-5', label: 'Opus 5.5', available: new5, note: new5 ? '' : 'requiere Claude Code ≥ 2.1.251' },
+    { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', available: new5, note: new5 ? '' : 'requiere Claude Code ≥ 2.1.251' },
+    { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', available: true },
+  ];
+  let codex = [];
+  try {
+    const cache = JSON.parse(fs.readFileSync(path.join(process.env.HOME, '.codex', 'models_cache.json'), 'utf8'));
+    const list = cache.models || cache.data || cache;
+    codex = (Array.isArray(list) ? list : []).map((m) => (typeof m === 'string' ? m : m.slug || m.id || m.model)).filter((x) => x && !/review/i.test(x)).map((id) => ({ id, label: id, available: true }));
+  } catch { /* sin caché */ }
+  if (!codex.some((m) => m.id === 'gpt-5.5')) codex.push({ id: 'gpt-5.5', label: 'gpt-5.5', available: true });
+  return { claude, codex, claudeVersion: v };
+}
+
 // ── Logins en curso ─────────────────────────────────────────────────────────
 const logins = new Map(); // engine -> { proc, state, url, code, output, error, startedAt, mode }
 const publicLogin = (engine) => {

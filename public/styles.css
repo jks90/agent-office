@@ -221,6 +221,7 @@ dialog h3 { margin: 0 0 var(--s-3); font-size: 20px; }
 dialog label { display: block; margin: var(--s-3) 0 var(--s-1); font-size: 12px; color: var(--muted); }
 dialog input, dialog select, dialog textarea { width: 100%; }
 dialog .row { display: flex; justify-content: flex-end; gap: var(--s-2); margin-top: var(--s-4); }
+.model-other { margin-top: 6px; }
 dialog .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
 dialog select[multiple] { width: 100%; }
 dialog textarea.code { font: 12px/1.45 ui-monospace, monospace; min-height: 360px; }

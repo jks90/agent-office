@@ -63,6 +63,26 @@ const roleChip = (role) => `<span class="chip" style="--c:${S.roles[role]?.color
 // ── Pintado ─────────────────────────────────────────────────────────────────
 // Pestañas de administración (Oficina / Tareas / Agentes), recordadas por navegador.
 let skillsData = null; // catálogo e inventario de skills (se carga al abrir Agentes)
+let MODELS = { claude: [], codex: [] }; // modelos disponibles por motor (GET /api/engines/models)
+const loadModels = () => api('GET', '/api/engines/models').then((m) => { MODELS = m; }).catch(() => {});
+loadModels();
+// <select> de modelo: grupos por motor (en «auto» salen los dos), los no disponibles deshabilitados con su motivo, y «otro…» libre.
+function modelSelect(name, engine, current) {
+  const groups = engine === 'auto' ? ['claude', 'codex'] : engine === 'demo' ? [] : [engine];
+  const known = groups.flatMap((g) => MODELS[g] || []).some((m) => m.id === current);
+  return `<select name="${name}" class="model-select" data-engine="${engine}">
+    <option value="" ${!current ? 'selected' : ''}>por defecto del rol / motor</option>
+    ${groups.map((g) => `<optgroup label="${g === 'claude' ? 'Claude Code' : 'Codex'}">${(MODELS[g] || []).map((m) => `<option value="${esc(m.id)}" ${m.id === current ? 'selected' : ''} ${m.available ? '' : 'disabled'}>${esc(m.label)}${m.available ? '' : ' — ' + esc(m.note || 'no disponible')}</option>`).join('')}</optgroup>`).join('')}
+    <option value="__other" ${current && !known ? 'selected' : ''}>otro… (escribir id)</option>
+  </select><input name="${name}_other" class="model-other" placeholder="id del modelo" value="${current && !known ? esc(current) : ''}" style="${current && !known ? '' : 'display:none'}" />`;
+}
+document.addEventListener('change', (e) => {
+  const sel = e.target.closest('.model-select');
+  if (sel) { const other = sel.parentElement.querySelector('.model-other'); if (other) other.style.display = sel.value === '__other' ? '' : 'none'; return; }
+  const eng = e.target.closest('select[name=engine]');
+  if (eng) { const ms = eng.closest('form')?.querySelector('.model-select'); if (ms) ms.outerHTML = modelSelect(ms.name, eng.value, '').replace(/<input[^>]*>$/, ''); }
+});
+const pickModel = (f) => (f.model === '__other' ? (f.model_other || '').trim() : f.model || '');
 let activeTab = safeGet('ao:tab') || 'office';
 function showTab(tab) {
   activeTab = tab;
@@ -262,7 +282,7 @@ function editRole(id, duplicate = false) {
     <div class="grid2">
       <div><label>Identificador (sin espacios)</label><input name="id" value="${esc(rid)}" placeholder="unity-dev" ${rid ? 'readonly' : 'required autofocus'} /></div>
       <div><label>Tipo</label><select name="kind"><option value="dev" ${r.kind === 'dev' ? 'selected' : ''}>desarrolla</option><option value="qa" ${r.kind === 'qa' ? 'selected' : ''}>QA (MCP de flow-test)</option><option value="docs" ${r.kind === 'docs' ? 'selected' : ''}>documenta (MCP de flow-test)</option><option value="planner" ${r.kind === 'planner' ? 'selected' : ''}>planifica (PO)</option></select></div>
-      <div><label>Modelo por defecto</label><input name="model" value="${esc(r.model || '')}" placeholder="sonnet / opus / gpt-5.5" /></div>
+      <div><label>Modelo por defecto</label>${modelSelect('model', 'auto', r.model || '')}</div>
       <div><label>Atiende tareas de rol (Ctrl+clic)</label><select name="handles" multiple>${['po', 'back', 'front', 'qa'].map((h) => `<option value="${h}" ${(r.handles || []).includes(h) ? 'selected' : ''}>${h}</option>`).join('')}</select></div>
     </div>
     <label>Descripción (una línea)</label><input name="description" value="${esc(r.description || '')}" />
@@ -273,7 +293,7 @@ function editRole(id, duplicate = false) {
     ${buttons('Guardar')}`, async (f) => {
     const form = $('#dialog form');
     const pick = (n) => [...form.querySelector(`[name=${n}]`).selectedOptions].map((o) => o.value);
-    await api('POST', '/api/roles', { ...f, id: f.id || rid, handles: pick('handles'), skills: pick('skills'), file: rid ? r.file : null });
+    await api('POST', '/api/roles', { ...f, model: pickModel(f), id: f.id || rid, handles: pick('handles'), skills: pick('skills'), file: rid ? r.file : null });
     toast('Rol guardado en el catálogo');
   });
 }
@@ -463,8 +483,8 @@ Pasos, convenciones y ejemplos…</textarea>
     <label>Nombre</label><input name="name" required autofocus />
     <label>Rol</label><select name="role">${roleOptions('back')}</select>
     <label>Motor</label><select name="engine">${engineOptions('auto')}</select>
-    <label>Modelo (opcional)</label><input name="model" placeholder="por defecto del CLI" />
-    ${buttons('Contratar')}`, (f) => api('POST', '/api/agents', { ...f, projectId })),
+    <label>Modelo (opcional)</label>${modelSelect('model', 'auto', '')}
+    ${buttons('Contratar')}`, (f) => api('POST', '/api/agents', { ...f, model: pickModel(f), projectId })),
   'new-task': () => dialog(`
     <h3>Nueva tarea</h3>
     <label>Título</label><input name="title" required autofocus />
@@ -662,10 +682,10 @@ function editAgent(id) {
     <label>Rol</label><select name="role">${roleOptions(a.role)}</select>
     <div class="grid2">
       <div><label>Motor</label><select name="engine">${engineOptions(a.engine)}</select></div>
-      <div><label>Modelo</label><input name="model" value="${esc(a.model || '')}" placeholder="por defecto del rol / sonnet" /></div>
+      <div><label>Modelo</label>${modelSelect('model', a.engine, a.model || '')}</div>
     </div>
     ${a.status === 'working' ? '<p class="muted">Está trabajando: los cambios se aplican a partir de su siguiente tarea.</p>' : ''}
-    ${buttons('Guardar')}`, async (f) => { await api('PATCH', `/api/agents/${id}`, f); toast('Agente actualizado'); });
+    ${buttons('Guardar')}`, async (f) => { await api('PATCH', `/api/agents/${id}`, { ...f, model: pickModel(f) }); toast('Agente actualizado'); });
 }
 
 // Editar una tarea desde su tarjeta.
