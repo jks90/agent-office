@@ -92,6 +92,25 @@ Intervenir en un agente que trabaja (sección 6.3 de la especificación del Guid
 - **Constraints**: `task.constraints[] = {text, at, origin}` (`POST /api/tasks/:id/constraints` o `constraint:true` en el mensaje). Van **siempre** en `buildPrompt` («Restricciones del cliente (obligatorias…)»), también tras Devolver o reintentar. El modal de la tarea las lista. Evento `UserInstructionAdded` (`kind: 'message'|'constraint'`).
 - **UI**: botones ⏸ Pausar / ▶ Reanudar / ✉ Mensaje en la tarjeta del agente, el cajón y el modal de la tarea.
 
+## Integraciones deterministas del Guide (FT-10)
+
+Fase 4 de la especificación (preferencia 2: API/CLI antes que visión). Nuevas tools del registro de FT-4 (`server/guide/integrations.js`; mismo `POST /api/guide/tool` y MCP: `ide_openFile`, `git_status`…), todas bajo la Policy Layer, con auditoría y **limitadas a los repos del proyecto** (y a los worktrees de sus tareas):
+
+| Tool | Política | Qué hace |
+|---|---|---|
+| `ide.openFile {path, line?, task?, repo?}` | navigate | Abre el fichero en el IDE: `AO_IDE_CMD` (por defecto `code --goto {path}:{line}`; se trocea sin shell). Con `task` abre la copia del worktree y, sin `line`, la del **primer hunk** del diff. Sin IDE → 503 y el Guide cae a `app.openArtifact` (diff en la UI). |
+| `git.status` / `git.diff` / `git.log {repo, branch?}` | read | Reutilizan `server/git.js`. Con `branch` el diff es `base...rama` y el estado se mira en el worktree de esa rama. Rama validada (sin `-opciones`). |
+| `filesystem.read {repo\|task, path}` | read | Solo dentro del repo/worktree (resuelve symlinks), tope **200 KB** (recorta y avisa). Nunca `.env*`, `.git` ni `data/`. |
+| `filesystem.write {repo\|task, path, content}` | write → confirmación | Mismos límites. |
+| `terminal.execute {repo\|task, cmd}` | execute | **Misma lista blanca que los workers** (`server/engines/allowlist.js`, compartida con `engines/claude.js`: sin `rm`, `sudo`, `docker`, `ssh` ni `git push`). Sin shell (`execFile`): se rechazan `; & \| > < $ ( ) { } \` y backticks, `find -exec/-delete`, `xargs` con comandos no permitidos y rutas fuera del repo o vetadas. Timeout **60 s**, salida recortada a 20 KB por flujo; `exitCode` ≠ 0 no es un error HTTP. |
+| `browser.open {url}` | navigate | Solo `http(s)`; `xdg-open` (`open` en macOS; `AO_BROWSER_CMD` lo cambia). |
+
+`repo` es la clave de un repo del proyecto; con `task` se trabaja en su worktree. Límite conocido: la lista blanca es la de los workers, así que `node -e`, `python3 -c` o `curl` siguen pudiendo hacer lo que hagan (igual que un worker); por eso `terminal.execute` es `execute` y se puede pasar a confirmación en Ajustes ▸ 🛡 Guide Agent.
+
+«Enséñame lo que ha cambiado» / «abre el fichero que acaba de modificar»: `agent.getModifiedFiles` + `ide.openFile` con el código de la tarea (VS Code en la línea del primer hunk); si no hay IDE, `app.openArtifact`.
+
+Prueba: `node scripts/integrations-e2e.mjs` (55 comprobaciones, sin Claude: servidor temporal, repo git de pega, IDE/navegador falsos que registran sus argumentos). Incluye `rm -rf`, encadenados y rutas fuera del repo rechazados, `.env`/`data/`/symlinks, tope de 200 KB y timeout.
+
 ## 🧭 Guía (FT-6 · FT-12)
 
 Mapa rápido (cada pieza es una tarea y tiene su sección en este README): eventos **FT-1** · contexto de la UI **FT-2** · contexto de flow-test **FT-3** (en el repo flow-test) · tools, políticas y MCP **FT-4** · control de workers **FT-5** · chat y proveedores **FT-6** · Task Capture **FT-7** · e2e **FT-11** · documentación **FT-12**. Cómo encaja todo: flow `flowtest/arquitectura-guide.flow.json` del workspace (Mermaid de arquitectura, eventos y permisos + cajitas ejecutables contra `/api/context`, `/api/events` y `/api/guide/tool`) y, comparado con la especificación, `AgentOffice - Guía y oficina de agentes.md` en la carpeta docs/ del proyecto (12-flowtest).
@@ -140,7 +159,8 @@ server/index.js     HTTP + API REST + SSE (/events)
 server/team.js      proyectos, agentes, tareas, planificador, revisión
 server/events.js    Activity Stream tipado (FT-1)
 server/context.js   contexto de la UI para el Guide Agent (FT-2)
-server/guide/       Guide Agent: tools + política + auditoría (FT-4), chats, prompt y proveedores (FT-6)
+server/guide/       Guide Agent: tools + política + auditoría (FT-4), chats, prompt y proveedores (FT-6), integraciones IDE/git/fs/terminal/browser (FT-10)
+server/engines/allowlist.js  lista blanca de shell compartida por el motor Claude y terminal.execute (FT-10)
 bin/ao-mcp.mjs      servidor MCP stdio del Guide (FT-4)
 server/git.js       worktrees, commit, diff, merge
 server/engines/     demo · claude · codex (+ describe.js: herramienta → frase del bocadillo)

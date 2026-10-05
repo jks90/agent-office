@@ -11,6 +11,7 @@ import * as activity from '../events.js';
 import { prefixOf } from '../codes.js';
 import { draftTask } from '../ai-draft.js';
 import { cleanContext } from '../task-context.js';
+import * as integ from './integrations.js';
 import { gate, audit, summarize, POLICIES } from './policy.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
@@ -164,6 +165,18 @@ export const tools = [
       else if (t.branch && repo) { const out = await git.git(repo.path, 'log', '--format=%h %s', '--grep', `Merge branch '${t.branch}'`, '-1'); commits = out ? [out + ' (ya fusionada)'] : []; }
       return { task: t.code || t.id, branch: t.branch || null, summary: t.summary, diffStat: t.diffStat, commits };
     }),
+
+  // — Integraciones deterministas (FT-10): IDE, git, filesystem, terminal, navegador. Solo repos/worktrees del proyecto —
+  T('ide.openFile', 'Abre un fichero en el IDE del usuario (AO_IDE_CMD, por defecto VS Code) en una línea. Con «task» abre la copia del worktree de la tarea y, si no das «line», la del primer hunk de su diff. «path» es relativo al repo (como lo devuelve agent_getModifiedFiles). Si responde 503 no hay IDE: enseña el diff con app_openArtifact.',
+    obj({ path: str('Fichero, relativo al repo/worktree'), line: { type: 'integer', description: 'Línea (opcional)' }, task: str('Código de la tarea a la que pertenece el fichero (recomendado)'), repo: str('Clave del repo (si no das tarea)') }, ['path']), 'navigate',
+    (a) => integ.ideOpenFile(a)),
+  T('git.status', 'git status del repo (o del worktree de la rama indicada).', obj({ repo: str('Clave del repo'), branch: str('Rama de una tarea (opcional)') }, ['repo']), 'read', (a) => integ.gitStatus(a)),
+  T('git.diff', 'git diff del repo: con «branch», rama base...rama; sin ella, los cambios sin confirmar frente a HEAD. Recortado a 200 KB.', obj({ repo: str('Clave del repo'), branch: str('Rama de una tarea (opcional)') }, ['repo']), 'read', (a) => integ.gitDiff(a)),
+  T('git.log', 'git log del repo (o de una rama): hash, fecha, autor y asunto.', obj({ repo: str('Clave del repo'), branch: str('Rama (opcional)'), limit: { type: 'integer', description: 'Máx. de commits (20 por defecto, 100 como mucho)' } }, ['repo']), 'read', (a) => integ.gitLog(a)),
+  T('filesystem.read', 'Lee un fichero de un repo/worktree del proyecto (máx. 200 KB). Nunca .env, .git ni data/; fuera del repo da error.', obj({ repo: str('Clave del repo'), task: str('Código de la tarea (lee su worktree)'), path: str('Fichero, relativo al repo') }, ['path']), 'read', (a) => integ.fsRead(a)),
+  T('filesystem.write', 'Escribe (crea o sobrescribe) un fichero dentro de un repo/worktree del proyecto (máx. 200 KB). Pide confirmación. Nunca .env, .git ni data/.', obj({ repo: str('Clave del repo'), task: str('Código de la tarea (escribe en su worktree)'), path: str('Fichero, relativo al repo'), content: str('Contenido completo') }, ['path', 'content']), 'write', (a) => integ.fsWrite(a)),
+  T('terminal.execute', 'Ejecuta un comando en la raíz de un repo/worktree, sin shell (nada de ; & | > $ ni sustituciones). Solo la lista blanca de los workers (npm, node, git status/diff/log/add/commit…, ls, cat, grep…; sin rm, sudo, docker, ssh ni git push). Timeout 60 s y salida recortada.', obj({ repo: str('Clave del repo'), task: str('Código de la tarea (corre en su worktree)'), cmd: str('Comando, p. ej. «git status --short»') }, ['cmd']), 'execute', (a) => integ.terminalExecute(a)),
+  T('browser.open', 'Abre una URL http(s) en el navegador del usuario (xdg-open).', obj({ url: str('URL') }, ['url']), 'navigate', (a) => integ.browserOpen(a)),
 
   // — Ejecución y borrado —
   T('project.run', 'Pone a trabajar (running=true) o pausa (false) al equipo del proyecto.', obj({ projectId: str('Id o nombre del proyecto'), running: { type: 'boolean' } }, ['projectId', 'running']), 'execute',
