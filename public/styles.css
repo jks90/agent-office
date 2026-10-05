@@ -355,4 +355,9 @@ table.summary td.num, table.summary th.num { text-align: right; font-variant-num
 table.summary td.zero { color: var(--line); }
 table.summary td.st-doing { color: #93c5fd; font-weight: 700; } table.summary td.st-review { color: #fbbf24; font-weight: 700; } table.summary td.st-failed { color: #f87171; font-weight: 700; } table.summary td.st-done { color: var(--ok); }
 table.summary .busy { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+/* Consumo de tokens en el Resumen (FT-26) */
+.tokrow { display: flex; white-space: nowrap; gap: 6px; align-items: center; font-size: 11px; margin: 2px 0; } .tokrow.old { opacity: .6; }
+.tokrow .tok { color: var(--ok); font-weight: 600; }
+.tokbar { display: inline-block; width: 60px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.tokbar i { display: block; height: 100%; background: var(--ok); } .tokbar.warn i { background: #fbbf24; } .tokbar.bad i { background: #f87171; }
 table.summary button.small.on { background: color-mix(in srgb, var(--ok) 20%, transparent); border-color: var(--ok); color: #b8f4d8; }

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 import { describeTool, toolSummary, firstLine } from './describe.js';
 import { BASH_TOOLS } from './allowlist.js';
+import { claudeTracker } from '../usage.js';
 
 // Lectura/edición + shell de andar por casa (sin rm, sudo, docker, ssh ni git push; lista blanca compartida con terminal.execute del Guide, FT-10).
 const WORK_TOOLS = ['Read', 'Edit', 'MultiEdit', 'Write', 'Glob', 'Grep', 'TodoWrite', ...BASH_TOOLS];
@@ -13,7 +14,7 @@ const WORK_TOOLS = ['Read', 'Edit', 'MultiEdit', 'Write', 'Glob', 'Grep', 'TodoW
 const ASK_RULE = `Bash(node ${path.join(ROOT, 'bin', 'ao-ask.mjs')} *)`;
 const PLAN_TOOLS = ['Read', 'Glob', 'Grep', ASK_RULE, 'Bash(ls *)', 'Bash(cat *)', 'Bash(head *)', 'Bash(sed -n *)', 'Bash(grep *)', 'Bash(find *)', 'Bash(wc *)', 'Bash(git log*)', 'Bash(git status*)', 'Bash(git diff*)'];
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv = {}, onActivity, onLog, onTool = () => {} }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
   const tools = [...(mode === 'plan' ? PLAN_TOOLS : WORK_TOOLS)];
   // FT-5: entrada stream-json con stdin abierto → se pueden inyectar mensajes del cliente en caliente.
   const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--append-system-prompt', system];
@@ -42,6 +43,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv 
   const cancelClose = () => { clearTimeout(closeTimer); closeTimer = null; };
 
   let result = null;
+  const tracker = claudeTracker();
   let stopped = false;
   const stderr = [];
 
@@ -49,6 +51,8 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv 
     let ev;
     try { ev = JSON.parse(line); } catch { if (line.trim()) onLog(line); return; }
     if (closeTimer && ev.type !== 'result') cancelClose(); // otro turno en marcha
+    const u = tracker.feed(ev); // FT-26: solo cifras de uso
+    if (u) onUsage(u);
     if (ev.type === 'assistant') {
       for (const c of ev.message?.content || []) {
         if (c.type === 'tool_use') {
