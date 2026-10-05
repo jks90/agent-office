@@ -99,6 +99,39 @@ export function uncentralize(name) {
   try { if (fs.lstatSync(link).isSymbolicLink()) fs.unlinkSync(link); else throw new Error('no es un enlace'); } catch (e) { throw Object.assign(new Error(`No pude quitar «${name}» del catálogo: ${e.message}`), { status: 400 }); }
 }
 
+// Leer / escribir el SKILL.md de una skill (del catálogo o del inventario; solo bajo $HOME) y crear skills en el catálogo.
+const safeDir = (dir) => {
+  const d = real(expand(dir));
+  if (!d.startsWith(HOME + path.sep) || !isSkillDir(d)) throw Object.assign(new Error('Carpeta de skill no válida'), { status: 400 });
+  return d;
+};
+export function readSkillFile(dir) {
+  const d = safeDir(dir);
+  const files = [];
+  const walk = (base, rel = '') => { for (const e of fs.readdirSync(base, { withFileTypes: true })) { if (e.name.startsWith('.') || e.name === 'node_modules') continue; const r = rel ? `${rel}/${e.name}` : e.name; if (e.isDirectory()) { if (files.length < 200) walk(path.join(base, e.name), r); } else files.push(r); } };
+  try { walk(d); } catch { /* parcial */ }
+  return { dir: d, file: path.join(d, 'SKILL.md'), content: fs.readFileSync(path.join(d, 'SKILL.md'), 'utf8'), files: files.sort() };
+}
+export function writeSkillFile(dir, content) {
+  const d = safeDir(dir);
+  const text = String(content ?? '');
+  if (!/^---\r?\n[\s\S]*?\r?\n---/.test(text)) throw Object.assign(new Error('El SKILL.md debe empezar por el frontmatter (--- name / description ---)'), { status: 400 });
+  const f = path.join(d, 'SKILL.md');
+  fs.copyFileSync(f, f + '.bak');
+  fs.writeFileSync(f, text.endsWith('\n') ? text : text + '\n');
+  return readSkillFile(d);
+}
+export function createSkill({ name, description = '', body = '' }) {
+  ensureCatalog();
+  const nm = String(name || '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+  if (!nm) throw Object.assign(new Error('La skill necesita un nombre'), { status: 400 });
+  const d = path.join(skillsDir(), nm);
+  if (fs.existsSync(d)) throw Object.assign(new Error(`Ya existe «${nm}» en el catálogo`), { status: 409 });
+  fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(path.join(d, 'SKILL.md'), `---\nname: ${nm}\ndescription: ${String(description).replace(/\n/g, ' ').trim()}\n---\n\n${String(body).trim() || `# ${nm}\n\nInstrucciones de la skill.`}\n`);
+  return { name: nm, dir: d };
+}
+
 // Enlazar las skills de un rol en el worktree del agente (.claude/skills/<nombre>) sin que entren en los commits.
 export function linkSkillsInto(cwd, names) {
   const wanted = (names || []).filter(Boolean);

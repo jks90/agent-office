@@ -73,6 +73,9 @@ const routes = [
   // Catálogo central de skills y roles
   ['GET', /^\/api\/skills$/, () => ({ catalogDir: skills.catalogDir(), catalog: skills.listCatalog(), inventory: skills.inventory() })],
   ['POST', /^\/api\/skills\/centralize$/, (_, b) => skills.centralize(b.dir, b.name)],
+  ['POST', /^\/api\/skills\/read$/, (_, b) => skills.readSkillFile(b.dir)],
+  ['POST', /^\/api\/skills\/write$/, (_, b) => skills.writeSkillFile(b.dir, b.content)],
+  ['POST', /^\/api\/skills\/new$/, (_, b) => skills.createSkill(b)],
   ['DELETE', /^\/api\/skills\/([\w-]+)$/, ([name]) => skills.uncentralize(name)],
   ['POST', /^\/api\/roles$/, (_, b) => { const r = saveRole(b); store.changed(); return r; }],
   ['DELETE', /^\/api\/roles\/([\w-]+)$/, ([id]) => { deleteRole(id); store.changed(); }],

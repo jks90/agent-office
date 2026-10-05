@@ -208,6 +208,8 @@ dialog input, dialog select, dialog textarea { width: 100%; }
 dialog .row { display: flex; justify-content: flex-end; gap: var(--s-2); margin-top: var(--s-4); }
 dialog .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
 dialog select[multiple] { width: 100%; }
+dialog textarea.code { font: 12px/1.45 ui-monospace, monospace; min-height: 360px; }
+dialog .files { font-size: 11px; color: var(--muted); max-height: 70px; overflow: auto; margin-top: 6px; }
 dialog pre { background: var(--panel3); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--s-3); max-height: 60vh; overflow: auto; font-size: 12px; }
 dialog.wide { width: min(1000px, 94vw); }
 .diff-add { color: #4ade80; } .diff-del { color: #f87171; } .diff-hunk { color: #60a5fa; }

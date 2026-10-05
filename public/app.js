@@ -184,9 +184,20 @@ async function renderSkills(reload = false) {
   const groups = {};
   for (const s of inventory) (groups[s.sourceLabel] = groups[s.sourceLabel] || []).push(s);
   el.innerHTML = `<div class="skills-wrap">
-    <div class="skills-box"><h4>Catálogo central (lo que pueden usar los roles)</h4>${catalog.length ? catalog.map((s) => `<div class="skill"><span class="nm">${esc(s.name)}</span><span class="ds" title="${esc(s.description)}">${esc(s.description)}</span><span class="src" title="${esc(s.target)}">${s.broken ? '⚠ roto' : '→ ' + esc(short(s.target))}</span><button class="small danger" data-skill-del="${esc(s.name)}" title="Quitar del catálogo (no borra la skill)">✕</button></div>`).join('') : '<p class="muted">Vacío. Añade skills desde el inventario →</p>'}</div>
-    <div class="skills-box"><h4>Inventario del PC</h4>${Object.entries(groups).map(([g, list]) => `<div class="muted" style="margin:8px 0 4px;font-weight:600">${esc(g)} <span class="muted">(${list.length})</span></div>${list.map((s) => `<div class="skill"><span class="nm">${esc(s.name)}</span><span class="ds" title="${esc(s.description)}">${esc(s.description)}</span>${s.central ? `<span class="src">✓ en catálogo${s.central !== s.name ? ' como ' + esc(s.central) : ''}</span>` : `<button class="small ghost" data-skill-add="${esc(s.dir)}" title="${esc(s.dir)}">→ Catálogo</button>`}</div>`).join('')}`).join('')}</div>
+    <div class="skills-box"><h4>Catálogo central (lo que pueden usar los roles)</h4>${catalog.length ? catalog.map((s) => `<div class="skill"><span class="nm">${esc(s.name)}</span><span class="ds" title="${esc(s.description)}">${esc(s.description)}</span><span class="src" title="${esc(s.target)}">${s.broken ? '⚠ roto' : '→ ' + esc(short(s.target))}</span><button class="small ghost" data-skill-edit="${esc(s.target)}" title="Editar SKILL.md">✎</button><button class="small danger" data-skill-del="${esc(s.name)}" title="Quitar del catálogo (no borra la skill)">✕</button></div>`).join('') : '<p class="muted">Vacío. Añade skills desde el inventario →</p>'}</div>
+    <div class="skills-box"><h4>Inventario del PC</h4>${Object.entries(groups).map(([g, list]) => `<div class="muted" style="margin:8px 0 4px;font-weight:600">${esc(g)} <span class="muted">(${list.length})</span></div>${list.map((s) => `<div class="skill"><span class="nm">${esc(s.name)}</span><span class="ds" title="${esc(s.description)}">${esc(s.description)}</span><button class="small ghost" data-skill-edit="${esc(s.dir)}" title="Editar SKILL.md">✎</button>${s.central ? `<span class="src">✓ en catálogo${s.central !== s.name ? ' como ' + esc(s.central) : ''}</span>` : `<button class="small ghost" data-skill-add="${esc(s.dir)}" title="${esc(s.dir)}">→ Catálogo</button>`}</div>`).join('')}`).join('')}</div>
   </div>`;
+}
+
+async function editSkill(dir) {
+  const r = await api('POST', '/api/skills/read', { dir });
+  dialog(`
+    <h3>✎ SKILL.md</h3>
+    <p class="muted" style="margin:0 0 6px">${esc(short(r.file))}</p>
+    <textarea name="content" class="code" spellcheck="false">${esc(r.content)}</textarea>
+    ${r.files.length > 1 ? `<div class="files">Otros ficheros de la skill (solo lectura aquí): ${r.files.filter((f) => f !== 'SKILL.md').map(esc).join(' · ')}</div>` : ''}
+    <p class="muted">Se guarda en el fichero real (copia previa en SKILL.md.bak).</p>
+    ${buttons('Guardar')}`, async (f) => { await api('POST', '/api/skills/write', { dir, content: f.content }); toast('SKILL.md guardado'); renderSkills(true); }, 'wide');
 }
 
 async function saveRepos(repos) {
@@ -394,6 +405,14 @@ const actions = {
   'add-repo': () => editRepo(''),
   'new-role': () => editRole('', false),
   'reload-skills': () => renderSkills(true),
+  'new-skill': () => dialog(`
+    <h3>＋ Nueva skill en el catálogo</h3>
+    <label>Nombre (sin espacios)</label><input name="name" placeholder="mi-skill" required autofocus />
+    <label>Descripción (cuándo usarla; es lo que lee el modelo para decidir)</label><input name="description" />
+    <label>Instrucciones (cuerpo del SKILL.md, Markdown)</label><textarea name="body" class="code" rows="10"># Mi skill
+
+Pasos, convenciones y ejemplos…</textarea>
+    ${buttons('Crear')}`, async (f) => { const r = await api('POST', '/api/skills/new', f); toast(`Skill «${r.name}» creada en el catálogo`); renderSkills(true); }),
   sync: async () => { const r = await api('POST', '/api/sync'); toast(`Carpetas de flow-test: ${r.folders.join(', ')}${r.created ? ` · ${r.created} proyecto(s) nuevo(s)` : ''}`); },
   'new-project': () => dialog(`
     <h3>Nuevo proyecto</h3>
@@ -678,6 +697,7 @@ document.addEventListener('click', async (e) => {
   if (d.roleDel) { if (confirm(`¿Borrar el rol «${d.roleDel}» del catálogo?`)) api('DELETE', `/api/roles/${d.roleDel}`).then(() => toast('Rol borrado')); return; }
   if (d.skillAdd) return api('POST', '/api/skills/centralize', { dir: d.skillAdd }).then((r) => { toast(`«${r.name}» en el catálogo`); renderSkills(true); });
   if (d.skillDel) return api('DELETE', `/api/skills/${d.skillDel}`).then(() => { toast('Quitada del catálogo'); renderSkills(true); });
+  if (d.skillEdit) return editSkill(d.skillEdit);
   if (d.agentEdit) return editAgent(d.agentEdit);
   if (d.park) return api('PATCH', `/api/tasks/${d.park}`, { status: 'backlog' });
   if (d.del) { if (confirm('¿Borrar la tarea?')) api('DELETE', `/api/tasks/${d.del}`); return; }
