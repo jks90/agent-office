@@ -69,7 +69,7 @@ export function extractText(file) {
   } catch { return null; }
 }
 
-const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), questions: questions.list(), guidePolicy: guidePolicy.getPolicy() }; };
+const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), questions: questions.list(), guidePolicy: guidePolicy.getPolicy(), guideProviders: guide.providerInfo() }; };
 
 async function readBody(req) {
   const limit = req.url.startsWith('/api/upload') ? 40e6 : 1e6; // adjuntos en base64 (≈30 MB de ficheros)
@@ -176,6 +176,10 @@ const routes = [
     if (b.maxParallel) st.maxParallel = Math.max(1, Math.min(8, Number(b.maxParallel) || 4));
     if (typeof b.guideModel === 'string') st.guideModel = b.guideModel.trim();
     if (guide.providerNames().includes(b.guideProvider)) st.guideProvider = b.guideProvider;
+    if (b.guideModels && typeof b.guideModels === 'object') { // modelo por proveedor del Guide (FT-8)
+      st.guideModels = { ...st.guideModels };
+      for (const n of guide.providerNames()) if (typeof b.guideModels[n] === 'string') { const v = b.guideModels[n].trim(); if (v) st.guideModels[n] = v; else delete st.guideModels[n]; }
+    }
     if (b.guidePolicy && typeof b.guidePolicy === 'object') guidePolicy.setPolicy(b.guidePolicy);
     store.changed();
     return st;

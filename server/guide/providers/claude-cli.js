@@ -11,6 +11,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+export const label = 'Claude Code (CLI)';
+export const defaultModel = 'sonnet';
+export const ready = () => true; // usa la sesión del propio `claude` (suscripción o clave)
 const IDLE_MS = 10 * 60_000;
 const MCP_SERVER = 'agentoffice';
 // `mcp__agentoffice__task_create` → `task.create` (los nombres MCP no admiten «.»; ver bin/ao-mcp.mjs)

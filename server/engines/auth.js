@@ -30,6 +30,15 @@ export function engineEnv(engine) {
   return {};
 }
 
+// Clave API para los proveedores HTTP del Guide (FT-8): la guardada en Ajustes ▸ Motores (claude → Anthropic; la de Codex también
+// se copia aquí como `openai`) o, si no hay, la variable de entorno.
+export function guideApiKey(provider) {
+  const k = readKeys();
+  if (provider === 'anthropic') return k.claude || process.env.ANTHROPIC_API_KEY || null;
+  if (provider === 'openai') return k.openai || process.env.OPENAI_API_KEY || null;
+  return null;
+}
+
 // ── Estado ──────────────────────────────────────────────────────────────────
 async function claudeStatus() {
   const keys = readKeys();
@@ -162,6 +171,7 @@ export function cancelLogin(engine) {
 
 export async function logout(engine) {
   cancelLogin(engine);
+  if (engine === 'codex') setApiKey('openai', null);
   if (engine === 'claude') { setApiKey('claude', null); await exec(BIN.claude, ['auth', 'logout'], { timeout: 15000 }).catch(() => {}); }
   else await exec(BIN.codex, ['logout'], { timeout: 15000 }).catch(() => {});
 }
@@ -174,7 +184,7 @@ export async function loginWithApiKey(engine, key) {
     const p = spawn(BIN.codex, ['login', '--with-api-key'], { env: { ...process.env, BROWSER: 'true' }, stdio: ['pipe', 'pipe', 'pipe'] });
     let err = '';
     p.stderr.on('data', (d) => { err += d; });
-    p.on('close', (c) => (c === 0 ? resolve() : reject(Object.assign(new Error(strip(err).trim() || `codex login terminó con código ${c}`), { status: 400 }))));
+    p.on('close', (c) => (c === 0 ? (setApiKey('openai', key), resolve()) : reject(Object.assign(new Error(strip(err).trim() || `codex login terminó con código ${c}`), { status: 400 }))));
     p.stdin.end(key.trim() + '\n');
   });
 }

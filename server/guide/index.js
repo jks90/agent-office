@@ -9,11 +9,20 @@ import * as context from '../context.js';
 import * as activity from '../events.js';
 import { SYSTEM } from './prompt.js';
 import * as claudeCli from './providers/claude-cli.js';
+import * as anthropicApi from './providers/anthropic-api.js';
+import * as openaiApi from './providers/openai-api.js';
 import * as fakeProvider from './providers/fake.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
-const PROVIDERS = { 'claude-cli': claudeCli, ...(process.env.AO_GUIDE_FAKE === '1' ? { fake: fakeProvider } : {}) }; // `fake` (FT-11): solo para pruebas e2e
+const PROVIDERS = { 'claude-cli': claudeCli, 'anthropic-api': anthropicApi, 'openai-api': openaiApi, ...(process.env.AO_GUIDE_FAKE === '1' ? { fake: fakeProvider } : {}) }; // `fake` (FT-11): solo para pruebas e2e
 export const providerNames = () => Object.keys(PROVIDERS);
+// Para Ajustes (FT-8): proveedores elegibles con su modelo por defecto y si tienen credenciales. El modelo de cada uno va en
+// settings.guideModels[proveedor]; claude-cli conserva settings.guideModel (FT-6).
+export const providerInfo = () => Object.entries(PROVIDERS).filter(([n]) => n !== 'fake').map(([id, m]) => ({ id, label: m.label, defaultModel: m.defaultModel, ready: m.ready() }));
+export function modelFor(name) {
+  const st = store.get().settings;
+  return (name === 'claude-cli' ? st.guideModel : st.guideModels?.[name]) || PROVIDERS[name].defaultModel;
+}
 const DIR = () => path.join(store.DATA_DIR, 'guide');
 const file = (id) => path.join(DIR(), `${id}.json`);
 const MAX_EVENTS = 40;
@@ -77,13 +86,13 @@ export async function* chat({ chatId, text, client = null }) {
   const c = cur || { id: 'g_' + store.newId(), title: text.slice(0, 60), createdAt: Date.now(), updatedAt: Date.now(), sessionId: null, provider: null, lastEventTs: 0, messages: [] };
   const name = store.get().settings.guideProvider || 'claude-cli';
   if (!PROVIDERS[name]) throw fail(400, `Proveedor de Guide desconocido: ${name}`);
-  const model = store.get().settings.guideModel || 'sonnet';
+  const model = modelFor(name);
 
   let slot = providers.get(c.id);
   if (!slot || slot.model !== model || slot.name !== name) {
     slot?.provider.stop();
     const provider = PROVIDERS[name].create();
-    provider.start({ system: SYSTEM, model, resume: c.provider === name ? c.sessionId : null, cwd: store.DATA_DIR });
+    provider.start({ system: SYSTEM, model, resume: c.provider === name ? c.sessionId : null, history: c.messages, cwd: store.DATA_DIR });
     slot = { provider, model, name };
     providers.set(c.id, slot);
   }
@@ -103,13 +112,13 @@ export async function* chat({ chatId, text, client = null }) {
   let reply = '';
   const flush = () => { if (reply) { c.messages.push({ role: 'assistant', ts: Date.now(), text: reply }); reply = ''; } };
   try {
-    for await (const ev of provider.send({ text, context: prompt })) {
+    for await (const ev of provider.send({ text, context: prompt, client })) {
       if (ev.type === 'text') { reply += (reply ? '\n\n' : '') + ev.text; }
       else if (ev.type === 'tool_call') { flush(); c.messages.push({ role: 'tool', ts: Date.now(), id: ev.id, name: ev.name, args: ev.args, ok: null, result: null }); }
       else if (ev.type === 'tool_result') { flush(); const m = c.messages.findLast((x) => x.role === 'tool' && x.id === ev.id); if (m) Object.assign(m, { ok: ev.ok, result: ev.result.slice(0, 4000) }); }
       else if (ev.type === 'error') { flush(); c.messages.push({ role: 'error', ts: Date.now(), text: ev.error, stopped: !!ev.stopped }); }
-      else if (ev.type === 'done') flush();
-      yield ev;
+      else if (ev.type === 'done') { flush(); if (ev.costUsd != null || ev.usage) c.messages.push({ role: 'meta', ts: Date.now(), provider: name, model, costUsd: ev.costUsd ?? null, usage: ev.usage || null }); }
+      yield ev.type === 'done' ? { ...ev, provider: name, model } : ev;
       if (ev.type !== 'text') { c.updatedAt = Date.now(); saveChat(c); }
     }
   } finally {

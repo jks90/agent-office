@@ -167,6 +167,7 @@ function guideRender() {
 function guideMsg(m, i) {
   if (m.role === 'user') return `<div class="g-msg user">${esc(m.text)}</div>`;
   if (m.role === 'assistant') return `<div class="g-msg assistant">${md(m.text)}</div>`;
+  if (m.role === 'meta') return `<div class="g-meta" title="${esc(m.provider || '')}">${esc(m.model || m.provider || '')}${m.costUsd != null ? ` · ≈ ${m.costUsd.toFixed(4)} $` : ''}${m.usage ? ` · ${m.usage.input + m.usage.cacheRead + m.usage.cacheWrite} tok entrada${m.usage.cacheRead ? ` (${m.usage.cacheRead} en caché)` : ''} / ${m.usage.output} salida` : ''}</div>`;
   if (m.role === 'error') return `<div class="g-msg error ${m.stopped ? 'stopped' : ''}">${m.stopped ? '■ ' : '⚠ '}${esc(m.text)}</div>`;
   const state = m.ok == null ? '<span class="st">⏳</span>' : m.ok ? '<span class="st ok">✓</span>' : '<span class="st bad">✗</span>';
   const args = Object.keys(m.args || {}).length ? JSON.stringify(m.args) : '';
@@ -222,6 +223,7 @@ async function guideSend(text) {
         else if (ev.type === 'text') push({ role: 'assistant', text: ev.text });
         else if (ev.type === 'tool_call') push({ role: 'tool', id: ev.id, name: ev.name, args: ev.args, ok: null, result: null });
         else if (ev.type === 'tool_result') { const m = G.messages.findLast((x) => x.role === 'tool' && x.id === ev.id); if (m) { m.ok = ev.ok; m.result = ev.result; } guideRender(); }
+        else if (ev.type === 'done' && (ev.costUsd != null || ev.usage)) push({ role: 'meta', provider: ev.provider, model: ev.model, costUsd: ev.costUsd ?? null, usage: ev.usage || null });
         else if (ev.type === 'error') push({ role: 'error', text: ev.error, stopped: !!ev.stopped });
       }
     }
@@ -708,7 +710,11 @@ Pasos, convenciones y ejemplos…</textarea>
     <label>Carpeta del workspace de flow-test en esta máquina (para deducir los repos de cada proyecto por sus enlaces)</label><input name="workspaceHostDir" value="${esc(S.settings.workspaceHostDir || '')}" placeholder="~/JksDocs/workspace" />
     <label>Agentes trabajando a la vez (máx.)</label><input name="maxParallel" type="number" min="1" max="8" value="${S.settings.maxParallel}" />
     <div class="section-title">🧭 Guía (FT-6)</div>
-    <label>Modelo de Claude con el que conversa el Guía</label>${modelSelect('guideModel', 'claude', S.settings.guideModel || '')}
+    <label>Proveedor del Guía (el LLM con el que conversa; los cuatro flujos funcionan igual con cualquiera) (FT-8)</label>
+    <select name="guideProvider">${(S.guideProviders || []).map((p) => `<option value="${esc(p.id)}" ${(S.settings.guideProvider || 'claude-cli') === p.id ? 'selected' : ''}>${esc(p.label)}${p.ready ? '' : ' — sin clave API'}</option>`).join('')}</select>
+    <label>Modelo con Claude Code (CLI)</label>${modelSelect('guideModel', 'claude', S.settings.guideModel || '')}
+    ${(S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => `<label>Modelo con ${esc(p.label)}</label><input name="gm_${esc(p.id)}" value="${esc(S.settings.guideModels?.[p.id] || '')}" placeholder="${esc(p.defaultModel)}" />`).join('')}
+    <p class="muted">Las APIs usan la clave guardada en «Motores de IA» (Claude → Anthropic, Codex → OpenAI) o ANTHROPIC_API_KEY / OPENAI_API_KEY; URL base con ANTHROPIC_BASE_URL / OPENAI_BASE_URL. El coste por turno sale en el chat cuando el proveedor lo da.</p>
     <div class="section-title">🛡 Guide Agent — qué puede hacer sin preguntarte (FT-4)</div>
     <label>Acciones que ponen a trabajar o pausan al equipo (ejecutar)</label>
     <select name="guideExecute"><option value="auto" ${S.guidePolicy?.execute === 'auto' ? 'selected' : ''}>Automático</option><option value="confirm" ${S.guidePolicy?.execute === 'confirm' ? 'selected' : ''}>Pedir confirmación</option></select>
@@ -727,7 +733,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <hr style="border-color:var(--line);margin:16px 0" />
     <button type="button" class="danger small" data-delete-project>Borrar el proyecto «${esc(project()?.name)}»</button>
     ${buttons()}`, async (f) => {
-    await api('POST', '/api/settings', { ...f, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guidePolicy: { execute: f.guideExecute, write: f.guideWrite } });
+    await api('POST', '/api/settings', { ...f, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite } });
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
     if (repos.map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|') !== cur) await api('PATCH', `/api/projects/${projectId}`, { repos });

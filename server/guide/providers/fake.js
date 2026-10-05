@@ -5,6 +5,7 @@
 // Un mensaje sin guion solo se devuelve en eco. Mismo contrato GuideProvider que claude-cli.js: start / send / stop / sessionId.
 import { run } from '../tools.js';
 
+export const label = 'fake', defaultModel = 'fake', ready = () => true;
 export function create() {
   let stopped = false;
   let sessionId = null;
