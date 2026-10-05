@@ -15,6 +15,7 @@ import { suiteOk, mcpUrl, flowTestUrl } from './suite.js';
 import { engineEnv, cachedEnginesStatus } from './engines/auth.js';
 import * as boards from './boards/index.js';
 import { linkSkillsInto } from './skills.js';
+import { cleanContext, describeContext } from './task-context.js';
 
 const ENGINES = { demo, claude, codex };
 export const ENGINE_IDS = ['auto', 'claude', 'codex', 'demo'];
@@ -304,7 +305,7 @@ export function messageAgent(id, { text, constraint = false, origin = 'user' } =
 }
 
 // ── Tareas ─────────────────────────────────────────────────────────────────
-export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null }) {
+export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null, context = null, skills = [] }) {
   // attachments (subidos): imágenes → images (las ve el agente), el resto → files (se citan en el prompt)
   for (const a of attachments) { if (/\.(png|jpe?g|webp)$/i.test(a.path)) images = [...images, a.path]; else files = [...files, a.path]; }
   const s = get();
@@ -317,7 +318,7 @@ export function createTask({ projectId, title, description = '', role, repo = nu
     dependsOn: (Array.isArray(dependsOn) ? dependsOn : []).filter((d) => s.tasks.some((t) => t.id === d)),
     status: ['backlog', 'todo', 'review', 'done'].includes(status) ? status : 'todo',
     agentId: null, branch: null, summary: '', diffStat: '', error: null, feedback: '', source, files: files.filter((f) => fs.existsSync(f)),
-    constraints: [], costUsd: null, attempts: 0, createdAt: Date.now(), updatedAt: Date.now(),
+    constraints: [], context: cleanContext(context), skills: (Array.isArray(skills) ? skills : []).map(String).slice(0, 10), costUsd: null, attempts: 0, createdAt: Date.now(), updatedAt: Date.now(),
   };
   codes.assignCode(s.tasks, p, task);
   task.feedbackImages = copyImages(task, images);
@@ -599,6 +600,7 @@ function buildPrompt(p, agent, t) {
     `Tarea ${t.code || '#' + t.id}: ${t.title}`,
     '',
     t.description,
+    t.context ? `\n${describeContext(t.context, true)}.` : '',
     clientBlock(t),
     done.length ? `\nTrabajo previo del equipo (ya fusionado):\n${done.map((d) => `- ${d.title}: ${d.summary}`).join('\n')}` : '',
     t.feedback ? `\nComentarios de la revisión anterior (corrígelos):\n${t.feedback}` : '',

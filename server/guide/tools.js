@@ -9,6 +9,8 @@ import * as git from '../git.js';
 import * as context from '../context.js';
 import * as activity from '../events.js';
 import { prefixOf } from '../codes.js';
+import { draftTask } from '../ai-draft.js';
+import { cleanContext } from '../task-context.js';
 import { gate, audit, summarize, POLICIES } from './policy.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
@@ -104,13 +106,24 @@ export const tools = [
   T('task.list', 'Lista tareas, filtradas por proyecto y/o estado.', obj({ projectId: str('Id o nombre del proyecto'), status: { type: 'string', enum: team.STATUSES } }), 'read',
     ({ projectId, status }) => { const pid = projectId ? findProject(projectId).id : null; return store.get().tasks.filter((t) => (!pid || t.projectId === pid) && (!status || t.status === status)).map(brief); }),
   T('task.get', 'Detalle de una tarea: descripción, resumen del agente, diffStat, error, preguntas y respuestas.', obj({ code: str('Código de la tarea') }, ['code']), 'read',
-    ({ code }) => { const t = findTask(code); return { ...brief(t), description: t.description, summary: t.summary, diffStat: t.diffStat, error: t.error, feedback: t.feedback, questions: t.questions || [], costUsd: t.costUsd, attempts: t.attempts, createdAt: t.createdAt }; }),
-  T('task.create', 'Crea una tarea en un proyecto (entra en la cola del equipo con su código).', obj({
+    ({ code }) => { const t = findTask(code); return { ...brief(t), context: t.context || null, description: t.description, summary: t.summary, diffStat: t.diffStat, error: t.error, feedback: t.feedback, questions: t.questions || [], costUsd: t.costUsd, attempts: t.attempts, createdAt: t.createdAt }; }),
+  // FT-7: borrador de tarea con la IA de «✨ Redactar con IA» + el contexto que el usuario tiene delante. No crea nada.
+  T('task.draft', 'Redacta (sin crearlo) el borrador de una tarea a partir de lo que pide el usuario y de lo que está viendo (flow/nodo de flow-test, tarea o agente abiertos): título, descripción con «Hecho cuando», rol, repo y skills. Enséñaselo al usuario y, si lo aprueba, pásalo a task_create. Tarda unos segundos.', obj({
+    projectId: str('Id o nombre del proyecto'), text: str('Lo que pide el usuario, tal cual'),
+  }, ['projectId', 'text']), 'read',
+  async ({ projectId, text }, ctx) => {
+    const p = findProject(projectId);
+    const c = context.get(ctx?.client);
+    const { costUsd, ...draft } = await draftTask({ projectId: p.id, text, context: cleanContext(c), model: store.get().settings.guideModel || '' });
+    return { projectId: p.id, ...draft };
+  }),
+  T('task.create', 'Crea una tarea en un proyecto (entra en la cola del equipo con su código). Guarda en la tarea el contexto que el usuario tenía delante (flow/nodo, tarea o agente abiertos) para que se vea «Nació de…» y el worker lo sepa; para título/descripción/rol usa antes task_draft.', obj({
     projectId: str('Id o nombre del proyecto'), title: str('Título'), description: str('Descripción / criterios de aceptación'), role: str('Rol que la hará (back, front, qa, po…)'),
     repo: str('Clave del repo (opcional)'), dependsOn: { type: 'array', items: { type: 'string' }, description: 'Códigos de tareas de las que depende' }, status: { type: 'string', enum: ['backlog', 'todo'] },
+    skills: { type: 'array', items: { type: 'string' }, description: 'Skills sugeridas (de las del rol)' },
   }, ['projectId', 'title', 'role']), 'write',
-  ({ projectId, title, description, role, repo, dependsOn = [], status }) => {
-    const t = team.createTask({ projectId: findProject(projectId).id, title, description, role, repo: repo || null, dependsOn: dependsOn.map((c) => findTask(c).id), status: status || 'todo' });
+  ({ projectId, title, description, role, repo, dependsOn = [], status, skills = [] }, ctx) => {
+    const t = team.createTask({ projectId: findProject(projectId).id, title, description, role, repo: repo || null, dependsOn: dependsOn.map((c) => findTask(c).id), status: status || 'todo', skills, context: cleanContext(context.get(ctx?.client)) });
     return brief(t);
   }),
   T('task.update', 'Edita una tarea que no esté en curso (título, descripción, rol, repo, estado backlog/todo, dependencias).', obj({
