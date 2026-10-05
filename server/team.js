@@ -242,6 +242,7 @@ function buildPrompt(p, agent, t) {
 
 async function runTask(p, agent, t) {
   const s = get();
+  jobs.set(agent.id, { stop() {}, taskId: t.id }); // ocupado DESDE YA (antes de cualquier await), o el mismo tick le daría dos tareas
   Object.assign(t, { status: 'doing', agentId: agent.id, error: null, attempts: t.attempts + 1, updatedAt: Date.now() });
   Object.assign(agent, { status: 'working', taskId: t.id, activity: t.kind === 'plan' ? 'Leyendo el objetivo' : 'Preparando su copia del repo' });
   changed();
