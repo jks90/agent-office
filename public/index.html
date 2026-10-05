@@ -28,6 +28,7 @@
   <div class="shell">
   <aside id="sidebar" class="sidebar">
     <button class="nav-item active" data-tab="office" title="Oficina"><span class="ico">🏢</span><span class="lbl">Oficina</span></button>
+    <button class="nav-item" data-tab="summary" title="Resumen de toda la empresa"><span class="ico">📊</span><span class="lbl">Resumen</span><span class="tab-count" id="tab-summary-count"></span></button>
     <button class="nav-item" data-tab="tasks" title="Tareas"><span class="ico">🗂</span><span class="lbl">Tareas</span><span class="tab-count" id="tab-tasks-count"></span></button>
     <button class="nav-item" data-tab="agents" title="Agentes"><span class="ico">👥</span><span class="lbl">Agentes</span><span class="tab-count" id="tab-agents-count"></span></button>
     <button class="nav-item" data-tab="guide" title="Guía (Ctrl+G)"><span class="ico">🧭</span><span class="lbl">Guía</span></button>
@@ -45,6 +46,7 @@
       </div>
     </section>
 
+    <section class="view" id="view-summary" hidden><div id="summary"></div></section>
     <section class="view" id="view-tasks" hidden>
       <form id="goal-form" class="goal">
         <textarea id="goal" rows="2" placeholder="🎯 Objetivo para el PO: p. ej. «Alta de clientes con email y verificación»"></textarea>

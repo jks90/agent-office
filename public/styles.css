@@ -335,3 +335,16 @@ dialog.question .q-context { color: var(--muted); font-size: 13px; margin-bottom
 #guide-panel .guide .g-list { display: none; }
 #view-guide .guide { margin: 0; }
 @media (max-width: 760px) { .guide .g-list { display: none; } }
+
+/* Resumen de la empresa */
+.summary-kpis { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+.kpi { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 14px; min-width: 120px; display: flex; flex-direction: column; gap: 2px; }
+.kpi b { font-size: 20px; } .kpi span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.kpi.on b { color: var(--ok); } .kpi.warn b { color: #fbbf24; } .kpi.bad b { color: #f87171; }
+table.summary tr[data-sum-project] { cursor: pointer; } table.summary tr[data-sum-project]:hover td { background: var(--panel2); }
+table.summary tr.sel td:first-child { box-shadow: inset 3px 0 0 var(--ok); }
+table.summary td.num, table.summary th.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.summary td.zero { color: var(--line); }
+table.summary td.st-doing { color: #93c5fd; font-weight: 700; } table.summary td.st-review { color: #fbbf24; font-weight: 700; } table.summary td.st-failed { color: #f87171; font-weight: 700; } table.summary td.st-done { color: var(--ok); }
+table.summary .busy { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+table.summary button.small.on { background: color-mix(in srgb, var(--ok) 20%, transparent); border-color: var(--ok); color: #b8f4d8; }

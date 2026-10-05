@@ -5,7 +5,7 @@ import * as store from './store.js';
 import { prefixOf } from './codes.js';
 import * as activity from './events.js';
 
-const VIEWS = ['office', 'tasks', 'agents', 'guide', 'settings'];
+const VIEWS = ['office', 'summary', 'tasks', 'agents', 'guide', 'settings'];
 const MAX_CLIENTS = 50;
 const clients = new Map(); // clientId → contexto publicado (el último del Map es el más reciente)
 const str = (v, n = 200) => (v == null || v === '' ? null : String(v).slice(0, n));
