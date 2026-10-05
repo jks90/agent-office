@@ -1,5 +1,6 @@
 // AgentOffice: servidor HTTP sin dependencias — estáticos, API REST y SSE (/events).
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as store from './store.js';
@@ -9,6 +10,18 @@ import { checkSuite, suiteInfo } from './suite.js';
 
 const PORT = Number(process.env.AO_PORT || 7420);
 const HOST = process.env.AO_HOST || '127.0.0.1'; // lanza procesos con tus permisos: solo local
+// Si se expone fuera del loopback (p. ej. para que el flow-test en Docker lo proxee), hace falta un token:
+// cabecera `x-ao-token` (flow-test lo manda desde FLOW_AGENTS_TOKEN). Desde 127.0.0.1 no se pide.
+const TOKEN = process.env.AO_TOKEN || (HOST !== '127.0.0.1' && HOST !== 'localhost' ? loadOrCreateToken() : null);
+function loadOrCreateToken() {
+  const f = path.join(store.DATA_DIR, '.token');
+  try { return fs.readFileSync(f, 'utf8').trim(); } catch { /* se crea */ }
+  const t = crypto.randomBytes(24).toString('base64url');
+  fs.mkdirSync(store.DATA_DIR, { recursive: true });
+  fs.writeFileSync(f, t, { mode: 0o600 });
+  return t;
+}
+const isLoopback = (req) => /^(::1|127\.\d+\.\d+\.\d+|::ffff:127\.\d+\.\d+\.\d+)$/.test(req.socket.remoteAddress || '');
 const PUBLIC = path.join(store.ROOT, 'public');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.json': 'application/json' };
 
@@ -85,6 +98,9 @@ function serveStatic(req, res) {
 
 http.createServer(async (req, res) => {
   const { pathname } = new URL(req.url, 'http://x');
+  if (TOKEN && !isLoopback(req) && req.headers['x-ao-token'] !== TOKEN) {
+    return res.writeHead(401, { 'content-type': 'application/json' }).end('{"error":"AgentOffice: falta el token (x-ao-token)"}');
+  }
   if (pathname === '/events') return events(req, res);
   if (!pathname.startsWith('/api/')) return serveStatic(req, res);
   const route = routes.find(([m, re]) => m === req.method && re.test(pathname));
@@ -95,4 +111,7 @@ http.createServer(async (req, res) => {
   } catch (e) {
     res.writeHead(e.status || 500, { 'content-type': 'application/json' }).end(JSON.stringify({ error: e.message, gated: e.gated, suite: e.suite }));
   }
-}).listen(PORT, HOST, () => console.log(`🏢 AgentOffice en http://${HOST}:${PORT}`));
+}).listen(PORT, HOST, () => {
+  console.log(`🏢 AgentOffice en http://${HOST}:${PORT}`);
+  if (TOKEN) console.log(`🔑 Token para el proxy de flow-test (FLOW_AGENTS_TOKEN): ${TOKEN}`);
+});

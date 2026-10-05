@@ -13,8 +13,10 @@ const office = new Office($('#office'), { onAgentClick: (id) => openDrawer(id) }
 function safeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
 function safeSet(k, v) { try { localStorage.setItem(k, v); } catch { /* sin almacenamiento */ } }
 
+// Base de la app: '/' en solitario o '/agents/' cuando flow-test la proxea como plugin de la suite.
+const BASE = new URL('.', location.href).pathname;
 async function api(method, url, body) {
-  const r = await fetch(url, { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const r = await fetch(BASE + url.replace(/^\//, ''), { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
     if (j.gated === 'suite') { if (j.suite) S.suite = j.suite; renderSuite(); }
@@ -33,7 +35,7 @@ function toast(text, kind = '') {
 }
 
 // ── Tiempo real ─────────────────────────────────────────────────────────────
-const es = new EventSource('/events');
+const es = new EventSource(BASE + 'events');
 es.addEventListener('state', (e) => {
   S = JSON.parse(e.data);
   if (!S.projects.some((p) => p.id === projectId)) projectId = S.projects[0]?.id ?? null;
