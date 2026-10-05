@@ -180,6 +180,8 @@ El nombre de la app sale de `/proc/<pid>/comm`. `available()` indica qué herram
 
 **`screen.describe` (FT-23)**: último recurso (la descripción de la tool manda al Guide a usar antes `window.getActive` / `app.getContext`). Política `read` con el mismo `confirmOnce` que `screen.capture` (la clave de sesión es compartida: confirmar una vale para la otra). Captura el escritorio, o usa `capturePath` de una captura previa (solo PNG dentro de `data/desktop/captures/`), y la describe con el proveedor del Guide (`server/guide/vision.js`, por `fetch`): `anthropic-api` (bloque `image` base64) u `openai-api` (`image_url` con data URL), con el modelo de `guideModels`. `claude-cli` y `fake` responden 501 «el proveedor actual no admite imágenes» (antes de capturar o preguntar); `fake` con `AO_DESKTOP=fake` devuelve una descripción fija. Si la ventana activa es flow-test/AgentOffice responde `{inside: true, hint: 'usa app.getContext'}` sin llamar al modelo. Argumento opcional `question`. Devuelve `{description, capturePath, provider, model}`.
 
+**e2e de escritorio (FT-24)**: `node scripts/desktop-e2e.mjs` (37 checks con el provider fake; `--real` además llama a getActive/list/capture contra el escritorio real y solo informa). Variables de prueba: `AO_DESKTOP_FAKE_ACTIVE=<título>` (el fake finge esa ventana activa, p. ej. «AgentOffice» para la regla «solo fuera») y `AO_DESKTOP_PLATFORM=darwin|win32` (simula otra plataforma → 501).
+
 Prueba: `node -e "import('./server/desktop/index.js').then(async m=>{const p=m.getProvider();console.log(p.session,p.available(),await p.getActive(),(await p.list()).length)})"`.
 
 ## Estructura
