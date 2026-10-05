@@ -28,6 +28,7 @@ const HAIR_SETS = [
   { row: 8, cols: [19, 20, 21, 22] },
 ];
 const hash = (s) => [...String(s)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
+const pick = (n, len) => (n >>> 0) % len;
 
 export class Office {
   constructor(canvas, { onAgentClick } = {}) {
@@ -234,20 +235,23 @@ export class Office {
     this.px(251, 28, 2, 2, '#fbbf24');
     // Cocina/café con sprites, vapor a mano
     if (this.assetsReady) {
-      this.tile(this.indoor, 13, 14, 256, 12);
-      this.tile(this.indoor, 13, 15, 256, 28);
-      this.tile(this.indoor, 14, 14, 288, 20);
-      this.tile(this.indoor, 14, 15, 288, 36);
-      this.tile(this.indoor, 0, 12, 272, 28);
-      this.tile(this.indoor, 1, 12, 304, 28);
+      this.tile(this.indoor, 13, 14, 256, 44);
+      this.tile(this.indoor, 13, 15, 256, 60);
+      this.tile(this.indoor, 13, 16, 256, 76);
+      this.tile(this.indoor, 0, 12, 272, 60);
+      this.tile(this.indoor, 0, 13, 272, 76);
+      this.tile(this.indoor, 14, 14, 288, 60);
+      this.tile(this.indoor, 14, 15, 288, 76);
+      this.tile(this.indoor, 1, 12, 304, 60);
+      this.tile(this.indoor, 1, 13, 304, 76);
     } else {
       this.px(266, 36, 50, 8, '#6b7280');
       this.px(296, 20, 14, 16, '#1f2937');
     }
-    this.px(278, 30, 5, 6, '#e5e7eb');
-    this.px(284, 32, 4, 4, '#fde68a');
+    this.px(278, 62, 5, 6, '#e5e7eb');
+    this.px(284, 64, 4, 4, '#fde68a');
     const steam = Math.floor(now / 260) % 3;
-    for (let i = 0; i < 3; i++) this.px(279 + i * 3, 25 - ((steam + i) % 3) * 2, 1, 3, 'rgba(255,255,255,.55)');
+    for (let i = 0; i < 3; i++) this.px(279 + i * 3, 57 - ((steam + i) % 3) * 2, 1, 3, 'rgba(255,255,255,.55)');
   }
 
   drawFloorOnly() {
@@ -261,7 +265,7 @@ export class Office {
   }
 
   drawRug(x, y) {
-    for (let ry = 0; ry < 4; ry++) for (let rx = 0; rx < 4; rx++) this.tile(this.indoor, 23 + rx, 4 + ry, x + rx * 16, y + ry * 16);
+    for (let ry = 0; ry < 4; ry++) for (let rx = 0; rx < 4; rx++) this.tile(this.indoor, 23 + rx, 14 + ry, x + rx * 16, y + ry * 16);
   }
 
   drawWhiteboard() {
@@ -440,11 +444,11 @@ export class Office {
     ctx.imageSmoothingEnabled = false;
     ctx.scale(S, S);
 
-    const skinRow = SKIN_ROWS[h % SKIN_ROWS.length];
-    const shirtCol = 6 + ((h >> 3) % 4);
-    const hairSet = HAIR_SETS[(h >> 5) % HAIR_SETS.length];
-    const hairCol = view === 'back' ? 22 : hairSet.cols[(h >> 8) % hairSet.cols.length];
-    const hairRow = hairSet.row + ((h >> 10) & 1);
+    const skinRow = SKIN_ROWS[pick(h, SKIN_ROWS.length)];
+    const shirtCol = 6 + pick(h >>> 3, 4);
+    const hairSet = HAIR_SETS[pick(h >>> 5, HAIR_SETS.length)];
+    const hairCol = view === 'back' ? 22 : hairSet.cols[pick(h >>> 8, hairSet.cols.length)];
+    const hairRow = hairSet.row + ((h >>> 10) & 1);
 
     this.tileCtx(ctx, this.characters, view === 'back' ? 1 : 0, skinRow, 0, 0);
     this.drawTintedShirt(ctx, shirtCol, 0, this.roles[a.role]?.color || '#999999');
