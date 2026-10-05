@@ -61,6 +61,14 @@ async function codexStatus() {
     return { installed: !/ENOENT/.test(e.message), loggedIn: false, method: null, error: /ENOENT/.test(e.message) ? 'No encuentro el CLI `codex`' : (txt || e.message) };
   }
 }
+// Estado cacheado (60 s) para decidir el motor automático sin lanzar los CLIs en cada tick.
+let statusCache = { at: 0, value: null, inflight: null };
+export function cachedEnginesStatus() {
+  if (Date.now() - statusCache.at > 60000 && !statusCache.inflight) {
+    statusCache.inflight = enginesStatus().then((v) => { statusCache = { at: Date.now(), value: v, inflight: null }; return v; }).catch(() => { statusCache.inflight = null; });
+  }
+  return statusCache.value;
+}
 export async function enginesStatus() {
   const [claude, codex] = await Promise.all([claudeStatus(), codexStatus()]);
   return { claude: { ...claude, login: publicLogin('claude') }, codex: { ...codex, login: publicLogin('codex') } };

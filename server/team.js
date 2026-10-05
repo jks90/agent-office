@@ -9,12 +9,29 @@ import * as demo from './engines/demo.js';
 import * as claude from './engines/claude.js';
 import * as codex from './engines/codex.js';
 import { suiteOk, mcpUrl, flowTestUrl } from './suite.js';
-import { engineEnv } from './engines/auth.js';
+import { engineEnv, cachedEnginesStatus } from './engines/auth.js';
 import * as boards from './boards/index.js';
 import { linkSkillsInto } from './skills.js';
 
 const ENGINES = { demo, claude, codex };
-export const ENGINE_IDS = Object.keys(ENGINES);
+export const ENGINE_IDS = ['auto', 'claude', 'codex', 'demo'];
+
+// Motor automático: el que tenga sesión y menos trabajo en curso (empate → Claude). Sin ninguno con sesión → error claro.
+const MODEL_OF = { claude: /^(sonnet|opus|haiku|claude-)/i, codex: /^(gpt-|o[0-9]|codex)/i };
+function pickEngine(agent) {
+  if (agent.engine !== 'auto') return agent.engine;
+  const st = cachedEnginesStatus();
+  const ok = (e) => st ? !!st[e]?.loggedIn : true; // sin estado aún: optimista
+  const load = (e) => [...jobs.values()].filter((j) => j.engine === e).length;
+  const candidates = ['claude', 'codex'].filter(ok).sort((a, b) => load(a) - load(b) || (a === 'claude' ? -1 : 1));
+  if (!candidates.length) throw new Error('Motor automático: ni Claude ni Codex tienen sesión (Ajustes ▸ Motores de IA)');
+  return candidates[0];
+}
+const modelFor = (engineId, agent, role) => {
+  const wanted = agent.model || role.model || '';
+  if (wanted && MODEL_OF[engineId]?.test(wanted)) return wanted;
+  return engineId === 'claude' ? 'sonnet' : engineId === 'codex' ? 'gpt-5.5' : '';
+};
 export const STATUSES = ['backlog', 'todo', 'doing', 'review', 'done', 'failed'];
 
 const { get, changed, newId, log } = store;
@@ -76,7 +93,7 @@ export async function syncWorkspace() {
     if (!p) {
       p = { id: newId(), name: folder === 'default' ? 'default' : folder, folder, repos: [], repoPath: null, baseBranch: null, running: false, createdAt: Date.now() };
       s.projects.push(p);
-      DEFAULT_TEAM.forEach((m) => s.agents.push(newAgent(p.id, { ...m, engine: 'claude' })));
+      DEFAULT_TEAM.forEach((m) => s.agents.push(newAgent(p.id, { ...m, engine: 'auto' })));
       created++;
     }
     p.flows = n;
@@ -112,7 +129,7 @@ async function autoRepos(p, folderPath) {
 export async function createProject({ name, repoPath, repos, engine = 'demo', folder = null }) {
   if (!name?.trim()) throw fail(400, 'El proyecto necesita un nombre');
   const list = await resolveRepos({ repos, repoPath });
-  if (!ENGINE_IDS.includes(engine)) engine = 'demo';
+  if (!ENGINE_IDS.includes(engine)) engine = 'auto';
   const s = get();
   const project = { id: newId(), name: name.trim(), folder: folder || null, repos: list, repoPath: list[0]?.path || null, baseBranch: list[0]?.baseBranch || null, running: false, createdAt: Date.now() };
   s.projects.push(project);
@@ -168,7 +185,7 @@ export function hire({ projectId, name, role, engine, model }) {
   if (!roleOf(role)) throw fail(400, 'Rol desconocido');
   if (!name?.trim()) throw fail(400, 'El agente necesita un nombre');
   if (s.agents.filter((a) => a.projectId === projectId).length >= 8) throw fail(400, 'La oficina tiene 8 mesas: no caben más agentes');
-  const agent = newAgent(projectId, { name: name.trim(), role, engine: ENGINE_IDS.includes(engine) ? engine : 'demo', model: model || '' });
+  const agent = newAgent(projectId, { name: name.trim(), role, engine: ENGINE_IDS.includes(engine) ? engine : 'auto', model: model || '' });
   s.agents.push(agent);
   changed();
   return agent;
@@ -456,15 +473,19 @@ function buildPrompt(p, agent, t) {
 
 async function runTask(p, agent, t) {
   const s = get();
-  jobs.set(agent.id, { stop() {}, taskId: t.id }); // ocupado DESDE YA (antes de cualquier await), o el mismo tick le daría dos tareas
+  jobs.set(agent.id, { stop() {}, taskId: t.id, engine: agent.engine === 'auto' ? null : agent.engine }); // ocupado DESDE YA (antes de cualquier await), o el mismo tick le daría dos tareas
   Object.assign(t, { status: 'doing', agentId: agent.id, error: null, attempts: t.attempts + 1, updatedAt: Date.now() });
   Object.assign(agent, { status: 'working', taskId: t.id, activity: t.kind === 'plan' ? 'Leyendo el objetivo' : 'Preparando su copia del repo' });
   changed();
   log(agent.id, `▶ #${t.id} ${t.title}`);
   reflect(t, `▶ ${agent.name} (${roleOf(agent.role)?.label || agent.role}) empieza a trabajar en AgentOffice`);
 
-  const engine = ENGINES[agent.engine] || demo;
-  const real = agent.engine !== 'demo';
+  let engineId;
+  try { engineId = pickEngine(agent); } catch (e) { Object.assign(t, { status: 'failed', error: e.message, agentId: null }); Object.assign(agent, { status: 'idle', taskId: null, activity: '' }); jobs.delete(agent.id); log(agent.id, '❌ ' + e.message); changed(); return; }
+  const engine = ENGINES[engineId] || demo;
+  const real = engineId !== 'demo';
+  agent.activeEngine = engineId;
+  if (agent.engine === 'auto') log(agent.id, `🤖 Motor automático → ${engineId}`);
   const role = roleOf(agent.role) || roleOf('back');
   const roles = teamRoles(p);
   const repo = repoOfTask(p, t);
@@ -480,7 +501,7 @@ async function runTask(p, agent, t) {
       t.reused = !!wt.reused;
       if (wt.reused) log(agent.id, `↺ Sigue sobre su intento anterior en ${wt.branch}`);
       else log(agent.id, `🌿 Rama ${wt.branch} en el repo ${repo.key}`);
-      if (agent.engine === 'claude' && role.skills?.length) { const linked = linkSkillsInto(cwd, role.skills); if (linked.length) log(agent.id, `🧩 Skills: ${linked.join(', ')}`); }
+      if (engineId === 'claude' && role.skills?.length) { const linked = linkSkillsInto(cwd, role.skills); if (linked.length) log(agent.id, `🧩 Skills: ${linked.join(', ')}`); }
     }
     if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true });
 
@@ -489,13 +510,13 @@ async function runTask(p, agent, t) {
       prompt: buildPrompt(p, agent, t),
       images: t.kind === 'plan' ? [] : (t.feedbackImages || []).filter((f) => fs.existsSync(f)),
       system: role.system,
-      model: agent.model || role.model || '',
+      model: modelFor(engineId, agent, role),
       mcpUrl: role.kind === 'qa' ? mcpUrl() : null,
-      env: engineEnv(agent.engine),
+      env: engineEnv(engineId),
       onActivity: (text) => { agent.activity = text; changed(); },
       onLog: (line) => log(agent.id, line),
     });
-    jobs.set(agent.id, { stop: job.stop, taskId: t.id });
+    jobs.set(agent.id, { stop: job.stop, taskId: t.id, engine: engineId });
     const res = await job.done;
 
     if (res.costUsd != null) t.costUsd = (t.costUsd || 0) + res.costUsd;
@@ -533,7 +554,7 @@ async function runTask(p, agent, t) {
   } finally {
     jobs.delete(agent.id);
     t.updatedAt = Date.now();
-    Object.assign(agent, { status: 'idle', taskId: null, activity: '' });
+    Object.assign(agent, { status: 'idle', taskId: null, activity: '', activeEngine: null });
     changed();
     tick();
   }

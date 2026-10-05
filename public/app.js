@@ -146,7 +146,7 @@ function renderTeam() {
       <div class="top" data-agent="${a.id}">
         <span class="avatar">${esc(a.name).charAt(0).toUpperCase()}</span>
         <div class="member-main"><b>${esc(a.name)}</b><div class="act">${a.status === 'working' ? esc(a.activity) : 'En la zona de descanso ☕'}</div></div>
-        <span class="eng">${esc(a.engine)}${a.model ? ' · ' + esc(a.model) : ''}</span>
+        <span class="eng">${esc(a.engine)}${a.engine === 'auto' && a.activeEngine ? ' → ' + esc(a.activeEngine) : ''}${a.model ? ' · ' + esc(a.model) : ''}</span>
       </div>
       <div class="member-foot">${roleChip(a.role)}<span class="state ${a.status}"><span class="dot ${a.status}"></span>${a.status === 'working' ? 'Trabajando' : 'Descansando'}</span></div>
       ${task ? `<div class="task">▶ #${task.id} ${esc(task.title)}</div>` : ''}
@@ -412,7 +412,8 @@ function dialog(html, onSubmit, cls = '') {
 const buttons = (ok = 'Guardar') => `<div class="row"><button class="ghost" value="cancel">Cancelar</button>${ok ? `<button>${ok}</button>` : ''}</div>`;
 const roleOptions = (sel, skipPo) => Object.entries(S.roles).filter(([, r]) => !(skipPo && r.kind === 'planner'))
   .map(([k, r]) => `<option value="${k}" ${k === sel ? 'selected' : ''} title="${esc(r.description || '')}">${esc(r.label)}${r.custom ? ` · ${esc(r.source)}` : ''}${r.kind === 'planner' ? ' (planifica)' : r.kind === 'qa' ? ' (QA)' : ''}</option>`).join('');
-const engineOptions = (sel) => S.engines.map((e) => `<option ${e === sel ? 'selected' : ''}>${e}</option>`).join('');
+const ENGINE_LABEL = { auto: 'automático (el que esté libre: Claude o Codex)', claude: 'Claude Code', codex: 'Codex', demo: 'demo (simulado)' };
+const engineOptions = (sel) => S.engines.map((e) => `<option value="${e}" ${e === sel ? 'selected' : ''}>${ENGINE_LABEL[e] || e}</option>`).join('');
 
 const actions = {
   'add-repo': () => editRepo(''),
@@ -432,7 +433,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <label>Nombre</label><input name="name" required autofocus />
     <label>Repositorios git (opcional; uno por línea, <code>clave = ruta</code> o solo la ruta; <code>clave = ruta @ rol1,rol2</code> fija qué roles trabajan en ese repo)</label>
     <textarea name="repos" rows="3" placeholder="~/dev/mi-api @ back,qa&#10;~/dev/mi-web @ front"></textarea>
-    <label>Motor del equipo</label><select name="engine">${engineOptions('demo')}</select>
+    <label>Motor del equipo</label><select name="engine">${engineOptions('auto')}</select>
     <p class="muted">Cada tarea se hace en un git worktree propio del repo que le toca (rama <code>ao/&lt;tarea&gt;</code>); nada llega a tu rama hasta que apruebas. Sin repo solo funciona el motor <b>demo</b>.</p>
     ${buttons('Crear')}`, async (f) => {
     const p = await api('POST', '/api/projects', { name: f.name, engine: f.engine, repos: parseRepos(f.repos) });
@@ -444,7 +445,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <h3>Contratar agente</h3>
     <label>Nombre</label><input name="name" required autofocus />
     <label>Rol</label><select name="role">${roleOptions('back')}</select>
-    <label>Motor</label><select name="engine">${engineOptions('demo')}</select>
+    <label>Motor</label><select name="engine">${engineOptions('auto')}</select>
     <label>Modelo (opcional)</label><input name="model" placeholder="por defecto del CLI" />
     ${buttons('Contratar')}`, (f) => api('POST', '/api/agents', { ...f, projectId })),
   'new-task': () => dialog(`
