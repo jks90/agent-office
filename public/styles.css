@@ -91,7 +91,7 @@ main { flex: 1; display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(4
 .goal { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--s-3); margin-bottom: var(--s-3); box-shadow: var(--shadow); }
 .goal .row { display: flex; gap: var(--s-2); margin-top: var(--s-2); }
 
-#board { flex: 1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-2); min-height: 0; }
+#board { flex: 1; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--s-2); min-height: 0; }
 .col { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .col h4 { margin: 0; padding: 10px var(--s-3); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; border-bottom: 2px solid var(--c); display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 1; background: var(--surface); }
 .count { min-width: 24px; padding: 2px 8px; border-radius: 99px; background: color-mix(in srgb, var(--c) 22%, transparent); color: var(--text); text-align: center; border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); }
