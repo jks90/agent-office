@@ -142,14 +142,15 @@ export async function alignColumns(project) {
 export function exportAll(project) {
   const { kind, cfg, sec } = ctx(project);
   if (project.board.job?.running) throw fail(409, 'Ya hay una exportación en marcha');
-  const pending = store.get().tasks.filter((t) => t.projectId === project.id && !t.source && t.kind !== 'plan');
+  // Sin tarjeta en ESTE tablero (las importadas de un flow también se exportan; conservan su enlace al flow).
+  const pending = store.get().tasks.filter((t) => t.projectId === project.id && t.source?.kind !== kind.id && t.kind !== 'plan');
   const job = { running: true, total: pending.length, done: 0, failed: 0, startedAt: Date.now(), lastError: null };
   project.board.job = job; store.changed();
   (async () => {
     for (const t of pending) {
       try {
         const r = await call(kind, 'create', cfg, sec, { title: t.title, description: t.description, status: t.status === 'failed' ? 'todo' : t.status });
-        t.source = { kind: kind.id, id: r.id, url: r.url, remoteStatus: t.status, pushedStatus: t.status };
+        t.source = { ...(t.source || {}), kind: kind.id, id: r.id, url: r.url, remoteStatus: t.status, pushedStatus: t.status };
         job.done++;
       } catch (e) { job.failed++; job.lastError = `«${t.title.slice(0, 60)}»: ${e.message.slice(0, 200)}`; }
       store.changed();
@@ -171,11 +172,11 @@ export function pushContentSoon(project, task) {
 
 // Tarea nueva creada aquí (PO o a mano) → tarjeta fuera, si el tablero lo pide.
 export async function createRemote(project, task) {
-  if (!project?.board?.pushNew || task.source || task.kind === 'plan') return;
+  if (!project?.board?.pushNew || task.source?.kind === project.board.kind || task.kind === 'plan') return;
   const { kind, cfg, sec } = ctx(project);
   try {
     const r = await call(kind, 'create', cfg, sec, { title: task.title, description: task.description, status: task.status });
-    task.source = { kind: kind.id, id: r.id, url: r.url, remoteStatus: task.status, pushedStatus: task.status };
+    task.source = { ...(task.source || {}), kind: kind.id, id: r.id, url: r.url, remoteStatus: task.status, pushedStatus: task.status };
     store.changed();
   } catch (e) { project.board.lastError = `crear «${task.title}»: ${e.message}`; store.changed(); }
 }

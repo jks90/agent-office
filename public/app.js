@@ -388,7 +388,7 @@ async function renderBoardCfg(kindOverride) {
     <div class="acts">
       <button type="button" class="small" data-board-save>Guardar y probar</button>
       ${def.canCreateBoard && !cfg.project ? '<button type="button" class="small ghost" data-board-create title="Crea un GitHub Project nuevo con las columnas Backlog / Todo / In Progress / In Review / Done, lo enlaza al repo y lo deja configurado aquí">＋ Crear Project en GitHub</button>' : ''}
-      ${b?.kind === kind ? `<button type="button" class="small ghost" data-board-sync>↻ Sincronizar ahora</button>${kind === 'github' && cfg.project ? '<button type="button" class="small ghost" data-board-align title="Renombra las columnas del Project a Backlog / Por hacer / En curso / Revisión / Hecho y recoloca las tareas sincronizadas">⇄ Columnas como aquí</button>' : ''}<button type="button" class="small ghost" data-board-export title="Crea una tarjeta por cada tarea que aún no tiene, en su columna">⇪ Exportar ${tasks().filter((t) => !t.source && t.kind !== 'plan').length} tareas sin tarjeta</button><button type="button" class="small danger" data-board-off>Desconectar</button>` : ''}
+      ${b?.kind === kind ? `<button type="button" class="small ghost" data-board-sync>↻ Sincronizar ahora</button>${kind === 'github' && cfg.project ? '<button type="button" class="small ghost" data-board-align title="Renombra las columnas del Project a Backlog / Por hacer / En curso / Revisión / Hecho y recoloca las tareas sincronizadas">⇄ Columnas como aquí</button>' : ''}<button type="button" class="small ghost" data-board-export title="Crea una tarjeta por cada tarea que aún no tiene, en su columna">⇪ Exportar ${tasks().filter((t) => t.source?.kind !== kind && t.kind !== 'plan').length} tareas sin tarjeta</button><button type="button" class="small danger" data-board-off>Desconectar</button>` : ''}
       <span class="muted" id="board-msg">${b?.kind === kind ? boardMsg(b) : ''}</span>
     </div>` : ''}`;
   $('#board-kind').onchange = (e) => renderBoardCfg(e.target.value);
@@ -422,7 +422,7 @@ document.addEventListener('click', async (e) => {
       const r = await api('POST', `/api/projects/${projectId}/board/align`); toast(`Columnas alineadas · ${r.placed} tarjetas recolocadas`); renderBoardCfg();
     }
     if (d.boardExport !== undefined) {
-      const n = tasks().filter((t) => !t.source && t.kind !== 'plan').length;
+      const n = tasks().filter((t) => t.source?.kind !== (project()?.board?.kind) && t.kind !== 'plan').length;
       if (!n) return toast('Todas las tareas tienen ya tarjeta');
       if (!confirm(`Se crearán ${n} tarjetas/issues en el tablero online (una por tarea sin tarjeta), en su columna. Tarda ~1 s por tarjeta. ¿Seguimos?`)) return;
       await api('POST', `/api/projects/${projectId}/board/export`); toast('Exportando en segundo plano…'); renderBoardCfg();
