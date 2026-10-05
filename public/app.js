@@ -60,6 +60,7 @@ const roleChip = (role) => `<span class="chip" style="--c:${S.roles[role]?.color
 
 // ── Pintado ─────────────────────────────────────────────────────────────────
 // Pestañas de administración (Oficina / Tareas / Agentes), recordadas por navegador.
+let skillsData = null; // catálogo e inventario de skills (se carga al abrir Agentes)
 let activeTab = safeGet('ao:tab') || 'office';
 function showTab(tab) {
   activeTab = tab;
@@ -174,7 +175,6 @@ function renderRoles() {
     </div>`).join('');
 }
 
-let skillsData = null;
 async function renderSkills(reload = false) {
   const el = $('#skills');
   if (!el) return;
