@@ -132,6 +132,9 @@ export function createSkill({ name, description = '', body = '' }) {
   return { name: nm, dir: d };
 }
 
+import { execFileSync } from 'node:child_process';
+const isTracked = (cwd, rel) => { try { execFileSync('git', ['-C', cwd, 'ls-files', '--error-unmatch', rel], { stdio: 'ignore' }); return true; } catch { return false; } };
+
 // Enlazar las skills de un rol en el worktree del agente (.claude/skills/<nombre>) sin que entren en los commits.
 export function linkSkillsInto(cwd, names) {
   const wanted = (names || []).filter(Boolean);
@@ -143,7 +146,15 @@ export function linkSkillsInto(cwd, names) {
     const src = path.join(skillsDir(), n);
     if (!isSkillDir(src)) continue;
     const link = path.join(dest, n);
-    try { if (fs.lstatSync(link).isSymbolicLink()) fs.unlinkSync(link); else continue; } catch { /* no existía */ }
+    // Si ya hay un enlace que resuelve al mismo sitio (p. ej. uno RASTREADO por git, relativo) se deja tal cual:
+    // sustituirlo por uno absoluto lo cambiaba y acababa en el commit de la tarea (visto en FT-25).
+    try {
+      const st = fs.lstatSync(link);
+      if (!st.isSymbolicLink()) continue;
+      if (real(link) === real(src)) { linked.push(n); continue; }
+      if (isTracked(cwd, path.join('.claude', 'skills', n))) continue; // rastreado y distinto: no se toca
+      fs.unlinkSync(link);
+    } catch { /* no existía */ }
     try { fs.symlinkSync(real(src), link, 'dir'); linked.push(n); } catch { /* sin permisos */ }
   }
   // Excluir del índice (sin tocar .gitignore del repo): .git/info/exclude del repo al que pertenece el worktree.
