@@ -175,6 +175,7 @@ const routes = [
     if (typeof b.workspaceHostDir === 'string') st.workspaceHostDir = b.workspaceHostDir.trim();
     if (b.maxParallel) st.maxParallel = Math.max(1, Math.min(8, Number(b.maxParallel) || 4));
     if (typeof b.guideModel === 'string') st.guideModel = b.guideModel.trim();
+    if (guide.providerNames().includes(b.guideProvider)) st.guideProvider = b.guideProvider;
     if (b.guidePolicy && typeof b.guidePolicy === 'object') guidePolicy.setPolicy(b.guidePolicy);
     store.changed();
     return st;

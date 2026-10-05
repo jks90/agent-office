@@ -9,9 +9,11 @@ import * as context from '../context.js';
 import * as activity from '../events.js';
 import { SYSTEM } from './prompt.js';
 import * as claudeCli from './providers/claude-cli.js';
+import * as fakeProvider from './providers/fake.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
-const PROVIDERS = { 'claude-cli': claudeCli };
+const PROVIDERS = { 'claude-cli': claudeCli, ...(process.env.AO_GUIDE_FAKE === '1' ? { fake: fakeProvider } : {}) }; // `fake` (FT-11): solo para pruebas e2e
+export const providerNames = () => Object.keys(PROVIDERS);
 const DIR = () => path.join(store.DATA_DIR, 'guide');
 const file = (id) => path.join(DIR(), `${id}.json`);
 const MAX_EVENTS = 40;
