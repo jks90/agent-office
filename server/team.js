@@ -199,6 +199,14 @@ export function createTask({ projectId, title, description = '', role, repo = nu
 
 // Tableros online: sincronizar (pull + push de lo cambiado aquí) y reflejar cambios de estado.
 export const syncBoard = (projectId) => boards.syncBoard(findOr404(get().projects, projectId, 'Proyecto'), { createTask, roles: allRoles() });
+// Igualar los dos lados: pull/push de lo que ya está enlazado y, si faltan tarjetas fuera, exportarlas en segundo plano.
+export async function syncAll(projectId) {
+  const p = findOr404(get().projects, projectId, 'Proyecto');
+  const r = await syncBoard(projectId);
+  const pending = get().tasks.filter((t) => t.projectId === p.id && t.source?.kind !== p.board.kind && t.kind !== 'plan').length;
+  if (pending && !p.board.job?.running) boards.exportAll(p);
+  return { ...r, exporting: pending };
+}
 const reflect = (t, comment) => { const p = projectOf(t); if (p?.board && t.source?.kind === p.board.kind) boards.pushStatusSoon(p, t, comment); };
 
 export function updateTask(id, patch) {

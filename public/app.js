@@ -109,7 +109,11 @@ function render() {
   $('#tab-summary').innerHTML = `${ts.filter((t) => t.status === 'doing').length} en curso<br>${ts.filter((t) => t.status === 'review').length} por revisar<br>${working.length}/${team().length} agentes trabajando`;
   $('#office-live').textContent = working.length ? working.map((a) => `${a.name}: ${a.activity}`).join('  ·  ') : 'Nadie está trabajando ahora mismo';
   const b = p?.board;
-  $('#board-chip').innerHTML = b ? `🔗 ${esc(BOARD_LABELS[b.kind] || b.kind)} · <a href="${esc(b.url || '#')}" target="_blank" rel="noopener">${esc(b.config.repo || b.config.boardId || b.config.projectKey || '')}</a> · ${b.syncedAt ? 'hace ' + ago(b.syncedAt) : 'sin sincronizar'}${b.lastError ? ` <span class="bad" title="${esc(b.lastError)}">⚠</span>` : ''} <button class="small ghost" data-board-sync title="Sincronizar ahora">↻</button>` : '';
+  const pending = b ? ts.filter((t) => t.source?.kind !== b.kind && t.kind !== 'plan').length : 0;
+  const job = b?.job;
+  $('#board-chip').innerHTML = b
+    ? `🔗 ${esc(BOARD_LABELS[b.kind] || b.kind)} · <a href="${esc(b.url || '#')}" target="_blank" rel="noopener">${esc(b.config.repo || b.config.boardId || b.config.projectKey || '')}</a> · ${b.syncedAt ? 'hace ' + ago(b.syncedAt) : 'sin sincronizar'}${pending ? ` · <span title="tareas sin tarjeta fuera">${pending} sin tarjeta</span>` : ''}${b.lastError ? ` <span class="bad" title="${esc(b.lastError)}">⚠</span>` : ''} ${job?.running ? `<span class="muted">⇪ ${job.done}/${job.total}${job.waitingUntil ? ' · esperando a GitHub' : ''}</span> <button class="small ghost" data-board-cancel>✕</button>` : `<button class="small" data-board-syncall title="Igualar los dos lados: trae y lleva los estados y crea fuera las tarjetas que falten">⇅ Sincronizar</button>`}`
+    : `<button class="small ghost" data-action="settings" title="Conecta GitHub, Trello o Jira en Ajustes ▸ Tablero online">🔗 Conectar tablero…</button>`;
   if (drawerAgent) renderDrawer();
 }
 
@@ -394,7 +398,7 @@ async function renderBoardCfg(kindOverride) {
   $('#board-kind').onchange = (e) => renderBoardCfg(e.target.value);
 }
 document.addEventListener('click', async (e) => {
-  const el = e.target.closest('[data-board-save],[data-board-sync],[data-board-off],[data-board-create],[data-board-align],[data-board-export]');
+  const el = e.target.closest('[data-board-save],[data-board-sync],[data-board-off],[data-board-create],[data-board-align],[data-board-export],[data-board-syncall],[data-board-cancel]');
   if (!el) return;
   e.preventDefault();
   const d = el.dataset;
@@ -417,6 +421,12 @@ document.addEventListener('click', async (e) => {
       toast(r.info);
       renderBoardCfg();
     }
+    if (d.boardSyncall !== undefined) {
+      el.disabled = true;
+      const r = await api('POST', `/api/projects/${projectId}/board/sync-all`);
+      toast(`Sincronizado: ${r.total} tarjetas · ${r.created} nuevas aquí · ${r.pushed} estados enviados${r.exporting ? ` · exportando ${r.exporting} tarjetas en segundo plano` : ''}`);
+    }
+    if (d.boardCancel !== undefined) { await api('POST', `/api/projects/${projectId}/board/export/cancel`); toast('Exportación cancelada'); }
     if (d.boardAlign !== undefined) {
       if (!confirm('Se renombrarán las columnas del Project a Backlog / Por hacer / En curso / Revisión / Hecho (los items se recolocan después). ¿Seguimos?')) return;
       const r = await api('POST', `/api/projects/${projectId}/board/align`); toast(`Columnas alineadas · ${r.placed} tarjetas recolocadas`); renderBoardCfg();
