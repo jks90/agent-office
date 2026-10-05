@@ -292,12 +292,12 @@ export function updateTask(id, patch) {
   return t;
 }
 
-export function planGoal(projectId, goal) {
+export function planGoal(projectId, goal, { attachments = [], title = '' } = {}) {
   if (!goal?.trim()) throw fail(400, 'Escribe un objetivo');
   const s = get();
   const planner = teamOf(s.projects.find((p) => p.id === projectId)).find((a) => roleOf(a.role)?.kind === 'planner');
   if (!planner) throw fail(400, 'El equipo no tiene PO/orquestador: contrata uno para planificar');
-  return createTask({ projectId, kind: 'plan', goal: goal.trim(), role: planner.role, title: `Planificar: ${goal.trim().slice(0, 80)}`, description: goal.trim() });
+  return createTask({ projectId, kind: 'plan', goal: goal.trim(), role: planner.role, title: `Planificar: ${(title || goal).trim().slice(0, 80)}`, description: goal.trim(), attachments });
 }
 
 export async function deleteTask(id) {
@@ -468,6 +468,9 @@ function buildPrompt(p, agent, t) {
       'Las tareas de QA van al final y dependen de lo que verifican.',
       roles.some((r) => roleOf(r)?.kind === 'docs') ? `Si el objetivo cambia cómo funciona algo o añade una pieza nueva, incluye al final una tarea para el rol de documentación (${roles.filter((r) => roleOf(r)?.kind === 'docs').join('/')}) que lo documente en flow-test (carpeta «${p.folder || 'default'}/»), dependiente de las tareas que documenta.` : '',
       '',
+      t.feedbackImages?.length ? `Imágenes adjuntas a la petición (míralas; están en ${t.feedbackImages.join(', ')}).` : '',
+      t.files?.length ? `Ficheros adjuntos a la petición (léelos): ${t.files.join(', ')}.` : '',
+      'Si la petición es una sola cosa concreta, devuelve UNA tarea (no la trocees sin motivo). Decide tú a qué rol y repo va.',
       'Responde SOLO con un bloque JSON (máximo 6 tareas):',
       '```json',
       `[{"title": "…", "description": "qué hacer y cómo saber que está bien", "role": "${roles.join('|')}", ${repos.length > 1 ? `"repo": "${repos.map((r) => r.key).join('|')}", ` : ''}"dependsOn": [índices de tareas anteriores de esta lista]}]`,
@@ -529,7 +532,7 @@ async function runTask(p, agent, t) {
     const job = engine.start({
       agent, task: t, project: p, cwd, mode: t.kind === 'plan' ? 'plan' : 'work', goal: t.goal, roles,
       prompt: buildPrompt(p, agent, t),
-      images: t.kind === 'plan' ? [] : (t.feedbackImages || []).filter((f) => fs.existsSync(f)),
+      images: (t.feedbackImages || []).filter((f) => fs.existsSync(f)),
       system: role.system,
       model: modelFor(engineId, agent, role),
       mcpUrl: ['qa', 'docs'].includes(role.kind) ? mcpUrl() : null, // QA y documentalista hablan con flow-test por MCP

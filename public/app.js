@@ -490,10 +490,20 @@ Pasos, convenciones y ejemplos…</textarea>
     <label>Título <span class="muted">(con «Redactar con IA» puedes dejarlo vacío)</span></label><input name="title" autofocus />
     <label>Descripción <span class="muted">(a mano, o en bruto para que la IA la redacte)</span></label><textarea name="description" rows="5" placeholder="Qué hay que hacer y cómo saber que está bien. Con ✨ basta con contarlo a tu manera: la IA lo convierte en una tarea completa."></textarea>
     ${attachArea()}
-    <label>Rol</label><select name="role">${roleOptions('back', true)}</select>
+    <label>Para quién</label><select name="role">${whoOptions()}</select>
     ${(project()?.repos || []).length > 1 ? `<label>Repositorio</label><select name="repo"><option value="">(el que diga el rol)</option>${project().repos.map((r) => `<option value="${r.key}">${esc(r.key)} — ${esc(r.path)}</option>`).join('')}</select>` : ''}
     <label>Estado inicial</label><select name="status"><option value="todo">Por hacer (el equipo la coge en cuanto pueda)</option><option value="backlog">Backlog (esperar)</option></select>
-    <div class="row"><button type="button" class="ghost" data-ai-draft title="Pasa tu texto y los adjuntos por la IA (Claude), que redacta título, descripción con criterios de «hecho cuando», rol y repo, y crea la tarea en Backlog para que la revises">✨ Redactar con IA y crear</button><div class="spacer"></div><button class="ghost" value="cancel">Cancelar</button><button>Crear</button></div>`, (f) => { if (!f.title?.trim()) { toast('Pon un título o usa «Redactar con IA»', 'error'); throw new Error('sin título'); } return api('POST', '/api/tasks', { ...f, projectId, attachments: pendingAttachments }); }); },
+    <div class="row"><button type="button" class="ghost" data-ai-draft title="Pasa tu texto y los adjuntos por la IA (Claude), que redacta título, descripción con criterios de «hecho cuando», rol y repo, y crea la tarea en Backlog para que la revises">✨ Redactar con IA y crear</button><div class="spacer"></div><button class="ghost" value="cancel">Cancelar</button><button>Crear</button></div>`, async (f) => {
+    if (f.role === '__po') {
+      const goal = [f.title, f.description].filter((x) => x?.trim()).join('\n\n');
+      if (!goal.trim()) { toast('Cuenta qué quieres que se haga', 'error'); throw new Error('vacío'); }
+      await api('POST', `/api/projects/${projectId}/goal`, { goal, title: f.title, attachments: pendingAttachments });
+      toast('Encargado al PO: decidirá quién lo hace y creará la tarea');
+      return;
+    }
+    if (!f.title?.trim()) { toast('Pon un título o usa «Redactar con IA»', 'error'); throw new Error('sin título'); }
+    return api('POST', '/api/tasks', { ...f, projectId, attachments: pendingAttachments });
+  }); },
   settings: () => dialog(`
     <h3>Ajustes</h3>
     <div class="section-title">🧠 Motores de IA — las inteligencias que llevan la empresa</div>
@@ -672,6 +682,16 @@ document.addEventListener('click', (e) => {
     }).catch(() => {});
   }
 });
+
+// «Para quién»: los agentes de la plantilla (por rol, sin el PO) y, si hay PO, «que lo decida el PO».
+function whoOptions() {
+  const planner = team().find((a) => S.roles[a.role]?.kind === 'planner');
+  const byRole = new Map();
+  for (const a of team()) { if (S.roles[a.role]?.kind === 'planner') continue; byRole.set(a.role, [...(byRole.get(a.role) || []), a.name]); }
+  return (planner ? `<option value="__po">🗂 Que lo decida ${esc(planner.name)} (PO): él elige a quién y crea la tarea</option>` : '') +
+    [...byRole].map(([role, names]) => `<option value="${role}">${esc(names.join(' / '))} — ${esc(S.roles[role]?.label || role)}</option>`).join('') +
+    (!planner && !byRole.size ? '<option value="back">(sin plantilla: rol Backend)</option>' : '');
+}
 
 // Adjuntos de una tarea (imágenes y ficheros): se suben al servidor al elegirlos (o al pegar/arrastrar) y se guardan
 // como rutas; las imágenes las ve el agente (codex --image / Read), el resto se citan en el prompt.
