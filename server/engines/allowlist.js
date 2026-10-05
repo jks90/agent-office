@@ -8,6 +8,7 @@ export const BASH_RULES = [
   'mkdir *', 'cp *', 'mv *', 'touch *', 'cd *', 'pwd',
   'git status*', 'git diff*', 'git log*', 'git show*', 'git add*', 'git commit*', 'git branch*',
   'git rm *', 'git mv *', 'git restore *', // borrar/mover/deshacer ficheros del worktree (reversible por git; sin `rm` genérico)
+  'mvn *', './mvnw *', 'gradle *', './gradlew *', 'make *', // compilar/probar proyectos Java y otros (GL-2: el agente no podía ejecutar Maven)
 ];
 export const BASH_TOOLS = BASH_RULES.map((r) => `Bash(${r})`);
 
