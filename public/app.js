@@ -65,12 +65,16 @@ let activeTab = safeGet('ao:tab') || 'office';
 function showTab(tab) {
   activeTab = tab;
   safeSet('ao:tab', tab);
-  document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.nav-item[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.view').forEach((v) => { v.hidden = v.id !== 'view-' + tab; });
   if (tab === 'office') requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
 }
-$('#tabs').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) showTab(b.dataset.tab); });
+$('#sidebar').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) showTab(b.dataset.tab); });
 showTab(activeTab);
+// Menú lateral plegable (solo iconos), recordado por navegador.
+const setCollapsed = (c) => { $('#sidebar').classList.toggle('collapsed', c); safeSet('ao:sidebar', c ? 'collapsed' : 'open'); requestAnimationFrame(() => window.dispatchEvent(new Event('resize'))); };
+setCollapsed(safeGet('ao:sidebar') === 'collapsed');
+$('#collapse').addEventListener('click', () => setCollapsed(!$('#sidebar').classList.contains('collapsed')));
 const RENDERER_2D = (() => { try { return new URLSearchParams(location.search).get('r') === '2d' || localStorage.getItem('ao:renderer') === '2d'; } catch { return false; } })();
 $('[data-action="renderer"]').textContent = RENDERER_2D ? '🎨 Cambiar a 3D' : '🎨 Cambiar a 2D';
 document.body.classList.toggle('r2d', RENDERER_2D);
@@ -96,7 +100,7 @@ function render() {
   const working = team().filter((a) => a.status === 'working');
   $('#tab-tasks-count').textContent = ts.filter((t) => ['todo', 'doing', 'review'].includes(t.status)).length || '';
   $('#tab-agents-count').textContent = team().length || '';
-  $('#tab-summary').textContent = `${ts.filter((t) => t.status === 'doing').length} en curso · ${ts.filter((t) => t.status === 'review').length} por revisar · ${working.length}/${team().length} agentes trabajando`;
+  $('#tab-summary').innerHTML = `${ts.filter((t) => t.status === 'doing').length} en curso<br>${ts.filter((t) => t.status === 'review').length} por revisar<br>${working.length}/${team().length} agentes trabajando`;
   $('#office-live').textContent = working.length ? working.map((a) => `${a.name}: ${a.activity}`).join('  ·  ') : 'Nadie está trabajando ahora mismo';
   if (drawerAgent) renderDrawer();
 }

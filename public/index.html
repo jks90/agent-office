@@ -22,14 +22,16 @@
     <button data-action="settings" class="ghost" title="Ajustes">⚙</button>
   </header>
 
-  <nav class="tabs" id="tabs">
-    <button data-tab="office" class="tab active">🏢 Oficina</button>
-    <button data-tab="tasks" class="tab">🗂 Tareas <span class="tab-count" id="tab-tasks-count"></span></button>
-    <button data-tab="agents" class="tab">👥 Agentes <span class="tab-count" id="tab-agents-count"></span></button>
+  <div class="shell">
+  <aside id="sidebar" class="sidebar">
+    <button class="nav-item active" data-tab="office" title="Oficina"><span class="ico">🏢</span><span class="lbl">Oficina</span></button>
+    <button class="nav-item" data-tab="tasks" title="Tareas"><span class="ico">🗂</span><span class="lbl">Tareas</span><span class="tab-count" id="tab-tasks-count"></span></button>
+    <button class="nav-item" data-tab="agents" title="Agentes"><span class="ico">👥</span><span class="lbl">Agentes</span><span class="tab-count" id="tab-agents-count"></span></button>
     <div class="spacer"></div>
-    <span id="tab-summary" class="muted"></span>
-  </nav>
-
+    <div id="tab-summary" class="side-summary muted"></div>
+    <button class="nav-item" data-action="settings" title="Ajustes"><span class="ico">⚙</span><span class="lbl">Ajustes</span></button>
+    <button class="nav-item collapse" id="collapse" title="Plegar / desplegar el menú"><span class="ico">◀</span><span class="lbl">Plegar</span></button>
+  </aside>
   <main>
     <section class="view" id="view-office">
       <div class="office-wrap"><canvas id="office"></canvas></div>
@@ -65,6 +67,7 @@
       <div id="roles"></div>
     </section>
   </main>
+  </div>
 
   <aside id="drawer" hidden></aside>
   <div id="suite-lock" hidden>
