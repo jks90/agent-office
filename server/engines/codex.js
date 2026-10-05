@@ -3,6 +3,12 @@ import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 import { firstLine } from './describe.js';
 
+// Codex envuelve cada orden en `/usr/bin/zsh -lc "…"`: en el bocadillo solo interesa la orden.
+const unwrap = (cmd) => {
+  const m = String(cmd ?? '').match(/^\S*\/?(?:ba|z)?sh -lc (['"])([\s\S]*)\1$/);
+  return m ? m[2] : String(cmd ?? '');
+};
+
 export function start({ cwd, prompt, system, model, mode, mcpUrl, onActivity, onLog }) {
   const args = ['exec', '--json', '--skip-git-repo-check', '-C', cwd, '-s', mode === 'plan' ? 'read-only' : 'workspace-write'];
   if (model) args.push('-m', model);
@@ -25,7 +31,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, onActivity, on
       const started = ev.type === 'item.started';
       switch (it.type) {
         case 'command_execution':
-          if (started) { onActivity(`Ejecutando \`${firstLine(it.command, 50)}\``); onLog('🔧 $ ' + it.command); }
+          if (started) { onActivity(`Ejecutando \`${firstLine(unwrap(it.command), 50)}\``); onLog('🔧 $ ' + unwrap(it.command)); }
           else if (it.exit_code) onLog(`⚠ código ${it.exit_code}: ${firstLine(it.aggregated_output, 200)}`);
           break;
         case 'file_change':
