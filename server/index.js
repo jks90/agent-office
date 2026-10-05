@@ -9,6 +9,8 @@ import { allRoles } from './roles.js';
 import { checkSuite, suiteInfo } from './suite.js';
 import * as auth from './engines/auth.js';
 import * as boards from './boards/index.js';
+import * as skills from './skills.js';
+import { saveRole, deleteRole } from './roles.js';
 
 const PORT = Number(process.env.AO_PORT || 7420);
 const HOST = process.env.AO_HOST || '127.0.0.1'; // lanza procesos con tus permisos: solo local
@@ -68,6 +70,12 @@ const routes = [
   ['POST', /^\/api\/projects\/(\w+)\/import-flow$/, ([id], b) => team.importFlow(id, b.path)],
   ['GET', /^\/api\/flows$/, () => team.listFlows()],
   ['POST', /^\/api\/sync$/, () => team.syncWorkspace()],
+  // Catálogo central de skills y roles
+  ['GET', /^\/api\/skills$/, () => ({ catalogDir: skills.catalogDir(), catalog: skills.listCatalog(), inventory: skills.inventory() })],
+  ['POST', /^\/api\/skills\/centralize$/, (_, b) => skills.centralize(b.dir, b.name)],
+  ['DELETE', /^\/api\/skills\/([\w-]+)$/, ([name]) => skills.uncentralize(name)],
+  ['POST', /^\/api\/roles$/, (_, b) => { const r = saveRole(b); store.changed(); return r; }],
+  ['DELETE', /^\/api\/roles\/([\w-]+)$/, ([id]) => { deleteRole(id); store.changed(); }],
   // Tableros online por proyecto
   ['GET', /^\/api\/boards\/kinds$/, () => boards.describe()],
   ['GET', /^\/api\/projects\/(\w+)\/board$/, ([id]) => boards.publicBoard(store.get().projects.find((p) => p.id === id) || {})],

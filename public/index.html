@@ -59,14 +59,33 @@
 
     <section class="view" id="view-agents" hidden>
       <div class="team-head">
+        <h3>Repositorios del proyecto</h3>
+        <span id="repos-summary" class="muted"></span>
+        <div class="spacer"></div>
+        <button data-action="add-repo" class="ghost small">＋ Añadir repo</button>
+      </div>
+      <div id="repos"></div>
+      <div class="team-head">
         <h3>Plantilla del proyecto</h3>
         <span id="team-summary" class="muted"></span>
         <div class="spacer"></div>
         <button data-action="hire" class="ghost small">＋ Contratar</button>
       </div>
       <div id="team"></div>
-      <div class="team-head"><h3>Roles disponibles</h3></div>
+      <div class="team-head">
+        <h3>Roles</h3>
+        <span id="roles-summary" class="muted"></span>
+        <div class="spacer"></div>
+        <button data-action="new-role" class="ghost small">＋ Nuevo rol</button>
+      </div>
       <div id="roles"></div>
+      <div class="team-head">
+        <h3>Skills</h3>
+        <span id="skills-summary" class="muted"></span>
+        <div class="spacer"></div>
+        <button data-action="reload-skills" class="ghost small">↻ Inventariar el PC</button>
+      </div>
+      <div id="skills"><p class="muted">Cargando…</p></div>
     </section>
   </main>
   </div>

@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import * as store from './store.js';
+import { rolesDir, ensureCatalog, parseFrontmatter as parseFM } from './skills.js';
 
 const BUILTIN = {
   po: {
@@ -75,6 +76,7 @@ function loadDir(dir, source, out) {
         description: meta.description || '', model: MODEL_MAP[meta.model] || meta.model || '',
         tools: meta.tools ? meta.tools.split(',').map((t) => t.trim()).filter(Boolean) : null,
         handles: meta.handles ? meta.handles.split(',').map((t) => t.trim()).filter(Boolean) : [],
+        skills: meta.skills ? meta.skills.split(',').map((t) => t.trim()).filter(Boolean) : [],
         system: body.slice(0, 40_000), source, file: full, custom: true,
       };
     } catch { /* fichero ilegible: se ignora */ }
@@ -84,7 +86,7 @@ function loadDir(dir, source, out) {
 // Todos los roles visibles ahora mismo (de serie + globales + los de los repos de todos los proyectos).
 export function allRoles() {
   const out = { ...BUILTIN };
-  loadDir(path.join(store.DATA_DIR, 'roles'), 'global', out);
+  loadDir(rolesDir(), 'catálogo', out);
   for (const p of store.get().projects) {
     for (const r of p.repos || []) {
       loadDir(path.join(r.path, '.claude', 'agents'), `repo:${r.key}`, out);
@@ -95,3 +97,25 @@ export function allRoles() {
 }
 export const roleOf = (id) => allRoles()[id] || null;
 export const ROLES = BUILTIN; // de serie (para quien solo necesite los fijos)
+
+// Guardar un rol en el catálogo (<catálogo>/roles/<id>.md, formato subagente de Claude Code).
+export function saveRole({ id, description = '', kind = 'dev', model = '', handles = [], skills = [], system = '', file = null }) {
+  const rid = String(id || '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+  if (!rid) throw Object.assign(new Error('El rol necesita un nombre'), { status: 400 });
+  if (BUILTIN[rid]) throw Object.assign(new Error('Ese nombre es de un rol de serie'), { status: 400 });
+  if (!system.trim()) throw Object.assign(new Error('El rol necesita un prompt de sistema'), { status: 400 });
+  ensureCatalog();
+  const target = file && file.startsWith(rolesDir()) ? file : path.join(rolesDir(), `${rid}.md`);
+  const fm = [`name: ${rid}`, `description: ${String(description).replace(/\n/g, ' ').trim()}`, `kind: ${['planner', 'dev', 'qa'].includes(kind) ? kind : 'dev'}`];
+  if (model) fm.push(`model: ${model}`);
+  if (handles.length) fm.push(`handles: ${handles.join(', ')}`);
+  if (skills.length) fm.push(`skills: ${skills.join(', ')}`);
+  fs.writeFileSync(target, `---\n${fm.join('\n')}\n---\n\n${system.trim()}\n`);
+  return allRoles()[rid];
+}
+export function deleteRole(id) {
+  const r = allRoles()[id];
+  if (!r?.custom || !r.file?.startsWith(rolesDir())) throw Object.assign(new Error('Solo se borran roles del catálogo'), { status: 400 });
+  if (store.get().agents.some((a) => a.role === id)) throw Object.assign(new Error('Hay agentes con ese rol: cámbialos antes'), { status: 409 });
+  fs.unlinkSync(r.file);
+}

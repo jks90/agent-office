@@ -11,6 +11,7 @@ import * as codex from './engines/codex.js';
 import { suiteOk, mcpUrl, flowTestUrl } from './suite.js';
 import { engineEnv } from './engines/auth.js';
 import * as boards from './boards/index.js';
+import { linkSkillsInto } from './skills.js';
 
 const ENGINES = { demo, claude, codex };
 export const ENGINE_IDS = Object.keys(ENGINES);
@@ -64,7 +65,7 @@ export async function syncWorkspace() {
     if (f.type && f.type !== 'flow') continue;
     const parts = String(f.path).split('/');
     const folder = parts.length > 1 ? parts[0] : 'default';
-    if (folder.startsWith('.')) continue;
+    if (folder.startsWith('.') || folder.startsWith('_')) continue; // _agentes (catálogo) y similares no son proyectos
     counts.set(folder, (counts.get(folder) || 0) + 1);
   }
   const s = get();
@@ -479,6 +480,7 @@ async function runTask(p, agent, t) {
       t.reused = !!wt.reused;
       if (wt.reused) log(agent.id, `↺ Sigue sobre su intento anterior en ${wt.branch}`);
       else log(agent.id, `🌿 Rama ${wt.branch} en el repo ${repo.key}`);
+      if (agent.engine === 'claude' && role.skills?.length) { const linked = linkSkillsInto(cwd, role.skills); if (linked.length) log(agent.id, `🧩 Skills: ${linked.join(', ')}`); }
     }
     if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true });
 

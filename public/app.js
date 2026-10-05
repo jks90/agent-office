@@ -67,6 +67,7 @@ function showTab(tab) {
   document.querySelectorAll('.nav-item[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.view').forEach((v) => { v.hidden = v.id !== 'view-' + tab; });
   if (tab === 'office') requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+  if (tab === 'agents') renderSkills();
 }
 $('#sidebar').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) showTab(b.dataset.tab); });
 showTab(activeTab);
@@ -100,6 +101,7 @@ function render() {
   office.update({ agents: team(), tasks: tasks(), roles: S.roles, title: p?.name || '', selected: drawerAgent });
   renderSuite();
   renderTeam();
+  renderRepos();
   renderRoles();
   renderBoard();
   const ts = tasks();
@@ -145,13 +147,94 @@ function renderTeam() {
   }).join('') || '<p class="empty">Sin agentes todavía. Contrata a alguien para empezar.</p>';
 }
 
+const short = (p) => String(p || '').replace(/^\/home\/[^/]+/, '~');
+function renderRepos() {
+  const repos = project()?.repos || [];
+  $('#repos-summary').textContent = repos.length ? `${repos.length} repos · cada tarea trabaja en un worktree del repo que le toca` : 'sin repos: solo funciona el motor demo';
+  $('#repos').innerHTML = repos.length ? `<table class="repos"><thead><tr><th>Clave</th><th>Ruta</th><th>Rama base</th><th>Roles que trabajan aquí</th><th></th></tr></thead><tbody>${repos.map((r) => `
+    <tr>
+      <td><code>${esc(r.key)}</code>${r.auto ? ' <span class="auto-chip" title="Deducido del enlace de la carpeta del proyecto en el hub">auto</span>' : ''}</td>
+      <td class="muted">${esc(short(r.path))}</td>
+      <td>${esc(r.baseBranch || '')}</td>
+      <td>${(r.roles || []).length ? r.roles.map((x) => roleChip(x)).join(' ') : '<span class="muted">(los roles sin repo propio)</span>'}</td>
+      <td style="white-space:nowrap"><button class="small ghost" data-repo-edit="${esc(r.key)}">✎</button> <button class="small danger" data-repo-del="${esc(r.key)}">✕</button></td>
+    </tr>`).join('')}</tbody></table>` : '<p class="empty">Sin repositorios. Añade uno, o crea un enlace en la carpeta del proyecto del hub y pulsa ↻ Carpetas.</p>';
+}
+
 function renderRoles() {
-  $('#roles').innerHTML = Object.entries(S.roles).map(([id, r]) => `
+  const roles = Object.entries(S.roles);
+  $('#roles-summary').textContent = `${roles.filter(([, r]) => r.custom).length} del catálogo · ${roles.filter(([, r]) => !r.custom).length} de serie`;
+  $('#roles').innerHTML = roles.map(([id, r]) => `
     <div class="role-card" style="--c:${r.color}">
-      <b>${esc(r.label)}</b> <span class="muted">· ${r.kind === 'planner' ? 'planifica' : r.kind === 'qa' ? 'QA' : 'desarrolla'}${r.model ? ' · ' + esc(r.model) : ''}</span>
+      <b>${esc(r.label)}</b> <span class="muted">· ${r.kind === 'planner' ? 'planifica' : r.kind === 'qa' ? 'QA' : 'desarrolla'}${r.model ? ' · ' + esc(r.model) : ''}${r.handles?.length ? ' · atiende ' + r.handles.join('/') : ''}</span>
       <div class="desc">${esc(r.description || r.system.slice(0, 160))}</div>
-      <div class="src">${r.custom ? `📄 ${esc(r.file)}` : 'de serie'}${team().some((a) => a.role === id) ? ' · en plantilla' : ''}</div>
+      ${r.skills?.length ? `<div class="sk">🧩 ${r.skills.map(esc).join(' · ')}</div>` : ''}
+      <div class="src">${r.custom ? `📄 ${esc(r.file.replace(/^.*\/_agentes\/roles\//, 'catálogo/'))}` : 'de serie'}${team().some((a) => a.role === id) ? ' · en plantilla' : ''}</div>
+      <div class="acts">${r.custom ? `<button class="small ghost" data-role-edit="${id}">✎ Editar</button><button class="small danger" data-role-del="${id}">✕</button>` : `<button class="small ghost" data-role-dup="${id}">Copiar al catálogo…</button>`}</div>
     </div>`).join('');
+}
+
+let skillsData = null;
+async function renderSkills(reload = false) {
+  const el = $('#skills');
+  if (!el) return;
+  if (!skillsData || reload) { el.innerHTML = '<p class="muted">Inventariando…</p>'; try { skillsData = await api('GET', '/api/skills'); } catch { el.innerHTML = '<p class="bad">No se pudo leer el catálogo</p>'; return; } }
+  const { catalog, inventory, catalogDir } = skillsData;
+  $('#skills-summary').textContent = `${catalog.length} en el catálogo · ${inventory.length} encontradas en el PC · ${short(catalogDir)}/skills`;
+  const groups = {};
+  for (const s of inventory) (groups[s.sourceLabel] = groups[s.sourceLabel] || []).push(s);
+  el.innerHTML = `<div class="skills-wrap">
+    <div class="skills-box"><h4>Catálogo central (lo que pueden usar los roles)</h4>${catalog.length ? catalog.map((s) => `<div class="skill"><span class="nm">${esc(s.name)}</span><span class="ds" title="${esc(s.description)}">${esc(s.description)}</span><span class="src" title="${esc(s.target)}">${s.broken ? '⚠ roto' : '→ ' + esc(short(s.target))}</span><button class="small danger" data-skill-del="${esc(s.name)}" title="Quitar del catálogo (no borra la skill)">✕</button></div>`).join('') : '<p class="muted">Vacío. Añade skills desde el inventario →</p>'}</div>
+    <div class="skills-box"><h4>Inventario del PC</h4>${Object.entries(groups).map(([g, list]) => `<div class="muted" style="margin:8px 0 4px;font-weight:600">${esc(g)} <span class="muted">(${list.length})</span></div>${list.map((s) => `<div class="skill"><span class="nm">${esc(s.name)}</span><span class="ds" title="${esc(s.description)}">${esc(s.description)}</span>${s.central ? `<span class="src">✓ en catálogo${s.central !== s.name ? ' como ' + esc(s.central) : ''}</span>` : `<button class="small ghost" data-skill-add="${esc(s.dir)}" title="${esc(s.dir)}">→ Catálogo</button>`}</div>`).join('')}`).join('')}</div>
+  </div>`;
+}
+
+async function saveRepos(repos) {
+  await api('PATCH', `/api/projects/${projectId}`, { repos: repos.map((r) => ({ key: r.key, path: r.path, roles: r.roles || [] })) });
+  toast('Repositorios guardados');
+}
+function editRepo(key) {
+  const repos = project()?.repos || [];
+  const r = repos.find((x) => x.key === key) || { key: '', path: '', roles: [] };
+  dialog(`
+    <h3>${key ? '✎ Repo «' + esc(key) + '»' : '＋ Añadir repositorio'}</h3>
+    <label>Clave (corta, sin espacios)</label><input name="key" value="${esc(r.key)}" placeholder="servidor" required ${key ? '' : 'autofocus'} />
+    <label>Ruta del repositorio git en esta máquina</label><input name="path" value="${esc(r.path)}" placeholder="~/dev/mi-proyecto" required />
+    <label>Roles que trabajan en este repo (Ctrl+clic para varios; vacío = los roles sin repo propio)</label>
+    <select name="roles" multiple class="tall">${Object.entries(S.roles).filter(([, x]) => x.kind !== 'planner').map(([id, x]) => `<option value="${id}" ${(r.roles || []).includes(id) ? 'selected' : ''}>${esc(x.label)}</option>`).join('')}</select>
+    ${r.auto ? '<p class="muted">Deducido del enlace del hub; al editarlo deja de ser automático.</p>' : ''}
+    ${buttons('Guardar')}`, async (f) => {
+    const roles = [...$('#dialog form').querySelector('[name=roles]').selectedOptions].map((o) => o.value);
+    const next = repos.filter((x) => x.key !== key).map((x) => ({ key: x.key, path: x.path, roles: x.roles || [] }));
+    next.push({ key: f.key.trim(), path: f.path.trim(), roles });
+    await saveRepos(next);
+  });
+}
+
+function editRole(id, duplicate = false) {
+  const r = S.roles[id] || {};
+  const rid = duplicate ? '' : id;
+  const catalog = skillsData?.catalog || [];
+  const mine = r.skills || [];
+  dialog(`
+    <h3>${rid ? '✎ Rol «' + esc(r.label) + '»' : '＋ Nuevo rol' + (duplicate ? ' (a partir de «' + esc(r.label) + '»)' : '')}</h3>
+    <div class="grid2">
+      <div><label>Identificador (sin espacios)</label><input name="id" value="${esc(rid)}" placeholder="unity-dev" ${rid ? 'readonly' : 'required autofocus'} /></div>
+      <div><label>Tipo</label><select name="kind"><option value="dev" ${r.kind === 'dev' ? 'selected' : ''}>desarrolla</option><option value="qa" ${r.kind === 'qa' ? 'selected' : ''}>QA</option><option value="planner" ${r.kind === 'planner' ? 'selected' : ''}>planifica (PO)</option></select></div>
+      <div><label>Modelo por defecto</label><input name="model" value="${esc(r.model || '')}" placeholder="sonnet / opus / gpt-5.5" /></div>
+      <div><label>Atiende tareas de rol (Ctrl+clic)</label><select name="handles" multiple>${['po', 'back', 'front', 'qa'].map((h) => `<option value="${h}" ${(r.handles || []).includes(h) ? 'selected' : ''}>${h}</option>`).join('')}</select></div>
+    </div>
+    <label>Descripción (una línea)</label><input name="description" value="${esc(r.description || '')}" />
+    <label>Skills del catálogo que lleva (Ctrl+clic)</label>
+    <select name="skills" multiple class="tall">${catalog.map((s) => `<option value="${esc(s.name)}" ${mine.includes(s.name) ? 'selected' : ''}>${esc(s.name)} — ${esc(s.description.slice(0, 80))}</option>`).join('') || '<option disabled>(catálogo vacío: añade skills abajo)</option>'}</select>
+    <label>Prompt de sistema</label><textarea name="system" rows="12">${esc(r.system || '')}</textarea>
+    <p class="muted">Se guarda como fichero .md en el catálogo central (${esc(short(skillsData?.catalogDir || '~/JksDocs/workspace/_agentes'))}/roles/).</p>
+    ${buttons('Guardar')}`, async (f) => {
+    const form = $('#dialog form');
+    const pick = (n) => [...form.querySelector(`[name=${n}]`).selectedOptions].map((o) => o.value);
+    await api('POST', '/api/roles', { ...f, id: f.id || rid, handles: pick('handles'), skills: pick('skills'), file: rid ? r.file : null });
+    toast('Rol guardado en el catálogo');
+  });
 }
 
 // Candado de suite: chip en la cabecera y pantalla de bloqueo si flow-test no está o ha caducado.
@@ -308,6 +391,9 @@ const roleOptions = (sel, skipPo) => Object.entries(S.roles).filter(([, r]) => !
 const engineOptions = (sel) => S.engines.map((e) => `<option ${e === sel ? 'selected' : ''}>${e}</option>`).join('');
 
 const actions = {
+  'add-repo': () => editRepo(''),
+  'new-role': () => editRole('', false),
+  'reload-skills': () => renderSkills(true),
   sync: async () => { const r = await api('POST', '/api/sync'); toast(`Carpetas de flow-test: ${r.folders.join(', ')}${r.created ? ` · ${r.created} proyecto(s) nuevo(s)` : ''}`); },
   'new-project': () => dialog(`
     <h3>Nuevo proyecto</h3>
@@ -585,6 +671,13 @@ document.addEventListener('click', async (e) => {
   if (d.approve) return api('POST', `/api/tasks/${d.approve}/approve`).then(() => toast('Tarea aprobada ✓'));
   if (d.ready) return api('PATCH', `/api/tasks/${d.ready}`, { status: 'todo' });
   if (d.edit) return editTask(d.edit);
+  if (d.repoEdit !== undefined) return editRepo(d.repoEdit);
+  if (d.repoDel !== undefined) { if (confirm(`¿Quitar el repo «${d.repoDel}» del proyecto? (no toca el disco)`)) saveRepos((project()?.repos || []).filter((r) => r.key !== d.repoDel)); return; }
+  if (d.roleEdit) return editRole(d.roleEdit);
+  if (d.roleDup) return editRole(d.roleDup, true);
+  if (d.roleDel) { if (confirm(`¿Borrar el rol «${d.roleDel}» del catálogo?`)) api('DELETE', `/api/roles/${d.roleDel}`).then(() => toast('Rol borrado')); return; }
+  if (d.skillAdd) return api('POST', '/api/skills/centralize', { dir: d.skillAdd }).then((r) => { toast(`«${r.name}» en el catálogo`); renderSkills(true); });
+  if (d.skillDel) return api('DELETE', `/api/skills/${d.skillDel}`).then(() => { toast('Quitada del catálogo'); renderSkills(true); });
   if (d.agentEdit) return editAgent(d.agentEdit);
   if (d.park) return api('PATCH', `/api/tasks/${d.park}`, { status: 'backlog' });
   if (d.del) { if (confirm('¿Borrar la tarea?')) api('DELETE', `/api/tasks/${d.del}`); return; }
