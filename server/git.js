@@ -30,7 +30,7 @@ export async function createWorktree(project, task) {
   if (fs.existsSync(dir)) {
     try {
       await git(repo, 'rev-parse', '--verify', `refs/heads/${branch}`);
-      if ((await git(dir, 'rev-parse', '--abbrev-ref', 'HEAD')) === branch) return { path: dir, branch, reused: true };
+      if ((await git(dir, 'rev-parse', '--abbrev-ref', 'HEAD')) === branch) { linkNodeModules(repo, dir); return { path: dir, branch, reused: true }; }
     } catch { /* worktree roto: se recrea abajo */ }
   }
   if (fs.existsSync(dir)) {
@@ -39,7 +39,15 @@ export async function createWorktree(project, task) {
   try { await git(repo, 'branch', '-D', branch); } catch { /* no existía */ }
   fs.mkdirSync(path.dirname(dir), { recursive: true });
   await git(repo, 'worktree', 'add', '-b', branch, dir, project.baseBranch);
+  linkNodeModules(repo, dir);
   return { path: dir, branch };
+}
+
+// node_modules no está en git: el worktree lo enlaza al del repo para que los scripts del proyecto funcionen.
+function linkNodeModules(repo, dir) {
+  const src = path.join(repo, 'node_modules');
+  const dest = path.join(dir, 'node_modules');
+  if (fs.existsSync(src) && !fs.existsSync(dest)) { try { fs.symlinkSync(src, dest, 'dir'); } catch { /* sin enlace: el agente hará npm install */ } }
 }
 
 export async function commitAll(dir, message, author) {

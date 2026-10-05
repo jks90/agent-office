@@ -9,7 +9,7 @@ import { ROLES } from './roles.js';
 const PORT = Number(process.env.AO_PORT || 7420);
 const HOST = process.env.AO_HOST || '127.0.0.1'; // lanza procesos con tus permisos: solo local
 const PUBLIC = path.join(store.ROOT, 'public');
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.json': 'application/json' };
 
 // Primer arranque: un proyecto de demostración para ver la oficina sin configurar nada.
 if (!store.get().projects.length) await team.createProject({ name: 'Demo — Tienda online' });

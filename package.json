@@ -8,5 +8,10 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js"
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^25.12.0"
+  }
 }
