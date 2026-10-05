@@ -26,6 +26,13 @@ export async function createWorktree(project, task) {
   const dir = worktreeDir(project, task);
   const branch = branchOf(task);
   await git(repo, 'worktree', 'prune');
+  // Tarea devuelta: se sigue sobre su intento anterior en vez de empezar de cero.
+  if (fs.existsSync(dir)) {
+    try {
+      await git(repo, 'rev-parse', '--verify', `refs/heads/${branch}`);
+      if ((await git(dir, 'rev-parse', '--abbrev-ref', 'HEAD')) === branch) return { path: dir, branch, reused: true };
+    } catch { /* worktree roto: se recrea abajo */ }
+  }
   if (fs.existsSync(dir)) {
     try { await git(repo, 'worktree', 'remove', '--force', dir); } catch { fs.rmSync(dir, { recursive: true, force: true }); }
   }

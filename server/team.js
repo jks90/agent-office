@@ -152,9 +152,9 @@ export async function approve(id) {
 export async function reject(id, feedback = '') {
   const t = findOr404(get().tasks, id, 'Tarea');
   if (!['review', 'failed'].includes(t.status)) throw fail(409, 'Solo se devuelven tareas en revisión o fallidas');
-  await git.cleanup(projectOf(t), t);
+  // La rama y el worktree se conservan: el agente corrige sobre su intento anterior.
   if (feedback.trim()) t.feedback = [t.feedback, feedback.trim()].filter(Boolean).join('\n');
-  Object.assign(t, { status: 'todo', agentId: null, branch: null, diffStat: '', error: null, updatedAt: Date.now() });
+  Object.assign(t, { status: 'todo', agentId: null, diffStat: '', error: null, updatedAt: Date.now() });
   changed();
   tick();
 }
@@ -215,6 +215,7 @@ function buildPrompt(p, agent, t) {
     t.feedback ? `\nComentarios de la revisión anterior (corrígelos):\n${t.feedback}` : '',
     '',
     `Trabajas en una copia aislada del repo (git worktree) en la rama ${t.branch}. No cambies de rama ni hagas push.`,
+    t.reused ? 'En esta rama ya está tu intento anterior (mira `git log` y `git diff` contra la rama base): parte de él y corrige lo que pide la revisión, sin rehacer lo que ya estaba bien.' : '',
     'Lo que dejes sin confirmar se confirmará solo al terminar.',
     'Al acabar, responde con un resumen breve: qué cambiaste y cómo lo probaste.',
   ].join('\n');
@@ -238,6 +239,8 @@ async function runTask(p, agent, t) {
       const wt = await git.createWorktree(p, t);
       cwd = wt.path;
       t.branch = wt.branch;
+      t.reused = !!wt.reused;
+      if (wt.reused) log(agent.id, `↺ Sigue sobre su intento anterior en ${wt.branch}`);
     }
     if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true });
 
