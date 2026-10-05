@@ -37,7 +37,7 @@ const STEPS = {
 const slugOf = (s) => String(s).toLowerCase().normalize('NFD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 20) || 'feature';
 const capital = (s) => s.charAt(0).toUpperCase() + s.slice(1).replace(/-(\w)/g, (_, c) => c.toUpperCase());
 
-export function start({ agent, task, mode, goal, roles, onActivity, onLog }) {
+export function start({ agent, task, mode, goal, roles, onActivity, onLog, onTool = () => {} }) {
   const role = mode === 'plan' ? 'po' : agent.role;
   const slug = slugOf(mode === 'plan' ? goal : task.title);
   const steps = STEPS[role].map((s) => s.replace('{slug}', slug).replace('{Slug}', capital(slug)));
@@ -47,15 +47,20 @@ export function start({ agent, task, mode, goal, roles, onActivity, onLog }) {
   const done = new Promise((r) => { finish = r; });
 
   let i = 0;
+  let callId = null;
   const next = () => {
     if (stopped) return;
+    if (callId) { onTool({ phase: 'finished', callId, ok: true }); callId = null; }
     if (i >= steps.length) {
       if (mode === 'plan') return finish({ ok: true, summary: 'Plan listo', tasks: demoPlan(goal, roles), costUsd: 0 });
       return finish({ ok: true, summary: demoSummary(role, task), costUsd: 0, diffStat: demoDiff(role, slug) });
     }
     const step = steps[i++];
+    if (callId) onTool({ phase: 'finished', callId, ok: true });
     onActivity(step);
     onLog('🔧 ' + step);
+    callId = `demo${i}`;
+    onTool({ phase: 'started', callId, tool: /^(Leyendo|Revisando)/.test(step) ? 'Read' : /^Editando/.test(step) ? 'Edit' : /^Ejecutando/.test(step) ? 'Bash' : /^Buscando/.test(step) ? 'Grep' : /^flow-test/.test(step) ? 'mcp__flow-test' : 'Think', summary: step });
     timer = setTimeout(next, 2200 + Math.random() * 2800);
   };
   timer = setTimeout(next, 600);

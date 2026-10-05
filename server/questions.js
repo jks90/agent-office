@@ -4,6 +4,7 @@
 // vuelve al comando, que la imprime para que el agente siga. Cada pregunta y su respuesta quedan en `task.questions`
 // (se ven en el modal de la tarea y se repiten al agente si vuelve a intentarla, para que no pregunte dos veces).
 import * as store from './store.js';
+import * as events from './events.js';
 
 const pending = new Map(); // id → { id, taskId, agentId, projectId, question, options, allowCustom, createdAt, waiters[] }
 const MAX_OPEN_PER_TASK = 1;
@@ -27,6 +28,7 @@ export function ask({ taskId, question, options = [], allowCustom = true, contex
   pending.set(q.id, q);
   if (agent) { agent.activity = `❓ Esperando tu respuesta: ${q.question.slice(0, 80)}`; }
   store.log(t.agentId, `❓ ${t.code || t.id} pregunta: ${q.question}${q.options.length ? ` [${q.options.join(' / ')}]` : ''}`);
+  events.emit('AgentBlocked', events.ctxOf(t, agent), { questionId: q.id, question: q.question, options: q.options });
   store.changed();
   return { id: q.id };
 }
@@ -52,6 +54,9 @@ function settle(q, answer) {
   if (t) { (t.questions ||= []).push({ id: q.id, question: q.question, options: q.options, answer, askedAt: q.createdAt, answeredAt: Date.now() }); t.updatedAt = Date.now(); }
   const agent = s.agents.find((a) => a.id === q.agentId);
   if (agent?.taskId === q.taskId) agent.activity = answer == null ? 'Sigue trabajando' : `💬 Respondido: ${String(answer).slice(0, 60)} · sigue trabajando`;
+  const ctx = { projectId: q.projectId, taskId: q.taskId, taskCode: q.taskCode, agentId: q.agentId };
+  if (answer != null) events.emit('UserInstructionAdded', ctx, { kind: 'answer', questionId: q.id, text: String(answer).slice(0, 500) });
+  if (agent?.taskId === q.taskId) events.emit('AgentResumed', ctx, { reason: answer == null ? 'question-cancelled' : 'answered', questionId: q.id });
   const res = answer == null ? { status: 'cancelled' } : { status: 'answered', answer };
   for (const w of q.waiters) w(res);
   q.waiters = [];

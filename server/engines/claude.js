@@ -1,7 +1,7 @@
 // Motor Claude Code: `claude -p --output-format stream-json` en el worktree de la tarea.
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
-import { describeTool, firstLine } from './describe.js';
+import { describeTool, toolSummary, firstLine } from './describe.js';
 
 // Lectura/edición + shell de andar por casa (sin rm, sudo, docker, ssh ni git push).
 const WORK_TOOLS = [
@@ -15,7 +15,7 @@ const WORK_TOOLS = [
 ];
 const PLAN_TOOLS = ['Read', 'Glob', 'Grep'];
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv = {}, onActivity, onLog }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv = {}, onActivity, onLog, onTool = () => {} }) {
   const tools = [...(mode === 'plan' ? PLAN_TOOLS : WORK_TOOLS)];
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--append-system-prompt', system];
   args.push('--model', model || 'sonnet'); // nunca heredar el modelo por defecto de la sesión del usuario (puede no estar disponible en -p)
@@ -45,6 +45,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv 
         if (c.type === 'tool_use') {
           const d = describeTool(c.name, c.input);
           onActivity(d);
+          onTool({ phase: 'started', callId: c.id, tool: c.name, summary: toolSummary(c.name, c.input) });
           onLog('🔧 ' + d);
         } else if (c.type === 'text' && c.text.trim()) {
           onActivity('Pensando: ' + firstLine(c.text, 50));
@@ -53,6 +54,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv 
       }
     } else if (ev.type === 'user') {
       for (const c of ev.message?.content || []) {
+        if (c.type === 'tool_result') onTool({ phase: 'finished', callId: c.tool_use_id, ok: !c.is_error });
         if (c.type === 'tool_result' && c.is_error) onLog('⚠ ' + firstLine(typeof c.content === 'string' ? c.content : JSON.stringify(c.content), 200));
       }
     } else if (ev.type === 'system' && ev.subtype === 'init') {

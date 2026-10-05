@@ -27,6 +27,13 @@ export function describeTool(name, input = {}) {
   return name;
 }
 
+// Resumen para el Activity Stream (FT-1): sin contenido sensible — nunca el comando de Bash ni textos escritos, solo el programa/fichero/patrón.
+export function toolSummary(name, input = {}) {
+  if (name === 'Bash') return `Ejecutando ${short(String(input.command ?? '').trim().split(/\s+/)[0], 30)}`;
+  if (name === 'WebFetch') return 'Leyendo una URL';
+  return describeTool(name, input);
+}
+
 export const firstLine = (s, n = 70) => short(String(s ?? '').split('\n').find((l) => l.trim()) || '', n);
 
 // El PO devuelve las tareas como JSON; lo sacamos aunque venga envuelto en texto o en ```json.

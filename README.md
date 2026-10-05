@@ -27,6 +27,33 @@ escribe un objetivo, pulsa **Encargar al PO** y luego **▶ Poner a trabajar**.
 5. **Tú decides**: *Ver cambios* (diff), *Aprobar y fusionar* (`merge --no-ff` a la rama base; exige el repo limpio y en esa rama) o *Devolver* con comentarios (se descarta la rama y el agente lo rehace con tu feedback).
 6. **QA + flow-test**: el agente QA recibe el MCP de flow-test (`Ajustes`, por defecto `http://localhost:9998/mcp`) para crear y ejecutar flows que verifiquen la API.
 
+## Activity Stream (FT-1)
+
+Además de las líneas de texto por agente (`log`), el servidor emite **eventos tipados** con ids correlacionables, pensados para el Guide Agent y la UI: `server/events.js`.
+
+```json
+{ "id": "ev_…", "ts": 1760000000000, "type": "AgentToolStarted", "projectId": "…", "taskId": "…", "taskCode": "FT-1", "agentId": "…", "data": { … } }
+```
+
+| Tipo | Cuándo (`data`) |
+|---|---|
+| `TaskCreated` | se crea una tarea (`title, role, kind, status, dependsOn, source`) |
+| `TaskAssigned` / `AgentStarted` | el planificador entrega la tarea a un agente (`agentName, role, attempt` / `engine`) |
+| `AgentProgress` | cambia la actividad del agente (`activity`) |
+| `AgentToolStarted` / `AgentToolFinished` | el motor (claude/codex/demo) llama a una herramienta (`callId, tool, summary` / `callId, ok`). El resumen no lleva contenido sensible: de Bash solo el programa, nunca el comando |
+| `AgentFileModified` | un fichero entra en el commit de la tarea (`path`) |
+| `AgentArtifactCreated` | commit (`kind:'commit', branch, repo, sha, files, diffStat`) o diff simulado (`kind:'diff'`) |
+| `AgentBlocked` | pregunta pendiente al cliente (`questionId, question, options`) |
+| `UserInstructionAdded` | respuesta del cliente o feedback de *Devolver* (`kind:'answer'\|'feedback', text`) |
+| `AgentPaused` / `AgentResumed` | el usuario para al agente / vuelve tras una respuesta o un reintento (`reason`) |
+| `AgentFailed` / `AgentCompleted` | fin de la ejecución (`error` / `status, summary, costUsd`) |
+| `TaskReviewed` | *Aprobar* o *Devolver* (`decision:'approved'\|'rejected'`) |
+
+- **Consulta**: `GET /api/events?taskId=&agentId=&projectId=&since=&limit=` (`taskId` acepta id o código; `since` = id de evento o timestamp en ms; `limit` por defecto 200, máx. 2000). Devuelve los más recientes en orden cronológico.
+- **SSE**: `/events` emite `event: activity` por cada evento (los clientes que no lo conocen lo ignoran).
+- **Almacenamiento**: buffer en memoria de los últimos 2000 y `data/events.jsonl` (al pasar de 5 MB se rota a `events.jsonl.1`).
+- Secuencia típica con el motor demo: `TaskCreated → TaskAssigned → AgentStarted → AgentProgress/ToolStarted/ToolFinished… → AgentArtifactCreated → AgentCompleted`.
+
 ## Motores
 
 | Motor | Cómo se lanza | Permisos |
@@ -43,6 +70,7 @@ Variables: `AO_PORT` (7420), `AO_HOST` (127.0.0.1), `AO_DATA_DIR`, `AO_CLAUDE_BI
 ```
 server/index.js     HTTP + API REST + SSE (/events)
 server/team.js      proyectos, agentes, tareas, planificador, revisión
+server/events.js    Activity Stream tipado (FT-1)
 server/git.js       worktrees, commit, diff, merge
 server/engines/     demo · claude · codex (+ describe.js: herramienta → frase del bocadillo)
 public/office.js    la oficina: pixel art en canvas, rutas por pasillos, bocadillos
