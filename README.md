@@ -54,3 +54,7 @@ data/state.json     estado (gitignored)
 - Codex hereda los MCP de `~/.codex/config.toml`.
 - El QA trabaja sobre la rama base, así que solo ve lo que ya has aprobado (por eso depende de esas tareas).
 - Sin tope de gasto todavía: se muestra el coste por tarea (Claude) pero no se corta.
+
+## Créditos
+
+- Sprites de la oficina: [Kenney](https://kenney.nl) — *Roguelike Indoors* y *Roguelike Characters*, licencia CC0 (`public/assets/kenney/`). Mapa de tiles en `docs/assets-kenney.md`.

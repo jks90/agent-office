@@ -101,7 +101,7 @@ export function stopAgent(id) {
 }
 
 // ── Tareas ─────────────────────────────────────────────────────────────────
-export function createTask({ projectId, title, description = '', role, dependsOn = [], kind = 'work', goal = null }) {
+export function createTask({ projectId, title, description = '', role, dependsOn = [], kind = 'work', goal = null, images = [] }) {
   const s = get();
   findOr404(s.projects, projectId, 'Proyecto');
   if (!title?.trim()) throw fail(400, 'La tarea necesita un título');
@@ -112,6 +112,7 @@ export function createTask({ projectId, title, description = '', role, dependsOn
     status: 'todo', agentId: null, branch: null, summary: '', diffStat: '', error: null, feedback: '',
     costUsd: null, attempts: 0, createdAt: Date.now(), updatedAt: Date.now(),
   };
+  task.feedbackImages = copyImages(task, images);
   s.tasks.push(task);
   changed();
   tick();
@@ -154,19 +155,24 @@ export async function reject(id, feedback = '', images = []) {
   if (!['review', 'failed'].includes(t.status)) throw fail(409, 'Solo se devuelven tareas en revisión o fallidas');
   // La rama y el worktree se conservan: el agente corrige sobre su intento anterior.
   if (feedback.trim()) t.feedback = [t.feedback, feedback.trim()].filter(Boolean).join('\n');
-  // Capturas de la revisión: se copian a data/ para que el agente las vea (codex -i, claude con Read).
-  t.feedbackImages = [];
+  t.feedbackImages = copyImages(t, images);
+  Object.assign(t, { status: 'todo', agentId: null, diffStat: '', error: null, updatedAt: Date.now() });
+  changed();
+  tick();
+}
+
+// Imágenes adjuntas (capturas, referencias): se copian a data/ para que el agente las vea (codex --image, claude con Read).
+function copyImages(t, images) {
+  const out = [];
   const dir = path.join(store.DATA_DIR, 'feedback', t.id);
-  for (const [i, src] of (Array.isArray(images) ? images : []).slice(0, 6).entries()) {
+  for (const [i, src] of (Array.isArray(images) ? images : []).slice(0, 8).entries()) {
     if (!/\.(png|jpe?g|webp)$/i.test(src) || !fs.existsSync(src)) throw fail(400, `No encuentro la imagen ${src}`);
     fs.mkdirSync(dir, { recursive: true });
     const dest = path.join(dir, `${t.attempts}-${i + 1}${path.extname(src).toLowerCase()}`);
     fs.copyFileSync(src, dest);
-    t.feedbackImages.push(dest);
+    out.push(dest);
   }
-  Object.assign(t, { status: 'todo', agentId: null, diffStat: '', error: null, updatedAt: Date.now() });
-  changed();
-  tick();
+  return out;
 }
 
 export async function taskDiff(id) {
@@ -223,7 +229,7 @@ function buildPrompt(p, agent, t) {
     t.description,
     done.length ? `\nTrabajo previo del equipo (ya fusionado):\n${done.map((d) => `- ${d.title}: ${d.summary}`).join('\n')}` : '',
     t.feedback ? `\nComentarios de la revisión anterior (corrígelos):\n${t.feedback}` : '',
-    t.feedbackImages?.length ? `\nCapturas de la revisión (míralas antes de cambiar nada; también están en ${t.feedbackImages.join(', ')}).` : '',
+    t.feedbackImages?.length ? `\nImágenes adjuntas (míralas con atención antes de cambiar nada; también están en ${t.feedbackImages.join(', ')}).` : '',
     '',
     `Trabajas en una copia aislada del repo (git worktree) en la rama ${t.branch}. No cambies de rama ni hagas push.`,
     t.reused ? 'En esta rama ya está tu intento anterior (mira `git log` y `git diff` contra la rama base): parte de él y corrige lo que pide la revisión, sin rehacer lo que ya estaba bien.' : '',
