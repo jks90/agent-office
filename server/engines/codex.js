@@ -30,7 +30,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, images = [], e
   for (const img of images) args.push(`--image=${img}`); // con «=» para que -i (variádico) no se trague el «-»
   args.push('-'); // el prompt va por stdin
 
-  const child = spawn(process.env.AO_CODEX_BIN || 'codex', args, { cwd, env: { ...process.env, ...extraEnv, BROWSER: 'true' }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.env.AO_CODEX_BIN || 'codex', args, { cwd, env: { ...process.env, ...extraEnv, BROWSER: 'true' }, stdio: ['pipe', 'pipe', 'pipe'], detached: true }); // detached: grupo propio para pausar/matar (FT-5)
   child.stdin.end(`${system}\n\n${prompt}`);
 
   let lastMessage = '';
@@ -99,5 +99,12 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, images = [], e
     });
   });
 
-  return { done, stop() { stopped = true; child.kill('SIGTERM'); setTimeout(() => child.kill('SIGKILL'), 3000).unref(); } };
+  const signal = (sig) => { try { process.kill(-child.pid, sig); } catch { try { child.kill(sig); } catch { /* ya terminó */ } } };
+  return {
+    done,
+    pid: child.pid,
+    pause() { signal('SIGSTOP'); },
+    resume() { signal('SIGCONT'); },
+    stop() { stopped = true; signal('SIGTERM'); signal('SIGCONT'); setTimeout(() => signal('SIGKILL'), 3000).unref(); },
+  };
 }

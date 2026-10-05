@@ -159,6 +159,10 @@ const routes = [
   ['PATCH', /^\/api\/agents\/(\w+)$/, ([id], b) => team.updateAgent(id, b)],
   ['DELETE', /^\/api\/agents\/(\w+)$/, ([id]) => team.fire(id)],
   ['POST', /^\/api\/agents\/(\w+)\/stop$/, ([id]) => team.stopAgent(id)],
+  ['POST', /^\/api\/agents\/(\w+)\/pause$/, ([id]) => team.pauseAgent(id)],
+  ['POST', /^\/api\/agents\/(\w+)\/resume$/, ([id]) => team.resumeAgent(id)],
+  ['POST', /^\/api\/agents\/(\w+)\/message$/, ([id], b) => team.messageAgent(id, { text: b.text, constraint: !!b.constraint })],
+  ['POST', /^\/api\/tasks\/([\w-]+)\/constraints$/, ([id], b) => team.addConstraint(id, b.text)],
   ['POST', /^\/api\/settings$/, (_, b) => {
     const st = store.get().settings;
     if (typeof b.flowTestUrl === 'string' && b.flowTestUrl.trim()) st.flowTestUrl = b.flowTestUrl.trim().replace(/\/+$/, '').replace(/\/mcp$/, '');
