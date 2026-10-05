@@ -92,14 +92,18 @@ export async function syncBoard(project, { createTask, roles }) {
       created++;
       continue;
     }
-    t.title = c.title; t.description = c.description; t.source = { ...t.source, url: c.url, remoteStatus: c.status };
-    const localChanged = t.updatedAt > since && t.status !== t.source.pushedStatus;
+    // Editada aquí después de la última sincronización → gana lo local hasta la siguiente (el índice remoto
+    // puede ir unos segundos por detrás de lo que acabamos de enviar); si no, título y descripción mandan desde fuera.
+    const editedLocally = t.updatedAt > since;
+    let touched = false;
+    if (!editedLocally && (t.title !== c.title || t.description !== c.description)) { t.title = c.title; t.description = c.description; touched = true; }
+    t.source = { ...t.source, url: c.url, remoteStatus: c.status };
+    const localStatusChanged = editedLocally && t.status !== t.source.pushedStatus;
     if (c.status !== t.status) {
-      if (localChanged && t.status !== 'doing') { await pushStatus(project, t).then(() => pushed++).catch(() => {}); }
-      else if (!['doing'].includes(t.status) && ['backlog', 'todo', 'review', 'done'].includes(c.status) && !t.branch) { t.status = c.status; }
+      if (localStatusChanged && t.status !== 'doing') { await pushStatus(project, t).then(() => pushed++).catch(() => {}); }
+      else if (!editedLocally && !['doing'].includes(t.status) && ['backlog', 'todo', 'review', 'done'].includes(c.status) && !t.branch) { t.status = c.status; touched = true; }
     }
-    t.updatedAt = Date.now();
-    updated++;
+    if (touched) { t.updatedAt = Date.now(); updated++; }
   }
   project.board.syncedAt = Date.now(); project.board.lastError = null;
   store.changed();
