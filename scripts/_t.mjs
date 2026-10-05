@@ -1,0 +1,40 @@
+import { spawn } from 'node:child_process';
+import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
+import puppeteer from 'puppeteer-core';
+const port = 7580;
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-t-'));
+const srv = spawn(process.execPath, ['server/index.js'], { cwd: process.cwd(), env: { ...process.env, AO_PORT: String(port), AO_DATA_DIR: dir }, stdio: 'ignore' });
+await new Promise((r) => setTimeout(r, 1500));
+const B = `http://127.0.0.1:${port}`;
+const post = (u, b) => fetch(B + u, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) }).then((r) => r.json());
+const ctx = () => fetch(B + '/api/context').then((r) => r.json());
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const br = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox', '--disable-gpu', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+try {
+  const p = await post('/api/projects', { name: 'Demo', engine: 'demo', repos: [] });
+  console.log('project', p.id || JSON.stringify(p).slice(0, 100));
+  const ap = await post('/api/agents', { projectId: (await fetch(B + '/api/state').then((r) => r.json())).projects[0].id, name: 'Oscar', role: 'back' }); console.log('agent', JSON.stringify(ap).slice(0, 60));
+  const pg = await br.newPage();
+  pg.on('pageerror', (e) => console.log('PAGEERR', e.message));
+  await pg.goto(`${B}/`); await wait(1500);
+  const st = await fetch(B + '/api/state').then((r) => r.json());
+  if (!st.agents.length) console.log('sin agentes');
+  let t0 = Date.now();
+  await pg.click('[data-tab=tasks]'); await wait(450);
+  let c = await ctx(); console.log('tasks:', c.view, c.project?.name, c.project?.prefix, Date.now() - t0, 'ms');
+  await pg.type('#task-filter', 'zz'); await wait(450);
+  c = await ctx(); console.log('filter:', c.taskFilter);
+  await pg.evaluate(() => { document.querySelector('#task-filter').value = ''; document.querySelector('#task-filter').dispatchEvent(new Event('input')); });
+  const tk = await post('/api/tasks', { projectId: st.projects[0]?.id || p.id, title: 'Prueba', description: 'x', role: 'back' }).catch(() => null);
+  console.log('task', JSON.stringify(tk).slice(0, 80));
+  await wait(800);
+  const btn = await pg.$('[data-open]');
+  if (btn) { await btn.click(); await wait(450); c = await ctx(); console.log('task open:', c.openTaskId, c.task?.code, c.task?.title, c.task?.status); await pg.keyboard.press('Escape'); await wait(450); c = await ctx(); console.log('closed:', c.openTaskId); }
+  const ag = await pg.evaluate(() => document.querySelector('[data-agent]')?.click() ?? null); await wait(450);
+  c = await ctx(); console.log('agent:', c.selectedAgentId, c.agent?.name, c.agent?.status);
+  const f = await pg.evaluate((u) => { const i = document.createElement('iframe'); i.id = 'f'; i.src = u; document.body.append(i); return true; }, `${B}/`);
+  await wait(1500);
+  await pg.evaluate(() => document.getElementById('f').contentWindow.postMessage({ type: 'flowtest:context', flow: 'login', filePath: 'a.flow', node: 'n1', consoleTail: ['x'], dirty: true, running: false }, '*'));
+  await wait(600);
+  c = await ctx(); console.log('host:', JSON.stringify(c.host));
+} finally { await br.close(); srv.kill(); }
