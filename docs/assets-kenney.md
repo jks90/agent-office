@@ -14,14 +14,15 @@ Las referencias con cuadrícula numerada están en `docs/in-a.png` (interiores c
 
 ## Interiores (`indoor.png`) — coordenadas (col, fila)
 
-**Mesas de madera** (2 filas de alto: fila superior = tablero, fila inferior = frente):
-- Mesa 3 de ancho: izquierda (0,0)/(0,1) · centro (1,0)/(1,1) · derecha (2,0)/(2,1). Se puede alargar repitiendo el centro.
-- Mesa redonda 2×2: (3,0),(4,0) / (3,1),(4,1). Mesas pequeñas: (5,0)/(5,1), (6,0)/(6,1), (7,0)/(7,1).
+**Mesas de madera** (CADA FILA ES UNA MESA COMPLETA de 1 tile de alto; la fila 1 es la misma mesa con patas más largas, no «el frente»):
+- Mesa 3 de ancho: (0,0) izquierda · (1,0) centro · (2,0) derecha. Se alarga repitiendo el centro. Para un escritorio con más cuerpo se pueden apilar la fila 0 encima de la fila 1.
+- Mesa ovalada 2 de ancho: (3,0),(4,0) (o la variante (3,1),(4,1)). Mesas de 1 tile: (5,0), (6,0), (7,0).
 - Mesas de 1 tile: (4,2)…(7,2) y filas 3–5 cols 4–7 (variantes).
 
 **Sillas** (cada fila es un estilo; col 0 = mirando abajo/frente, col 1 = de espaldas/mirando arriba, col 2 = mirando derecha, col 3 = mirando izquierda):
 - Fila 2: cojín naranja · fila 3: cojín naranja (var.) · filas 4–5: madera lisa · filas 6–7: respaldo alto, cojín · fila 8: gris.
 - Para un agente sentado tecleando de cara al monitor (que está al fondo de la mesa) usa la silla **de espaldas (col 1)** y pinta el personaje encima.
+- La silla de la col 2 tiene el respaldo a la IZQUIERDA (mira a la derecha → va a la izquierda de una mesa); la de la col 3 al revés.
 
 **Bancos** (fila 6–8, cols 4–7, 2 de alto): banco largo (4,6),(5,6),(6,6),(7,6) / fila 7 frente.
 
@@ -33,14 +34,13 @@ Las referencias con cuadrícula numerada están en `docs/in-a.png` (interiores c
 
 **Velas / candelabros:** (19,0)…(22,3) (opcional, ambiente). Antorchas de pared (20,6),(21,6),(22,6).
 
-**Sofás** (2 de alto):
-- Naranja 3 de ancho: (16,8),(17,8),(18,8) / (16,9),(17,9),(18,9). Naranja redondeado 2 de ancho: (19,8),(20,8) / (19,9),(20,9).
-- Verde 3 de ancho: (16,10),(17,10),(18,10) / fila 11. Verde redondeado: (19,10),(20,10) / fila 11.
+**Sofás** (CADA FILA ES UN SOFÁ COMPLETO de 1 tile de alto; las filas 9 y 11 son variantes, no «el frente»):
+- Naranja 3 de ancho: (16,8),(17,8),(18,8). Naranja redondeado 2 de ancho: (19,8),(20,8).
+- Verde 3 de ancho: (16,10),(17,10),(18,10). Verde redondeado: (19,10),(20,10).
 - Sillones de 1 tile: (0,9)/(0,10) naranja, (6,9)/(6,10) verde…
 
-**Alfombras** (4×4 con borde marrón; fila superior = borde de arriba, filas centrales = interior, fila inferior = borde de abajo; col 23 = borde izquierdo, col 26 = borde derecho):
-- Naranja: cols 23–26, filas 10–13. Verde: cols 23–26, filas 14–17.
-- OJO: cols 23–26 filas 0–7 NO son alfombras, son **cortinas/empapelado de pared** (naranja 0–3, verde 4–7).
+**Camas** (cols 23–26, filas 10–17): cama doble naranja (23,11),(24,11)/(23,12),(24,12)/(23,13),(24,13) y verde en filas 15–17; camas individuales en cols 25–26. La fila 10/14 es el cabecero suelto.
+**Alfombras:** no hay un tile de alfombra claro en esta hoja (cols 23–26 filas 0–7 son cortinas/empapelado): **la alfombra se dibuja a mano** (`drawRug`).
 
 **Cuadros:** pequeños (16,12),(17,12),(18,12),(16,13),(17,13),(18,13) · grandes apaisados (19,12)+(20,12), (19,13)+(20,13) · teal largo (16,14),(17,14),(18,14) · naranja largo (16,15),(17,15),(18,15) · retratos (19,15),(20,15),(21,15) · mapa (16,17),(17,17),(18,17).
 **Espejo:** (22,14)/(22,15). **Piano:** (23,8),(24,8) / (23,9),(24,9). **Armarios altos:** (25,8)/(25,9), (26,8)/(26,9).
