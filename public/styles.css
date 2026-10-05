@@ -189,6 +189,8 @@ dialog h3 { margin: 0 0 var(--s-3); font-size: 20px; }
 dialog label { display: block; margin: var(--s-3) 0 var(--s-1); font-size: 12px; color: var(--muted); }
 dialog input, dialog select, dialog textarea { width: 100%; }
 dialog .row { display: flex; justify-content: flex-end; gap: var(--s-2); margin-top: var(--s-4); }
+dialog .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+dialog select[multiple] { width: 100%; }
 dialog pre { background: var(--panel3); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--s-3); max-height: 60vh; overflow: auto; font-size: 12px; }
 dialog.wide { width: min(1000px, 94vw); }
 .diff-add { color: #4ade80; } .diff-del { color: #f87171; } .diff-hunk { color: #60a5fa; }

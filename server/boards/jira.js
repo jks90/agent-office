@@ -55,6 +55,12 @@ export async function push(cfg, sec, remoteId, status, { comment } = {}) {
   }
   if (comment) await api(cfg, sec, 'POST', `/issue/${remoteId}/comment`, { body: adf(comment) });
 }
+export async function update(cfg, sec, remoteId, { title, description }) {
+  const fields = {};
+  if (title) fields.summary = title;
+  if (description !== undefined) fields.description = adf(description || '');
+  if (Object.keys(fields).length) await api(cfg, sec, 'PUT', `/issue/${remoteId}`, { fields });
+}
 export async function create(cfg, sec, { title, description, status }) {
   const j = await api(cfg, sec, 'POST', '/issue', { fields: { project: { key: cfg.projectKey }, summary: title, description: adf(description || ''), issuetype: { name: cfg.issueType || 'Task' } } });
   if (status && status !== 'backlog') await push(cfg, sec, j.key, status).catch(() => {});

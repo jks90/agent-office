@@ -41,6 +41,12 @@ export async function push(cfg, sec, remoteId, status, { comment } = {}) {
   if (byState[status]) await api(cfg, sec, 'PUT', `/cards/${remoteId}`, { idList: byState[status] });
   if (comment) await api(cfg, sec, 'POST', `/cards/${remoteId}/actions/comments?text=${encodeURIComponent(comment)}`);
 }
+export async function update(cfg, sec, remoteId, { title, description }) {
+  const body = {};
+  if (title) body.name = title;
+  if (description !== undefined) body.desc = description || '';
+  if (Object.keys(body).length) await api(cfg, sec, 'PUT', `/cards/${remoteId}`, body);
+}
 export async function create(cfg, sec, { title, description, status }) {
   const { byState } = await listMap(cfg, sec);
   const c = await api(cfg, sec, 'POST', '/cards', { idList: byState[status] || byState.backlog || byState.todo, name: title, desc: description || '' });

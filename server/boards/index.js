@@ -118,6 +118,15 @@ export async function pushStatus(project, task, comment) {
 }
 export function pushStatusSoon(project, task, comment) { pushStatus(project, task, comment).catch((e) => { if (project.board) { project.board.lastError = `push #${task.id}: ${e.message}`; store.changed(); } }); }
 
+// Título/descripción editados aquí → fuera (si no, el siguiente pull los pisaría).
+export function pushContentSoon(project, task) {
+  if (!project?.board || task.source?.kind !== project.board.kind) return;
+  const { kind, cfg, sec } = ctx(project);
+  if (!kind.update) return;
+  call(kind, 'update', cfg, sec, task.source.id, { title: task.title, description: task.description })
+    .catch((e) => { project.board.lastError = `editar #${task.id}: ${e.message}`; store.changed(); });
+}
+
 // Tarea nueva creada aquí (PO o a mano) → tarjeta fuera, si el tablero lo pide.
 export async function createRemote(project, task) {
   if (!project?.board?.pushNew || task.source || task.kind === 'plan') return;

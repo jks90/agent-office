@@ -206,8 +206,10 @@ export function updateTask(id, patch) {
   const t = findOr404(s.tasks, id, 'Tarea');
   const p = projectOf(t);
   if (t.status === 'doing') throw fail(409, 'Para al agente antes de editar la tarea');
+  const before = `${t.title}\n${t.description}`;
   if (patch.title?.trim()) t.title = patch.title.trim();
   if (typeof patch.description === 'string') t.description = patch.description.trim();
+  if (`${t.title}\n${t.description}` !== before && p?.board && t.source?.kind === p.board.kind) boards.pushContentSoon(p, t);
   if (patch.role && roleOf(patch.role)) t.role = patch.role;
   if (patch.repo !== undefined) {
     if (patch.repo && !(p.repos || []).some((r) => r.key === patch.repo)) throw fail(400, `El proyecto no tiene el repo «${patch.repo}»`);

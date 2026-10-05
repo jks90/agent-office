@@ -207,6 +207,7 @@ function card(t) {
     acts.push(`<button class="small ghost" data-reject="${t.id}">↩ Devolver</button>`);
   }
   if (t.status === 'failed') acts.push(`<button class="small" data-reject="${t.id}">↻ Reintentar</button>`);
+  if (t.status !== 'doing') acts.unshift(`<button class="small ghost" data-edit="${t.id}" title="Editar título, descripción, rol, repo y dependencias">✎</button>`);
   if (t.status === 'backlog') acts.push(`<button class="small" data-ready="${t.id}">→ Por hacer</button>`);
   if (t.status === 'todo') acts.push(`<button class="small ghost" data-park="${t.id}">← Backlog</button>`);
   if (['todo', 'failed', 'done'].includes(t.status)) acts.push(`<button class="small danger" data-del="${t.id}">Borrar</button>`);
@@ -487,6 +488,32 @@ document.addEventListener('click', (e) => {
   }
 });
 
+// Editar una tarea desde su tarjeta.
+function editTask(id) {
+  const t = S.tasks.find((x) => x.id === id);
+  if (!t) return;
+  const others = tasks().filter((x) => x.id !== id && x.kind !== 'plan');
+  const repos = project()?.repos || [];
+  dialog(`
+    <h3>✎ Tarea #${t.id}${t.source?.url ? ` · <a href="${esc(t.source.url)}" target="_blank" rel="noopener" style="font-size:13px;color:#93c5fd">${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} ${esc(t.source.id)} ↗</a>` : ''}</h3>
+    <label>Título</label><input name="title" value="${esc(t.title)}" required autofocus />
+    <label>Descripción</label><textarea name="description" rows="6">${esc(t.description)}</textarea>
+    <div class="grid2">
+      <div><label>Rol</label><select name="role">${roleOptions(t.role, true)}</select></div>
+      ${repos.length > 1 ? `<div><label>Repositorio</label><select name="repo"><option value="">(el que diga el rol)</option>${repos.map((r) => `<option value="${r.key}" ${r.key === t.repo ? 'selected' : ''}>${esc(r.key)}</option>`).join('')}</select></div>` : ''}
+    </div>
+    <label>Depende de (Ctrl+clic para varias)</label>
+    <select name="dependsOn" multiple size="${Math.min(6, Math.max(2, others.length))}">${others.map((o) => `<option value="${o.id}" ${t.dependsOn.includes(o.id) ? 'selected' : ''}>${o.status === 'done' ? '✓' : '⏳'} #${o.id} · ${esc(o.title.slice(0, 70))}</option>`).join('')}</select>
+    ${['backlog', 'todo', 'failed'].includes(t.status) ? `<label>Estado</label><select name="status"><option value="backlog" ${t.status === 'backlog' ? 'selected' : ''}>Backlog</option><option value="todo" ${t.status !== 'backlog' ? 'selected' : ''}>Por hacer</option></select>` : ''}
+    ${t.source?.kind && t.source.kind !== 'flow' ? '<p class="muted">Título y descripción se actualizan también en el tablero online.</p>' : ''}
+    ${buttons('Guardar')}`, async (f) => {
+    const form = $('#dialog form');
+    const dependsOn = [...form.querySelector('[name=dependsOn]').selectedOptions].map((o) => o.value);
+    await api('PATCH', `/api/tasks/${id}`, { ...f, dependsOn });
+    toast('Tarea actualizada');
+  });
+}
+
 // «clave = ruta @ rol1,rol2» · «ruta @ roles» · «ruta» (la clave sale del nombre de la carpeta)
 function parseRepos(text) {
   return String(text || '').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
@@ -512,6 +539,7 @@ document.addEventListener('click', async (e) => {
   }
   if (d.approve) return api('POST', `/api/tasks/${d.approve}/approve`).then(() => toast('Tarea aprobada ✓'));
   if (d.ready) return api('PATCH', `/api/tasks/${d.ready}`, { status: 'todo' });
+  if (d.edit) return editTask(d.edit);
   if (d.park) return api('PATCH', `/api/tasks/${d.park}`, { status: 'backlog' });
   if (d.del) { if (confirm('¿Borrar la tarea?')) api('DELETE', `/api/tasks/${d.del}`); return; }
   if (d.reject) {

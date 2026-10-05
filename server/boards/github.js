@@ -132,6 +132,13 @@ export async function push(cfg, remoteId, status, { comment } = {}) {
   if (comment) await gh('issue', 'comment', remoteId, '--repo', cfg.repo, '--body', comment).catch(() => {});
 }
 
+export async function update(cfg, remoteId, { title, description }) {
+  const args = ['issue', 'edit', remoteId, '--repo', cfg.repo];
+  if (title) args.push('--title', title);
+  if (description !== undefined) args.push('--body', description || '');
+  if (args.length > 5) await gh(...args);
+}
+
 export async function create(cfg, { title, description, status }) {
   if (!cfg.project) await ensureLabels(cfg);
   const args = ['issue', 'create', '--repo', cfg.repo, '--title', title, '--body', description || '(creada desde AgentOffice)'];
