@@ -21,7 +21,9 @@ import * as context from './context.js';
 import * as guideTools from './guide/tools.js';
 import * as guidePolicy from './guide/policy.js';
 import * as guide from './guide/index.js';
+import * as stt from './guide/stt/index.js';
 
+const fail = (status, msg) => Object.assign(new Error(msg), { status });
 const PORT = Number(process.env.AO_PORT || 7420);
 const HOST = process.env.AO_HOST || '127.0.0.1'; // lanza procesos con tus permisos: solo local
 // Si se expone fuera del loopback (p. ej. para que el flow-test en Docker lo proxee), hace falta un token:
@@ -72,7 +74,7 @@ export function extractText(file) {
 const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), questions: questions.list(), guidePolicy: guidePolicy.getPolicy() }; };
 
 async function readBody(req) {
-  const limit = req.url.startsWith('/api/upload') ? 40e6 : 1e6; // adjuntos en base64 (≈30 MB de ficheros)
+  const limit = req.url.startsWith('/api/upload') ? 40e6 : req.url.startsWith('/api/guide/stt') ? 12e6 : 1e6; // adjuntos y audio del Guide (FT-9) en base64
   let raw = '';
   for await (const chunk of req) { raw += chunk; if (raw.length > limit) throw Object.assign(new Error('Cuerpo demasiado grande'), { status: 413 }); }
   return raw ? JSON.parse(raw) : {};
@@ -99,6 +101,12 @@ const routes = [
   ['GET', /^\/api\/guide\/chats$/, () => guide.listChats()],
   ['GET', /^\/api\/guide\/chats\/([\w-]+)$/, ([id]) => guide.getChat(id)],
   ['DELETE', /^\/api\/guide\/chats\/([\w-]+)$/, ([id]) => guide.deleteChat(id)],
+  // Voz (FT-9): GET = proveedores STT y su estado; POST {audio: base64, mime, lang?} → {text, lang, ms}. El texto lo manda el cliente a /api/guide/chat
+  ['GET', /^\/api\/guide\/stt$/, () => stt.status()],
+  ['POST', /^\/api\/guide\/stt$/, (_, b) => {
+    if (typeof b.audio !== 'string' || !b.audio) throw fail(400, 'Falta el audio (base64)');
+    return stt.transcribe(Buffer.from(b.audio, 'base64'), b.mime, b.lang);
+  }],
   ['POST', /^\/api\/guide\/stop$/, (_, b) => guide.stop(String(b.chatId || ''))],
   // Cuentas de los motores de IA (login OAuth/clave API, logout)
   ['GET', /^\/api\/engines$/, () => auth.enginesStatus()],
@@ -176,6 +184,8 @@ const routes = [
     if (b.maxParallel) st.maxParallel = Math.max(1, Math.min(8, Number(b.maxParallel) || 4));
     if (typeof b.guideModel === 'string') st.guideModel = b.guideModel.trim();
     if (guide.providerNames().includes(b.guideProvider)) st.guideProvider = b.guideProvider;
+    if (stt.providerNames().includes(b.sttProvider)) st.sttProvider = b.sttProvider; // FT-9
+    if (typeof b.sttLang === 'string' && /^(auto|[a-z]{2})$/.test(b.sttLang.trim())) st.sttLang = b.sttLang.trim();
     if (b.guidePolicy && typeof b.guidePolicy === 'object') guidePolicy.setPolicy(b.guidePolicy);
     store.changed();
     return st;

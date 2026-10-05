@@ -23,6 +23,16 @@ export function setApiKey(engine, key) {
   if (key) k[engine] = String(key).trim(); else delete k[engine];
   writeKeys(k);
 }
+// Clave API de un proveedor para usos fuera de los motores (FT-9: STT de OpenAI). «openai»: variable de entorno, clave
+// guardada aquí o la que Codex tenga en ~/.codex/auth.json (OPENAI_API_KEY). «claude»: la guardada aquí o ANTHROPIC_API_KEY.
+export function getApiKey(provider) {
+  if (provider === 'openai') {
+    if (process.env.OPENAI_API_KEY) return process.env.OPENAI_API_KEY;
+    if (readKeys().openai) return readKeys().openai;
+    try { return JSON.parse(fs.readFileSync(path.join(process.env.CODEX_HOME || path.join(process.env.HOME || '', '.codex'), 'auth.json'), 'utf8')).OPENAI_API_KEY || null; } catch { return null; }
+  }
+  return readKeys()[provider] || null;
+}
 // Variables de entorno extra para lanzar un agente con ese motor.
 export function engineEnv(engine) {
   const k = readKeys();

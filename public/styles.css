@@ -328,6 +328,13 @@ dialog.question .q-context { color: var(--muted); font-size: 13px; margin-bottom
 .g-typing { align-self: flex-start; color: var(--muted); font-size: 12px; padding: 2px 6px; }
 .guide .g-form { display: flex; gap: var(--s-2); padding: var(--s-2) var(--s-3); border-top: 1px solid var(--line-soft); align-items: flex-end; }
 .guide .g-form textarea { resize: none; flex: 1; max-height: 140px; }
+/* Voz (FT-9) */
+.guide .g-mic { padding: 6px 10px; font-size: 16px; touch-action: none; user-select: none; }
+.guide .g-mic.rec { background: var(--err); color: #fff; border-color: var(--err); animation: g-pulse 1s infinite; }
+@keyframes g-pulse { 50% { box-shadow: 0 0 0 6px rgba(255,119,119,.25); } }
+.guide .g-voice { display: flex; align-items: center; gap: var(--s-2); padding: 4px var(--s-3); font-size: 12px; color: var(--muted); border-top: 1px solid var(--line-soft); }
+.guide .g-voice[hidden] { display: none; }
+.g-vlevel { --lv: 0; display: inline-block; flex: none; width: 70px; height: 6px; border-radius: 3px; background: linear-gradient(90deg, var(--ok) calc(var(--lv) * 100%), var(--line) 0); }
 #guide-fab { position: fixed; right: 18px; bottom: 18px; z-index: 15; width: 48px; height: 48px; border-radius: 50%; font-size: 22px; padding: 0; box-shadow: var(--shadow); }
 #guide-panel { position: fixed; right: 18px; bottom: 76px; z-index: 30; width: min(440px, calc(100vw - 24px)); height: min(620px, calc(100vh - 100px)); display: flex; box-shadow: 0 18px 55px rgba(0,0,0,.55); border-radius: var(--r-lg); }
 #guide-panel[hidden], #guide-fab[hidden] { display: none; }
