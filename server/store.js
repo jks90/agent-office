@@ -26,6 +26,8 @@ function load() {
     // Ajuste antiguo (URL del MCP) → URL base de flow-test.
     if (s.settings.flowTestMcpUrl && !s.settings.flowTestUrl) s.settings.flowTestUrl = s.settings.flowTestMcpUrl.replace(/\/mcp\/?$/, '');
     delete s.settings.flowTestMcpUrl;
+    // Proyectos antiguos de un solo repo → lista de repos.
+    for (const p of s.projects) if (!Array.isArray(p.repos)) p.repos = p.repoPath ? [{ key: 'main', path: p.repoPath, baseBranch: p.baseBranch, roles: [] }] : [];
     // Los procesos no sobreviven a un reinicio: lo que estaba en curso vuelve a la cola.
     for (const t of s.tasks) if (t.status === 'doing') { t.status = 'todo'; t.agentId = null; }
     for (const a of s.agents) { a.status = 'idle'; a.taskId = null; a.activity = ''; }

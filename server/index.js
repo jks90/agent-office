@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as store from './store.js';
 import * as team from './team.js';
-import { ROLES } from './roles.js';
+import { allRoles } from './roles.js';
 import { checkSuite, suiteInfo } from './suite.js';
 
 const PORT = Number(process.env.AO_PORT || 7420);
@@ -32,7 +32,7 @@ setInterval(() => checkSuite().then(() => store.changed()).catch(() => {}), 5 * 
 // Primer arranque: un proyecto de demostración para ver la oficina sin configurar nada.
 if (!store.get().projects.length) await team.createProject({ name: 'Demo — Tienda online' });
 
-const snapshot = () => ({ ...store.get(), roles: ROLES, engines: team.ENGINE_IDS, suite: suiteInfo() });
+const snapshot = () => ({ ...store.get(), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo() });
 
 async function readBody(req) {
   let raw = '';
@@ -52,6 +52,10 @@ const routes = [
   ['GET', /^\/api\/suite$/, () => checkSuite(true).then((suite) => { store.changed(); return suite; })],
   ['POST', /^\/api\/projects$/, (_, b) => team.createProject(b)],
   ['DELETE', /^\/api\/projects\/(\w+)$/, ([id]) => team.deleteProject(id)],
+  ['PATCH', /^\/api\/projects\/(\w+)$/, ([id], b) => team.updateProject(id, b)],
+  ['POST', /^\/api\/projects\/(\w+)\/import-flow$/, ([id], b) => team.importFlow(id, b.path)],
+  ['GET', /^\/api\/flows$/, () => team.listFlows()],
+  ['PATCH', /^\/api\/tasks\/(\w+)$/, ([id], b) => team.updateTask(id, b)],
   ['POST', /^\/api\/projects\/(\w+)\/run$/, gated(([id], b) => team.setRunning(id, b.running))],
   ['POST', /^\/api\/projects\/(\w+)\/goal$/, gated(([id], b) => team.planGoal(id, b.goal))],
   ['POST', /^\/api\/tasks$/, gated((_, b) => team.createTask(b))],

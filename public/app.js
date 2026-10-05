@@ -63,7 +63,9 @@ const roleChip = (role) => `<span class="chip" style="--c:${S.roles[role]?.color
 function render() {
   const p = project();
   $('#project').innerHTML = S.projects.map((x) => `<option value="${x.id}" ${x.id === projectId ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
-  $('#repo').textContent = p ? (p.repoPath ? `📁 ${p.repoPath} · ${p.baseBranch}` : 'sin repositorio · solo motor demo') : '';
+  const repos = p?.repos || [];
+  $('#repo').textContent = p ? (repos.length ? `📁 ${repos.map((r) => `${r.key} (${r.baseBranch})`).join(' · ')}` : 'sin repositorio · solo motor demo') : '';
+  $('#repo').title = repos.map((r) => `${r.key}: ${r.path}`).join('\n');
   const run = $('#run');
   run.textContent = p?.running ? '⏸ Parar el equipo' : '▶ Poner a trabajar';
   run.classList.toggle('on', !!p?.running);
@@ -115,6 +117,7 @@ $('#lock-form').onsubmit = async (e) => {
 };
 
 const COLS = [
+  ['backlog', 'Backlog', '#94a3b8'],
   ['todo', 'Por hacer', '#fde047'],
   ['doing', 'En curso', '#60a5fa'],
   ['review', 'Revisión', '#fb923c'],
@@ -143,9 +146,11 @@ function card(t) {
     acts.push(`<button class="small ghost" data-reject="${t.id}">↩ Devolver</button>`);
   }
   if (t.status === 'failed') acts.push(`<button class="small" data-reject="${t.id}">↻ Reintentar</button>`);
+  if (t.status === 'backlog') acts.push(`<button class="small" data-ready="${t.id}">→ Por hacer</button>`);
+  if (t.status === 'todo') acts.push(`<button class="small ghost" data-park="${t.id}">← Backlog</button>`);
   if (['todo', 'failed', 'done'].includes(t.status)) acts.push(`<button class="small danger" data-del="${t.id}">Borrar</button>`);
   return `<div class="card ${t.status}" style="--c:${S.roles[t.role]?.color}">
-    <div class="card-head">${roleChip(t.role)} <span class="task-id">#${t.id}</span>${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}</div>
+    <div class="card-head">${roleChip(t.role)} <span class="task-id">#${t.id}</span>${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? ` <span class="repo-chip">📁 ${esc(t.repo || '?')}</span>` : ''}${t.source ? ` <span title="Importada del tablero «${esc(t.source.flow)}» · columna ${esc(t.source.column)}">🗂</span>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}</div>
     <div class="t">${esc(t.title)}</div>
     <div class="meta">${agent ? `<span>👤 ${esc(agent.name)}</span>` : ''}${deps ? `<span>depende de ${deps}</span>` : ''}${t.costUsd ? ` <span>💲${t.costUsd.toFixed(3)}</span>` : ''}</div>
     ${t.status === 'doing' && agent ? `<div class="live">● ${esc(agent.activity)}</div>` : ''}
@@ -231,19 +236,20 @@ function dialog(html, onSubmit, cls = '') {
   dlg.showModal();
 }
 const buttons = (ok = 'Guardar') => `<div class="row"><button class="ghost" value="cancel">Cancelar</button>${ok ? `<button>${ok}</button>` : ''}</div>`;
-const roleOptions = (sel, skipPo) => Object.entries(S.roles).filter(([k]) => !(skipPo && k === 'po'))
-  .map(([k, r]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(r.label)}</option>`).join('');
+const roleOptions = (sel, skipPo) => Object.entries(S.roles).filter(([, r]) => !(skipPo && r.kind === 'planner'))
+  .map(([k, r]) => `<option value="${k}" ${k === sel ? 'selected' : ''} title="${esc(r.description || '')}">${esc(r.label)}${r.custom ? ` · ${esc(r.source)}` : ''}${r.kind === 'planner' ? ' (planifica)' : r.kind === 'qa' ? ' (QA)' : ''}</option>`).join('');
 const engineOptions = (sel) => S.engines.map((e) => `<option ${e === sel ? 'selected' : ''}>${e}</option>`).join('');
 
 const actions = {
   'new-project': () => dialog(`
     <h3>Nuevo proyecto</h3>
     <label>Nombre</label><input name="name" required autofocus />
-    <label>Repositorio git (opcional)</label><input name="repoPath" placeholder="~/dev/mi-proyecto" />
+    <label>Repositorios git (opcional; uno por línea, <code>clave = ruta</code> o solo la ruta; <code>clave = ruta @ rol1,rol2</code> fija qué roles trabajan en ese repo)</label>
+    <textarea name="repos" rows="3" placeholder="~/dev/mi-api @ back,qa&#10;~/dev/mi-web @ front"></textarea>
     <label>Motor del equipo</label><select name="engine">${engineOptions('demo')}</select>
-    <p class="muted">Cada tarea se hace en un git worktree propio (rama <code>ao/&lt;tarea&gt;</code>); nada llega a tu rama hasta que apruebas. Sin repo solo funciona el motor <b>demo</b>.</p>
+    <p class="muted">Cada tarea se hace en un git worktree propio del repo que le toca (rama <code>ao/&lt;tarea&gt;</code>); nada llega a tu rama hasta que apruebas. Sin repo solo funciona el motor <b>demo</b>.</p>
     ${buttons('Crear')}`, async (f) => {
-    const p = await api('POST', '/api/projects', f);
+    const p = await api('POST', '/api/projects', { name: f.name, engine: f.engine, repos: parseRepos(f.repos) });
     projectId = p.id;
     safeSet('ao:project', p.id);
   }),
@@ -260,15 +266,46 @@ const actions = {
     <label>Título</label><input name="title" required autofocus />
     <label>Descripción</label><textarea name="description" rows="4" placeholder="Qué hay que hacer y cómo saber que está bien"></textarea>
     <label>Rol</label><select name="role">${roleOptions('back', true)}</select>
+    ${(project()?.repos || []).length > 1 ? `<label>Repositorio</label><select name="repo"><option value="">(el que diga el rol)</option>${project().repos.map((r) => `<option value="${r.key}">${esc(r.key)} — ${esc(r.path)}</option>`).join('')}</select>` : ''}
+    <label>Estado inicial</label><select name="status"><option value="todo">Por hacer (el equipo la coge en cuanto pueda)</option><option value="backlog">Backlog (esperar)</option></select>
     ${buttons('Crear')}`, (f) => api('POST', '/api/tasks', { ...f, projectId })),
   settings: () => dialog(`
     <h3>Ajustes</h3>
     <label>URL de flow-test (la suite; su MCP se usa para el QA)</label><input name="flowTestUrl" value="${esc(S.settings.flowTestUrl)}" placeholder="http://localhost:9998" />
     <label>Agentes trabajando a la vez (máx.)</label><input name="maxParallel" type="number" min="1" max="8" value="${S.settings.maxParallel}" />
     <hr style="border-color:var(--line);margin:16px 0" />
+    <label>Repositorios del proyecto «${esc(project()?.name)}» (uno por línea: <code>clave = ruta @ roles</code>)</label>
+    <textarea name="repos" rows="3">${esc((project()?.repos || []).map((r) => `${r.key} = ${r.path}${r.roles?.length ? ' @ ' + r.roles.join(',') : ''}`).join('\n'))}</textarea>
+    <label>Importar un tablero de flow-test (notas = tarjetas; las columnas «En revisión»/«Hecho» conservan su estado, el resto entra en Backlog)</label>
+    <div style="display:flex;gap:8px"><select name="importFlow" id="import-flow"><option value="">— elegir flow —</option></select><button type="button" class="small" data-import-flow>Importar</button></div>
+    <hr style="border-color:var(--line);margin:16px 0" />
     <button type="button" class="danger small" data-delete-project>Borrar el proyecto «${esc(project()?.name)}»</button>
-    ${buttons()}`, (f) => api('POST', '/api/settings', f)),
+    ${buttons()}`, async (f) => {
+    await api('POST', '/api/settings', f);
+    const repos = parseRepos(f.repos);
+    const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
+    if (repos.map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|') !== cur) await api('PATCH', `/api/projects/${projectId}`, { repos });
+  }),
 };
+// Tras abrir Ajustes, rellenar el selector de flows con los del flow-test conectado.
+document.addEventListener('click', (e) => {
+  if (e.target.closest('[data-action="settings"]')) {
+    api('GET', '/api/flows').then((flows) => {
+      const sel = $('#import-flow');
+      if (sel) sel.innerHTML = '<option value="">— elegir flow —</option>' + flows.map((f) => `<option value="${esc(f.path)}">${esc(f.name)} — ${esc(f.path)}</option>`).join('');
+    }).catch(() => {});
+  }
+});
+
+// «clave = ruta @ rol1,rol2» · «ruta @ roles» · «ruta» (la clave sale del nombre de la carpeta)
+function parseRepos(text) {
+  return String(text || '').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
+    const [left, rolesPart] = l.split('@').map((x) => x.trim());
+    const m = left.match(/^([\w-]+)\s*=\s*(.+)$/);
+    const path = (m ? m[2] : left).trim();
+    return { key: m ? m[1] : path.replace(/\/+$/, '').split('/').pop(), path, roles: rolesPart ? rolesPart.split(',').map((r) => r.trim()).filter(Boolean) : [] };
+  });
+}
 
 document.addEventListener('click', async (e) => {
   const el = e.target.closest('button, .member');
@@ -284,6 +321,8 @@ document.addEventListener('click', async (e) => {
     return;
   }
   if (d.approve) return api('POST', `/api/tasks/${d.approve}/approve`).then(() => toast('Tarea aprobada ✓'));
+  if (d.ready) return api('PATCH', `/api/tasks/${d.ready}`, { status: 'todo' });
+  if (d.park) return api('PATCH', `/api/tasks/${d.park}`, { status: 'backlog' });
   if (d.del) { if (confirm('¿Borrar la tarea?')) api('DELETE', `/api/tasks/${d.del}`); return; }
   if (d.reject) {
     const t = S.tasks.find((x) => x.id === d.reject);
@@ -304,6 +343,12 @@ document.addEventListener('click', async (e) => {
       ${t.summary ? `<p>${esc(t.summary)}</p>` : ''}
       ${t.diffStat ? `<pre>${esc(t.diffStat)}</pre>` : ''}
       <pre>${html}</pre>${buttons(null)}`, null, 'wide');
+  }
+  if (d.importFlow !== undefined) {
+    const path = $('#import-flow')?.value;
+    if (!path) return toast('Elige un flow', 'error');
+    const r = await api('POST', `/api/projects/${projectId}/import-flow`, { path });
+    return toast(`Tablero «${r.flowName}»: ${r.created} tarjetas nuevas, ${r.updated} actualizadas, ${r.skipped} ignoradas (columnas: ${r.columns.join(' · ')})`);
   }
   if (d.deleteProject !== undefined) {
     if (confirm('¿Borrar el proyecto con su equipo y tareas? (no toca tu repositorio)')) {

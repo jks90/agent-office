@@ -1,4 +1,4 @@
-// Git: un worktree + rama ao/<tarea> por tarea, para que los agentes no se pisen.
+// Git: un worktree + rama ao/<tarea> por tarea, en el repo del proyecto que le toque, para que los agentes no se pisen.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -15,37 +15,37 @@ export async function git(cwd, ...args) {
 export async function repoInfo(dir) {
   const top = await git(dir, 'rev-parse', '--show-toplevel');
   const branch = await git(top, 'rev-parse', '--abbrev-ref', 'HEAD');
-  return { repoPath: top, baseBranch: branch };
+  return { path: top, baseBranch: branch };
 }
 
+// `repo` = { key, path, baseBranch } (uno de project.repos).
 export const worktreeDir = (project, task) => path.join(DATA_DIR, 'worktrees', project.id, task.id);
 export const branchOf = (task) => `ao/${task.id}`;
 
-export async function createWorktree(project, task) {
-  const repo = project.repoPath;
+export async function createWorktree(project, repo, task) {
   const dir = worktreeDir(project, task);
   const branch = branchOf(task);
-  await git(repo, 'worktree', 'prune');
+  await git(repo.path, 'worktree', 'prune');
   // Tarea devuelta: se sigue sobre su intento anterior en vez de empezar de cero.
   if (fs.existsSync(dir)) {
     try {
-      await git(repo, 'rev-parse', '--verify', `refs/heads/${branch}`);
-      if ((await git(dir, 'rev-parse', '--abbrev-ref', 'HEAD')) === branch) { linkNodeModules(repo, dir); return { path: dir, branch, reused: true }; }
+      await git(repo.path, 'rev-parse', '--verify', `refs/heads/${branch}`);
+      if ((await git(dir, 'rev-parse', '--abbrev-ref', 'HEAD')) === branch) { linkNodeModules(repo.path, dir); return { path: dir, branch, reused: true }; }
     } catch { /* worktree roto: se recrea abajo */ }
   }
   if (fs.existsSync(dir)) {
-    try { await git(repo, 'worktree', 'remove', '--force', dir); } catch { fs.rmSync(dir, { recursive: true, force: true }); }
+    try { await git(repo.path, 'worktree', 'remove', '--force', dir); } catch { fs.rmSync(dir, { recursive: true, force: true }); }
   }
-  try { await git(repo, 'branch', '-D', branch); } catch { /* no existía */ }
+  try { await git(repo.path, 'branch', '-D', branch); } catch { /* no existía */ }
   fs.mkdirSync(path.dirname(dir), { recursive: true });
-  await git(repo, 'worktree', 'add', '-b', branch, dir, project.baseBranch);
-  linkNodeModules(repo, dir);
+  await git(repo.path, 'worktree', 'add', '-b', branch, dir, repo.baseBranch);
+  linkNodeModules(repo.path, dir);
   return { path: dir, branch };
 }
 
 // node_modules no está en git: el worktree lo enlaza al del repo para que los scripts del proyecto funcionen.
-function linkNodeModules(repo, dir) {
-  const src = path.join(repo, 'node_modules');
+function linkNodeModules(repoPath, dir) {
+  const src = path.join(repoPath, 'node_modules');
   const dest = path.join(dir, 'node_modules');
   if (fs.existsSync(src) && !fs.existsSync(dest)) { try { fs.symlinkSync(src, dest, 'dir'); } catch { /* sin enlace: el agente hará npm install */ } }
 }
@@ -57,28 +57,27 @@ export async function commitAll(dir, message, author) {
   return true;
 }
 
-export const diffStat = (project, task) => git(project.repoPath, 'diff', '--stat', `${project.baseBranch}...${task.branch}`);
-export const diff = (project, task) => git(project.repoPath, 'diff', `${project.baseBranch}...${task.branch}`);
+export const diffStat = (repo, task) => git(repo.path, 'diff', '--stat', `${repo.baseBranch}...${task.branch}`);
+export const diff = (repo, task) => git(repo.path, 'diff', `${repo.baseBranch}...${task.branch}`);
 
-export async function merge(project, task) {
-  const repo = project.repoPath;
-  const current = await git(repo, 'rev-parse', '--abbrev-ref', 'HEAD');
-  if (current !== project.baseBranch) {
-    throw new Error(`El repo está en la rama «${current}»; cámbiate a «${project.baseBranch}» para fusionar.`);
+export async function merge(repo, task) {
+  const current = await git(repo.path, 'rev-parse', '--abbrev-ref', 'HEAD');
+  if (current !== repo.baseBranch) {
+    throw new Error(`El repo ${repo.key} está en la rama «${current}»; cámbiate a «${repo.baseBranch}» para fusionar.`);
   }
-  if (await git(repo, 'status', '--porcelain', '--untracked-files=no')) {
-    throw new Error('El repo tiene cambios sin confirmar: guárdalos o descártalos antes de fusionar.');
+  if (await git(repo.path, 'status', '--porcelain', '--untracked-files=no')) {
+    throw new Error(`El repo ${repo.key} tiene cambios sin confirmar: guárdalos o descártalos antes de fusionar.`);
   }
   try {
-    await git(repo, 'merge', '--no-ff', '--no-edit', task.branch);
+    await git(repo.path, 'merge', '--no-ff', '--no-edit', task.branch);
   } catch (e) {
-    try { await git(repo, 'merge', '--abort'); } catch { /* nada que abortar */ }
-    throw new Error(`Conflicto al fusionar ${task.branch}: ${e.stderr || e.message}`);
+    try { await git(repo.path, 'merge', '--abort'); } catch { /* nada que abortar */ }
+    throw new Error(`Conflicto al fusionar ${task.branch} en ${repo.key}: ${e.stderr || e.message}`);
   }
 }
 
-export async function cleanup(project, task) {
-  if (!project.repoPath || !task.branch) return;
-  try { await git(project.repoPath, 'worktree', 'remove', '--force', worktreeDir(project, task)); } catch { /* ya no está */ }
-  try { await git(project.repoPath, 'branch', '-D', task.branch); } catch { /* ya no está */ }
+export async function cleanup(project, repo, task) {
+  if (!repo?.path || !task.branch) return;
+  try { await git(repo.path, 'worktree', 'remove', '--force', worktreeDir(project, task)); } catch { /* ya no está */ }
+  try { await git(repo.path, 'branch', '-D', task.branch); } catch { /* ya no está */ }
 }

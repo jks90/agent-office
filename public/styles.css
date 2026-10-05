@@ -107,6 +107,8 @@ main { flex: 1; display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(4
 .card .meta span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .card .sum { font-size: 12px; color: #cfd5e6; margin-top: var(--s-2); max-height: 70px; overflow: hidden; white-space: pre-wrap; }
 .card .err { font-size: 12px; color: #ffb6b6; margin-top: var(--s-2); white-space: pre-wrap; max-height: 70px; overflow: hidden; }
+.repo-chip { font-size: 11px; color: var(--muted); }
+.col[style*="#94a3b8"] .card { opacity: .85; }
 .card .acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--s-3); padding-top: var(--s-2); border-top: 1px solid var(--line-soft); }
 .card .live { color: #b8f4d8; font-size: 12px; margin-top: var(--s-2); }
 .empty { color: var(--muted); border: 1px dashed var(--line); border-radius: var(--r-md); padding: var(--s-3); text-align: center; background: rgba(255,255,255,.02); }
