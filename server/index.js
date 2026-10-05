@@ -163,6 +163,17 @@ function events(req, res) {
   req.on('close', () => { clearInterval(ping); store.bus.off('state', onState); store.bus.off('log', onLog); });
 }
 
+// Adjuntos subidos (solo dentro de data/uploads) para verlos desde la tarjeta
+function serveUpload(req, res) {
+  const p = decodeURIComponent(new URL(req.url, 'http://x').searchParams.get('path') || '');
+  const base = path.join(store.DATA_DIR, 'uploads');
+  const abs = path.resolve(p);
+  if (!abs.startsWith(base + path.sep) || !fs.existsSync(abs) || fs.statSync(abs).isDirectory()) { res.writeHead(404).end('No encontrado'); return; }
+  const ext = path.extname(abs).toLowerCase();
+  res.writeHead(200, { 'content-type': MIME[ext] || (ext === '.txt' || ext === '.md' ? 'text/plain; charset=utf-8' : 'application/octet-stream'), 'content-disposition': `inline; filename="${path.basename(abs)}"` });
+  fs.createReadStream(abs).pipe(res);
+}
+
 function serveStatic(req, res) {
   const rel = decodeURIComponent(new URL(req.url, 'http://x').pathname).replace(/^\/+/, '') || 'index.html';
   const file = path.join(PUBLIC, rel);
@@ -180,6 +191,7 @@ http.createServer(async (req, res) => {
     return res.writeHead(401, { 'content-type': 'application/json' }).end('{"error":"AgentOffice: falta el token (x-ao-token)"}');
   }
   if (pathname === '/events') return events(req, res);
+  if (pathname === '/api/file') return serveUpload(req, res);
   if (!pathname.startsWith('/api/')) return serveStatic(req, res);
   const route = routes.find(([m, re]) => m === req.method && re.test(pathname));
   if (!route) return res.writeHead(404, { 'content-type': 'application/json' }).end('{"error":"Ruta desconocida"}');

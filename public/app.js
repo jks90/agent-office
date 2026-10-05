@@ -332,7 +332,6 @@ const COLS = [
   ['done', 'Hecho', '#4ade80'],
 ];
 
-const expanded = new Set(); // tarjetas con el detalle abierto
 let taskFilter = '';
 $('#task-filter').addEventListener('input', (e) => { taskFilter = e.target.value.trim().toLowerCase(); renderBoard(); });
 function renderBoard() {
@@ -368,14 +367,7 @@ function card(t) {
     ${t.status === 'doing' && agent ? `<div class="live">● ${esc(agent.activity)}</div>` : ''}
     ${t.summary && t.status !== 'doing' && !expanded.has(t.id) ? `<div class="sum">${esc(t.summary)}</div>` : ''}
     ${t.error ? `<div class="err">${esc(t.error)}</div>` : ''}
-    <button class="small ghost expand" data-expand="${t.id}">${expanded.has(t.id) ? '▴ Ocultar detalle' : '▾ Ver qué va a hacer'}</button>
-    ${expanded.has(t.id) ? `<div class="detail">
-      <div class="dt">Descripción</div><div class="dd">${esc(t.description || '(sin descripción)')}</div>
-      ${t.feedback ? `<div class="dt">Comentarios de revisión</div><div class="dd">${esc(t.feedback)}</div>` : ''}
-      ${t.summary ? `<div class="dt">Resumen del agente</div><div class="dd">${esc(t.summary)}</div>` : ''}
-      ${t.diffStat ? `<div class="dt">Cambios</div><pre class="dd">${esc(t.diffStat)}</pre>` : ''}
-      ${(t.feedbackImages?.length || t.files?.length) ? `<div class="dt">Adjuntos</div><div class="dd">${[...(t.feedbackImages || []), ...(t.files || [])].map((f) => esc(f.split('/').pop())).join(' · ')}</div>` : ''}
-    </div>` : ''}
+    <button class="small ghost expand" data-open="${t.id}">🔍 Ver la tarea</button>
     ${acts.length ? `<div class="acts">${acts.join('')}</div>` : ''}
   </div>`;
 }
@@ -746,6 +738,59 @@ function editAgent(id) {
     ${buttons('Guardar')}`, async (f) => { await api('PATCH', `/api/agents/${id}`, { ...f, model: pickModel(f) }); toast('Agente actualizado'); });
 }
 
+// Markdown ligero y seguro para descripciones y resúmenes (escapa primero, luego formatea).
+function md(src) {
+  const lines = esc(src || '').split('\n');
+  let out = '', inList = null, inCode = false;
+  const inline = (s) => s.replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/(^|\s)_([^_]+)_(?=\s|$)/g, '$1<em>$2</em>').replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+  const closeList = () => { if (inList) { out += `</${inList}>`; inList = null; } };
+  for (const raw of lines) {
+    if (raw.startsWith('```')) { closeList(); inCode = !inCode; out += inCode ? '<pre>' : '</pre>'; continue; }
+    if (inCode) { out += raw + '\n'; continue; }
+    const h = raw.match(/^(#{1,3})\s+(.*)$/);
+    if (h) { closeList(); out += `<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`; continue; }
+    const ul = raw.match(/^\s*[-*•]\s+(.*)$/), ol = raw.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (ul || ol) { const kind = ul ? 'ul' : 'ol'; if (inList !== kind) { closeList(); out += `<${kind}>`; inList = kind; } out += `<li>${inline((ul || ol)[1])}</li>`; continue; }
+    closeList();
+    if (!raw.trim()) continue;
+    out += `<p>${inline(raw)}</p>`;
+  }
+  closeList();
+  if (inCode) out += '</pre>';
+  return out || '<p class="muted">(vacío)</p>';
+}
+
+// Modal de una tarea: todo lo que va a hacer (o hizo), adjuntos, dependencias, revisión y acciones.
+function openTask(id) {
+  const t = S.tasks.find((x) => x.id === id);
+  if (!t) return;
+  const agent = S.agents.find((a) => a.id === t.agentId);
+  const repos = project()?.repos || [];
+  const repoKey = t.repo || repos.find((r) => (r.roles || []).includes(t.role))?.key || repos[0]?.key || '';
+  const deps = t.dependsOn.map((dId) => { const dt = S.tasks.find((x) => x.id === dId); return dt ? `<span>${dt.status === 'done' ? '✓' : '⏳'} #${dt.id} ${esc(dt.title.slice(0, 60))}</span>` : ''; }).join('');
+  const dependents = S.tasks.filter((x) => x.dependsOn.includes(id)).map((x) => `<span>→ #${x.id} ${esc(x.title.slice(0, 60))}</span>`).join('');
+  const att = [...(t.feedbackImages || []), ...(t.files || [])];
+  const fileUrl = (f) => `${BASE}api/file?path=${encodeURIComponent(f)}`;
+  const STATUS = { backlog: 'Backlog', todo: 'Por hacer', doing: 'En curso', review: 'En revisión', done: 'Hecha', failed: 'Fallida' };
+  const acts = [];
+  if (t.status !== 'doing') acts.push(`<button class="small ghost" data-edit="${t.id}">✎ Editar</button>`);
+  if (t.status === 'backlog') acts.push(`<button class="small" data-ready="${t.id}">→ Por hacer</button>`);
+  if (t.status === 'todo') acts.push(`<button class="small ghost" data-park="${t.id}">← Backlog</button>`);
+  if (t.status === 'review') acts.push(`<button class="small ghost" data-diff="${t.id}">Ver cambios</button><button class="small ok" data-approve="${t.id}">✓ Aprobar${t.branch ? ' y fusionar' : ''}</button><button class="small ghost" data-reject="${t.id}">↩ Devolver</button>`);
+  if (t.status === 'failed') acts.push(`<button class="small" data-reject="${t.id}">↻ Reintentar</button>`);
+  dialog(`
+    <div class="task-head">${roleChip(t.role)} <span>#${t.id}</span>${repoKey ? ` <span>📁 ${esc(repoKey)}</span>` : ''} <span class="st">${STATUS[t.status] || t.status}</span>${agent ? ` <span>👤 ${esc(agent.name)}</span>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}${t.costUsd ? ` <span>≈ ${t.costUsd.toFixed(2)} $</span>` : ''}${t.source?.url ? ` <a href="${esc(t.source.url)}" target="_blank" rel="noopener" style="color:#93c5fd">🔗 ${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} ${esc(t.source.id)}</a>` : ''}<div class="spacer"></div><span>${new Date(t.createdAt).toLocaleString()}</span></div>
+    <div class="task-title">${esc(t.title)}</div>
+    <div class="task-sec"><h4>${t.kind === 'plan' ? 'Encargo al PO' : 'Qué va a hacer'}</h4><div class="md">${md(t.description)}</div></div>
+    ${att.length ? `<div class="task-sec"><h4>Adjuntos</h4><div class="task-attach">${att.map((f) => /\.(png|jpe?g|webp|gif)$/i.test(f) ? `<a href="${fileUrl(f)}" target="_blank" rel="noopener"><img src="${fileUrl(f)}" alt="" /></a>` : `<a href="${fileUrl(f)}" target="_blank" rel="noopener">📄 ${esc(f.split('/').pop())}</a>`).join('')}</div></div>` : ''}
+    ${deps || dependents ? `<div class="task-sec task-deps"><h4>Dependencias</h4>${deps ? `<div>Depende de: ${deps}</div>` : ''}${dependents ? `<div>Bloquea a: ${dependents}</div>` : ''}</div>` : ''}
+    ${t.feedback ? `<div class="task-sec"><h4>Comentarios de revisión</h4><div class="md">${md(t.feedback)}</div></div>` : ''}
+    ${t.summary ? `<div class="task-sec"><h4>Resumen del agente</h4><div class="md">${md(t.summary)}</div></div>` : ''}
+    ${t.diffStat ? `<div class="task-sec"><h4>Cambios en la rama ${esc(t.branch || '')}</h4><pre class="md">${esc(t.diffStat)}</pre></div>` : ''}
+    ${t.error ? `<div class="task-sec"><h4>Error</h4><div class="md bad">${esc(t.error)}</div></div>` : ''}
+    <div class="task-acts">${acts.join('')}<div class="spacer"></div><button class="ghost" value="cancel">Cerrar</button></div>`, null, 'task');
+}
+
 // Editar una tarea desde su tarjeta.
 function editTask(id) {
   const t = S.tasks.find((x) => x.id === id);
@@ -797,7 +842,7 @@ document.addEventListener('click', async (e) => {
     return;
   }
   if (d.approve) return api('POST', `/api/tasks/${d.approve}/approve`).then(() => toast('Tarea aprobada ✓'));
-  if (d.expand) { expanded.has(d.expand) ? expanded.delete(d.expand) : expanded.add(d.expand); renderBoard(); return; }
+  if (d.open) return openTask(d.open);
   if (d.ready) return api('PATCH', `/api/tasks/${d.ready}`, { status: 'todo' });
   if (d.edit) return editTask(d.edit);
   if (d.aiDraft !== undefined) {
