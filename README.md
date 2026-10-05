@@ -63,6 +63,25 @@ El Guide Agent necesita saber qué está viendo el usuario, sin visión ni captu
 - **`host`**: contexto que manda flow-test (FT-3). La UI escucha `postMessage({type:'flowtest:context', flow, filePath, node, consoleTail, dirty, running})` de la ventana padre y lo reenvía en el mismo POST. Solo se acepta el contexto del host si el mensaje viene del mismo origen (`e.origin === location.origin`, flow-test embebe AgentOffice por su proxy `/agents/`) y de `window.parent`; cualquier otro origen se ignora (FT-2).
 - El snapshot SSE no cambia y no hay polling.
 
+## Tools del Guide Agent (FT-4)
+
+El Guide no es un worker: es la capa de conversación/supervisión por encima del orquestador. No duplica nada: cada tool delega en `team.js`, `context.js`, `events.js` o `git.js`.
+
+- **Registro** (`server/guide/tools.js`): `{name, description, input (JSON Schema), policy, handler(args, ctx)}`. `GET /api/guide/tools` lo lista. Familias: `app.*` (`getContext`, `navigate`, `openTask`, `selectAgent`, `openArtifact`), `flowtest.show`, `project.list/run`, `task.list/get/create/update/assign/getStatus/delete`, `agent.list/status/getLastActions/getModifiedFiles/getArtifacts`.
+- **Pendientes (501)**: `task.pause/resume/stop` y `agent.message` (los implementa FT-5) y `flowtest.deleteFlow` (flow-test aún no expone el borrado). Están registradas y devuelven 501 sin pedir confirmación.
+- **Políticas** (`server/guide/policy.js`): `read` y `navigate` automáticas; `execute` y `write` según `settings.guidePolicy = {execute:'auto'|'confirm', write:'auto'|'confirm'}` (por defecto `execute=auto`, `write=confirm`; se cambia en Ajustes ▸ 🛡 Guide Agent); `irreversible` (`task.delete`) **siempre** pide confirmación.
+- **Confirmación**: reutiliza `questions.js` con `kind:'confirm'` (opciones Sí/No, sin respuesta libre, sin tarea asociada). El modal existente la pinta con 🛡; si se rechaza, la tool responde 403 y no hace nada. Sin respuesta en 10 min cuenta como «No».
+- **Auditoría**: `data/guide-audit.jsonl` (rota a 5 MB): `{ts, tool, args resumidos, policy, mode, confirmed, via, client, result: ok|denied|error, status, error, ms}`.
+- **`POST /api/guide/tool`** `{name, args}` (cabecera `x-ao-client` opcional) ejecuta una tool; los errores salen con su código HTTP (400 args inválidos, 403 rechazada, 404, 501). `task.create` no pasa por el control de suite de `POST /api/tasks` (crear no arranca nada; el planificador sí lo respeta).
+- **Órdenes a la UI**: las tools de navegación emiten `event: ui` por el SSE (`navigate`, `openTask`, `selectAgent`, `flowtest.show`), dirigidas a la pestaña del último contexto publicado (FT-2). `flowtest.show` llega al host como `postMessage({type:'flowtest:show', flow, node})` (mismo origen, solo embebido). El snapshot incluye `guidePolicy`.
+- **`task.assign`** fija `task.assignedAgentId` (el agente debe estar fichado en el proyecto); `tick()` solo se la da a ese agente.
+- **MCP por stdio** (`bin/ao-mcp.mjs`, JSON-RPC 2.0 sin dependencias): `initialize`, `tools/list`, `tools/call`, `ping`; proxya a la API con `AO_URL` (7420) y `AO_TOKEN`. Los nombres MCP no admiten «.», así que `task.create` se publica como `task_create`. Para el proveedor Claude CLI del Guide (FT-6): `--mcp-config` con `{"mcpServers":{"agentoffice":{"command":"node","args":["bin/ao-mcp.mjs"]}}}`.
+
+```
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | node bin/ao-mcp.mjs
+curl -X POST localhost:7420/api/guide/tool -H 'content-type: application/json' -d '{"name":"task.create","args":{"projectId":"…","title":"…","role":"back"}}'
+```
+
 ## Motores
 
 | Motor | Cómo se lanza | Permisos |
@@ -81,6 +100,8 @@ server/index.js     HTTP + API REST + SSE (/events)
 server/team.js      proyectos, agentes, tareas, planificador, revisión
 server/events.js    Activity Stream tipado (FT-1)
 server/context.js   contexto de la UI para el Guide Agent (FT-2)
+server/guide/       tools tipadas + política + auditoría del Guide Agent (FT-4)
+bin/ao-mcp.mjs      servidor MCP stdio del Guide (FT-4)
 server/git.js       worktrees, commit, diff, merge
 server/engines/     demo · claude · codex (+ describe.js: herramienta → frase del bocadillo)
 public/office.js    la oficina: pixel art en canvas, rutas por pasillos, bocadillos

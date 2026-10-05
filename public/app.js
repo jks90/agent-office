@@ -69,6 +69,18 @@ function connectEvents() {
 }
 connectEvents();
 
+// Órdenes del Guide Agent (FT-4): llegan por SSE `ui` (navegar, abrir tarea/agente, enseñar un flow en flow-test).
+es.addEventListener('ui', (e) => {
+  const c = JSON.parse(e.data);
+  if (c.client && c.client !== CLIENT_ID) return; // dirigida a otra pestaña
+  const goProject = (id) => { if (id && S.projects.some((p) => p.id === id) && id !== projectId) { projectId = id; safeSet('ao:project', id); closeDrawer(); render(); } };
+  if ($('#dialog').open && c.type !== 'flowtest.show') $('#dialog').close();
+  if (c.type === 'navigate') { goProject(c.projectId); showTab(c.view); }
+  else if (c.type === 'openTask') { const t = S.tasks.find((x) => x.id === c.taskId); if (t) { goProject(t.projectId); showTab('tasks'); openTask(t.id); } }
+  else if (c.type === 'selectAgent') { showTab('agents'); openDrawer(c.agentId); }
+  else if (c.type === 'flowtest.show' && EMBEDDED) window.parent.postMessage({ type: 'flowtest:show', flow: c.flow, node: c.node }, location.origin);
+});
+
 const project = () => S.projects.find((p) => p.id === projectId);
 const team = () => { const ids = new Set(project()?.team || []); return S.agents.filter((a) => ids.has(a.id)); };
 const bench = () => { const ids = new Set(project()?.team || []); return S.agents.filter((a) => !ids.has(a.id)); };
@@ -531,6 +543,12 @@ Pasos, convenciones y ejemplos…</textarea>
     <label>URL de flow-test (la suite; su MCP se usa para el QA)</label><input name="flowTestUrl" value="${esc(S.settings.flowTestUrl)}" placeholder="http://localhost:9998" />
     <label>Carpeta del workspace de flow-test en esta máquina (para deducir los repos de cada proyecto por sus enlaces)</label><input name="workspaceHostDir" value="${esc(S.settings.workspaceHostDir || '')}" placeholder="~/JksDocs/workspace" />
     <label>Agentes trabajando a la vez (máx.)</label><input name="maxParallel" type="number" min="1" max="8" value="${S.settings.maxParallel}" />
+    <div class="section-title">🛡 Guide Agent — qué puede hacer sin preguntarte (FT-4)</div>
+    <label>Acciones que ponen a trabajar o pausan al equipo (ejecutar)</label>
+    <select name="guideExecute"><option value="auto" ${S.guidePolicy?.execute === 'auto' ? 'selected' : ''}>Automático</option><option value="confirm" ${S.guidePolicy?.execute === 'confirm' ? 'selected' : ''}>Pedir confirmación</option></select>
+    <label>Acciones que crean o editan datos (escribir)</label>
+    <select name="guideWrite"><option value="auto" ${S.guidePolicy?.write === 'auto' ? 'selected' : ''}>Automático</option><option value="confirm" ${S.guidePolicy?.write !== 'auto' ? 'selected' : ''}>Pedir confirmación</option></select>
+    <p class="muted">Leer y navegar son siempre automáticos; las acciones irreversibles (borrar) siempre piden confirmación.</p>
     <hr style="border-color:var(--line);margin:16px 0" />
     <div class="section-title">🔗 Tablero online del proyecto «${esc(project()?.name)}»</div>
     <div id="board-cfg" class="board-cfg"><p class="muted">Cargando…</p></div>
@@ -543,7 +561,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <hr style="border-color:var(--line);margin:16px 0" />
     <button type="button" class="danger small" data-delete-project>Borrar el proyecto «${esc(project()?.name)}»</button>
     ${buttons()}`, async (f) => {
-    await api('POST', '/api/settings', f);
+    await api('POST', '/api/settings', { ...f, guidePolicy: { execute: f.guideExecute, write: f.guideWrite } });
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
     if (repos.map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|') !== cur) await api('PATCH', `/api/projects/${projectId}`, { repos });
@@ -562,7 +580,7 @@ function renderQuestions() {
   const qs = S.questions || [];
   const bar = $('#questions-bar');
   if (bar) {
-    bar.innerHTML = qs.map((q) => `<button class="qbar" data-q="${q.id}">❓ <b>${esc(q.agentName)}</b> (${esc(q.taskCode || q.taskId)}) te pregunta: ${esc(q.question.slice(0, 90))}${q.question.length > 90 ? '…' : ''} — <u>responder</u></button>`).join('');
+    bar.innerHTML = qs.map((q) => q.kind === 'confirm' ? `<button class="qbar" data-q="${q.id}">🛡 <b>Guide</b> pide confirmación: ${esc(q.question.slice(0, 90))} — <u>responder</u></button>` : `<button class="qbar" data-q="${q.id}">❓ <b>${esc(q.agentName)}</b> (${esc(q.taskCode || q.taskId)}) te pregunta: ${esc(q.question.slice(0, 90))}${q.question.length > 90 ? '…' : ''} — <u>responder</u></button>`).join('');
     bar.hidden = !qs.length;
   }
   if (qOpen && !qs.some((q) => q.id === qOpen)) { qOpen = null; if ($('#dialog').open && $('#dialog').className === 'question') $('#dialog').close(); }
@@ -574,8 +592,9 @@ function openQuestion(id) {
   if (!q) return;
   const t = S.tasks.find((x) => x.id === q.taskId);
   qOpen = id;
+  const confirm = q.kind === 'confirm'; // FT-4: confirmación del Guide (Sí/No, sin respuesta libre)
   dialog(`
-    <div class="task-head"><b>❓ ${esc(q.agentName)}</b> <span>${esc(q.taskCode || q.taskId)}</span>${t ? ` <span class="muted">${esc(t.title.slice(0, 70))}</span>` : ''}<div class="spacer"></div><span class="muted">${new Date(q.createdAt).toLocaleTimeString()}</span></div>
+    <div class="task-head"><b>${confirm ? '🛡 Guide · confirmación' : '❓ ' + esc(q.agentName)}</b> ${confirm ? '' : `<span>${esc(q.taskCode || q.taskId)}</span>`}${t ? ` <span class="muted">${esc(t.title.slice(0, 70))}</span>` : ''}<div class="spacer"></div><span class="muted">${new Date(q.createdAt).toLocaleTimeString()}</span></div>
     <h3 class="q-text">${esc(q.question)}</h3>
     ${q.context ? `<div class="q-context">${md(q.context)}</div>` : ''}
     ${q.options.length ? `<div class="q-opts">${q.options.map((o) => `<button type="button" class="q-opt" data-answer="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}

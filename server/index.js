@@ -18,6 +18,8 @@ import crypto2 from 'node:crypto';
 import { saveRole, deleteRole } from './roles.js';
 import * as activity from './events.js';
 import * as context from './context.js';
+import * as guideTools from './guide/tools.js';
+import * as guidePolicy from './guide/policy.js';
 
 const PORT = Number(process.env.AO_PORT || 7420);
 const HOST = process.env.AO_HOST || '127.0.0.1'; // lanza procesos con tus permisos: solo local
@@ -66,7 +68,7 @@ export function extractText(file) {
   } catch { return null; }
 }
 
-const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), questions: questions.list() }; };
+const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), questions: questions.list(), guidePolicy: guidePolicy.getPolicy() }; };
 
 async function readBody(req) {
   const limit = req.url.startsWith('/api/upload') ? 40e6 : 1e6; // adjuntos en base64 (≈30 MB de ficheros)
@@ -89,6 +91,9 @@ const routes = [
   // Contexto de la UI (FT-2): lo que el usuario está viendo, por cliente (cabecera `x-ao-client`)
   ['GET', /^\/api\/context$/, (_, __, q, req) => context.get(q.client || req.headers['x-ao-client'])],
   ['POST', /^\/api\/context$/, (_, b, __, req) => context.publish(req.headers['x-ao-client'], b)],
+  // Tool Registry + Policy Layer del Guide Agent (FT-4): lo usan la UI, las pruebas y bin/ao-mcp.mjs
+  ['GET', /^\/api\/guide\/tools$/, () => guideTools.describe()],
+  ['POST', /^\/api\/guide\/tool$/, (_, b, __, req) => guideTools.run(String(b.name || ''), b.args ?? {}, { client: req.headers['x-ao-client'] || null, via: req.headers['x-ao-via'] || 'api' })],
   // Cuentas de los motores de IA (login OAuth/clave API, logout)
   ['GET', /^\/api\/engines$/, () => auth.enginesStatus()],
   ['GET', /^\/api\/engines\/models$/, () => auth.enginesModels()],
@@ -159,6 +164,7 @@ const routes = [
     if (typeof b.flowTestUrl === 'string' && b.flowTestUrl.trim()) st.flowTestUrl = b.flowTestUrl.trim().replace(/\/+$/, '').replace(/\/mcp$/, '');
     if (typeof b.workspaceHostDir === 'string') st.workspaceHostDir = b.workspaceHostDir.trim();
     if (b.maxParallel) st.maxParallel = Math.max(1, Math.min(8, Number(b.maxParallel) || 4));
+    if (b.guidePolicy && typeof b.guidePolicy === 'object') guidePolicy.setPolicy(b.guidePolicy);
     store.changed();
     return st;
   }],
@@ -174,9 +180,11 @@ function events(req, res) {
   const onActivity = (ev) => send('activity', ev); // FT-1
   store.bus.on('state', onState);
   store.bus.on('log', onLog);
+  const onUi = (cmd) => send('ui', cmd); // FT-4: órdenes del Guide a la UI (navegar, abrir tarea…)
   store.bus.on('activity', onActivity);
+  store.bus.on('ui', onUi);
   const ping = setInterval(() => res.write(': ping\n\n'), 20000);
-  req.on('close', () => { clearInterval(ping); store.bus.off('state', onState); store.bus.off('log', onLog); store.bus.off('activity', onActivity); });
+  req.on('close', () => { clearInterval(ping); store.bus.off('state', onState); store.bus.off('log', onLog); store.bus.off('activity', onActivity); store.bus.off('ui', onUi); });
 }
 
 // Adjuntos subidos (solo dentro de data/uploads) para verlos desde la tarjeta

@@ -300,6 +300,22 @@ export function updateTask(id, patch) {
   return t;
 }
 
+// Fija qué agente hará la tarea (FT-4); null = vuelve a elegirse por rol. Solo antes de empezar.
+export function assignTask(id, agentId) {
+  const s = get();
+  const t = findOr404(s.tasks, id, 'Tarea');
+  if (!['backlog', 'todo', 'failed'].includes(t.status)) throw fail(409, 'Solo se puede asignar una tarea que no ha empezado');
+  if (agentId) {
+    const a = findOr404(s.agents, agentId, 'Agente');
+    if (!(projectOf(t)?.team || []).includes(a.id)) throw fail(400, `${a.name} no está fichado en el proyecto de la tarea`);
+    t.assignedAgentId = a.id;
+  } else delete t.assignedAgentId;
+  t.updatedAt = Date.now();
+  changed();
+  tick();
+  return t;
+}
+
 export function planGoal(projectId, goal, { attachments = [], title = '' } = {}) {
   if (!goal?.trim()) throw fail(400, 'Escribe un objetivo');
   const s = get();
@@ -458,7 +474,7 @@ export function tick() {
     for (const t of todo) {
       if (slots <= 0) break;
       if (!depsDone(t)) continue;
-      const agent = team.find((a) => !jobs.has(a.id) && (a.role === t.role || (roleOf(a.role)?.handles || []).includes(t.role)));
+      const agent = team.find((a) => !jobs.has(a.id) && (t.assignedAgentId ? a.id === t.assignedAgentId : (a.role === t.role || (roleOf(a.role)?.handles || []).includes(t.role))));
       if (!agent) continue;
       slots--;
       runTask(p, agent, t);
