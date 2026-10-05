@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import * as store from './store.js';
+import * as codes from './codes.js';
 import * as git from './git.js';
 import { allRoles, roleOf } from './roles.js';
 import { parseTasks } from './engines/describe.js';
@@ -47,7 +48,7 @@ const DEFAULT_TEAM = [
 export const teamOf = (p) => { const ids = new Set(p?.team || []); return get().agents.filter((a) => ids.has(a.id)); };
 
 const fail = (status, message) => Object.assign(new Error(message), { status });
-const findOr404 = (list, id, what) => list.find((x) => x.id === id) || (() => { throw fail(404, `${what} no encontrado`); })();
+const findOr404 = (list, id, what) => list.find((x) => x.id === id || (x.code && x.code === String(id).toUpperCase())) || (() => { throw fail(404, `${what} no encontrado`); })();
 const expand = (p) => String(p || '').trim().replace(/^~(?=\/|$)/, process.env.HOME);
 
 // ── Proyectos ──────────────────────────────────────────────────────────────
@@ -144,6 +145,7 @@ export async function updateProject(id, patch) {
   const p = findOr404(get().projects, id, 'Proyecto');
   if (patch.name?.trim()) p.name = patch.name.trim();
   if (patch.folder !== undefined) p.folder = patch.folder || null;
+  if (patch.prefix !== undefined) p.prefix = codes.normalizePrefix(patch.prefix) || null; // las tareas ya numeradas conservan su código
   if (patch.repos) {
     p.repos = await resolveRepos({ repos: patch.repos });
     p.repoPath = p.repos[0]?.path || null;
@@ -246,6 +248,7 @@ export function createTask({ projectId, title, description = '', role, repo = nu
     agentId: null, branch: null, summary: '', diffStat: '', error: null, feedback: '', source, files: files.filter((f) => fs.existsSync(f)),
     costUsd: null, attempts: 0, createdAt: Date.now(), updatedAt: Date.now(),
   };
+  codes.assignCode(s.tasks, p, task);
   task.feedbackImages = copyImages(task, images);
   s.tasks.push(task);
   changed();
@@ -479,7 +482,7 @@ function buildPrompt(p, agent, t) {
   }
   const done = get().tasks.filter((x) => t.dependsOn.includes(x.id));
   return [
-    `Tarea #${t.id}: ${t.title}`,
+    `Tarea ${t.code || '#' + t.id}: ${t.title}`,
     '',
     t.description,
     done.length ? `\nTrabajo previo del equipo (ya fusionado):\n${done.map((d) => `- ${d.title}: ${d.summary}`).join('\n')}` : '',
@@ -491,6 +494,7 @@ function buildPrompt(p, agent, t) {
     `Trabajas en una copia aislada del repo (git worktree) en la rama ${t.branch}. No cambies de rama ni hagas push.`,
     t.reused ? 'En esta rama ya está tu intento anterior (mira `git log` y `git diff` contra la rama base): parte de él y corrige lo que pide la revisión, sin rehacer lo que ya estaba bien.' : '',
     'Lo que dejes sin confirmar se confirmará solo al terminar.',
+    t.code ? `Cita el código ${t.code} en lo que documentes (changelog, README, flows, tablero) para que la tarea se pueda rastrear.` : '',
     'Al acabar, responde con un resumen breve: qué cambiaste y cómo lo probaste.',
   ].join('\n');
 }
@@ -501,7 +505,7 @@ async function runTask(p, agent, t) {
   Object.assign(t, { status: 'doing', agentId: agent.id, error: null, attempts: t.attempts + 1, updatedAt: Date.now() });
   Object.assign(agent, { status: 'working', taskId: t.id, activity: t.kind === 'plan' ? 'Leyendo el objetivo' : 'Preparando su copia del repo' });
   changed();
-  log(agent.id, `▶ #${t.id} ${t.title}`);
+  log(agent.id, `▶ ${t.code || '#' + t.id} ${t.title}`);
   reflect(t, `▶ ${agent.name} (${roleOf(agent.role)?.label || agent.role}) empieza a trabajar en AgentOffice`);
 
   let engineId;
@@ -561,7 +565,7 @@ async function runTask(p, agent, t) {
       log(agent.id, `✅ Plan listo: ${ids.length} tareas`);
     } else {
       if (t.branch) {
-        await git.commitAll(cwd, `${t.title} (#${t.id})`, `${agent.name} (${role.label})`);
+        await git.commitAll(cwd, t.code ? `${t.code}: ${t.title}` : `${t.title} (#${t.id})`, `${agent.name} (${role.label})`);
         t.diffStat = await git.diffStat(repo, t);
       } else {
         t.diffStat = res.diffStat || '';

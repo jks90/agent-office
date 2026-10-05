@@ -19,8 +19,9 @@ export async function repoInfo(dir) {
 }
 
 // `repo` = { key, path, baseBranch } (uno de project.repos).
-export const worktreeDir = (project, task) => path.join(DATA_DIR, 'worktrees', project.id, task.id);
-export const branchOf = (task) => `ao/${task.id}`;
+// Tareas anteriores a los códigos: su worktree/rama llevan el id y se siguen usando tal cual.
+export const worktreeDir = (project, task) => { const legacy = path.join(DATA_DIR, 'worktrees', project.id, task.id); return (task.code && !fs.existsSync(legacy)) ? path.join(DATA_DIR, 'worktrees', project.id, task.code) : legacy; };
+export const branchOf = (task) => task.branch || `ao/${task.code || task.id}`;
 
 export async function createWorktree(project, repo, task) {
   const dir = worktreeDir(project, task);

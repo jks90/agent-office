@@ -171,7 +171,7 @@ function renderTeam() {
         <span class="eng">${esc(a.engine)}${a.engine === 'auto' && a.activeEngine ? ' → ' + esc(a.activeEngine) : ''}${a.model ? ' · ' + esc(a.model) : ''}</span>
       </div>
       <div class="member-foot">${roleChip(a.role)}<span class="state ${a.status}"><span class="dot ${a.status}"></span>${a.status === 'working' ? 'Trabajando' : 'Descansando'}</span></div>
-      ${task ? `<div class="task">▶ #${task.id} ${esc(task.title)}</div>` : ''}
+      ${task ? `<div class="task">▶ ${esc(tcode(task))} ${esc(task.title)}</div>` : ''}
       <div class="meta"><span>${done} entregadas</span>${cost ? `<span>≈ ${cost.toFixed(2)} $</span>` : ''}${r?.custom ? `<span title="${esc(r.description || '')}">rol de fichero · ${esc(r.source)}</span>` : ''}</div>
       ${projectsOf(a.id).length ? `<div class="meta"><span>también en: ${projectsOf(a.id).map(esc).join(', ')}</span></div>` : ''}
       <div class="acts">
@@ -335,7 +335,7 @@ const COLS = [
 let taskFilter = '';
 $('#task-filter').addEventListener('input', (e) => { taskFilter = e.target.value.trim().toLowerCase(); renderBoard(); });
 function renderBoard() {
-  const list = tasks().filter((t) => !taskFilter || `${t.id} ${t.title} ${t.role} ${t.repo || ''} ${t.description}`.toLowerCase().includes(taskFilter));
+  const list = tasks().filter((t) => !taskFilter || `${t.id} ${t.code || ''} ${t.title} ${t.role} ${t.repo || ''} ${t.description}`.toLowerCase().includes(taskFilter));
   $('#board').innerHTML = COLS.map(([st, label, c]) => {
     const items = list.filter((t) => t.status === st || (st === 'todo' && t.status === 'failed'))
       .sort((a, b) => (st === 'done' ? b.updatedAt - a.updatedAt : a.createdAt - b.createdAt));
@@ -347,7 +347,7 @@ function card(t) {
   const agent = S.agents.find((a) => a.id === t.agentId);
   const deps = t.dependsOn.map((d) => {
     const dt = S.tasks.find((x) => x.id === d);
-    return `<span title="${esc(dt?.title)}">${dt?.status === 'done' ? '✓' : '⏳'}#${d}</span>`;
+    return `<span title="${esc(dt?.title)}">${dt?.status === 'done' ? '✓' : '⏳'}${esc(dt ? tcode(dt) : '#' + d)}</span>`;
   }).join(' ');
   const acts = [];
   if (t.status === 'review') {
@@ -361,7 +361,7 @@ function card(t) {
   if (t.status === 'todo') acts.push(`<button class="small ghost" data-park="${t.id}">← Backlog</button>`);
   if (['todo', 'failed', 'done'].includes(t.status)) acts.push(`<button class="small danger" data-del="${t.id}">Borrar</button>`);
   return `<div class="card ${t.status}" style="--c:${S.roles[t.role]?.color}">
-    <div class="card-head">${roleChip(t.role)} <span class="task-id">#${t.id}</span>${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? ` <span class="repo-chip">📁 ${esc(t.repo || '?')}</span>` : ''}${t.source?.flow ? ` <span title="Importada del tablero «${esc(t.source.flow)}» · columna ${esc(t.source.column)}">🗂</span>` : ''}${(t.feedbackImages?.length || t.files?.length) ? ` <span title="${esc([...(t.feedbackImages || []), ...(t.files || [])].map((f) => f.split('/').pop()).join(', '))}">📎${(t.feedbackImages?.length || 0) + (t.files?.length || 0)}</span>` : ''}${t.source?.url ? ` <a class="ext" href="${esc(t.source.url)}" target="_blank" rel="noopener" title="${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} · ${esc(t.source.id)}${t.source.remoteStatus ? ' · fuera: ' + esc(t.source.remoteStatus) : ''}">🔗 ${esc(t.source.id)}</a>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}</div>
+    <div class="card-head">${roleChip(t.role)} <span class="task-id" title="Código de la tarea (rama ao/${t.code || t.id}; cítalo en commits y docs)">${esc(tcode(t))}</span>${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? ` <span class="repo-chip">📁 ${esc(t.repo || '?')}</span>` : ''}${t.source?.flow ? ` <span title="Importada del tablero «${esc(t.source.flow)}» · columna ${esc(t.source.column)}">🗂</span>` : ''}${(t.feedbackImages?.length || t.files?.length) ? ` <span title="${esc([...(t.feedbackImages || []), ...(t.files || [])].map((f) => f.split('/').pop()).join(', '))}">📎${(t.feedbackImages?.length || 0) + (t.files?.length || 0)}</span>` : ''}${t.source?.url ? ` <a class="ext" href="${esc(t.source.url)}" target="_blank" rel="noopener" title="${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} · ${esc(t.source.id)}${t.source.remoteStatus ? ' · fuera: ' + esc(t.source.remoteStatus) : ''}">🔗 ${esc(t.source.id)}</a>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}</div>
     <div class="t">${esc(t.title)}</div>
     <div class="meta">${agent ? `<span>👤 ${esc(agent.name)}</span>` : ''}${deps ? `<span>depende de ${deps}</span>` : ''}${t.costUsd ? ` <span>💲${t.costUsd.toFixed(3)}</span>` : ''}</div>
     ${t.status === 'doing' && agent ? `<div class="live">● ${esc(agent.activity)}</div>` : ''}
@@ -389,7 +389,7 @@ function renderDrawer() {
   // Si ya está pintado, solo refrescamos lo que cambia (no perder el foco de los inputs).
   if (d.dataset.agent === a.id) {
     d.querySelector('[data-f=status]').innerHTML = a.status === 'working' ? `🟢 ${esc(a.activity)}` : '☕ descansando';
-    d.querySelector('[data-f=task]').innerHTML = task ? `#${task.id} ${esc(task.title)}` : '—';
+    d.querySelector('[data-f=task]').innerHTML = task ? `${esc(tcode(task))} ${esc(task.title)}` : '—';
     d.querySelector('[data-stop]').hidden = a.status !== 'working';
     return;
   }
@@ -517,6 +517,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <div class="section-title">🔗 Tablero online del proyecto «${esc(project()?.name)}»</div>
     <div id="board-cfg" class="board-cfg"><p class="muted">Cargando…</p></div>
     <div class="section-title">📁 Proyecto</div>
+    <label>Prefijo de los códigos de tarea del proyecto «${esc(project()?.name)}» (p. ej. <code>GL</code> → GL-1, GL-2…; las tareas ya numeradas no cambian)</label><input name="prefix" value="${esc(project()?.prefix || "")}" placeholder="${esc(project()?.prefixDefault || "")}" maxlength="5" style="text-transform:uppercase;width:120px" />
     <label>Repositorios del proyecto «${esc(project()?.name)}» (uno por línea: <code>clave = ruta @ roles</code>)</label>
     <textarea name="repos" rows="3">${esc((project()?.repos || []).map((r) => `${r.key} = ${r.path}${r.roles?.length ? ' @ ' + r.roles.join(',') : ''}`).join('\n'))}</textarea>
     <label>Importar un tablero de flow-test (notas = tarjetas; las columnas «En revisión»/«Hecho» conservan su estado, el resto entra en Backlog)</label>
@@ -528,10 +529,13 @@ Pasos, convenciones y ejemplos…</textarea>
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
     if (repos.map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|') !== cur) await api('PATCH', `/api/projects/${projectId}`, { repos });
+    if ((f.prefix || '').toUpperCase() !== (project()?.prefix || '')) await api('PATCH', `/api/projects/${projectId}`, { prefix: f.prefix });
   }),
 };
 // Tras abrir Ajustes, rellenar el selector de flows con los del flow-test conectado.
 const BOARD_LABELS = { github: 'GitHub Issues', trello: 'Trello', jira: 'Jira' };
+// Código legible de la tarea (GL-7); las muy antiguas sin código enseñan el id.
+const tcode = (t) => t?.code || ('#' + (t?.id || '?'));
 const ago = (ts) => { const m = Math.round((Date.now() - ts) / 60000); return m < 1 ? 'un momento' : m < 60 ? `${m} min` : `${Math.round(m / 60)} h`; };
 let boardKinds = null;
 function boardMsg(b) {
@@ -767,8 +771,8 @@ function openTask(id) {
   const agent = S.agents.find((a) => a.id === t.agentId);
   const repos = project()?.repos || [];
   const repoKey = t.repo || repos.find((r) => (r.roles || []).includes(t.role))?.key || repos[0]?.key || '';
-  const deps = t.dependsOn.map((dId) => { const dt = S.tasks.find((x) => x.id === dId); return dt ? `<span>${dt.status === 'done' ? '✓' : '⏳'} #${dt.id} ${esc(dt.title.slice(0, 60))}</span>` : ''; }).join('');
-  const dependents = S.tasks.filter((x) => x.dependsOn.includes(id)).map((x) => `<span>→ #${x.id} ${esc(x.title.slice(0, 60))}</span>`).join('');
+  const deps = t.dependsOn.map((dId) => { const dt = S.tasks.find((x) => x.id === dId); return dt ? `<span>${dt.status === 'done' ? '✓' : '⏳'} ${esc(tcode(dt))} ${esc(dt.title.slice(0, 60))}</span>` : ''; }).join('');
+  const dependents = S.tasks.filter((x) => x.dependsOn.includes(id)).map((x) => `<span>→ ${esc(tcode(x))} ${esc(x.title.slice(0, 60))}</span>`).join('');
   const att = [...(t.feedbackImages || []), ...(t.files || [])];
   const fileUrl = (f) => `${BASE}api/file?path=${encodeURIComponent(f)}`;
   const STATUS = { backlog: 'Backlog', todo: 'Por hacer', doing: 'En curso', review: 'En revisión', done: 'Hecha', failed: 'Fallida' };
@@ -779,7 +783,7 @@ function openTask(id) {
   if (t.status === 'review') acts.push(`<button class="small ghost" data-diff="${t.id}">Ver cambios</button><button class="small ok" data-approve="${t.id}">✓ Aprobar${t.branch ? ' y fusionar' : ''}</button><button class="small ghost" data-reject="${t.id}">↩ Devolver</button>`);
   if (t.status === 'failed') acts.push(`<button class="small" data-reject="${t.id}">↻ Reintentar</button>`);
   dialog(`
-    <div class="task-head">${roleChip(t.role)} <span>#${t.id}</span>${repoKey ? ` <span>📁 ${esc(repoKey)}</span>` : ''} <span class="st">${STATUS[t.status] || t.status}</span>${agent ? ` <span>👤 ${esc(agent.name)}</span>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}${t.costUsd ? ` <span>≈ ${t.costUsd.toFixed(2)} $</span>` : ''}${t.source?.url ? ` <a href="${esc(t.source.url)}" target="_blank" rel="noopener" style="color:#93c5fd">🔗 ${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} ${esc(t.source.id)}</a>` : ''}<div class="spacer"></div><span>${new Date(t.createdAt).toLocaleString()}</span></div>
+    <div class="task-head">${roleChip(t.role)} <b>${esc(tcode(t))}</b>${repoKey ? ` <span>📁 ${esc(repoKey)}</span>` : ''} <span class="st">${STATUS[t.status] || t.status}</span>${agent ? ` <span>👤 ${esc(agent.name)}</span>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}${t.costUsd ? ` <span>≈ ${t.costUsd.toFixed(2)} $</span>` : ''}${t.source?.url ? ` <a href="${esc(t.source.url)}" target="_blank" rel="noopener" style="color:#93c5fd">🔗 ${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} ${esc(t.source.id)}</a>` : ''}<div class="spacer"></div><span>${new Date(t.createdAt).toLocaleString()}</span></div>
     <div class="task-title" tabindex="-1" autofocus>${esc(t.title)}</div>
     <div class="task-sec"><h4>${t.kind === 'plan' ? 'Encargo al PO' : 'Qué va a hacer'}</h4><div class="md">${md(t.description)}</div></div>
     ${att.length ? `<div class="task-sec"><h4>Adjuntos</h4><div class="task-attach">${att.map((f) => /\.(png|jpe?g|webp|gif)$/i.test(f) ? `<a href="${fileUrl(f)}" target="_blank" rel="noopener"><img src="${fileUrl(f)}" alt="" /></a>` : `<a href="${fileUrl(f)}" target="_blank" rel="noopener">📄 ${esc(f.split('/').pop())}</a>`).join('')}</div></div>` : ''}
@@ -798,7 +802,7 @@ function editTask(id) {
   const others = tasks().filter((x) => x.id !== id && x.kind !== 'plan');
   const repos = project()?.repos || [];
   dialog(`
-    <h3>✎ Tarea #${t.id}${t.source?.url ? ` · <a href="${esc(t.source.url)}" target="_blank" rel="noopener" style="font-size:13px;color:#93c5fd">${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} ${esc(t.source.id)} ↗</a>` : ''}</h3>
+    <h3>✎ Tarea ${esc(tcode(t))}${t.source?.url ? ` · <a href="${esc(t.source.url)}" target="_blank" rel="noopener" style="font-size:13px;color:#93c5fd">${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} ${esc(t.source.id)} ↗</a>` : ''}</h3>
     <label>Título</label><input name="title" value="${esc(t.title)}" required autofocus />
     <label>Descripción</label><textarea name="description" rows="6">${esc(t.description)}</textarea>
     <div class="grid2">
@@ -806,7 +810,7 @@ function editTask(id) {
       ${repos.length > 1 ? `<div><label>Repositorio</label><select name="repo"><option value="">(el que diga el rol)</option>${repos.map((r) => `<option value="${r.key}" ${r.key === t.repo ? 'selected' : ''}>${esc(r.key)}</option>`).join('')}</select></div>` : ''}
     </div>
     <label>Depende de (Ctrl+clic para varias)</label>
-    <select name="dependsOn" multiple size="${Math.min(6, Math.max(2, others.length))}">${others.map((o) => `<option value="${o.id}" ${t.dependsOn.includes(o.id) ? 'selected' : ''}>${o.status === 'done' ? '✓' : '⏳'} #${o.id} · ${esc(o.title.slice(0, 70))}</option>`).join('')}</select>
+    <select name="dependsOn" multiple size="${Math.min(6, Math.max(2, others.length))}">${others.map((o) => `<option value="${o.id}" ${t.dependsOn.includes(o.id) ? 'selected' : ''}>${o.status === 'done' ? '✓' : '⏳'} ${esc(tcode(o))} · ${esc(o.title.slice(0, 70))}</option>`).join('')}</select>
     ${['backlog', 'todo', 'failed'].includes(t.status) ? `<label>Estado</label><select name="status"><option value="backlog" ${t.status === 'backlog' ? 'selected' : ''}>Backlog</option><option value="todo" ${t.status !== 'backlog' ? 'selected' : ''}>Por hacer</option></select>` : ''}
     ${t.source?.kind && t.source.kind !== 'flow' ? '<p class="muted">Título y descripción se actualizan también en el tablero online.</p>' : ''}
     ${buttons('Guardar')}`, async (f) => {
@@ -854,7 +858,7 @@ document.addEventListener('click', async (e) => {
       const draft = await api('POST', '/api/tasks/draft', { projectId, text, attachments: pendingAttachments });
       const t = await api('POST', '/api/tasks', { projectId, title: draft.title, description: draft.description, role: draft.role, repo: draft.repo, status: 'backlog', attachments: pendingAttachments });
       $('#dialog').close();
-      toast(`Tarea #${t.id} creada en Backlog por la IA (${draft.role}${draft.repo ? ' · ' + draft.repo : ''})${draft.costUsd ? ` · ≈ ${draft.costUsd.toFixed(2)} $` : ''}`);
+      toast(`Tarea ${tcode(t)} creada en Backlog por la IA (${draft.role}${draft.repo ? ' · ' + draft.repo : ''})${draft.costUsd ? ` · ≈ ${draft.costUsd.toFixed(2)} $` : ''}`);
     } catch { el.disabled = false; el.textContent = '✨ Redactar con IA y crear'; }
     return;
   }
@@ -875,7 +879,7 @@ document.addEventListener('click', async (e) => {
     pendingAttachments = [];
     const t = S.tasks.find((x) => x.id === d.reject);
     return dialog(`
-      <h3>${t.status === 'failed' ? 'Reintentar' : 'Devolver'} #${t.id}</h3>
+      <h3>${t.status === 'failed' ? 'Reintentar' : 'Devolver'} ${esc(tcode(t))}</h3>
       <p class="muted">${esc(t.title)}</p>
       <label>Comentarios para el agente (opcional)</label><textarea name="feedback" rows="4" autofocus></textarea>
       ${attachArea()}
@@ -888,7 +892,7 @@ document.addEventListener('click', async (e) => {
       l.startsWith('+') && !l.startsWith('+++') ? `<span class="diff-add">${l}</span>`
         : l.startsWith('-') && !l.startsWith('---') ? `<span class="diff-del">${l}</span>`
           : l.startsWith('@@') ? `<span class="diff-hunk">${l}</span>` : l).join('\n');
-    return dialog(`<h3>#${t.id} ${esc(t.title)}</h3>
+    return dialog(`<h3>${esc(tcode(t))} ${esc(t.title)}</h3>
       ${t.summary ? `<p>${esc(t.summary)}</p>` : ''}
       ${t.diffStat ? `<pre>${esc(t.diffStat)}</pre>` : ''}
       <pre>${html}</pre>${buttons(null)}`, null, 'wide');

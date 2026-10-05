@@ -21,7 +21,8 @@ escribe un objetivo, pulsa **Encargar al PO** y luego **▶ Poner a trabajar**.
 1. **Proyecto** = un repositorio git (opcional en demo) más su equipo y su tablero.
 2. **Objetivo → PO**: el PO lee el repo y devuelve las tareas en JSON (título, descripción, rol, dependencias).
 3. **Planificador** (cada 1,5 s): cada tarea pendiente cuyas dependencias estén **hechas** va al primer agente libre de su rol (como mucho `maxParallel` a la vez).
-4. **Aislamiento**: cada tarea corre en un **git worktree** propio (`data/worktrees/…`, rama `ao/<tarea>`). Al terminar se hace commit con el agente como autor y la tarea pasa a **Revisión**.
+4. **Aislamiento**: cada tarea corre en un **git worktree** propio (`data/worktrees/…`, rama `ao/<código>`). Al terminar se hace commit `<código>: <título>` con el agente como autor y la tarea pasa a **Revisión**.
+5. **Código de tarea**: toda tarea lleva un código legible y estable — prefijo del proyecto + correlativo (`GL-7`, `UH-198`) — que aparece en la tarjeta, la rama, el commit, el prompt del agente (se le pide citarlo en lo que documente), la issue/tarjeta del tablero online (`GL-7 · título`; si el título ya trae un código, se respeta) y en `GET /api/projects/:id/tasks`. Las rutas `/api/tasks/<id>` aceptan también el código. El prefijo se deduce del nombre del proyecto y se cambia en Ajustes ▸ Proyecto (las tareas ya numeradas conservan el suyo).
 5. **Tú decides**: *Ver cambios* (diff), *Aprobar y fusionar* (`merge --no-ff` a la rama base; exige el repo limpio y en esa rama) o *Devolver* con comentarios (se descarta la rama y el agente lo rehace con tu feedback).
 6. **QA + flow-test**: el agente QA recibe el MCP de flow-test (`Ajustes`, por defecto `http://localhost:9998/mcp`) para crear y ejecutar flows que verifiquen la API.
 

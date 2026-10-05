@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import * as store from '../store.js';
+import { titleWithCode, stripCode } from '../codes.js';
 import * as github from './github.js';
 import * as trello from './trello.js';
 import * as jira from './jira.js';
@@ -96,7 +97,8 @@ export async function syncBoard(project, { createTask, roles }) {
     // puede ir unos segundos por detrás de lo que acabamos de enviar); si no, título y descripción mandan desde fuera.
     const editedLocally = t.updatedAt > since;
     let touched = false;
-    if (!editedLocally && (t.title !== c.title || t.description !== c.description)) { t.title = c.title; t.description = c.description; touched = true; }
+    const remoteTitle = stripCode(c.title, t.code);
+    if (!editedLocally && (t.title !== remoteTitle || t.description !== c.description)) { t.title = remoteTitle; t.description = c.description; touched = true; }
     t.source = { ...t.source, url: c.url, remoteStatus: c.status };
     const localStatusChanged = editedLocally && t.status !== t.source.pushedStatus;
     if (c.status !== t.status) {
@@ -158,7 +160,7 @@ export function exportAll(project) {
       for (;;) {
         if (ctl.cancelled) break;
         try {
-          const r = await call(kind, 'create', cfg, sec, { title: t.title, description: t.description, status: t.status === 'failed' ? 'todo' : t.status });
+          const r = await call(kind, 'create', cfg, sec, { title: titleWithCode(t), description: t.description, status: t.status === 'failed' ? 'todo' : t.status });
           t.source = { ...(t.source || {}), kind: kind.id, id: r.id, url: r.url, remoteStatus: t.status, pushedStatus: t.status };
           job.done++;
           break;
@@ -189,8 +191,8 @@ export function pushContentSoon(project, task) {
   if (!project?.board || task.source?.kind !== project.board.kind) return;
   const { kind, cfg, sec } = ctx(project);
   if (!kind.update) return;
-  call(kind, 'update', cfg, sec, task.source.id, { title: task.title, description: task.description })
-    .catch((e) => { project.board.lastError = `editar #${task.id}: ${e.message}`; store.changed(); });
+  call(kind, 'update', cfg, sec, task.source.id, { title: titleWithCode(task), description: task.description })
+    .catch((e) => { project.board.lastError = `editar ${task.code || '#' + task.id}: ${e.message}`; store.changed(); });
 }
 
 // Tarea nueva creada aquí (PO o a mano) → tarjeta fuera, si el tablero lo pide.
@@ -198,7 +200,7 @@ export async function createRemote(project, task) {
   if (!project?.board?.pushNew || task.source?.kind === project.board.kind || task.kind === 'plan') return;
   const { kind, cfg, sec } = ctx(project);
   try {
-    const r = await call(kind, 'create', cfg, sec, { title: task.title, description: task.description, status: task.status });
+    const r = await call(kind, 'create', cfg, sec, { title: titleWithCode(task), description: task.description, status: task.status });
     task.source = { ...(task.source || {}), kind: kind.id, id: r.id, url: r.url, remoteStatus: task.status, pushedStatus: task.status };
     store.changed();
   } catch (e) { project.board.lastError = `crear «${task.title}»: ${e.message}`; store.changed(); }

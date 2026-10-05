@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
+import { migrate as migrateCodes } from './codes.js';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const DATA_DIR = process.env.AO_DATA_DIR || path.join(ROOT, 'data');
@@ -41,6 +42,8 @@ function load() {
       s.schema = 2;
     }
     for (const p of s.projects) if (!Array.isArray(p.team)) p.team = [];
+    // Esquema 3: código legible por tarea (GL-7) — también para las tareas antiguas, por orden de creación.
+    if (!s.schema || s.schema < 3) { migrateCodes(s); s.schema = 3; }
     for (const p of s.projects) if (p.board?.job?.running) { p.board.job.running = false; p.board.job.lastError = 'Exportación interrumpida (reinicio)'; }
     return s;
   } catch {
