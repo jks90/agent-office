@@ -83,7 +83,9 @@ export class Office {
     this.agents.forEach((a, i) => {
       let c = this.chars.get(a.id);
       if (!c) {
-        c = { x: DOOR.x, y: DOOR.y, corr: null, path: [], key: null, moving: false, dir: 1, loungeSpot: i, nextWander: now + 8000 + Math.random() * 12000 };
+        // Entran por la puerta de uno en uno: si salen a la vez van solapados por el pasillo y parece que falta gente.
+        const queued = [...this.chars.values()].filter((o) => o.enterAt >= now).length;
+        c = { x: DOOR.x, y: DOOR.y, corr: null, path: [], key: null, moving: false, dir: 1, loungeSpot: i, enterAt: now + queued * 900, nextWander: now + 8000 + Math.random() * 12000 };
         this.chars.set(a.id, c);
       }
       // En la zona de descanso cambian de sitio de vez en cuando.
@@ -93,6 +95,7 @@ export class Office {
         if (free.length) c.loungeSpot = free[Math.floor(Math.random() * free.length)];
         c.nextWander = now + 10000 + Math.random() * 15000;
       }
+      if (now < c.enterAt) return;
       const t = this.targetFor(a, i);
       if (t.key !== c.key) {
         c.path = this.route(c, t);
@@ -147,11 +150,11 @@ export class Office {
     items.push({ y: 196, draw: () => this.drawPlant(246, 194) });
     this.agents.forEach((a) => {
       const c = this.chars.get(a.id);
-      if (c) items.push({ y: c.y, draw: () => this.drawChar(a, c, now) });
+      if (c && now >= c.enterAt) items.push({ y: c.y, draw: () => this.drawChar(a, c, now) });
     });
     items.sort((p, q) => p.y - q.y).forEach((it) => it.draw());
 
-    this.agents.forEach((a) => { const c = this.chars.get(a.id); if (c) this.drawLabels(a, c, now); });
+    this.agents.forEach((a) => { const c = this.chars.get(a.id); if (c && now >= c.enterAt) this.drawLabels(a, c, now); });
   }
 
   drawRoom(now) {
