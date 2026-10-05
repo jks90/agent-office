@@ -4,6 +4,8 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 let S = { projects: [], agents: [], tasks: [], settings: {}, roles: {}, engines: [] };
 let projectId = safeGet('ao:project');
 let drawerAgent = null;
+let openTaskId = null; // tarea abierta en el modal «Ver la tarea» (FT-2)
+let hostCtx = null, ctxTimer = null, ctxSent = ""; // publicación del contexto (FT-2)
 const logs = new Map();
 
 import { Office } from './office3d.js';
@@ -92,6 +94,7 @@ function showTab(tab) {
   document.querySelectorAll('.view').forEach((v) => { v.hidden = v.id !== 'view-' + tab; });
   if (tab === 'office') requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
   if (tab === 'agents') renderSkills();
+  publishContext();
 }
 $('#sidebar').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) showTab(b.dataset.tab); });
 // Secciones plegables de la pantalla Agentes (cabecera = plegar/desplegar; los botones de la cabecera siguen funcionando).
@@ -154,6 +157,7 @@ function render() {
     ? `🔗 ${esc(BOARD_LABELS[b.kind] || b.kind)} · <a href="${esc(b.url || '#')}" target="_blank" rel="noopener">${esc(b.config.repo || b.config.boardId || b.config.projectKey || '')}</a> · ${b.syncedAt ? 'hace ' + ago(b.syncedAt) : 'sin sincronizar'}${pending ? ` · <span title="tareas sin tarjeta fuera">${pending} sin tarjeta</span>` : ''}${b.lastError ? ` <span class="bad" title="${esc(b.lastError)}">⚠</span>` : ''} ${job?.running ? `<span class="muted">⇪ ${job.done}/${job.total}${job.waitingUntil ? ' · esperando a GitHub' : ''}</span> <button class="small ghost" data-board-cancel>✕</button>` : `<button class="small" data-board-syncall title="Igualar los dos lados: trae y lleva los estados y crea fuera las tarjetas que falten">⇅ Sincronizar</button>`}`
     : `<button class="small ghost" data-action="settings" title="Conecta GitHub, Trello o Jira en Ajustes ▸ Tablero online">🔗 Conectar tablero…</button>`;
   if (drawerAgent) renderDrawer();
+  publishContext();
 }
 
 function renderTeam() {
@@ -334,7 +338,7 @@ const COLS = [
 ];
 
 let taskFilter = '';
-$('#task-filter').addEventListener('input', (e) => { taskFilter = e.target.value.trim().toLowerCase(); renderBoard(); });
+$('#task-filter').addEventListener('input', (e) => { taskFilter = e.target.value.trim().toLowerCase(); renderBoard(); publishContext(); });
 function renderBoard() {
   const list = tasks().filter((t) => !taskFilter || `${t.id} ${t.code || ''} ${t.title} ${t.role} ${t.repo || ''} ${t.description}`.toLowerCase().includes(taskFilter));
   $('#board').innerHTML = COLS.map(([st, label, c]) => {
@@ -565,6 +569,7 @@ function openQuestion(id) {
     ${q.allowCustom ? `<label>${q.options.length ? 'U otra respuesta' : 'Tu respuesta'}</label><textarea name="answer" rows="3" placeholder="Escribe la respuesta para el agente…" ${q.options.length ? '' : 'autofocus'}></textarea>` : ''}
     <div class="row"><button class="ghost" value="cancel">Más tarde</button>${q.allowCustom ? '<button>Responder</button>' : ''}</div>`,
     async (f) => { if (!f.answer?.trim()) throw new Error('vacía'); await api('POST', `/api/questions/${id}/answer`, { answer: f.answer }); qOpen = null; toast(`Respuesta enviada a ${q.agentName}`); }, 'question');
+  publishContext();
   const dlg = $('#dialog');
   dlg.querySelectorAll('.q-opt').forEach((b) => { b.onclick = async () => { await api('POST', `/api/questions/${id}/answer`, { answer: b.dataset.answer }); qOpen = null; dlg.close(); toast(`Respuesta enviada a ${q.agentName}`); }; });
   dlg.addEventListener('close', () => { if (qOpen === id) { qSnoozed.add(id); qOpen = null; } }, { once: true });
@@ -830,6 +835,8 @@ function openTask(id) {
     ${t.diffStat ? `<div class="task-sec"><h4>Cambios en la rama ${esc(t.branch || '')}</h4><pre class="md">${esc(t.diffStat)}</pre></div>` : ''}
     ${t.error ? `<div class="task-sec"><h4>Error</h4><div class="md bad">${esc(t.error)}</div></div>` : ''}
     <div class="task-acts">${acts.join('')}<div class="spacer"></div><button class="ghost" value="cancel">Cerrar</button></div>`, null, 'task');
+  openTaskId = id;
+  publishContext();
 }
 
 // Editar una tarea desde su tarjeta.
@@ -958,3 +965,28 @@ $('#goal-form').onsubmit = async (e) => {
   toast(project()?.running ? 'El PO se pone con ello' : 'Encargado. Pulsa «▶ Poner a trabajar» para empezar');
 };
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && drawerAgent && !$('#dialog').open) closeDrawer(); });
+
+// ── Contexto de la UI para el Guide Agent (FT-2) ────────────────────────────
+// Publica lo que el usuario está viendo (POST /api/context, debounce 300 ms, solo si cambia). Estructurado, sin capturas.
+// Id de pestaña en sessionStorage para distinguir clientes; `host` = contexto que flow-test manda por postMessage (FT-3).
+const CLIENT_ID = (() => { try { return sessionStorage.getItem('ao:client') || (sessionStorage.setItem('ao:client', 'c_' + Math.random().toString(36).slice(2, 10)), sessionStorage.getItem('ao:client')); } catch { return 'c_' + Math.random().toString(36).slice(2, 10); } })();
+
+const ctxKey = () => JSON.stringify({ view: activeTab, projectId, openTaskId, selectedAgentId: drawerAgent, taskFilter, questionOpen: qOpen, host: hostCtx });
+function publishContext() {
+  clearTimeout(ctxTimer);
+  ctxTimer = setTimeout(() => {
+    const key = ctxKey();
+    if (key === ctxSent) return;
+    ctxSent = key;
+    fetch(BASE + 'api/context', { method: 'POST', keepalive: true, headers: { 'content-type': 'application/json', 'x-ao-client': CLIENT_ID }, body: JSON.stringify({ ...JSON.parse(key), at: Date.now() }) }).catch(() => { ctxSent = ''; });
+  }, 300);
+}
+$('#dialog').addEventListener('close', () => { openTaskId = null; publishContext(); });
+$('#project').addEventListener('change', publishContext);
+window.addEventListener('message', (e) => {
+  if (e.source !== window.parent || window.parent === window || e.data?.type !== 'flowtest:context') return;
+  const { flow, filePath, node, consoleTail, dirty, running } = e.data;
+  hostCtx = { flow, filePath, node, consoleTail, dirty, running };
+  publishContext();
+});
+publishContext();

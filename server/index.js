@@ -17,6 +17,7 @@ import { draftTask } from './ai-draft.js';
 import crypto2 from 'node:crypto';
 import { saveRole, deleteRole } from './roles.js';
 import * as activity from './events.js';
+import * as context from './context.js';
 
 const PORT = Number(process.env.AO_PORT || 7420);
 const HOST = process.env.AO_HOST || '127.0.0.1'; // lanza procesos con tus permisos: solo local
@@ -85,6 +86,9 @@ const routes = [
   ['GET', /^\/api\/state$/, () => snapshot()],
   // Activity Stream tipado (FT-1)
   ['GET', /^\/api\/events$/, (_, __, q) => activity.list(q)],
+  // Contexto de la UI (FT-2): lo que el usuario está viendo, por cliente (cabecera `x-ao-client`)
+  ['GET', /^\/api\/context$/, (_, __, q, req) => context.get(q.client || req.headers['x-ao-client'])],
+  ['POST', /^\/api\/context$/, (_, b, __, req) => context.publish(req.headers['x-ao-client'], b)],
   // Cuentas de los motores de IA (login OAuth/clave API, logout)
   ['GET', /^\/api\/engines$/, () => auth.enginesStatus()],
   ['GET', /^\/api\/engines\/models$/, () => auth.enginesModels()],
@@ -208,7 +212,7 @@ http.createServer(async (req, res) => {
   const route = routes.find(([m, re]) => m === req.method && re.test(pathname));
   if (!route) return res.writeHead(404, { 'content-type': 'application/json' }).end('{"error":"Ruta desconocida"}');
   try {
-    const out = await route[2](pathname.match(route[1]).slice(1), req.method === 'GET' ? {} : await readBody(req), Object.fromEntries(new URL(req.url, 'http://x').searchParams));
+    const out = await route[2](pathname.match(route[1]).slice(1), req.method === 'GET' ? {} : await readBody(req), Object.fromEntries(new URL(req.url, 'http://x').searchParams), req);
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(out ?? { ok: true }));
   } catch (e) {
     res.writeHead(e.status || 500, { 'content-type': 'application/json' }).end(JSON.stringify({ error: e.message, gated: e.gated, suite: e.suite }));
