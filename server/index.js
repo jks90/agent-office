@@ -213,12 +213,13 @@ function events(req, res) {
   req.on('close', () => { clearInterval(ping); store.bus.off('state', onState); store.bus.off('log', onLog); store.bus.off('activity', onActivity); store.bus.off('ui', onUi); });
 }
 
-// Adjuntos subidos (solo dentro de data/uploads) para verlos desde la tarjeta
+// Adjuntos subidos (data/uploads) e imágenes de feedback (data/feedback, FT-28) para verlos desde la tarjeta.
+// searchParams ya viene decodificado; no se vuelve a decodificar.
 function serveUpload(req, res) {
-  const p = decodeURIComponent(new URL(req.url, 'http://x').searchParams.get('path') || '');
-  const base = path.join(store.DATA_DIR, 'uploads');
+  const p = new URL(req.url, 'http://x').searchParams.get('path') || '';
   const abs = path.resolve(p);
-  if (!abs.startsWith(base + path.sep) || !fs.existsSync(abs) || fs.statSync(abs).isDirectory()) { res.writeHead(404).end('No encontrado'); return; }
+  const allowed = ['uploads', 'feedback'].some((d) => abs.startsWith(path.join(store.DATA_DIR, d) + path.sep));
+  if (!allowed || !fs.existsSync(abs) || fs.statSync(abs).isDirectory()) { res.writeHead(404).end('No encontrado'); return; }
   const ext = path.extname(abs).toLowerCase();
   res.writeHead(200, { 'content-type': MIME[ext] || (ext === '.txt' || ext === '.md' ? 'text/plain; charset=utf-8' : 'application/octet-stream'), 'content-disposition': `inline; filename="${path.basename(abs)}"` });
   fs.createReadStream(abs).pipe(res);
