@@ -30,8 +30,10 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
 checkSuite().then((s) => console.log(s.ok ? `🧪 flow-test en ${s.url} · ${s.mode}${s.plan ? ' · ' + s.plan : ''}${s.org ? ' · ' + s.org : ''}` : `⛔ ${s.reason}`)).catch(() => {});
 setInterval(() => checkSuite().then(() => store.changed()).catch(() => {}), 5 * 60 * 1000).unref();
 
-// Primer arranque: un proyecto de demostración para ver la oficina sin configurar nada.
-if (!store.get().projects.length) await team.createProject({ name: 'Demo — Tienda online' });
+// Proyectos = carpetas del workspace de flow-test (al arrancar, cada 5 min y con POST /api/sync).
+const sync = () => team.syncWorkspace().then((r) => { if (r.created) console.log(`📁 ${r.created} proyecto(s) nuevo(s) desde flow-test: ${r.folders.join(', ')}`); }).catch((e) => console.log(`📁 sin sincronizar: ${e.message}`));
+checkSuite().then(sync);
+setInterval(sync, 5 * 60 * 1000).unref();
 
 const snapshot = () => ({ ...store.get(), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo() });
 
@@ -62,6 +64,7 @@ const routes = [
   ['PATCH', /^\/api\/projects\/(\w+)$/, ([id], b) => team.updateProject(id, b)],
   ['POST', /^\/api\/projects\/(\w+)\/import-flow$/, ([id], b) => team.importFlow(id, b.path)],
   ['GET', /^\/api\/flows$/, () => team.listFlows()],
+  ['POST', /^\/api\/sync$/, () => team.syncWorkspace()],
   ['PATCH', /^\/api\/tasks\/(\w+)$/, ([id], b) => team.updateTask(id, b)],
   ['POST', /^\/api\/projects\/(\w+)\/run$/, gated(([id], b) => team.setRunning(id, b.running))],
   ['POST', /^\/api\/projects\/(\w+)\/goal$/, gated(([id], b) => team.planGoal(id, b.goal))],

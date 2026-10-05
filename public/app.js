@@ -62,7 +62,8 @@ const roleChip = (role) => `<span class="chip" style="--c:${S.roles[role]?.color
 // ── Pintado ─────────────────────────────────────────────────────────────────
 function render() {
   const p = project();
-  $('#project').innerHTML = S.projects.map((x) => `<option value="${x.id}" ${x.id === projectId ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
+  const sorted = [...S.projects].sort((a, b) => (a.folder === 'default' ? -1 : b.folder === 'default' ? 1 : (a.folder || '~').localeCompare(b.folder || '~')));
+  $('#project').innerHTML = sorted.map((x) => `<option value="${x.id}" ${x.id === projectId ? 'selected' : ''}>${x.folder ? '📁 ' : '• '}${esc(x.name)}${x.folder && x.folder !== x.name ? ` (${esc(x.folder)})` : ''}${x.flows != null ? ` · ${x.flows} flows` : ''}${x.orphan ? ' ⚠ sin carpeta' : ''}${!x.folder ? ' · manual' : ''}</option>`).join('');
   const repos = p?.repos || [];
   $('#repo').textContent = p ? (repos.length ? `📁 ${repos.map((r) => `${r.key} (${r.baseBranch})`).join(' · ')}` : 'sin repositorio · solo motor demo') : '';
   $('#repo').title = repos.map((r) => `${r.key}: ${r.path}`).join('\n');
@@ -241,6 +242,7 @@ const roleOptions = (sel, skipPo) => Object.entries(S.roles).filter(([, r]) => !
 const engineOptions = (sel) => S.engines.map((e) => `<option ${e === sel ? 'selected' : ''}>${e}</option>`).join('');
 
 const actions = {
+  sync: async () => { const r = await api('POST', '/api/sync'); toast(`Carpetas de flow-test: ${r.folders.join(', ')}${r.created ? ` · ${r.created} proyecto(s) nuevo(s)` : ''}`); },
   'new-project': () => dialog(`
     <h3>Nuevo proyecto</h3>
     <label>Nombre</label><input name="name" required autofocus />
@@ -356,7 +358,10 @@ document.addEventListener('click', (e) => {
     setTimeout(() => { refreshEngines(); clearInterval(enginesTimer); enginesTimer = setInterval(refreshEngines, 2500); }, 50);
     api('GET', '/api/flows').then((flows) => {
       const sel = $('#import-flow');
-      if (sel) sel.innerHTML = '<option value="">— elegir flow —</option>' + flows.map((f) => `<option value="${esc(f.path)}">${esc(f.name)} — ${esc(f.path)}</option>`).join('');
+      const folder = project()?.folder;
+      const mine = (f) => folder === 'default' ? !f.path.includes('/') : folder ? f.path.startsWith(folder + '/') : false;
+      const list = [...flows.filter(mine), ...flows.filter((f) => !mine(f))];
+      if (sel) sel.innerHTML = '<option value="">— elegir flow —</option>' + list.map((f) => `<option value="${esc(f.path)}">${mine(f) ? '📁 ' : ''}${esc(f.name)} — ${esc(f.path)}</option>`).join('');
     }).catch(() => {});
   }
 });

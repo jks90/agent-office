@@ -47,12 +47,50 @@ async function resolveRepos({ repos, repoPath }) {
   return out;
 }
 
-export async function createProject({ name, repoPath, repos, engine = 'demo' }) {
+// ── Sincronización con el workspace de flow-test: cada carpeta de primer nivel de flows/ es un proyecto;
+// los flows de la raíz van al proyecto «default». Los proyectos no se borran solos: si la carpeta desaparece
+// quedan marcados (orphan) para que el usuario decida.
+export async function syncWorkspace() {
+  let files, dir;
+  try {
+    const r = await fetch(`${flowTestUrl()}/workspace/flows`, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    files = j.files || []; dir = j.dir || null;
+  } catch (e) { throw fail(502, `No pude leer el workspace de flow-test: ${e.message}`); }
+  const counts = new Map([['default', 0]]);
+  for (const f of files) {
+    if (f.type && f.type !== 'flow') continue;
+    const parts = String(f.path).split('/');
+    const folder = parts.length > 1 ? parts[0] : 'default';
+    if (folder.startsWith('.')) continue;
+    counts.set(folder, (counts.get(folder) || 0) + 1);
+  }
+  const s = get();
+  let created = 0;
+  for (const [folder, n] of counts) {
+    let p = s.projects.find((x) => x.folder === folder);
+    if (!p) {
+      p = { id: newId(), name: folder === 'default' ? 'default' : folder, folder, repos: [], repoPath: null, baseBranch: null, running: false, createdAt: Date.now() };
+      s.projects.push(p);
+      DEFAULT_TEAM.forEach((m) => s.agents.push(newAgent(p.id, { ...m, engine: 'claude' })));
+      created++;
+    }
+    p.flows = n;
+    p.orphan = false;
+  }
+  for (const p of s.projects) if (p.folder && !counts.has(p.folder)) p.orphan = true;
+  s.workspace = { dir, folders: [...counts.keys()], syncedAt: Date.now() };
+  changed();
+  return { created, folders: [...counts.keys()], dir };
+}
+
+export async function createProject({ name, repoPath, repos, engine = 'demo', folder = null }) {
   if (!name?.trim()) throw fail(400, 'El proyecto necesita un nombre');
   const list = await resolveRepos({ repos, repoPath });
   if (!ENGINE_IDS.includes(engine)) engine = 'demo';
   const s = get();
-  const project = { id: newId(), name: name.trim(), repos: list, repoPath: list[0]?.path || null, baseBranch: list[0]?.baseBranch || null, running: false, createdAt: Date.now() };
+  const project = { id: newId(), name: name.trim(), folder: folder || null, repos: list, repoPath: list[0]?.path || null, baseBranch: list[0]?.baseBranch || null, running: false, createdAt: Date.now() };
   s.projects.push(project);
   DEFAULT_TEAM.forEach((m) => s.agents.push(newAgent(project.id, { ...m, engine })));
   changed();
@@ -62,6 +100,7 @@ export async function createProject({ name, repoPath, repos, engine = 'demo' }) 
 export async function updateProject(id, patch) {
   const p = findOr404(get().projects, id, 'Proyecto');
   if (patch.name?.trim()) p.name = patch.name.trim();
+  if (patch.folder !== undefined) p.folder = patch.folder || null;
   if (patch.repos) {
     p.repos = await resolveRepos({ repos: patch.repos });
     p.repoPath = p.repos[0]?.path || null;
