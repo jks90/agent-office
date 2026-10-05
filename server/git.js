@@ -63,6 +63,8 @@ export async function commitAll(dir, message, author) {
 export const diffStat = (repo, task) => git(repo.path, 'diff', '--stat', `${repo.baseBranch}...${task.branch}`);
 export const diff = (repo, task) => git(repo.path, 'diff', `${repo.baseBranch}...${task.branch}`);
 
+export const branchExists = async (repo, branch) => { try { await git(repo.path, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`); return true; } catch { return false; } };
+
 export async function merge(repo, task) {
   const current = await git(repo.path, 'rev-parse', '--abbrev-ref', 'HEAD');
   if (current !== repo.baseBranch) {

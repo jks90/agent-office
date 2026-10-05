@@ -325,8 +325,11 @@ export async function approve(id) {
   const p = projectOf(t);
   if (t.branch) {
     const repo = repoOfTask(p, t);
-    try { await git.merge(repo, t); } catch (e) { throw fail(409, e.message); }
-    await git.cleanup(p, repo, t);
+    // Si la rama ya no existe es que se fusionó y limpió en un intento anterior (p. ej. un reinicio perdió el estado): solo falta marcarla.
+    if (await git.branchExists(repo, t.branch)) {
+      try { await git.merge(repo, t); } catch (e) { throw fail(409, e.message); }
+      await git.cleanup(p, repo, t);
+    } else log(t.agentId, `ℹ ${t.code || t.id}: la rama ${t.branch} ya estaba fusionada`);
   }
   t.status = 'done';
   t.updatedAt = Date.now();
