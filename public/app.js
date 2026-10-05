@@ -1218,6 +1218,12 @@ function openTask(id) {
   const dependents = S.tasks.filter((x) => x.dependsOn.includes(id)).map((x) => `<span>→ ${esc(tcode(x))} ${esc(x.title.slice(0, 60))}</span>`).join('');
   const att = [...(t.feedbackImages || []), ...(t.files || [])];
   const fileUrl = (f) => `${BASE}api/file?path=${encodeURIComponent(f)}`;
+  // FT-28: miniatura con fallback (icono + nombre) si la imagen no carga
+  const attachHtml = (f) => {
+    const name = esc(f.split('/').pop());
+    if (!/\.(png|jpe?g|webp|gif)$/i.test(f)) return `<a href="${fileUrl(f)}" target="_blank" rel="noopener">📄 ${name}</a>`;
+    return `<a class="thumb" href="${fileUrl(f)}" target="_blank" rel="noopener" title="${name}"><img src="${fileUrl(f)}" alt="${name}" onerror="this.parentNode.classList.add('broken');this.replaceWith('🖼 '+this.alt)" /></a>`;
+  };
   const STATUS = { backlog: 'Backlog', todo: 'Por hacer', doing: 'En curso', review: 'En revisión', done: 'Hecha', failed: 'Fallida' };
   const acts = [];
   if (t.status === 'doing' && agent) acts.push(controls(agent));
@@ -1231,7 +1237,7 @@ function openTask(id) {
     <div class="task-title" tabindex="-1" autofocus>${esc(t.title)}</div>
     ${t.context ? `<div class="task-born">${bornFrom(t)}</div>` : ''}
     <div class="task-sec"><h4>${t.kind === 'plan' ? 'Encargo al PO' : 'Qué va a hacer'}</h4><div class="md">${md(t.description)}</div></div>
-    ${att.length ? `<div class="task-sec"><h4>Adjuntos</h4><div class="task-attach">${att.map((f) => /\.(png|jpe?g|webp|gif)$/i.test(f) ? `<a href="${fileUrl(f)}" target="_blank" rel="noopener"><img src="${fileUrl(f)}" alt="" /></a>` : `<a href="${fileUrl(f)}" target="_blank" rel="noopener">📄 ${esc(f.split('/').pop())}</a>`).join('')}</div></div>` : ''}
+    ${att.length ? `<div class="task-sec"><h4>Adjuntos</h4><div class="task-attach">${att.map(attachHtml).join('')}</div></div>` : ''}
     ${(t.questions || []).length ? `<div class="task-sec task-qa"><h4>Conversación con el agente</h4>${t.questions.map((q) => `<div class="qa"><div class="q">❓ ${esc(q.question)}</div><div class="a">${q.answer == null ? '<span class="muted">sin respuesta (se decidió solo)</span>' : '💬 ' + esc(q.answer)}</div></div>`).join('')}</div>` : ''}
     ${deps || dependents ? `<div class="task-sec task-deps"><h4>Dependencias</h4>${deps ? `<div>Depende de: ${deps}</div>` : ''}${dependents ? `<div>Bloquea a: ${dependents}</div>` : ''}</div>` : ''}
     ${(t.constraints || []).length ? `<div class="task-sec constraints"><h4>Restricciones del cliente</h4><ul>${t.constraints.map((c) => `<li>${esc(c.text)} <small>· ${new Date(c.at).toLocaleString()} · ${esc(c.origin)}</small></li>`).join('')}</ul></div>` : ''}
