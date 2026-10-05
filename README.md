@@ -174,6 +174,8 @@ Variables: `AO_PORT` (7420), `AO_HOST` (127.0.0.1), `AO_DATA_DIR`, `AO_CLAUDE_BI
 
 El nombre de la app sale de `/proc/<pid>/comm`. `available()` indica qué herramienta falta (`missing`). Sin dependencias npm; `execFile` con timeout de 3 s. Decisión (sin respuesta del cliente): se soportan ambas sesiones.
 
+**Captura (FT-21)**: `capture({target: 'screen'|'window', windowId?})` solo se ejecuta cuando alguien la llama (nunca hay capturas automáticas). Elige la herramienta según la sesión: X11 → `import -window root|<id>` (ImageMagick), luego `scrot`, `gnome-screenshot`; Wayland GNOME → `gnome-screenshot -f` o `gdbus org.gnome.Shell.Screenshot`; Wayland wlroots → `grim`. Guarda el PNG en `data/desktop/captures/<ts>.png` (`capture.js`: FIFO de 20 y, si hay `convert`, ancho máx. 1920 px) y devuelve `{path, width, height, bytes, tool, ts}`. En Wayland `windowId` no es posible (501); `target:'window'` sin id captura la ventana activa. `available()` añade `captureTool` (la herramienta que se usaría) y, si no hay ninguna, la lista en `missing`; capturar sin herramienta da 503 «falta una herramienta de captura para x11: instala …». `fake` devuelve `server/desktop/fake.png`.
+
 Prueba: `node -e "import('./server/desktop/index.js').then(async m=>{const p=m.getProvider();console.log(p.session,p.available(),await p.getActive(),(await p.list()).length)})"`.
 
 ## Estructura
@@ -187,7 +189,7 @@ server/guide/       Guide Agent: tools + política + auditoría (FT-4), chats, p
 server/engines/allowlist.js  lista blanca de shell compartida por el motor Claude y terminal.execute (FT-10)
 bin/ao-mcp.mjs      servidor MCP stdio del Guide (FT-4)
 bin/stt-whisper.py  STT local con faster-whisper (FT-9)
-server/desktop/     DesktopProvider: ventana activa/lista/captura, linux X11+Wayland GNOME, fake (FT-20)
+server/desktop/     DesktopProvider: ventana activa/lista/captura, linux X11+Wayland GNOME, fake (FT-20); capture.js guarda capturas (FT-21)
 server/git.js       worktrees, commit, diff, merge
 server/engines/     demo · claude · codex (+ describe.js: herramienta → frase del bocadillo)
 public/office.js    la oficina: pixel art en canvas, rutas por pasillos, bocadillos

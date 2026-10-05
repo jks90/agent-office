@@ -6,6 +6,7 @@ import { execFile, spawnSync } from 'node:child_process';
 import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { saveCapture } from './capture.js';
 
 const TIMEOUT = 3000;
 const fail503 = msg => Object.assign(new Error(msg), { status: 503 });
@@ -32,12 +33,39 @@ export function detectSession(env = process.env) {
 }
 
 // Captura con una herramienta que solo escribe a fichero: se usa un temporal.
-async function shotToFile(cmd, argsFor) {
+async function shotToFile(cmd, args) {
   const dir = mkdtempSync(join(tmpdir(), 'ao-desk-'));
   const f = join(dir, 'shot.png');
-  try { await run(cmd, argsFor(f)); return { mime: 'image/png', data: readFileSync(f) }; }
+  try { await run(cmd, args(f)); return readFileSync(f); }
   finally { rmSync(dir, { recursive: true, force: true }); }
 }
+// FT-21 · Cada herramienta de captura: { name, hint (paquete), run({windowId}) → Buffer PNG }.
+// windowId solo lo entienden las de X11; en Wayland target:'window' sin id = ventana activa.
+const noId = (windowId, msg) => {
+  if (windowId) throw Object.assign(new Error(msg), { status: 501 });
+};
+const gnomeShot = {
+  name: 'gnome-screenshot', hint: 'gnome-screenshot',
+  run: ({ windowId, target }) => {
+    noId(windowId, 'Wayland: no se puede capturar una ventana por id; usa target:"window" sin windowId (ventana activa)');
+    return shotToFile('gnome-screenshot', f => [...(target === 'window' ? ['-w'] : []), '-f', f]);
+  },
+};
+const gdbusShot = {
+  name: 'gdbus', hint: 'gdbus (libglib2.0-bin)',
+  run: ({ windowId, target }) => {
+    noId(windowId, 'Wayland: no se puede capturar una ventana por id');
+    const [method, extra] = target === 'window' ? ['ScreenshotWindow', ['true', 'false', 'true']] : ['Screenshot', ['false', 'true']];
+    return shotToFile('gdbus', f => [...SHELL_ARGS, '--object-path', '/org/gnome/Shell/Screenshot', '--method', `org.gnome.Shell.Screenshot.${method}`, ...extra, f]);
+  },
+};
+const grimShot = {
+  name: 'grim', hint: 'grim',
+  run: ({ windowId }) => {
+    noId(windowId, 'Wayland: no se puede capturar una ventana por id');
+    return run('grim', ['-'], { raw: true });
+  },
+};
 
 // ---- X11 ----
 const x11 = {
@@ -61,12 +89,11 @@ const x11 = {
       return { id, title: m[5], app: comm(pid), pid, active: !!active && active.id === id };
     }).filter(Boolean);
   },
-  async capture({ window } = {}) {
-    if (has('import')) return { mime: 'image/png', data: await run('import', ['-window', window || 'root', 'png:-'], { raw: true }) };
-    if (has('scrot')) return shotToFile('scrot', f => ['-o', ...(window ? ['-u'] : []), f]);
-    if (has('gnome-screenshot')) return shotToFile('gnome-screenshot', f => ['-f', f]);
-    throw fail503('falta una herramienta de captura (imagemagick, scrot o gnome-screenshot)');
-  },
+  captureTools: [
+    { name: 'import', hint: 'imagemagick', run: async ({ windowId, target }) => run('import', ['-window', windowId || (target === 'window' ? (await x11.getActive()).id : 'root'), 'png:-'], { raw: true }) },
+    { name: 'scrot', hint: 'scrot', run: ({ windowId, target }) => shotToFile('scrot', f => ['-o', ...(windowId || target === 'window' ? ['-u'] : []), f]) },
+    { ...gnomeShot, run: o => (o.windowId ? Promise.reject(Object.assign(new Error('gnome-screenshot no captura por id'), { status: 501 })) : gnomeShot.run(o)) },
+  ],
 };
 
 // ---- Wayland GNOME ----
@@ -100,16 +127,21 @@ const gnome = {
     const { active, ...rest } = a;
     return rest;
   },
-  async capture() {
-    if (has('grim')) return { mime: 'image/png', data: await run('grim', ['-'], { raw: true }) };
-    if (has('gnome-screenshot')) return shotToFile('gnome-screenshot', f => ['-f', f]);
-    throw fail503('falta una herramienta de captura (grim o gnome-screenshot)');
-  },
+  captureTools: [gnomeShot, gdbusShot],
+};
+
+// Wayland wlroots (sway, Hyprland…): solo captura con grim; ventanas aún no soportadas (501).
+const wlroots = {
+  missing: () => [],
+  captureTools: [grimShot],
+  getActive: () => Promise.reject(Object.assign(new Error('Wayland sin GNOME: ventanas aún no soportadas'), { status: 501 })),
+  list: () => wlroots.getActive(),
 };
 
 export function createLinuxProvider(env = process.env) {
   const session = detectSession(env);
-  const be = session === 'x11' ? x11 : session === 'wayland-gnome' ? gnome : null;
+  const be = session === 'x11' ? x11 : session === 'wayland-gnome' ? gnome : session === 'wayland' ? wlroots : null;
+  const captureTool = () => be?.captureTools.find(t => has(t.name));
   const nope = () => Object.assign(new Error(session === 'none'
     ? 'sin sesión gráfica (XDG_SESSION_TYPE/WAYLAND_DISPLAY/DISPLAY vacíos)'
     : 'Wayland sin GNOME: aún no soportado'), { status: 501 });
@@ -119,10 +151,19 @@ export function createLinuxProvider(env = process.env) {
     available() {
       if (!be) return { ok: false, missing: [session === 'none' ? 'sesión gráfica' : 'soporte para este compositor Wayland'] };
       const missing = be.missing();
-      return { ok: !missing.length, missing };
+      const tool = captureTool();
+      // FT-21 · captureTool: la herramienta de captura que se usaría (null si no hay ninguna)
+      if (!tool) missing.push(`herramienta de captura (${be.captureTools.map(t => t.hint).join(' | ')})`);
+      return { ok: !missing.length, missing, captureTool: tool?.name || null };
     },
     getActive: async () => { if (!be) throw nope(); return be.getActive(); },
     list: async () => { if (!be) throw nope(); return be.list(); },
-    capture: async (opts = {}) => { if (!be) throw nope(); return be.capture(opts); },
+    // FT-21 · capture({target:'screen'|'window', windowId?}) → { path, width, height, bytes, tool, ts }
+    capture: async ({ target = 'screen', windowId } = {}) => {
+      if (!be) throw nope();
+      const tool = captureTool();
+      if (!tool) throw fail503(`falta una herramienta de captura para ${session}: instala ${be.captureTools.map(t => t.hint).join(' o ')}`);
+      return saveCapture(await tool.run({ target, windowId }), tool.name);
+    },
   };
 }
