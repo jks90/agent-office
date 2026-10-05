@@ -53,7 +53,8 @@ function parseFrontmatter(text) {
 }
 
 const kindOf = (id, meta) => {
-  if (['planner', 'dev', 'qa'].includes(meta.kind)) return meta.kind;
+  if (['planner', 'dev', 'qa', 'docs'].includes(meta.kind)) return meta.kind;
+  if (/doc/i.test(id)) return 'docs';
   if (/orquest|planner|^po$|product|manager/i.test(id)) return 'planner';
   if (/qa|test|automation/i.test(id)) return 'qa';
   return 'dev';
@@ -106,7 +107,7 @@ export function saveRole({ id, description = '', kind = 'dev', model = '', handl
   if (!system.trim()) throw Object.assign(new Error('El rol necesita un prompt de sistema'), { status: 400 });
   ensureCatalog();
   const target = file && file.startsWith(rolesDir()) ? file : path.join(rolesDir(), `${rid}.md`);
-  const fm = [`name: ${rid}`, `description: ${String(description).replace(/\n/g, ' ').trim()}`, `kind: ${['planner', 'dev', 'qa'].includes(kind) ? kind : 'dev'}`];
+  const fm = [`name: ${rid}`, `description: ${String(description).replace(/\n/g, ' ').trim()}`, `kind: ${['planner', 'dev', 'qa', 'docs'].includes(kind) ? kind : 'dev'}`];
   if (model) fm.push(`model: ${model}`);
   if (handles.length) fm.push(`handles: ${handles.join(', ')}`);
   if (skills.length) fm.push(`skills: ${skills.join(', ')}`);
