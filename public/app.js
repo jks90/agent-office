@@ -16,7 +16,11 @@ function safeSet(k, v) { try { localStorage.setItem(k, v); } catch { /* sin alma
 async function api(method, url, body) {
   const r = await fetch(url, { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) { toast(j.error || r.statusText, 'error'); throw new Error(j.error); }
+  if (!r.ok) {
+    if (j.gated === 'suite') { if (j.suite) S.suite = j.suite; renderSuite(); }
+    toast(j.error || r.statusText, 'error');
+    throw new Error(j.error);
+  }
   return j;
 }
 
@@ -64,6 +68,7 @@ function render() {
   run.disabled = !p;
 
   office.update({ agents: team(), tasks: tasks(), roles: S.roles, title: p?.name || '', selected: drawerAgent });
+  renderSuite();
   renderTeam();
   renderBoard();
   if (drawerAgent) renderDrawer();
@@ -80,6 +85,32 @@ function renderTeam() {
       <div class="member-foot">${roleChip(a.role)}<span class="state ${a.status}"><span class="dot ${a.status}"></span>${a.status === 'working' ? 'Trabajando' : 'Descansando'}</span></div>
     </div>`).join('') || '<p class="empty">Sin agentes todavía. Contrata a alguien para empezar.</p>';
 }
+
+// Candado de suite: chip en la cabecera y pantalla de bloqueo si flow-test no está o ha caducado.
+const MODE_LABEL = { licensed: 'licencia', trial: 'prueba', linked: 'cuenta cloud', cloud: 'cloud', unverified: 'sin verificar', expired: 'caducado', revoked: 'revocado' };
+function renderSuite() {
+  const s = S.suite;
+  const chip = $('#suite');
+  if (!s) { chip.innerHTML = '<span class="dot"></span> flow-test · comprobando…'; chip.className = 'ghost suite'; return; }
+  const plan = s.plan ? s.plan.toUpperCase() : '';
+  chip.className = `ghost suite ${s.ok ? 'ok' : 'bad'}`;
+  chip.innerHTML = `<span class="dot"></span> flow-test${s.ok ? ` · ${plan || MODE_LABEL[s.mode] || s.mode}${s.org ? ' · ' + esc(s.org) : ''}${s.mode === 'trial' && s.daysLeft != null ? ` · ${s.daysLeft} días` : ''}` : ' · sin conexión'}`;
+  chip.title = s.ok ? `${s.url} · ${MODE_LABEL[s.mode] || s.mode}${s.plan ? ' · plan ' + s.plan : ''}` : s.reason;
+  const lock = $('#suite-lock');
+  lock.hidden = !!s.ok;
+  if (!s.ok) {
+    $('#lock-reason').textContent = s.reason || '';
+    if (document.activeElement !== $('#lock-url')) $('#lock-url').value = S.settings.flowTestUrl || s.url || '';
+  }
+}
+$('#lock-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const url = $('#lock-url').value.trim();
+  if (url) await api('POST', '/api/settings', { flowTestUrl: url });
+  S.suite = await api('GET', '/api/suite');
+  renderSuite();
+  if (S.suite.ok) toast(`Conectado a flow-test (${S.suite.plan || S.suite.mode})`);
+};
 
 const COLS = [
   ['todo', 'Por hacer', '#fde047'],
@@ -230,7 +261,7 @@ const actions = {
     ${buttons('Crear')}`, (f) => api('POST', '/api/tasks', { ...f, projectId })),
   settings: () => dialog(`
     <h3>Ajustes</h3>
-    <label>MCP de flow-test para el QA</label><input name="flowTestMcpUrl" value="${esc(S.settings.flowTestMcpUrl)}" placeholder="vacío = sin flow-test" />
+    <label>URL de flow-test (la suite; su MCP se usa para el QA)</label><input name="flowTestUrl" value="${esc(S.settings.flowTestUrl)}" placeholder="http://localhost:9998" />
     <label>Agentes trabajando a la vez (máx.)</label><input name="maxParallel" type="number" min="1" max="8" value="${S.settings.maxParallel}" />
     <hr style="border-color:var(--line);margin:16px 0" />
     <button type="button" class="danger small" data-delete-project>Borrar el proyecto «${esc(project()?.name)}»</button>
@@ -241,6 +272,7 @@ document.addEventListener('click', async (e) => {
   const el = e.target.closest('button, .member');
   if (!el) return;
   const d = el.dataset;
+  if (d.action === 'suite') { S.suite = await api('GET', '/api/suite'); renderSuite(); return toast(S.suite.ok ? `flow-test OK · ${S.suite.plan || S.suite.mode}` : S.suite.reason, S.suite.ok ? '' : 'error'); }
   if (d.action) return actions[d.action]?.();
   if (d.agent) return openDrawer(d.agent);
   if (d.close !== undefined) return closeDrawer();

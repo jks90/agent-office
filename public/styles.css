@@ -48,6 +48,19 @@ header { display: flex; align-items: center; gap: var(--s-3); padding: 12px 18px
 .project-bar { display: flex; align-items: center; gap: var(--s-2); min-width: 0; }
 #project { max-width: 280px; }
 #repo { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#suite { font-size: 12px; padding: 7px 10px; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+#suite .dot { width: 8px; height: 8px; border-radius: 50%; }
+#suite.ok .dot { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+#suite.bad .dot { background: var(--err); box-shadow: 0 0 8px var(--err); }
+#suite-lock[hidden] { display: none; }
+#suite-lock { position: fixed; inset: 0; z-index: 30; background: rgba(10,12,22,.82); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.lock-card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 28px; max-width: 560px; width: 100%; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
+.lock-card h2 { margin: 6px 0 10px; font-size: 20px; }
+.lock-card .lock-logo { font-size: 28px; }
+.lock-card .row { display: flex; gap: 8px; margin: 14px 0 10px; }
+.lock-card .row input { flex: 1; }
+.lock-card .small { font-size: 12px; }
+.lock-card code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; }
 #run { font-size: 14px; padding: 10px 16px; box-shadow: 0 8px 18px rgba(248,193,74,.16); }
 #run.on { background: var(--err); color: #fff; box-shadow: 0 8px 18px rgba(255,119,119,.18); }
 

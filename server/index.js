@@ -5,16 +5,21 @@ import path from 'node:path';
 import * as store from './store.js';
 import * as team from './team.js';
 import { ROLES } from './roles.js';
+import { checkSuite, suiteInfo } from './suite.js';
 
 const PORT = Number(process.env.AO_PORT || 7420);
 const HOST = process.env.AO_HOST || '127.0.0.1'; // lanza procesos con tus permisos: solo local
 const PUBLIC = path.join(store.ROOT, 'public');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.json': 'application/json' };
 
+// Comprobación inicial de la suite (y refresco periódico para el planificador).
+checkSuite().then((s) => console.log(s.ok ? `🧪 flow-test en ${s.url} · ${s.mode}${s.plan ? ' · ' + s.plan : ''}${s.org ? ' · ' + s.org : ''}` : `⛔ ${s.reason}`)).catch(() => {});
+setInterval(() => checkSuite().then(() => store.changed()).catch(() => {}), 5 * 60 * 1000).unref();
+
 // Primer arranque: un proyecto de demostración para ver la oficina sin configurar nada.
 if (!store.get().projects.length) await team.createProject({ name: 'Demo — Tienda online' });
 
-const snapshot = () => ({ ...store.get(), roles: ROLES, engines: team.ENGINE_IDS });
+const snapshot = () => ({ ...store.get(), roles: ROLES, engines: team.ENGINE_IDS, suite: suiteInfo() });
 
 async function readBody(req) {
   let raw = '';
@@ -22,16 +27,24 @@ async function readBody(req) {
   return raw ? JSON.parse(raw) : {};
 }
 
+// Acciones que ponen a trabajar al equipo: solo con un flow-test vigente.
+const gated = (fn) => async (m, b) => {
+  const suite = await checkSuite();
+  if (!suite.ok) throw Object.assign(new Error(suite.reason), { status: 402, gated: 'suite', suite });
+  return fn(m, b);
+};
+
 const routes = [
   ['GET', /^\/api\/state$/, () => snapshot()],
+  ['GET', /^\/api\/suite$/, () => checkSuite(true).then((suite) => { store.changed(); return suite; })],
   ['POST', /^\/api\/projects$/, (_, b) => team.createProject(b)],
   ['DELETE', /^\/api\/projects\/(\w+)$/, ([id]) => team.deleteProject(id)],
-  ['POST', /^\/api\/projects\/(\w+)\/run$/, ([id], b) => team.setRunning(id, b.running)],
-  ['POST', /^\/api\/projects\/(\w+)\/goal$/, ([id], b) => team.planGoal(id, b.goal)],
-  ['POST', /^\/api\/tasks$/, (_, b) => team.createTask(b)],
+  ['POST', /^\/api\/projects\/(\w+)\/run$/, gated(([id], b) => team.setRunning(id, b.running))],
+  ['POST', /^\/api\/projects\/(\w+)\/goal$/, gated(([id], b) => team.planGoal(id, b.goal))],
+  ['POST', /^\/api\/tasks$/, gated((_, b) => team.createTask(b))],
   ['DELETE', /^\/api\/tasks\/(\w+)$/, ([id]) => team.deleteTask(id)],
   ['POST', /^\/api\/tasks\/(\w+)\/approve$/, ([id]) => team.approve(id)],
-  ['POST', /^\/api\/tasks\/(\w+)\/reject$/, ([id], b) => team.reject(id, b.feedback, b.images)],
+  ['POST', /^\/api\/tasks\/(\w+)\/reject$/, gated(([id], b) => team.reject(id, b.feedback, b.images))],
   ['GET', /^\/api\/tasks\/(\w+)\/diff$/, async ([id]) => ({ diff: await team.taskDiff(id) })],
   ['POST', /^\/api\/agents$/, (_, b) => team.hire(b)],
   ['PATCH', /^\/api\/agents\/(\w+)$/, ([id], b) => team.updateAgent(id, b)],
@@ -39,7 +52,7 @@ const routes = [
   ['POST', /^\/api\/agents\/(\w+)\/stop$/, ([id]) => team.stopAgent(id)],
   ['POST', /^\/api\/settings$/, (_, b) => {
     const st = store.get().settings;
-    if (typeof b.flowTestMcpUrl === 'string') st.flowTestMcpUrl = b.flowTestMcpUrl.trim();
+    if (typeof b.flowTestUrl === 'string' && b.flowTestUrl.trim()) st.flowTestUrl = b.flowTestUrl.trim().replace(/\/+$/, '').replace(/\/mcp$/, '');
     if (b.maxParallel) st.maxParallel = Math.max(1, Math.min(8, Number(b.maxParallel) || 4));
     store.changed();
     return st;
@@ -80,6 +93,6 @@ http.createServer(async (req, res) => {
     const out = await route[2](pathname.match(route[1]).slice(1), req.method === 'GET' ? {} : await readBody(req));
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(out ?? { ok: true }));
   } catch (e) {
-    res.writeHead(e.status || 500, { 'content-type': 'application/json' }).end(JSON.stringify({ error: e.message }));
+    res.writeHead(e.status || 500, { 'content-type': 'application/json' }).end(JSON.stringify({ error: e.message, gated: e.gated, suite: e.suite }));
   }
 }).listen(PORT, HOST, () => console.log(`🏢 AgentOffice en http://${HOST}:${PORT}`));

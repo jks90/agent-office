@@ -8,6 +8,7 @@ import { parseTasks } from './engines/describe.js';
 import * as demo from './engines/demo.js';
 import * as claude from './engines/claude.js';
 import * as codex from './engines/codex.js';
+import { suiteOk, mcpUrl } from './suite.js';
 
 const ENGINES = { demo, claude, codex };
 export const ENGINE_IDS = Object.keys(ENGINES);
@@ -188,6 +189,7 @@ const depsDone = (t) => t.dependsOn.every((d) => get().tasks.find((x) => x.id ==
 // ── Planificador ───────────────────────────────────────────────────────────
 export function tick() {
   const s = get();
+  if (!suiteOk()) return; // sin flow-test vigente, el equipo no arranca nada
   for (const p of s.projects) {
     if (!p.running) continue;
     const team = s.agents.filter((a) => a.projectId === p.id);
@@ -267,7 +269,7 @@ async function runTask(p, agent, t) {
       images: t.kind === 'plan' ? [] : (t.feedbackImages || []).filter((f) => fs.existsSync(f)),
       system: ROLES[agent.role].system,
       model: agent.model,
-      mcpUrl: agent.role === 'qa' ? s.settings.flowTestMcpUrl : null,
+      mcpUrl: agent.role === 'qa' ? mcpUrl() : null,
       onActivity: (text) => { agent.activity = text; changed(); },
       onLog: (line) => log(agent.id, line),
     });

@@ -17,6 +17,7 @@
       <span id="repo" class="muted"></span>
     </div>
     <div class="spacer"></div>
+    <button id="suite" data-action="suite" class="ghost suite" title="Estado de flow-test (la suite)"></button>
     <button id="run" data-action="toggle-run"></button>
     <button data-action="settings" class="ghost" title="Ajustes">⚙</button>
   </header>
@@ -44,6 +45,19 @@
   </main>
 
   <aside id="drawer" hidden></aside>
+  <div id="suite-lock" hidden>
+    <div class="lock-card">
+      <div class="lock-logo">🧪 → 🏢</div>
+      <h2>AgentOffice es un complemento de flow-test</h2>
+      <p id="lock-reason"></p>
+      <p class="muted">Necesita una instalación de <b>flow-test</b> en marcha y con acceso vigente (prueba, licencia o cuenta cloud). El equipo no arranca tareas mientras tanto; el QA usa su MCP para verificar los flows.</p>
+      <form id="lock-form" class="row">
+        <input id="lock-url" placeholder="http://localhost:9998" />
+        <button type="submit">Conectar</button>
+      </form>
+      <p class="muted small">¿Sin flow-test? Descárgalo en <a href="https://flowtest.es" target="_blank" rel="noopener">flowtest.es</a> o lanza la imagen <code>juankanh/flow-app</code>.</p>
+    </div>
+  </div>
   <dialog id="dialog"></dialog>
   <div id="toasts"></div>
   <script type="module" src="app.js"></script>

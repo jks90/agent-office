@@ -15,7 +15,7 @@ const empty = () => ({
   projects: [],
   agents: [],
   tasks: [],
-  settings: { flowTestMcpUrl: 'http://localhost:9998/mcp', maxParallel: 4 },
+  settings: { flowTestUrl: 'http://localhost:9998', maxParallel: 4 },
 });
 
 let state = load();
@@ -23,6 +23,9 @@ let state = load();
 function load() {
   try {
     const s = { ...empty(), ...JSON.parse(fs.readFileSync(FILE, 'utf8')) };
+    // Ajuste antiguo (URL del MCP) → URL base de flow-test.
+    if (s.settings.flowTestMcpUrl && !s.settings.flowTestUrl) s.settings.flowTestUrl = s.settings.flowTestMcpUrl.replace(/\/mcp\/?$/, '');
+    delete s.settings.flowTestMcpUrl;
     // Los procesos no sobreviven a un reinicio: lo que estaba en curso vuelve a la cola.
     for (const t of s.tasks) if (t.status === 'doing') { t.status = 'todo'; t.agentId = null; }
     for (const a of s.agents) { a.status = 'idle'; a.taskId = null; a.activity = ''; }
