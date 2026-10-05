@@ -55,16 +55,22 @@ export const get = () => state;
 
 let saveTimer = null;
 let emitTimer = null;
+function save() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const tmp = FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+  fs.renameSync(tmp, FILE);
+}
 export function changed() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    const tmp = FILE + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
-    fs.renameSync(tmp, FILE);
-  }, 300);
+  saveTimer = setTimeout(() => { saveTimer = null; save(); }, 300);
   if (!emitTimer) emitTimer = setTimeout(() => { emitTimer = null; bus.emit('state', state); }, 80);
 }
+// Al apagar (systemctl stop/restart, Ctrl+C) se vuelca lo pendiente: con el debounce, un reinicio justo tras
+// aprobar/devolver perdía ese cambio y la tarea «volvía» a su estado anterior aunque el merge ya estuviera hecho.
+export function flush() { if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; try { save(); } catch { /* disco */ } } }
+for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(sig, () => { flush(); process.exit(0); });
+process.on('beforeExit', flush);
 
 export const newId = () => Math.random().toString(36).slice(2, 8);
 
