@@ -38,8 +38,9 @@ Las referencias con cuadrícula numerada están en `docs/in-a.png` (interiores c
 - Verde 3 de ancho: (16,10),(17,10),(18,10) / fila 11. Verde redondeado: (19,10),(20,10) / fila 11.
 - Sillones de 1 tile: (0,9)/(0,10) naranja, (6,9)/(6,10) verde…
 
-**Alfombras** (4×4 con borde; esquinas y bordes):
-- Naranja: cols 23–26, filas 0–3. Verde: cols 23–26, filas 4–7. Alfombras lisas/estampadas: cols 23–26 filas 10–17.
+**Alfombras** (4×4 con borde marrón; fila superior = borde de arriba, filas centrales = interior, fila inferior = borde de abajo; col 23 = borde izquierdo, col 26 = borde derecho):
+- Naranja: cols 23–26, filas 10–13. Verde: cols 23–26, filas 14–17.
+- OJO: cols 23–26 filas 0–7 NO son alfombras, son **cortinas/empapelado de pared** (naranja 0–3, verde 4–7).
 
 **Cuadros:** pequeños (16,12),(17,12),(18,12),(16,13),(17,13),(18,13) · grandes apaisados (19,12)+(20,12), (19,13)+(20,13) · teal largo (16,14),(17,14),(18,14) · naranja largo (16,15),(17,15),(18,15) · retratos (19,15),(20,15),(21,15) · mapa (16,17),(17,17),(18,17).
 **Espejo:** (22,14)/(22,15). **Piano:** (23,8),(24,8) / (23,9),(24,9). **Armarios altos:** (25,8)/(25,9), (26,8)/(26,9).
