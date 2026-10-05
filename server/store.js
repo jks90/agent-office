@@ -15,7 +15,7 @@ const empty = () => ({
   projects: [],
   agents: [],
   tasks: [],
-  settings: { flowTestUrl: 'http://localhost:9998', maxParallel: 4 },
+  settings: { flowTestUrl: 'http://localhost:9998', maxParallel: 4, workspaceHostDir: `${process.env.HOME}/JksDocs/workspace` },
 });
 
 let state = load();

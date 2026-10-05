@@ -69,6 +69,7 @@ export async function syncWorkspace() {
   }
   const s = get();
   let created = 0;
+  const hostDir = expand(s.settings.workspaceHostDir);
   for (const [folder, n] of counts) {
     let p = s.projects.find((x) => x.folder === folder);
     if (!p) {
@@ -79,11 +80,32 @@ export async function syncWorkspace() {
     }
     p.flows = n;
     p.orphan = false;
+    if (folder !== 'default' && hostDir) await autoRepos(p, path.join(hostDir, folder));
   }
   for (const p of s.projects) if (p.folder && !counts.has(p.folder)) p.orphan = true;
   s.workspace = { dir, folders: [...counts.keys()], syncedAt: Date.now() };
   changed();
   return { created, folders: [...counts.keys()], dir };
+}
+
+// Repos deducidos de los enlaces simbólicos de la carpeta del proyecto en el hub (p. ej. unityhouse/servidor → …/servidor/flows):
+// cada enlace que apunte dentro de un repo git aporta ese repo (clave = nombre del enlace). No pisa lo configurado a mano.
+async function autoRepos(p, folderPath) {
+  let entries;
+  try { entries = fs.readdirSync(folderPath, { withFileTypes: true }); } catch { return; }
+  p.repos = p.repos || [];
+  for (const e of entries) {
+    if (!e.isSymbolicLink() || e.name === 'docs') continue;
+    let real;
+    try { real = fs.realpathSync(path.join(folderPath, e.name)); } catch { continue; }
+    let info;
+    try { info = await git.repoInfo(real); } catch { continue; }
+    if (p.repos.some((r) => r.path === info.path)) continue;
+    const key = e.name.toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+    if (p.repos.some((r) => r.key === key)) continue;
+    p.repos.push({ key, path: info.path, baseBranch: info.baseBranch, roles: [], auto: true });
+  }
+  p.repoPath = p.repos[0]?.path || null; p.baseBranch = p.repos[0]?.baseBranch || null;
 }
 
 export async function createProject({ name, repoPath, repos, engine = 'demo', folder = null }) {
