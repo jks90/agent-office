@@ -6,8 +6,7 @@ let projectId = safeGet('ao:project');
 let drawerAgent = null;
 const logs = new Map();
 
-const useLegacy = new URLSearchParams(location.search).get('r') === '2d' || safeGet('ao:renderer') === '2d';
-const { Office } = await import(useLegacy ? './office.js' : './office3d.js');
+import { Office } from './office3d.js';
 const office = new Office($('#office'), { onAgentClick: (id) => openDrawer(id) });
 
 function safeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
@@ -75,9 +74,6 @@ showTab(activeTab);
 const setCollapsed = (c) => { $('#sidebar').classList.toggle('collapsed', c); safeSet('ao:sidebar', c ? 'collapsed' : 'open'); requestAnimationFrame(() => window.dispatchEvent(new Event('resize'))); };
 setCollapsed(safeGet('ao:sidebar') === 'collapsed');
 $('#collapse').addEventListener('click', () => setCollapsed(!$('#sidebar').classList.contains('collapsed')));
-const RENDERER_2D = (() => { try { return new URLSearchParams(location.search).get('r') === '2d' || localStorage.getItem('ao:renderer') === '2d'; } catch { return false; } })();
-$('[data-action="renderer"]').textContent = RENDERER_2D ? '🎨 Cambiar a 3D' : '🎨 Cambiar a 2D';
-document.body.classList.toggle('r2d', RENDERER_2D);
 // Embebido en el modal de flow-test: nuestra cabecera hace de cabecera del modal (título «Agentes», abrir en pestaña, cerrar).
 const EMBEDDED = window.self !== window.top;
 if (EMBEDDED) {
@@ -304,7 +300,6 @@ const roleOptions = (sel, skipPo) => Object.entries(S.roles).filter(([, r]) => !
 const engineOptions = (sel) => S.engines.map((e) => `<option ${e === sel ? 'selected' : ''}>${e}</option>`).join('');
 
 const actions = {
-  renderer: () => { safeSet('ao:renderer', RENDERER_2D ? '3d' : '2d'); location.reload(); },
   sync: async () => { const r = await api('POST', '/api/sync'); toast(`Carpetas de flow-test: ${r.folders.join(', ')}${r.created ? ` · ${r.created} proyecto(s) nuevo(s)` : ''}`); },
   'new-project': () => dialog(`
     <h3>Nuevo proyecto</h3>

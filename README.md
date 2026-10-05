@@ -57,11 +57,10 @@ data/state.json     estado (gitignored)
 
 ## La oficina
 
-Dos renderizadores con la misma API (`Office`): **3D isométrico** por defecto (`public/office3d.js`, three.js + modelos glTF de Kenney, personajes animados, etiquetas HTML proyectadas) y **2D pixel art** (`public/office.js`, sprites Kenney) con `?r=2d` en la URL o `localStorage['ao:renderer'] = '2d'`.
+Oficina **3D isométrica** (`public/office3d.js`: three.js + modelos glTF de Kenney, personajes animados, etiquetas HTML proyectadas).
 
 Para verla sin navegador (y para que un agente pueda ver lo que pinta): `node scripts/preview.mjs out.png --wait 15000` levanta un servidor temporal con un equipo demo, captura la oficina con Chrome headless (WebGL por SwiftShader) e imprime los errores de consola y los fps. `--full` captura la página entera, `--query r=2d` fuerza el 2D.
 
 ## Créditos
 
 - 3D: [Kenney](https://kenney.nl) *Furniture Kit* y *Mini Characters* (CC0, `public/assets/3d/`), [three.js](https://threejs.org) (MIT, `public/vendor/three/`).
-- 2D: [Kenney](https://kenney.nl) *Roguelike Indoors* y *Roguelike Characters* (CC0, `public/assets/kenney/`). Mapa de tiles en `docs/assets-kenney.md`.

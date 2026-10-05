@@ -5,7 +5,7 @@
 //   node scripts/preview.mjs out.png                 # captura de la oficina tras 12 s
 //   node scripts/preview.mjs out.png --wait 20000    # más tiempo (p. ej. para que alguien se siente)
 //   node scripts/preview.mjs out.png --full          # la página entera, no solo la oficina
-//   node scripts/preview.mjs out.png --query "r=2d"  # parámetros extra en la URL (p. ej. forzar un renderizador)
+//   node scripts/preview.mjs out.png --query "x=1"   # parámetros extra en la URL
 //
 // Imprime también los errores de consola de la página. Pensado para que un agente pueda VER lo que
 // pinta: captura → mirar el PNG → corregir → repetir. Necesita `npm install` (puppeteer-core) y Chrome/Chromium.
