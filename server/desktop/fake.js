@@ -9,13 +9,16 @@ const WINDOWS = [
 // PNG pequeño incluido en el repo (FT-21)
 const PNG = readFileSync(new URL('./fake.png', import.meta.url));
 
+// FT-24: AO_DESKTOP_FAKE_ACTIVE="AgentOffice" finge que la ventana activa tiene ese título (para probar la regla «solo fuera»).
+const windows = () => WINDOWS.map(w => (w.active && process.env.AO_DESKTOP_FAKE_ACTIVE ? { ...w, title: process.env.AO_DESKTOP_FAKE_ACTIVE, app: 'firefox' } : { ...w }));
+
 export function createFakeProvider() {
   return {
     id: 'fake',
     session: 'fake',
     available: () => ({ ok: true, missing: [], captureTool: 'fake' }),
-    getActive: async () => { const { active, ...w } = WINDOWS.find(x => x.active); return w; },
-    list: async () => WINDOWS.map(w => ({ ...w })),
+    getActive: async () => { const { active, ...w } = windows().find(x => x.active); return w; },
+    list: async () => windows(),
     capture: async () => saveCapture(PNG, 'fake'),
   };
 }

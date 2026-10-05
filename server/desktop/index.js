@@ -10,6 +10,7 @@
 //     capture({target:'screen'|'window', windowId?}): Promise<{ path, width, height, bytes, tool, ts }>  // FT-21: guarda el PNG en data/desktop/captures/ (capture.js)
 //   }
 // Los errores llevan `.status` (501 no soportado, 503 faltan herramientas) para que index.js los enrute.
+// FT-24: AO_DESKTOP_PLATFORM=darwin|win32 simula otra plataforma (pruebas del 501).
 // Selección: AO_DESKTOP=fake → fake; si no, por process.platform (solo linux de momento).
 import { createLinuxProvider } from './linux.js';
 import { createFakeProvider } from './fake.js';
@@ -28,6 +29,7 @@ export function createUnsupportedProvider(os = process.platform) {
 
 export function getProvider() {
   if (process.env.AO_DESKTOP === 'fake') return createFakeProvider();
-  if (process.platform === 'linux') return createLinuxProvider();
-  return createUnsupportedProvider();
+  const os = process.env.AO_DESKTOP_PLATFORM || process.platform;
+  if (os === 'linux') return createLinuxProvider();
+  return createUnsupportedProvider(os);
 }
