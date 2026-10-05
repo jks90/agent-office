@@ -147,14 +147,30 @@ export function exportAll(project) {
   const job = { running: true, total: pending.length, done: 0, failed: 0, startedAt: Date.now(), lastError: null };
   project.board.job = job; store.changed();
   (async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     for (const t of pending) {
-      try {
-        const r = await call(kind, 'create', cfg, sec, { title: t.title, description: t.description, status: t.status === 'failed' ? 'todo' : t.status });
-        t.source = { ...(t.source || {}), kind: kind.id, id: r.id, url: r.url, remoteStatus: t.status, pushedStatus: t.status };
-        job.done++;
-      } catch (e) { job.failed++; job.lastError = `«${t.title.slice(0, 60)}»: ${e.message.slice(0, 200)}`; }
+      let attempt = 0;
+      for (;;) {
+        try {
+          const r = await call(kind, 'create', cfg, sec, { title: t.title, description: t.description, status: t.status === 'failed' ? 'todo' : t.status });
+          t.source = { ...(t.source || {}), kind: kind.id, id: r.id, url: r.url, remoteStatus: t.status, pushedStatus: t.status };
+          job.done++;
+          break;
+        } catch (e) {
+          const msg = String(e.stderr || e.message || '');
+          if (/rate limit|secondary rate|abuse|429|retry later/i.test(msg) && attempt < 6) {
+            attempt++;
+            const wait = Math.min(15 * 60000, 60000 * 2 ** (attempt - 1)); // 1, 2, 4, 8, 15, 15 min
+            job.waitingUntil = Date.now() + wait; job.lastError = `GitHub frena (rate limit): reintento en ${Math.round(wait / 60000)} min`; store.changed();
+            await sleep(wait); job.waitingUntil = null;
+            continue;
+          }
+          job.failed++; job.lastError = `«${t.title.slice(0, 60)}»: ${msg.slice(0, 200)}`;
+          break;
+        }
+      }
       store.changed();
-      await new Promise((r) => setTimeout(r, 900)); // límite de creación de contenido de GitHub (~80/min)
+      await sleep(1500); // ritmo suave: GitHub limita la creación de contenido
     }
     job.running = false; job.finishedAt = Date.now(); store.changed();
   })();

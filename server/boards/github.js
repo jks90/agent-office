@@ -39,7 +39,19 @@ async function projectInfo(cfg) {
   return info;
 }
 const projectItems = async (cfg) => (JSON.parse(await gh('project', 'item-list', String(cfg.project), '--owner', ownerOf(cfg), '--format', 'json', '--limit', '1000')).items || []);
-const findItem = async (cfg, issueNumber) => (await projectItems(cfg)).find((it) => it.content?.type === 'Issue' && String(it.content.number) === String(issueNumber) && (!it.content.repository || it.content.repository.toLowerCase() === cfg.repo.toLowerCase()));
+// issue → item del Project, cacheado (listar todos los items en cada operación agotaba la cuota de GraphQL).
+const itemCache = new Map();
+async function findItem(cfg, issueNumber, { refresh = false } = {}) {
+  const key = `${ownerOf(cfg)}/${cfg.project}`;
+  let c = itemCache.get(key);
+  if (!c || refresh || Date.now() - c.at > 600000) {
+    const map = new Map();
+    for (const it of await projectItems(cfg)) if (it.content?.type === 'Issue' && (!it.content.repository || it.content.repository.toLowerCase() === cfg.repo.toLowerCase())) map.set(String(it.content.number), it);
+    c = { at: Date.now(), map }; itemCache.set(key, c);
+  }
+  return c.map.get(String(issueNumber)) || null;
+}
+const rememberItem = (cfg, issueNumber, item) => { const key = `${ownerOf(cfg)}/${cfg.project}`; const c = itemCache.get(key); if (c) c.map.set(String(issueNumber), item); };
 export const secretFields = []; // usa la sesión de `gh`
 const STATES = ['backlog', 'todo', 'doing', 'review'];
 const lbl = (cfg, st) => `${cfg.prefix || 'ao'}:${st}`;
@@ -121,6 +133,7 @@ async function setProjectColumn(cfg, issueNumber, status) {
   if (!item) {
     const url = `https://github.com/${cfg.repo}/issues/${issueNumber}`;
     item = JSON.parse(await gh('project', 'item-add', String(cfg.project), '--owner', ownerOf(cfg), '--url', url, '--format', 'json'));
+    rememberItem(cfg, issueNumber, item);
   }
   await gh('project', 'item-edit', '--id', item.id, '--project-id', p.id, '--field-id', p.statusFieldId, '--single-select-option-id', opt.id);
 }
