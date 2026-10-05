@@ -22,25 +22,47 @@
     <button data-action="settings" class="ghost" title="Ajustes">⚙</button>
   </header>
 
+  <nav class="tabs" id="tabs">
+    <button data-tab="office" class="tab active">🏢 Oficina</button>
+    <button data-tab="tasks" class="tab">🗂 Tareas <span class="tab-count" id="tab-tasks-count"></span></button>
+    <button data-tab="agents" class="tab">👥 Agentes <span class="tab-count" id="tab-agents-count"></span></button>
+    <div class="spacer"></div>
+    <span id="tab-summary" class="muted"></span>
+  </nav>
+
   <main>
-    <section class="left">
+    <section class="view" id="view-office">
       <div class="office-wrap"><canvas id="office"></canvas></div>
-      <div class="team-head">
-        <h3>Equipo</h3>
-        <button data-action="hire" class="ghost small">＋ Contratar</button>
+      <div class="office-foot">
+        <span id="office-live" class="muted"></span>
+        <div class="spacer"></div>
+        <button class="ghost small" data-action="renderer">🎨 Cambiar a 2D</button>
       </div>
-      <div id="team"></div>
     </section>
 
-    <section class="right">
+    <section class="view" id="view-tasks" hidden>
       <form id="goal-form" class="goal">
         <textarea id="goal" rows="2" placeholder="🎯 Objetivo para el PO: p. ej. «Alta de clientes con email y verificación»"></textarea>
         <div class="row">
           <button type="submit">Encargar al PO</button>
           <button type="button" data-action="new-task" class="ghost">＋ Tarea a mano</button>
+          <div class="spacer"></div>
+          <input id="task-filter" placeholder="🔍 filtrar tareas…" />
         </div>
       </form>
       <div id="board"></div>
+    </section>
+
+    <section class="view" id="view-agents" hidden>
+      <div class="team-head">
+        <h3>Plantilla del proyecto</h3>
+        <span id="team-summary" class="muted"></span>
+        <div class="spacer"></div>
+        <button data-action="hire" class="ghost small">＋ Contratar</button>
+      </div>
+      <div id="team"></div>
+      <div class="team-head"><h3>Roles disponibles</h3></div>
+      <div id="roles"></div>
     </section>
   </main>
 

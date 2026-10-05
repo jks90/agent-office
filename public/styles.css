@@ -64,15 +64,35 @@ header { display: flex; align-items: center; gap: var(--s-3); padding: 12px 18px
 #run { font-size: 14px; padding: 10px 16px; box-shadow: 0 8px 18px rgba(248,193,74,.16); }
 #run.on { background: var(--err); color: #fff; box-shadow: 0 8px 18px rgba(255,119,119,.18); }
 
-main { flex: 1; display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(420px, 1fr); gap: var(--s-4); padding: var(--s-4) 18px; min-height: 0; }
-.left, .right { min-height: 0; display: flex; flex-direction: column; }
-.right { overflow: hidden; }
+main { flex: 1; display: flex; flex-direction: column; padding: var(--s-3) 18px var(--s-4); min-height: 0; }
+.view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.view[hidden] { display: none; }
+.tabs { display: flex; align-items: center; gap: 4px; padding: 8px 18px 0; border-bottom: 1px solid var(--line); background: rgba(26,32,48,.6); }
+.tab { background: transparent; border: 1px solid transparent; border-bottom: 0; border-radius: 10px 10px 0 0; color: var(--muted); padding: 9px 16px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.tab:hover { color: var(--text); background: rgba(255,255,255,.03); }
+.tab.active { color: var(--text); background: var(--panel); border-color: var(--line); margin-bottom: -1px; padding-bottom: 10px; }
+.tab-count { font-size: 11px; padding: 0 7px; border-radius: 99px; background: var(--panel2); color: var(--muted); min-width: 18px; text-align: center; }
+.tab.active .tab-count { background: var(--accent); color: #1a1a1a; }
+#view-office .office-wrap { flex: 1; min-height: 0; display: flex; position: relative; }
+#view-office #office { width: 100%; height: 100%; aspect-ratio: auto; image-rendering: auto; }
+body.r2d #view-office #office { width: auto; height: auto; max-width: 100%; max-height: 100%; margin: auto; aspect-ratio: 320 / 208; image-rendering: pixelated; }
+.office-foot { display: flex; align-items: center; gap: 8px; margin-top: var(--s-2); font-size: 12px; }
+#task-filter { width: 220px; padding: 7px 10px; }
+#roles { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--s-2); }
+.role-card { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: var(--r-lg); padding: 10px 12px; font-size: 12px; }
+.role-card b { font-size: 13px; }
+.role-card .desc { color: var(--muted); margin-top: 4px; max-height: 54px; overflow: hidden; }
+.role-card .src { color: var(--muted); font-size: 11px; margin-top: 6px; }
+.member .acts { display: flex; gap: 6px; margin-top: var(--s-2); flex-wrap: wrap; }
+.member .meta { color: var(--muted); font-size: 12px; margin-top: 4px; display: flex; gap: 10px; flex-wrap: wrap; }
+.member .task { font-size: 12px; margin-top: 4px; color: #c7cbe0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .office-wrap { background: var(--panel3); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--s-2); box-shadow: inset 0 0 0 1px rgba(255,255,255,.02), var(--shadow); }
 #office { width: 100%; aspect-ratio: 320 / 208; image-rendering: pixelated; display: block; border-radius: var(--r-sm); }
 
 .team-head { display: flex; align-items: center; justify-content: space-between; margin: var(--s-4) 0 var(--s-2); }
 .team-head h3 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
-#team { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--s-2); overflow: auto; padding-bottom: 2px; }
+#team { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--s-2); padding-bottom: 2px; }
+#view-agents { overflow: auto; }
 .member { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--s-3); cursor: pointer; transition: transform .16s ease, border-color .16s ease, background .16s ease; }
 .member:hover, .member.sel { border-color: color-mix(in srgb, var(--c) 58%, var(--accent)); background: #202738; transform: translateY(-1px); }
 .member .top { display: flex; align-items: center; gap: var(--s-2); min-width: 0; }

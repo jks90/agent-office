@@ -60,6 +60,21 @@ const tasks = () => S.tasks.filter((t) => t.projectId === projectId);
 const roleChip = (role) => `<span class="chip" style="--c:${S.roles[role]?.color}">${esc(S.roles[role]?.label || role)}</span>`;
 
 // ── Pintado ─────────────────────────────────────────────────────────────────
+// Pestañas de administración (Oficina / Tareas / Agentes), recordadas por navegador.
+let activeTab = safeGet('ao:tab') || 'office';
+function showTab(tab) {
+  activeTab = tab;
+  safeSet('ao:tab', tab);
+  document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.view').forEach((v) => { v.hidden = v.id !== 'view-' + tab; });
+  if (tab === 'office') requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+}
+$('#tabs').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) showTab(b.dataset.tab); });
+showTab(activeTab);
+const RENDERER_2D = (() => { try { return new URLSearchParams(location.search).get('r') === '2d' || localStorage.getItem('ao:renderer') === '2d'; } catch { return false; } })();
+$('[data-action="renderer"]').textContent = RENDERER_2D ? '🎨 Cambiar a 3D' : '🎨 Cambiar a 2D';
+document.body.classList.toggle('r2d', RENDERER_2D);
+
 function render() {
   const p = project();
   const sorted = [...S.projects].sort((a, b) => (a.folder === 'default' ? -1 : b.folder === 'default' ? 1 : (a.folder || '~').localeCompare(b.folder || '~')));
@@ -75,20 +90,51 @@ function render() {
   office.update({ agents: team(), tasks: tasks(), roles: S.roles, title: p?.name || '', selected: drawerAgent });
   renderSuite();
   renderTeam();
+  renderRoles();
   renderBoard();
+  const ts = tasks();
+  const working = team().filter((a) => a.status === 'working');
+  $('#tab-tasks-count').textContent = ts.filter((t) => ['todo', 'doing', 'review'].includes(t.status)).length || '';
+  $('#tab-agents-count').textContent = team().length || '';
+  $('#tab-summary').textContent = `${ts.filter((t) => t.status === 'doing').length} en curso · ${ts.filter((t) => t.status === 'review').length} por revisar · ${working.length}/${team().length} agentes trabajando`;
+  $('#office-live').textContent = working.length ? working.map((a) => `${a.name}: ${a.activity}`).join('  ·  ') : 'Nadie está trabajando ahora mismo';
   if (drawerAgent) renderDrawer();
 }
 
 function renderTeam() {
-  $('#team').innerHTML = team().map((a) => `
-    <div class="member ${a.id === drawerAgent ? 'sel' : ''}" style="--c:${S.roles[a.role]?.color}" data-agent="${a.id}">
-      <div class="top">
+  const ts = tasks();
+  $('#team-summary').textContent = `${team().length} agentes · ${team().filter((a) => a.status === 'working').length} trabajando`;
+  $('#team').innerHTML = team().map((a) => {
+    const task = ts.find((t) => t.id === a.taskId);
+    const done = ts.filter((t) => t.agentId === a.id && ['done', 'review'].includes(t.status)).length;
+    const cost = ts.filter((t) => t.agentId === a.id).reduce((n, t) => n + (t.costUsd || 0), 0);
+    const r = S.roles[a.role];
+    return `
+    <div class="member ${a.id === drawerAgent ? 'sel' : ''}" style="--c:${r?.color || '#999'}">
+      <div class="top" data-agent="${a.id}">
         <span class="avatar">${esc(a.name).charAt(0).toUpperCase()}</span>
         <div class="member-main"><b>${esc(a.name)}</b><div class="act">${a.status === 'working' ? esc(a.activity) : 'En la zona de descanso ☕'}</div></div>
-        <span class="eng">${esc(a.engine)}</span>
+        <span class="eng">${esc(a.engine)}${a.model ? ' · ' + esc(a.model) : ''}</span>
       </div>
       <div class="member-foot">${roleChip(a.role)}<span class="state ${a.status}"><span class="dot ${a.status}"></span>${a.status === 'working' ? 'Trabajando' : 'Descansando'}</span></div>
-    </div>`).join('') || '<p class="empty">Sin agentes todavía. Contrata a alguien para empezar.</p>';
+      ${task ? `<div class="task">▶ #${task.id} ${esc(task.title)}</div>` : ''}
+      <div class="meta"><span>${done} entregadas</span>${cost ? `<span>≈ ${cost.toFixed(2)} $</span>` : ''}${r?.custom ? `<span title="${esc(r.description || '')}">rol de fichero · ${esc(r.source)}</span>` : ''}</div>
+      <div class="acts">
+        <button class="small ghost" data-agent="${a.id}">Registro / editar</button>
+        ${a.status === 'working' ? `<button class="small danger" data-stop="${a.id}">⏹ Parar</button>` : ''}
+        <button class="small danger" data-fire="${a.id}">Despedir</button>
+      </div>
+    </div>`;
+  }).join('') || '<p class="empty">Sin agentes todavía. Contrata a alguien para empezar.</p>';
+}
+
+function renderRoles() {
+  $('#roles').innerHTML = Object.entries(S.roles).map(([id, r]) => `
+    <div class="role-card" style="--c:${r.color}">
+      <b>${esc(r.label)}</b> <span class="muted">· ${r.kind === 'planner' ? 'planifica' : r.kind === 'qa' ? 'QA' : 'desarrolla'}${r.model ? ' · ' + esc(r.model) : ''}</span>
+      <div class="desc">${esc(r.description || r.system.slice(0, 160))}</div>
+      <div class="src">${r.custom ? `📄 ${esc(r.file)}` : 'de serie'}${team().some((a) => a.role === id) ? ' · en plantilla' : ''}</div>
+    </div>`).join('');
 }
 
 // Candado de suite: chip en la cabecera y pantalla de bloqueo si flow-test no está o ha caducado.
@@ -125,8 +171,10 @@ const COLS = [
   ['done', 'Hecho', '#4ade80'],
 ];
 
+let taskFilter = '';
+$('#task-filter').addEventListener('input', (e) => { taskFilter = e.target.value.trim().toLowerCase(); renderBoard(); });
 function renderBoard() {
-  const list = tasks();
+  const list = tasks().filter((t) => !taskFilter || `${t.id} ${t.title} ${t.role} ${t.repo || ''} ${t.description}`.toLowerCase().includes(taskFilter));
   $('#board').innerHTML = COLS.map(([st, label, c]) => {
     const items = list.filter((t) => t.status === st || (st === 'todo' && t.status === 'failed'))
       .sort((a, b) => (st === 'done' ? b.updatedAt - a.updatedAt : a.createdAt - b.createdAt));
@@ -242,6 +290,7 @@ const roleOptions = (sel, skipPo) => Object.entries(S.roles).filter(([, r]) => !
 const engineOptions = (sel) => S.engines.map((e) => `<option ${e === sel ? 'selected' : ''}>${e}</option>`).join('');
 
 const actions = {
+  renderer: () => { safeSet('ao:renderer', RENDERER_2D ? '3d' : '2d'); location.reload(); },
   sync: async () => { const r = await api('POST', '/api/sync'); toast(`Carpetas de flow-test: ${r.folders.join(', ')}${r.created ? ` · ${r.created} proyecto(s) nuevo(s)` : ''}`); },
   'new-project': () => dialog(`
     <h3>Nuevo proyecto</h3>
@@ -377,7 +426,7 @@ function parseRepos(text) {
 }
 
 document.addEventListener('click', async (e) => {
-  const el = e.target.closest('button, .member');
+  const el = e.target.closest('button, [data-agent]');
   if (!el) return;
   const d = el.dataset;
   if (d.action === 'suite') { S.suite = await api('GET', '/api/suite'); renderSuite(); return toast(S.suite.ok ? `flow-test OK · ${S.suite.plan || S.suite.mode}` : S.suite.reason, S.suite.ok ? '' : 'error'); }
