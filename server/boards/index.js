@@ -17,7 +17,20 @@ const readSecrets = () => { try { return JSON.parse(fs.readFileSync(SECRETS(), '
 const writeSecrets = (s) => { fs.mkdirSync(store.DATA_DIR, { recursive: true }); fs.writeFileSync(SECRETS(), JSON.stringify(s, null, 2), { mode: 0o600 }); };
 const fail = (status, message) => Object.assign(new Error(message), { status });
 
-export const describe = () => Object.values(KINDS).map((k) => ({ id: k.id, label: k.label, fields: k.fields, secretFields: k.secretFields }));
+export const describe = () => Object.values(KINDS).map((k) => ({ id: k.id, label: k.label, fields: k.fields, secretFields: k.secretFields, canCreateBoard: !!k.canCreateBoard }));
+
+// Crear el tablero remoto (p. ej. un GitHub Project con las 5 columnas) y guardar la config resultante.
+export async function createBoard(project, { kind, config = {}, secrets = {} }) {
+  const k = KINDS[kind];
+  if (!k?.createBoard) throw fail(400, 'Ese tipo de tablero no se puede crear desde aquí');
+  const cfg = {};
+  for (const f of k.fields) cfg[f.key] = String(config[f.key] ?? '').trim() || f.default || '';
+  let r;
+  try { r = await (k.secretFields.length ? k.createBoard(cfg, secrets) : k.createBoard(cfg)); } catch (e) { throw fail(502, e.message); }
+  const saved = saveBoard(project, { kind, config: r.config, secrets, autoSync: true, pushNew: true });
+  project.board.url = r.url; project.board.lastInfo = r.info; store.changed();
+  return { ...saved, info: r.info, url: r.url };
+}
 
 export function publicBoard(project) {
   const b = project.board;

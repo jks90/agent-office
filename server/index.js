@@ -72,6 +72,7 @@ const routes = [
   ['GET', /^\/api\/boards\/kinds$/, () => boards.describe()],
   ['GET', /^\/api\/projects\/(\w+)\/board$/, ([id]) => boards.publicBoard(store.get().projects.find((p) => p.id === id) || {})],
   ['POST', /^\/api\/projects\/(\w+)\/board$/, ([id], b) => boards.saveBoard(store.get().projects.find((p) => p.id === id), b)],
+  ['POST', /^\/api\/projects\/(\w+)\/board\/create$/, ([id], b) => boards.createBoard(store.get().projects.find((p) => p.id === id), b)],
   ['POST', /^\/api\/projects\/(\w+)\/board\/test$/, ([id]) => boards.testBoard(store.get().projects.find((p) => p.id === id))],
   ['POST', /^\/api\/projects\/(\w+)\/board\/sync$/, gated(([id]) => team.syncBoard(id))],
   ['PATCH', /^\/api\/tasks\/(\w+)$/, ([id], b) => team.updateTask(id, b)],

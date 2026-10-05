@@ -379,13 +379,14 @@ async function renderBoardCfg(kindOverride) {
     <label class="check"><input type="checkbox" id="board-pushnew" ${b?.kind === kind ? (b.pushNew ? 'checked' : '') : 'checked'} /> Crear fuera las tareas nuevas del PO o a mano</label>
     <div class="acts">
       <button type="button" class="small" data-board-save>Guardar y probar</button>
+      ${def.canCreateBoard && !cfg.project ? '<button type="button" class="small ghost" data-board-create title="Crea un GitHub Project nuevo con las columnas Backlog / Todo / In Progress / In Review / Done, lo enlaza al repo y lo deja configurado aquí">＋ Crear Project en GitHub</button>' : ''}
       ${b?.kind === kind ? '<button type="button" class="small ghost" data-board-sync>↻ Sincronizar ahora</button><button type="button" class="small danger" data-board-off>Desconectar</button>' : ''}
       <span class="muted" id="board-msg">${b?.kind === kind ? (b.lastError ? '⚠ ' + esc(b.lastError) : esc(b.lastInfo || '')) : ''}</span>
     </div>` : ''}`;
   $('#board-kind').onchange = (e) => renderBoardCfg(e.target.value);
 }
 document.addEventListener('click', async (e) => {
-  const el = e.target.closest('[data-board-save],[data-board-sync],[data-board-off]');
+  const el = e.target.closest('[data-board-save],[data-board-sync],[data-board-off],[data-board-create]');
   if (!el) return;
   e.preventDefault();
   const d = el.dataset;
@@ -397,6 +398,15 @@ document.addEventListener('click', async (e) => {
       await api('POST', `/api/projects/${projectId}/board`, { kind, config, secrets, autoSync: $('#board-autosync')?.checked, pushNew: $('#board-pushnew')?.checked });
       const r = await api('POST', `/api/projects/${projectId}/board/test`);
       toast(`Conectado: ${r.info}`);
+      renderBoardCfg();
+    }
+    if (d.boardCreate !== undefined) {
+      const kind = $('#board-kind').value;
+      const config = {}, secrets = {};
+      $('#board-cfg').querySelectorAll('[name]').forEach((i) => { const [t, k] = i.name.split(':'); (t === 's' ? secrets : config)[k] = i.value; });
+      if (!confirm(`Se creará un GitHub Project nuevo para ${config.repo || 'el repo'} con las cinco columnas y se enlazará al repositorio. ¿Seguimos?`)) return;
+      const r = await api('POST', `/api/projects/${projectId}/board/create`, { kind, config, secrets });
+      toast(r.info);
       renderBoardCfg();
     }
     if (d.boardSync !== undefined) { const r = await api('POST', `/api/projects/${projectId}/board/sync`); toast(`Sincronizado: ${r.total} tarjetas · ${r.created} nuevas · ${r.updated} actualizadas · ${r.pushed} enviadas`); if ($('#board-cfg')) renderBoardCfg(); }
