@@ -12,6 +12,7 @@ const WORK_TOOLS = [
   'Bash(du *)', 'Bash(file *)', 'Bash(stat *)', 'Bash(date *)', 'Bash(echo *)', 'Bash(printf *)', 'Bash(true)', 'Bash(sleep *)',
   'Bash(mkdir *)', 'Bash(cp *)', 'Bash(mv *)', 'Bash(touch *)', 'Bash(cd *)', 'Bash(pwd)',
   'Bash(git status*)', 'Bash(git diff*)', 'Bash(git log*)', 'Bash(git show*)', 'Bash(git add*)', 'Bash(git commit*)', 'Bash(git branch*)',
+  'Bash(git rm *)', 'Bash(git mv *)', 'Bash(git restore *)', // borrar/mover/deshacer ficheros del worktree (reversible por git; sin `rm` genérico)
 ];
 const PLAN_TOOLS = ['Read', 'Glob', 'Grep'];
 
