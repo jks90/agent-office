@@ -178,6 +178,8 @@ El nombre de la app sale de `/proc/<pid>/comm`. `available()` indica qué herram
 
 **Tools del Guide (FT-22)**: `window.getActive`, `window.list` y `screen.capture` (política `read`, en `server/guide/tools.js`) delegan en este provider. Regla «solo fuera»: si la ventana activa casa con «FlowTest», «AgentOffice» o el origen de la UI (`localhost:<puerto>`), devuelven `{inside: true, hint: 'usa app.getContext'}` sin datos del escritorio (y `screen.capture` ni pide confirmación). `window.list` recorta los títulos a 200 caracteres; `screen.capture` devuelve ruta y metadatos, nunca el base64. `screen.capture` usa el modo `confirmOnce` de `server/guide/policy.js`: la primera vez por sesión abre el modal 🛡 Sí/No (`questions.confirm`). La clave de sesión es el `chatId` del Guide (cabecera `x-ao-chat`, que `bin/ao-mcp.mjs` envía desde `AO_CHAT_ID`) o, por API/MCP, `x-ao-client`; se recuerda solo en memoria (se olvida al reiniciar) y, sin ninguna clave, se pregunta siempre. Rechazar → 403 auditado como `denied` en `guide-audit.jsonl`.
 
+**`screen.describe` (FT-23)**: último recurso (la descripción de la tool manda al Guide a usar antes `window.getActive` / `app.getContext`). Política `read` con el mismo `confirmOnce` que `screen.capture` (la clave de sesión es compartida: confirmar una vale para la otra). Captura el escritorio, o usa `capturePath` de una captura previa (solo PNG dentro de `data/desktop/captures/`), y la describe con el proveedor del Guide (`server/guide/vision.js`, por `fetch`): `anthropic-api` (bloque `image` base64) u `openai-api` (`image_url` con data URL), con el modelo de `guideModels`. `claude-cli` y `fake` responden 501 «el proveedor actual no admite imágenes» (antes de capturar o preguntar); `fake` con `AO_DESKTOP=fake` devuelve una descripción fija. Si la ventana activa es flow-test/AgentOffice responde `{inside: true, hint: 'usa app.getContext'}` sin llamar al modelo. Argumento opcional `question`. Devuelve `{description, capturePath, provider, model}`.
+
 Prueba: `node -e "import('./server/desktop/index.js').then(async m=>{const p=m.getProvider();console.log(p.session,p.available(),await p.getActive(),(await p.list()).length)})"`.
 
 ## Estructura
@@ -187,7 +189,7 @@ server/index.js     HTTP + API REST + SSE (/events)
 server/team.js      proyectos, agentes, tareas, planificador, revisión
 server/events.js    Activity Stream tipado (FT-1)
 server/context.js   contexto de la UI para el Guide Agent (FT-2)
-server/guide/       Guide Agent: tools + política + auditoría (FT-4), chats, prompt y proveedores (FT-6), voz STT en stt/ (FT-9), integraciones IDE/git/fs/terminal/browser (FT-10)
+server/guide/       Guide Agent: tools + política + auditoría (FT-4), chats, prompt y proveedores (FT-6), voz STT en stt/ (FT-9), integraciones IDE/git/fs/terminal/browser (FT-10), visión de pantalla en vision.js (FT-23)
 server/engines/allowlist.js  lista blanca de shell compartida por el motor Claude y terminal.execute (FT-10)
 bin/ao-mcp.mjs      servidor MCP stdio del Guide (FT-4)
 bin/stt-whisper.py  STT local con faster-whisper (FT-9)
