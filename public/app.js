@@ -984,7 +984,7 @@ function publishContext() {
 $('#dialog').addEventListener('close', () => { openTaskId = null; publishContext(); });
 $('#project').addEventListener('change', publishContext);
 window.addEventListener('message', (e) => {
-  if (e.source !== window.parent || window.parent === window || e.data?.type !== 'flowtest:context') return;
+  if (e.origin !== location.origin || e.source !== window.parent || window.parent === window || e.data?.type !== 'flowtest:context') return;
   const { flow, filePath, node, consoleTail, dirty, running } = e.data;
   hostCtx = { flow, filePath, node, consoleTail, dirty, running };
   publishContext();

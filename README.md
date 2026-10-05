@@ -60,7 +60,7 @@ El Guide Agent necesita saber qué está viendo el usuario, sin visión ni captu
 
 - **Publicar**: `POST /api/context` con `{view, projectId, openTaskId, selectedAgentId, taskFilter, questionOpen, host, at}` (`view` = `office|tasks|agents|settings`). `public/app.js` lo manda con *debounce* de 300 ms cada vez que cambia algo (pestaña, proyecto, tarea abierta en «Ver la tarea», agente del cajón, filtro, pregunta abierta). El cliente se identifica con la cabecera `x-ao-client` (id generado por pestaña en `sessionStorage`).
 - **Leer**: `GET /api/context` (o `?client=`) devuelve el del cliente más reciente, enriquecido: `project` (nombre, prefijo, repos), `task` (código, título, estado, agente, rama, últimas 10 líneas de log, preguntas), `agent` (estado, actividad, tarea en curso), `recentEvents` (últimos 20 eventos de FT-1) y `host`.
-- **`host`**: contexto que manda flow-test (FT-3). La UI escucha `postMessage({type:'flowtest:context', flow, filePath, node, consoleTail, dirty, running})` de la ventana padre y lo reenvía en el mismo POST.
+- **`host`**: contexto que manda flow-test (FT-3). La UI escucha `postMessage({type:'flowtest:context', flow, filePath, node, consoleTail, dirty, running})` de la ventana padre y lo reenvía en el mismo POST. Solo se acepta el contexto del host si el mensaje viene del mismo origen (`e.origin === location.origin`, flow-test embebe AgentOffice por su proxy `/agents/`) y de `window.parent`; cualquier otro origen se ignora (FT-2).
 - El snapshot SSE no cambia y no hay polling.
 
 ## Motores
