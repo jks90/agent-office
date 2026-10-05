@@ -38,7 +38,9 @@ const modelFor = (engineId, agent, role) => {
 export const STATUSES = ['backlog', 'todo', 'doing', 'review', 'done', 'failed'];
 
 const { get, changed, newId, log } = store;
-const jobs = new Map(); // agentId -> { stop, taskId }
+const jobs = new Map(); // agentId -> { stop, taskId, engine, pid?, pause?, resume?, message?, requeue? }
+// Al apagar el servidor se matan los motores en marcha: van `detached` (grupo propio) y fuera de systemd sobrevivirían.
+store.onShutdown(() => { for (const j of jobs.values()) { try { j.stop?.(); } catch { /* ya terminó */ } } });
 
 const DEFAULT_TEAM = [
   { name: 'Olivia', role: 'po' },
@@ -236,6 +238,71 @@ export function stopAgent(id) {
   job.stop();
 }
 
+// ── Control de workers (FT-5): pausar, reanudar y mensaje en caliente ──────
+const jobOf = (id) => {
+  const a = findOr404(get().agents, id, 'Agente');
+  const job = jobs.get(a.id);
+  if (!job) throw fail(409, 'Ese agente no está trabajando');
+  return { a, job, t: get().tasks.find((x) => x.id === job.taskId) };
+};
+
+// SIGSTOP al grupo de procesos del motor (el agente queda congelado: ps STAT T); la tarea sigue `doing`.
+export function pauseAgent(id) {
+  const { a, job, t } = jobOf(id);
+  if (a.status === 'paused') throw fail(409, 'El agente ya está en pausa');
+  if (!job.pause) throw fail(409, 'El agente aún se está preparando; inténtalo en un momento');
+  job.pause();
+  Object.assign(a, { status: 'paused', pausedActivity: a.activity, activity: 'En pausa' });
+  events.emit('AgentPaused', events.ctxOf(t, a), { reason: 'paused-by-user', pid: job.pid || null });
+  log(a.id, '⏸ En pausa');
+  changed();
+  return a;
+}
+
+export function resumeAgent(id) {
+  const { a, job, t } = jobOf(id);
+  if (a.status !== 'paused') throw fail(409, 'El agente no está en pausa');
+  job.resume();
+  Object.assign(a, { status: 'working', activity: a.pausedActivity || 'Retomando el trabajo', pausedActivity: undefined });
+  events.emit('AgentResumed', events.ctxOf(t, a), { reason: 'resumed-by-user' });
+  log(a.id, '▶ Reanudado');
+  changed();
+  return a;
+}
+
+// Restricción persistente de la tarea: va SIEMPRE en el prompt (también tras Devolver o reintentar).
+export function addConstraint(taskId, text, origin = 'user') {
+  const t = findOr404(get().tasks, taskId, 'Tarea');
+  text = String(text || '').trim();
+  if (!text) throw fail(400, 'La restricción necesita texto');
+  (t.constraints ||= []).push({ text: text.slice(0, 2000), at: Date.now(), origin });
+  events.emit('UserInstructionAdded', events.ctxOf(t), { kind: 'constraint', text: text.slice(0, 500), origin });
+  changed();
+  return t;
+}
+
+// Mensaje del cliente a un agente en marcha. Claude: se inyecta en su turno por stdin (stream-json).
+// Codex/demo: no admiten entrada en caliente → se para al agente y se reencola LA MISMA tarea (misma rama) con el mensaje en el prompt.
+export function messageAgent(id, { text, constraint = false, origin = 'user' } = {}) {
+  text = String(text || '').trim();
+  if (!text) throw fail(400, 'Falta el texto del mensaje');
+  const { a, job, t } = jobOf(id);
+  if (constraint) addConstraint(t.id, text, origin);
+  else events.emit('UserInstructionAdded', events.ctxOf(t, a), { kind: 'message', text: text.slice(0, 500), origin });
+  if (job.message?.(text)) {
+    log(a.id, `✉ Mensaje del cliente: ${text}`);
+    changed();
+    return { delivered: 'live', agent: a.id, task: t.id };
+  }
+  (t.pendingMessages ||= []).push({ text: text.slice(0, 2000), at: Date.now(), origin });
+  if (!job.stop || !job.pause) { changed(); return { delivered: 'queued', agent: a.id, task: t.id }; } // aún preparando: el mensaje entra en el prompt
+  job.requeue = true;
+  log(a.id, `✉ Mensaje del cliente (el motor no admite mensajes en caliente: se reencola la tarea): ${text}`);
+  job.stop();
+  changed();
+  return { delivered: 'requeued', agent: a.id, task: t.id };
+}
+
 // ── Tareas ─────────────────────────────────────────────────────────────────
 export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null }) {
   // attachments (subidos): imágenes → images (las ve el agente), el resto → files (se citan en el prompt)
@@ -250,7 +317,7 @@ export function createTask({ projectId, title, description = '', role, repo = nu
     dependsOn: (Array.isArray(dependsOn) ? dependsOn : []).filter((d) => s.tasks.some((t) => t.id === d)),
     status: ['backlog', 'todo', 'review', 'done'].includes(status) ? status : 'todo',
     agentId: null, branch: null, summary: '', diffStat: '', error: null, feedback: '', source, files: files.filter((f) => fs.existsSync(f)),
-    costUsd: null, attempts: 0, createdAt: Date.now(), updatedAt: Date.now(),
+    constraints: [], costUsd: null, attempts: 0, createdAt: Date.now(), updatedAt: Date.now(),
   };
   codes.assignCode(s.tasks, p, task);
   task.feedbackImages = copyImages(task, images);
@@ -497,12 +564,19 @@ function askBlock(t) {
   ].join('\n');
 }
 
+// FT-5: restricciones del cliente (siempre) y mensajes recibidos en la ejecución anterior (si se reencoló).
+const clientBlock = (t) => [
+  (t.constraints || []).length ? `\nRestricciones del cliente (obligatorias, aplican a todo el trabajo):\n${t.constraints.map((c) => `- ${c.text}`).join('\n')}` : '',
+  (t.pendingMessages || []).length ? `\nIndicaciones que el cliente añadió mientras trabajabas (aplícalas):\n${t.pendingMessages.map((m) => `- ${m.text}`).join('\n')}` : '',
+].join('');
+
 function buildPrompt(p, agent, t) {
   if (t.kind === 'plan') {
     const roles = teamRoles(p);
     const repos = p.repos || [];
     return [
       `Objetivo del equipo: ${t.goal}`,
+      clientBlock(t),
       '',
       repos.length ? `Repositorios del proyecto (estás en ${repos[0].path}): ${repos.map((r) => `«${r.key}» = ${r.path} (rama ${r.baseBranch})`).join(' · ')}. Lee su documentación y código para entender el contexto.` : 'No hay repositorio: planifica solo a partir del objetivo.',
       `Divide el objetivo en tareas pequeñas para estos roles: ${roles.join(', ')}.`,
@@ -525,6 +599,7 @@ function buildPrompt(p, agent, t) {
     `Tarea ${t.code || '#' + t.id}: ${t.title}`,
     '',
     t.description,
+    clientBlock(t),
     done.length ? `\nTrabajo previo del equipo (ya fusionado):\n${done.map((d) => `- ${d.title}: ${d.summary}`).join('\n')}` : '',
     t.feedback ? `\nComentarios de la revisión anterior (corrígelos):\n${t.feedback}` : '',
     t.feedbackImages?.length ? `\nImágenes adjuntas (míralas con atención antes de cambiar nada; también están en ${t.feedbackImages.join(', ')}).` : '',
@@ -579,9 +654,11 @@ async function runTask(p, agent, t) {
     }
     if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true });
 
+    const prompt = buildPrompt(p, agent, t);
+    t.pendingMessages = []; // ya van en el prompt
     const job = engine.start({
       agent, task: t, project: p, cwd, mode: t.kind === 'plan' ? 'plan' : 'work', goal: t.goal, roles,
-      prompt: buildPrompt(p, agent, t),
+      prompt,
       images: (t.feedbackImages || []).filter((f) => fs.existsSync(f)),
       system: role.system,
       model: modelFor(engineId, agent, role),
@@ -591,7 +668,8 @@ async function runTask(p, agent, t) {
       onTool: (c) => events.emit(c.phase === 'started' ? 'AgentToolStarted' : 'AgentToolFinished', ev, c.phase === 'started' ? { callId: c.callId, tool: c.tool, summary: c.summary } : { callId: c.callId, ok: c.ok }),
       onLog: (line) => log(agent.id, line),
     });
-    jobs.set(agent.id, { stop: job.stop, taskId: t.id, engine: engineId });
+    const entry = jobs.get(agent.id);
+    Object.assign(entry, { stop: job.stop, engine: engineId, pid: job.pid, pause: job.pause, resume: job.resume, message: job.message });
     const res = await job.done;
 
     if (res.costUsd != null) t.costUsd = (t.costUsd || 0) + res.costUsd;
@@ -627,6 +705,14 @@ async function runTask(p, agent, t) {
       reflect(t, `✋ ${agent.name} terminó; pendiente de revisión en AgentOffice.${t.diffStat ? `\n\n\`\`\`\n${t.diffStat.slice(0, 800)}\n\`\`\`` : ''}`);
     }
   } catch (e) {
+    if (jobs.get(agent.id)?.requeue) { // FT-5: mensaje en caliente sin soporte del motor → misma tarea, misma rama, con el mensaje
+      t.status = 'todo';
+      t.error = null;
+      t.agentId = null;
+      events.emit('AgentProgress', ev, { activity: 'Reencolada con un mensaje del cliente' });
+      log(agent.id, '↻ Tarea reencolada con el mensaje del cliente');
+      return;
+    }
     t.status = 'failed';
     t.error = e.message;
     events.emit('AgentFailed', ev, { error: String(e.message).slice(0, 500) });

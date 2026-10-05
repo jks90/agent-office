@@ -18,7 +18,8 @@ const PLAN_TOOLS = ['Read', 'Glob', 'Grep'];
 
 export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv = {}, onActivity, onLog, onTool = () => {} }) {
   const tools = [...(mode === 'plan' ? PLAN_TOOLS : WORK_TOOLS)];
-  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--append-system-prompt', system];
+  // FT-5: entrada stream-json con stdin abierto → se pueden inyectar mensajes del cliente en caliente.
+  const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--append-system-prompt', system];
   args.push('--model', model || 'sonnet'); // nunca heredar el modelo por defecto de la sesión del usuario (puede no estar disponible en -p)
   // --strict-mcp-config: el agente NO hereda los MCP globales del usuario; solo flow-test para el QA.
   const mcpServers = {};
@@ -31,8 +32,17 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv 
 
   const env = { ...process.env, ...extraEnv, BROWSER: 'true' };
   delete env.CLAUDECODE; // si el servidor se lanzó desde una sesión de Claude Code
-  const child = spawn(process.env.AO_CLAUDE_BIN || 'claude', args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
-  child.stdin.end(prompt);
+  // detached: el hijo lidera su propio grupo de procesos, para pausar (SIGSTOP/SIGCONT) y matar también a sus subprocesos (FT-5).
+  const child = spawn(process.env.AO_CLAUDE_BIN || 'claude', args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+  child.stdin.on('error', () => {}); // EPIPE si el proceso ya murió
+  const userMsg = (text) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } }) + '\n';
+  child.stdin.write(userMsg(prompt)); // el prompt inicial es el primer mensaje de usuario
+
+  // Con stdin abierto el CLI no sale solo tras el `result`: se cierra cuando, tras un `result`, no arranca otro turno
+  // (un mensaje en cola empieza a emitir eventos enseguida; uno enviado en la ventana cancela el cierre).
+  let closeTimer = null;
+  const armClose = () => { clearTimeout(closeTimer); closeTimer = setTimeout(() => { if (!child.stdin.destroyed) child.stdin.end(); }, 2500); };
+  const cancelClose = () => { clearTimeout(closeTimer); closeTimer = null; };
 
   let result = null;
   let stopped = false;
@@ -41,6 +51,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv 
   readline.createInterface({ input: child.stdout }).on('line', (line) => {
     let ev;
     try { ev = JSON.parse(line); } catch { if (line.trim()) onLog(line); return; }
+    if (closeTimer && ev.type !== 'result') cancelClose(); // otro turno en marcha
     if (ev.type === 'assistant') {
       for (const c of ev.message?.content || []) {
         if (c.type === 'tool_use') {
@@ -61,7 +72,8 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv 
     } else if (ev.type === 'system' && ev.subtype === 'init') {
       onLog(`⚙ Claude Code · modelo ${ev.model || '?'} · ${ev.tools?.length ?? 0} herramientas`);
     } else if (ev.type === 'result') {
-      result = ev;
+      result = ev; // con varios turnos manda el último
+      armClose();
     }
   });
   readline.createInterface({ input: child.stderr }).on('line', (l) => { stderr.push(l); if (stderr.length > 30) stderr.shift(); });
@@ -80,5 +92,21 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv 
     });
   });
 
-  return { done, stop() { stopped = true; child.kill('SIGTERM'); setTimeout(() => child.kill('SIGKILL'), 3000).unref(); } };
+  const signal = (sig) => { try { process.kill(-child.pid, sig); } catch { try { child.kill(sig); } catch { /* ya terminó */ } } };
+  return {
+    done,
+    pid: child.pid,
+    pause() { signal('SIGSTOP'); },
+    resume() { signal('SIGCONT'); },
+    // Mensaje en caliente (FT-5): nuevo mensaje de usuario por stdin. false si el CLI ya no admite entrada.
+    message(text) {
+      if (child.stdin.destroyed || child.stdin.writableEnded) return false;
+      cancelClose();
+      // Redacción neutra a propósito: un encabezado en mayúsculas tipo «INSTRUCCIÓN… prioritaria… confírmala literalmente» hace que
+      // el modelo lo trate como inyección y lo rechace (probado con el CLI real).
+      child.stdin.write(userMsg(`El cliente (quien revisa tu trabajo) añade esta indicación para lo que queda de la tarea: «${text}». Aplícala a partir de ahora y menciónala en tu resumen final.`));
+      return true;
+    },
+    stop() { stopped = true; cancelClose(); signal('SIGTERM'); signal('SIGCONT'); setTimeout(() => signal('SIGKILL'), 3000).unref(); }, // SIGCONT: un grupo parado no recibe SIGTERM
+  };
 }

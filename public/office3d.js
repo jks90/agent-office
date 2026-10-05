@@ -375,8 +375,9 @@ export class Office3D {
 
   targetFor(agent, index, a) {
     const task = this.tasks.find((t) => t.id === agent.taskId);
+    if (agent.status === 'paused' && task?.kind === 'plan') return { key: 'board', ...BOARD_SPOTS[index % 2] };
     if (agent.status === 'working' && task?.kind === 'plan') return { key: 'board', ...BOARD_SPOTS[index % 2] };
-    if (agent.status === 'working') return { key: 'desk', ...seatOf(DESKS[index % DESKS.length]) };
+    if (agent.status === 'working' || agent.status === 'paused') return { key: 'desk', ...seatOf(DESKS[index % DESKS.length]) };
     const spot = a?.loungeSpot ?? index;
     const s = LOUNGE[spot % LOUNGE.length];
     return { key: 'lounge' + (spot % LOUNGE.length), x: s.x, z: s.z, corr: null, sit: !!s.sit };
@@ -437,7 +438,7 @@ export class Office3D {
 
       // Posición y giro.
       let y = 0;
-      if (a.key === 'desk' && agent.status === 'working' && !a.moving) y = 0.2;
+      if (a.key === 'desk' && (agent.status === 'working' || agent.status === 'paused') && !a.moving) y = 0.2;
       else if (a.sitSpot && !a.moving) y = 0.24;
       a.group.position.set(a.x, y, a.z);
       let da = a.targetAngle - a.angle;
@@ -455,7 +456,7 @@ export class Office3D {
       // Encender la pantalla de su mesa cuando trabaja sentado.
       const ws = (a.key === 'desk') ? this.workstations[i % this.workstations.length] : null;
       // (el encendido se resuelve abajo en refreshScreens)
-      a._ws = (a.key === 'desk' && agent.status === 'working' && !a.moving) ? i % this.workstations.length : -1;
+      a._ws = (a.key === 'desk' && (agent.status === 'working' || agent.status === 'paused') && !a.moving) ? i % this.workstations.length : -1;
     });
     this.refreshScreens();
   }
@@ -472,7 +473,7 @@ export class Office3D {
   chooseClip(a, agent, now) {
     if (a.emote && now < a.emote.until && a.actions[a.emote.name]) return a.emote.name;
     if (a.moving) return a.actions.walk ? 'walk' : 'idle';
-    if (a.key === 'desk' && agent.status === 'working') return a.actions.sit ? 'sit' : 'idle';
+    if (a.key === 'desk' && (agent.status === 'working' || agent.status === 'paused')) return a.actions.sit ? 'sit' : 'idle';
     if (a.sitSpot) return a.actions.sit ? 'sit' : 'idle';
     return a.actions.idle ? 'idle' : (Object.keys(a.actions)[0] || null);
   }
@@ -573,7 +574,8 @@ export class Office3D {
   bubbleText(agent, a, now) {
     const review = this.tasks.find((t) => t.agentId === agent.id && t.status === 'review');
     const failed = this.tasks.find((t) => t.agentId === agent.id && t.status === 'failed');
-    if (agent.status === 'working') {
+    if (agent.status === 'paused' && !a.moving) return { text: '⏸ En pausa', kind: 'review' };
+    if (agent.status === 'working' || agent.status === 'paused') {
       if (a.moving) return { text: a.key === 'board' ? '🗂 Voy a la pizarra' : '→ A mi mesa', kind: '' };
       if (a.key === 'board') return { text: '🗂 Planificando…', kind: 'plan' };
       return { text: agent.activity ? '✏️ ' + agent.activity : 'Trabajando…', kind: '' };

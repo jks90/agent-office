@@ -170,9 +170,10 @@ function render() {
   renderBoard();
   const ts = tasks();
   const working = team().filter((a) => a.status === 'working');
+  const paused = team().filter((a) => a.status === 'paused').length;
   $('#tab-tasks-count').textContent = ts.filter((t) => ['todo', 'doing', 'review'].includes(t.status)).length || '';
   $('#tab-agents-count').textContent = team().length || '';
-  $('#tab-summary').innerHTML = `${ts.filter((t) => t.status === 'doing').length} en curso<br>${ts.filter((t) => t.status === 'review').length} por revisar<br>${working.length}/${team().length} agentes trabajando`;
+  $('#tab-summary').innerHTML = `${ts.filter((t) => t.status === 'doing').length} en curso<br>${ts.filter((t) => t.status === 'review').length} por revisar<br>${working.length}/${team().length} agentes trabajando${paused ? ` · ${paused} en pausa` : ''}`;
   $('#office-live').textContent = working.length ? working.map((a) => `${a.name}: ${a.activity}`).join('  ·  ') : 'Nadie está trabajando ahora mismo';
   const b = p?.board;
   const pending = b ? ts.filter((t) => t.source?.kind !== b.kind && t.kind !== 'plan').length : 0;
@@ -196,17 +197,17 @@ function renderTeam() {
     <div class="member ${a.id === drawerAgent ? 'sel' : ''}" style="--c:${r?.color || '#999'}">
       <div class="top" data-agent="${a.id}">
         <span class="avatar">${esc(a.name).charAt(0).toUpperCase()}</span>
-        <div class="member-main"><b>${esc(a.name)}</b><div class="act">${a.status === 'working' ? esc(a.activity) : 'En la zona de descanso ☕'}</div></div>
+        <div class="member-main"><b>${esc(a.name)}</b><div class="act">${busy(a) ? esc(a.activity) : 'En la zona de descanso ☕'}</div></div>
         <span class="eng">${esc(a.engine)}${a.engine === 'auto' && a.activeEngine ? ' → ' + esc(a.activeEngine) : ''}${a.model ? ' · ' + esc(a.model) : ''}</span>
       </div>
-      <div class="member-foot">${roleChip(a.role)}<span class="state ${a.status}"><span class="dot ${a.status}"></span>${a.status === 'working' ? 'Trabajando' : 'Descansando'}</span></div>
+      <div class="member-foot">${roleChip(a.role)}<span class="state ${a.status}"><span class="dot ${a.status}"></span>${a.status === 'paused' ? 'En pausa' : a.status === 'working' ? 'Trabajando' : 'Descansando'}</span></div>
       ${task ? `<div class="task">▶ ${esc(tcode(task))} ${esc(task.title)}</div>` : ''}
       <div class="meta"><span>${done} entregadas</span>${cost ? `<span>≈ ${cost.toFixed(2)} $</span>` : ''}${r?.custom ? `<span title="${esc(r.description || '')}">rol de fichero · ${esc(r.source)}</span>` : ''}</div>
       ${projectsOf(a.id).length ? `<div class="meta"><span>también en: ${projectsOf(a.id).map(esc).join(', ')}</span></div>` : ''}
       <div class="acts">
         <button class="small ghost" data-agent="${a.id}">Registro</button>
         <button class="small ghost" data-agent-edit="${a.id}" title="Nombre, rol, motor y modelo">✎ Editar</button>
-        ${a.status === 'working' ? `<button class="small danger" data-stop="${a.id}">⏹ Parar</button>` : ''}
+        ${busy(a) ? `${controls(a)}<button class="small danger" data-stop="${a.id}">⏹ Parar</button>` : ''}
         <button class="small ghost" data-bench="${a.id}" title="Sale de la plantilla de este proyecto; sigue en la empresa">↓ Al banquillo</button>
       </div>
     </div>`;
@@ -220,8 +221,8 @@ function renderBench() {
   $('#bench').innerHTML = list.map((a) => {
     const r = S.roles[a.role];
     return `<div class="member bench" style="--c:${r?.color || '#999'}">
-      <div class="top" data-agent="${a.id}"><span class="avatar">${esc(a.name).charAt(0).toUpperCase()}</span><div class="member-main"><b>${esc(a.name)}</b><div class="act">${a.status === 'working' ? esc(a.activity) : (projectsOf(a.id).length ? 'en ' + projectsOf(a.id).map(esc).join(', ') : 'disponible')}</div></div><span class="eng">${esc(a.engine)}${a.model ? ' · ' + esc(a.model) : ''}</span></div>
-      <div class="member-foot">${roleChip(a.role)}<span class="state ${a.status}"><span class="dot ${a.status}"></span>${a.status === 'working' ? 'Trabajando' : 'Libre'}</span></div>
+      <div class="top" data-agent="${a.id}"><span class="avatar">${esc(a.name).charAt(0).toUpperCase()}</span><div class="member-main"><b>${esc(a.name)}</b><div class="act">${busy(a) ? esc(a.activity) : (projectsOf(a.id).length ? 'en ' + projectsOf(a.id).map(esc).join(', ') : 'disponible')}</div></div><span class="eng">${esc(a.engine)}${a.model ? ' · ' + esc(a.model) : ''}</span></div>
+      <div class="member-foot">${roleChip(a.role)}<span class="state ${a.status}"><span class="dot ${a.status}"></span>${a.status === 'paused' ? 'En pausa' : a.status === 'working' ? 'Trabajando' : 'Libre'}</span></div>
       <div class="acts"><button class="small" data-sign="${a.id}">↑ Fichar</button><button class="small ghost" data-agent-edit="${a.id}">✎</button><button class="small danger" data-fire="${a.id}" title="Baja definitiva de la empresa">Despedir</button></div>
     </div>`;
   }).join('') || '<p class="empty">Nadie en el banquillo: todos los agentes de la empresa están fichados aquí.</p>';
@@ -410,6 +411,21 @@ function openDrawer(id) {
 }
 function closeDrawer() { drawerAgent = null; $('#drawer').hidden = true; render(); }
 
+// Control de workers (FT-5): pausar / reanudar / mensaje en caliente.
+const busy = (a) => a.status === 'working' || a.status === 'paused';
+const controls = (a) => `${a.status === 'paused' ? `<button class="small ok" data-resume="${a.id}" title="Reanudar (SIGCONT)">▶ Reanudar</button>` : `<button class="small ghost" data-pause="${a.id}" title="Pausar (SIGSTOP): congela al agente sin perder su trabajo">⏸ Pausar</button>`}<button class="small ghost" data-msg="${a.id}" title="Mandarle una instrucción en caliente">✉ Mensaje</button>`;
+function messageDialog(agentId) {
+  const a = S.agents.find((x) => x.id === agentId);
+  if (!a) return;
+  const t = S.tasks.find((x) => x.id === a.taskId);
+  dialog(`
+    <h3>✉ Mensaje a ${esc(a.name)}${t ? ` · ${esc(tcode(t))}` : ''}</h3>
+    <p class="muted">${(a.activeEngine || a.engine) === 'claude' ? 'Llega a mitad de turno como instrucción prioritaria.' : 'Este motor no admite mensajes en caliente: se parará al agente y se reencolará la misma tarea (misma rama) con tu mensaje.'}</p>
+    <label>Instrucción</label><textarea name="text" rows="4" required autofocus placeholder="p. ej. no toques server/index.js"></textarea>
+    <label style="display:flex;gap:8px;align-items:center;text-transform:none;letter-spacing:0"><input type="checkbox" name="constraint" style="width:auto" /> Guardar como restricción de la tarea (se repite en cada ejecución, también tras Devolver)</label>
+    ${buttons('Enviar')}`, async (f) => { const r = await api('POST', `/api/agents/${agentId}/message`, { text: f.text, constraint: !!f.constraint }); toast(r.delivered === 'live' ? 'Mensaje entregado al agente' : 'Tarea reencolada con tu mensaje'); });
+}
+
 function renderDrawer() {
   const a = S.agents.find((x) => x.id === drawerAgent);
   if (!a) return closeDrawer();
@@ -417,9 +433,10 @@ function renderDrawer() {
   const d = $('#drawer');
   // Si ya está pintado, solo refrescamos lo que cambia (no perder el foco de los inputs).
   if (d.dataset.agent === a.id) {
-    d.querySelector('[data-f=status]').innerHTML = a.status === 'working' ? `🟢 ${esc(a.activity)}` : '☕ descansando';
+    d.querySelector('[data-f=status]').innerHTML = a.status === 'paused' ? '⏸ en pausa' : a.status === 'working' ? `🟢 ${esc(a.activity)}` : '☕ descansando';
+    d.querySelector('[data-f=controls]').innerHTML = busy(a) ? controls(a) : '';
     d.querySelector('[data-f=task]').innerHTML = task ? `${esc(tcode(task))} ${esc(task.title)}` : '—';
-    d.querySelector('[data-stop]').hidden = a.status !== 'working';
+    d.querySelector('[data-stop]').hidden = !busy(a);
     return;
   }
   d.dataset.agent = a.id;
@@ -433,6 +450,7 @@ function renderDrawer() {
       <span class="muted">Modelo</span><input data-f="model" value="${esc(a.model)}" placeholder="por defecto del CLI (p. ej. sonnet, opus)" />
     </div>
     <div class="row" style="display:flex;gap:8px">
+      <span data-f="controls" style="display:inline-flex;gap:8px"></span>
       <button class="danger small" data-stop="${a.id}">⏹ Parar</button>
       <div class="spacer"></div>
       <button class="danger small" data-fire="${a.id}">Despedir</button>
@@ -849,6 +867,7 @@ function openTask(id) {
   const fileUrl = (f) => `${BASE}api/file?path=${encodeURIComponent(f)}`;
   const STATUS = { backlog: 'Backlog', todo: 'Por hacer', doing: 'En curso', review: 'En revisión', done: 'Hecha', failed: 'Fallida' };
   const acts = [];
+  if (t.status === 'doing' && agent) acts.push(controls(agent));
   if (t.status !== 'doing') acts.push(`<button class="small ghost" data-edit="${t.id}">✎ Editar</button>`);
   if (t.status === 'backlog') acts.push(`<button class="small" data-ready="${t.id}">→ Por hacer</button>`);
   if (t.status === 'todo') acts.push(`<button class="small ghost" data-park="${t.id}">← Backlog</button>`);
@@ -861,6 +880,7 @@ function openTask(id) {
     ${att.length ? `<div class="task-sec"><h4>Adjuntos</h4><div class="task-attach">${att.map((f) => /\.(png|jpe?g|webp|gif)$/i.test(f) ? `<a href="${fileUrl(f)}" target="_blank" rel="noopener"><img src="${fileUrl(f)}" alt="" /></a>` : `<a href="${fileUrl(f)}" target="_blank" rel="noopener">📄 ${esc(f.split('/').pop())}</a>`).join('')}</div></div>` : ''}
     ${(t.questions || []).length ? `<div class="task-sec task-qa"><h4>Conversación con el agente</h4>${t.questions.map((q) => `<div class="qa"><div class="q">❓ ${esc(q.question)}</div><div class="a">${q.answer == null ? '<span class="muted">sin respuesta (se decidió solo)</span>' : '💬 ' + esc(q.answer)}</div></div>`).join('')}</div>` : ''}
     ${deps || dependents ? `<div class="task-sec task-deps"><h4>Dependencias</h4>${deps ? `<div>Depende de: ${deps}</div>` : ''}${dependents ? `<div>Bloquea a: ${dependents}</div>` : ''}</div>` : ''}
+    ${(t.constraints || []).length ? `<div class="task-sec constraints"><h4>Restricciones del cliente</h4><ul>${t.constraints.map((c) => `<li>${esc(c.text)} <small>· ${new Date(c.at).toLocaleString()} · ${esc(c.origin)}</small></li>`).join('')}</ul></div>` : ''}
     ${t.feedback ? `<div class="task-sec"><h4>Comentarios de revisión</h4><div class="md">${md(t.feedback)}</div></div>` : ''}
     ${t.summary ? `<div class="task-sec"><h4>Resumen del agente</h4><div class="md">${md(t.summary)}</div></div>` : ''}
     ${t.diffStat ? `<div class="task-sec"><h4>Cambios en la rama ${esc(t.branch || '')}</h4><pre class="md">${esc(t.diffStat)}</pre></div>` : ''}
@@ -916,6 +936,9 @@ document.addEventListener('click', async (e) => {
   if (d.agent) return openDrawer(d.agent);
   if (d.close !== undefined) return closeDrawer();
   if (d.stop) return api('POST', `/api/agents/${d.stop}/stop`);
+  if (d.pause) return api('POST', `/api/agents/${d.pause}/pause`);
+  if (d.resume) return api('POST', `/api/agents/${d.resume}/resume`);
+  if (d.msg) return messageDialog(d.msg);
   if (d.fire) {
     if (confirm('¿Despedir a este agente de la empresa? (baja definitiva; para quitarlo solo de este proyecto usa «Al banquillo»)')) { await api('DELETE', `/api/agents/${d.fire}`); closeDrawer(); }
     return;

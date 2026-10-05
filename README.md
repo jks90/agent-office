@@ -68,7 +68,8 @@ El Guide Agent necesita saber qué está viendo el usuario, sin visión ni captu
 El Guide no es un worker: es la capa de conversación/supervisión por encima del orquestador. No duplica nada: cada tool delega en `team.js`, `context.js`, `events.js` o `git.js`.
 
 - **Registro** (`server/guide/tools.js`): `{name, description, input (JSON Schema), policy, handler(args, ctx)}`. `GET /api/guide/tools` lo lista. Familias: `app.*` (`getContext`, `navigate`, `openTask`, `selectAgent`, `openArtifact`), `flowtest.show`, `project.list/run`, `task.list/get/create/update/assign/getStatus/delete`, `agent.list/status/getLastActions/getModifiedFiles/getArtifacts`.
-- **Pendientes (501)**: `task.pause/resume/stop` y `agent.message` (los implementa FT-5) y `flowtest.deleteFlow` (flow-test aún no expone el borrado). Están registradas y devuelven 501 sin pedir confirmación.
+- **Control de workers** (FT-5): `task.pause/resume/stop`, `task.addConstraint` y `agent.message` ya funcionan (ver «Control de workers»).
+- **Pendientes (501)**: `flowtest.deleteFlow` (flow-test aún no expone el borrado). Están registradas y devuelven 501 sin pedir confirmación.
 - **Políticas** (`server/guide/policy.js`): `read` y `navigate` automáticas; `execute` y `write` según `settings.guidePolicy = {execute:'auto'|'confirm', write:'auto'|'confirm'}` (por defecto `execute=auto`, `write=confirm`; se cambia en Ajustes ▸ 🛡 Guide Agent); `irreversible` (`task.delete`) **siempre** pide confirmación.
 - **Confirmación**: reutiliza `questions.js` con `kind:'confirm'` (opciones Sí/No, sin respuesta libre, sin tarea asociada). El modal existente la pinta con 🛡; si se rechaza, la tool responde 403 y no hace nada. Sin respuesta en 10 min cuenta como «No».
 - **Auditoría**: `data/guide-audit.jsonl` (rota a 5 MB): `{ts, tool, args resumidos, policy, mode, confirmed, via, client, result: ok|denied|error, status, error, ms}`.
@@ -81,6 +82,15 @@ El Guide no es un worker: es la capa de conversación/supervisión por encima de
 echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | node bin/ao-mcp.mjs
 curl -X POST localhost:7420/api/guide/tool -H 'content-type: application/json' -d '{"name":"task.create","args":{"projectId":"…","title":"…","role":"back"}}'
 ```
+
+## Control de workers (FT-5)
+
+Intervenir en un agente que trabaja (sección 6.3 de la especificación del Guide):
+
+- **Pausar / reanudar**: `POST /api/agents/:id/pause` y `/resume`. Los motores reales se lanzan con `detached:true` (grupo de procesos propio): pausa = `SIGSTOP` al grupo (`ps` → STAT `T`), reanudar = `SIGCONT`; parar manda `SIGTERM`+`SIGCONT` al grupo (un grupo parado no recibiría la señal). El agente pasa a `status:'paused'` («en pausa» en tarjeta, cajón y oficina 3D) y la tarea sigue `doing`. Eventos `AgentPaused` (`reason:'paused-by-user'`) / `AgentResumed`. El motor demo se congela sin avanzar.
+- **Mensaje en caliente**: `POST /api/agents/:id/message {text, constraint?}`. **Claude** corre con `--input-format stream-json` y stdin abierto: el prompt inicial es el primer mensaje de usuario y el mensaje se inyecta como otro, precedido de «INSTRUCCIÓN DEL CLIENTE (prioritaria):». Con stdin abierto el CLI no sale solo, así que se cierra 2,5 s tras un `result` si no arranca otro turno; manda el último `result`. **Codex/demo** (sin entrada en caliente): se registra el mensaje, se para al agente y se reencola la misma tarea (misma rama/worktree) con el mensaje en el prompt (`pendingMessages`, se consumen al lanzarse).
+- **Constraints**: `task.constraints[] = {text, at, origin}` (`POST /api/tasks/:id/constraints` o `constraint:true` en el mensaje). Van **siempre** en `buildPrompt` («Restricciones del cliente (obligatorias…)»), también tras Devolver o reintentar. El modal de la tarea las lista. Evento `UserInstructionAdded` (`kind: 'message'|'constraint'`).
+- **UI**: botones ⏸ Pausar / ▶ Reanudar / ✉ Mensaje en la tarjeta del agente, el cajón y el modal de la tarea.
 
 ## Motores
 

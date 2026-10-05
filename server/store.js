@@ -68,8 +68,10 @@ export function changed() {
 }
 // Al apagar (systemctl stop/restart, Ctrl+C) se vuelca lo pendiente: con el debounce, un reinicio justo tras
 // aprobar/devolver perdía ese cambio y la tarea «volvía» a su estado anterior aunque el merge ya estuviera hecho.
+const shutdownHooks = [];
+export const onShutdown = (fn) => shutdownHooks.push(fn);
 export function flush() { if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; try { save(); } catch { /* disco */ } } }
-for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(sig, () => { flush(); process.exit(0); });
+for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(sig, () => { for (const h of shutdownHooks) { try { h(); } catch { /* no bloquear el apagado */ } } flush(); process.exit(0); });
 process.on('beforeExit', flush);
 
 export const newId = () => Math.random().toString(36).slice(2, 8);

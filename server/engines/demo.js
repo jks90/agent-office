@@ -48,8 +48,10 @@ export function start({ agent, task, mode, goal, roles, onActivity, onLog, onToo
 
   let i = 0;
   let callId = null;
+  let paused = false;
   const next = () => {
     if (stopped) return;
+    if (paused) { timer = setTimeout(next, 300); return; } // en pausa: sin avanzar (FT-5)
     if (callId) { onTool({ phase: 'finished', callId, ok: true }); callId = null; }
     if (i >= steps.length) {
       if (mode === 'plan') return finish({ ok: true, summary: 'Plan listo', tasks: demoPlan(goal, roles), costUsd: 0 });
@@ -67,6 +69,8 @@ export function start({ agent, task, mode, goal, roles, onActivity, onLog, onToo
 
   return {
     done,
+    pause() { paused = true; },
+    resume() { paused = false; },
     stop() { stopped = true; clearTimeout(timer); finish({ ok: false, stopped: true, error: 'Parado por el usuario' }); },
   };
 }

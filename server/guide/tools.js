@@ -36,6 +36,8 @@ const findProject = (ref) => {
   return p;
 };
 const projectOf = (t) => store.get().projects.find((p) => p.id === t.projectId);
+// Agente que está ejecutando la tarea (para pausar/reanudar/parar por código de tarea).
+const doingAgent = (code) => { const t = findTask(code); if (t.status !== 'doing' || !t.agentId) throw fail(409, `La tarea ${t.code || t.id} no está en curso`); return t.agentId; };
 const agentOfTask = (t) => store.get().agents.find((a) => a.id === t.agentId);
 
 const brief = (t) => ({
@@ -119,10 +121,16 @@ export const tools = [
     ({ code, agentId }) => brief(team.assignTask(findTask(code).id, agentId ? findAgent(agentId).id : null))),
   T('task.getStatus', 'Estado de una tarea con sus últimas acciones (log del agente) y eventos del Activity Stream.', obj({ code: str('Código de la tarea'), limit: { type: 'integer', description: 'Máx. de acciones/eventos (20 por defecto)' } }, ['code']), 'read',
     ({ code, limit }) => { const t = findTask(code); return { ...brief(t), activity: agentOfTask(t)?.activity || '', error: t.error, lastActions: t.agentId ? lastActions(t.agentId, limit) : [], events: activity.list({ taskId: t.id, limit: Number(limit) || 20 }) }; }),
-  later('task.pause', 'Pausa la tarea en curso.', obj({ code: str('Código de la tarea') }, ['code']), 'execute'),
-  later('task.resume', 'Reanuda una tarea pausada.', obj({ code: str('Código de la tarea') }, ['code']), 'execute'),
-  later('task.stop', 'Detiene la tarea en curso.', obj({ code: str('Código de la tarea') }, ['code']), 'execute'),
-  later('agent.message', 'Envía una instrucción a un agente que está trabajando.', obj({ agentId: str('Id o nombre del agente'), message: str('Mensaje') }, ['agentId', 'message']), 'write'),
+  T('task.pause', 'Pausa al agente que trabaja en la tarea (SIGSTOP al proceso; la tarea sigue en curso).', obj({ code: str('Código de la tarea') }, ['code']), 'execute',
+    ({ code }) => briefAgent(team.pauseAgent(doingAgent(code)))),
+  T('task.resume', 'Reanuda al agente pausado de la tarea.', obj({ code: str('Código de la tarea') }, ['code']), 'execute',
+    ({ code }) => briefAgent(team.resumeAgent(doingAgent(code)))),
+  T('task.stop', 'Detiene al agente que trabaja en la tarea (mata su proceso; la tarea queda fallida y se puede reintentar).', obj({ code: str('Código de la tarea') }, ['code']), 'execute',
+    ({ code }) => { team.stopAgent(doingAgent(code)); return { stopped: true }; }),
+  T('task.addConstraint', 'Añade una restricción persistente a la tarea: se incluye siempre en el prompt del agente, también tras Devolver.', obj({ code: str('Código de la tarea'), text: str('Restricción, p. ej. «no toques server/index.js»') }, ['code', 'text']), 'write',
+    ({ code, text }) => brief(team.addConstraint(findTask(code).id, text, 'guide'))),
+  T('agent.message', 'Envía una instrucción a un agente que está trabajando (Claude: en caliente; Codex/demo: reencola la tarea con el mensaje). constraint=true la guarda además como restricción de la tarea.', obj({ agentId: str('Id o nombre del agente'), message: str('Mensaje'), constraint: { type: 'boolean', description: 'Guardarla como restricción persistente de la tarea' } }, ['agentId', 'message']), 'write',
+    ({ agentId, message, constraint }) => team.messageAgent(findAgent(agentId).id, { text: message, constraint: !!constraint, origin: 'guide' })),
 
   // — Agentes —
   T('agent.list', 'Lista los agentes de la empresa (rol, motor, estado, actividad actual).', obj({ projectId: str('Solo la plantilla de este proyecto (opcional)') }), 'read',
