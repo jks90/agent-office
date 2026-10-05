@@ -121,12 +121,22 @@ function guideMount(el, panel) {
     <div class="g-main">
       <div class="g-head"><b class="g-title">🧭 Guía</b>${panel ? '<select class="g-pick" title="Chats"></select><button class="ghost small" data-g="new">＋</button><button class="ghost small" data-g="close" title="Cerrar (Ctrl+G)">✕</button>' : ''}</div>
       <div class="g-msgs"></div>
-      <form class="g-form"><textarea rows="1" placeholder="Pídeme algo…" title="Intro envía · Mayús+Intro salto de línea"></textarea><button class="g-send">Enviar</button><button type="button" class="ghost g-stop" data-g="stop" hidden>■ Parar</button></form>
+      <div class="g-voice" hidden><span class="g-vtxt"></span><i class="g-vlevel"></i></div>
+      <form class="g-form"><button type="button" class="ghost g-mic" data-g="mic" title="Mantén pulsado para hablar (o barra espaciadora con la caja vacía)">🎤</button><textarea rows="1" placeholder="Pídeme algo…" title="Intro envía · Mayús+Intro salto de línea · barra espaciadora con la caja vacía = hablar"></textarea><button class="g-send">Enviar</button><button type="button" class="ghost g-stop" data-g="stop" hidden>■ Parar</button></form>
     </div></div>`;
   guideRoots.push({ el, panel });
   const ta = el.querySelector('textarea');
   el.querySelector('form').onsubmit = (e) => { e.preventDefault(); const t = ta.value.trim(); if (t && !G.busy) { ta.value = ''; ta.style.height = ''; guideSend(t); } };
   ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); el.querySelector('form').requestSubmit(); } });
+  // Voz (FT-9): mantener 🎤, o la barra espaciadora con la caja vacía
+  const mic = el.querySelector('.g-mic');
+  for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) mic.addEventListener(ev, () => voiceHold(false));
+  mic.addEventListener('pointerdown', (e) => { e.preventDefault(); voiceHold(true, el); });
+  const spaceKey = (e) => e.key === ' ' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing;
+  ta.addEventListener('keydown', (e) => { if (spaceKey(e) && !ta.value.trim()) { e.preventDefault(); if (!e.repeat) voiceHold(true, el); } });
+  ta.addEventListener('keyup', (e) => { if (e.key === ' ' && V.holding) { e.preventDefault(); voiceHold(false); } });
+  mic.addEventListener('keydown', (e) => { if (spaceKey(e)) { e.preventDefault(); if (!e.repeat) voiceHold(true, el); } });
+  mic.addEventListener('keyup', (e) => { if (e.key === ' ') voiceHold(false); });
   ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 140) + 'px'; });
   el.addEventListener('click', (e) => {
     const b = e.target.closest('[data-g], [data-gchat], [data-ghint]');
@@ -161,6 +171,11 @@ function guideRender() {
     el.querySelector('.g-send').hidden = G.busy;
     el.querySelector('.g-stop').hidden = !G.busy;
     el.querySelector('textarea').disabled = G.busy;
+    const mic = el.querySelector('.g-mic'), vbar = el.querySelector('.g-voice'), mine = V.root === el && V.state !== 'idle';
+    mic.disabled = G.busy || (V.state !== 'idle' && !mine);
+    mic.classList.toggle('rec', mine && V.state === 'rec');
+    vbar.hidden = !mine;
+    vbar.firstChild.textContent = V.state === 'rec' ? '🔴 Te escucho… suelta para enviar (o corto solo tras un silencio)' : V.state === 'stt' ? '⏳ Transcribiendo… puedes seguir usando la aplicación' : '';
   }
 }
 
@@ -200,6 +215,8 @@ $('#guide-fab').addEventListener('click', () => guideToggle(true));
 document.addEventListener('keydown', (e) => { if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'g') { e.preventDefault(); guideToggle(); } });
 
 async function guideSend(text) {
+  voiceSpeak(null); // callar lo que estuviera leyendo (FT-9)
+  let said = '';
   G.busy = true;
   G.messages.push({ role: 'user', text });
   guideRender();
@@ -219,16 +236,115 @@ async function guideSend(text) {
         if (!data) continue;
         const ev = JSON.parse(data[1]);
         if (ev.type === 'chat') { G.chatId = ev.chat.id; safeSet('ao:guide-chat', G.chatId); guideRefresh(); }
-        else if (ev.type === 'text') push({ role: 'assistant', text: ev.text });
+        else if (ev.type === 'text') { said += (said ? '\n' : '') + ev.text; push({ role: 'assistant', text: ev.text }); }
         else if (ev.type === 'tool_call') push({ role: 'tool', id: ev.id, name: ev.name, args: ev.args, ok: null, result: null });
         else if (ev.type === 'tool_result') { const m = G.messages.findLast((x) => x.role === 'tool' && x.id === ev.id); if (m) { m.ok = ev.ok; m.result = ev.result; } guideRender(); }
         else if (ev.type === 'error') push({ role: 'error', text: ev.error, stopped: !!ev.stopped });
       }
     }
   } catch (e) { push({ role: 'error', text: 'Se cortó la conexión con el servidor: ' + e.message }); }
-  finally { G.busy = false; guideRender(); guideRefresh(); }
+  finally { G.busy = false; guideRender(); guideRefresh(); voiceSpeak(said); }
 }
 function guideStop() { if (G.chatId) api('POST', '/api/guide/stop', { chatId: G.chatId }); }
+
+// ── Voz del Guía 🎤 (FT-9) ───────────────────────────────────────────────────
+// Push-to-talk: mantener 🎤 (o la barra espaciadora con la caja vacía) → MediaRecorder + VAD en el cliente → POST /api/guide/stt →
+// el texto entra en la caja y se envía por el MISMO camino que el teclado (guideSend), salvo «revisar antes de enviar».
+// La transcripción es una petición normal: la UI no se bloquea. TTS opcional con speechSynthesis (apagado por defecto).
+const V = { state: 'idle', holding: false, wantStop: false, rec: null, root: null }; // state: idle | rec | stt
+const VAD = { threshold: 0.02, silenceMs: 700, maxMs: 30000, minMs: 300 }; // RMS del AnalyserNode; corta tras 700 ms de silencio, tope 30 s
+const voicePref = { review: () => safeGet('ao:voice-review') === '1', tts: () => safeGet('ao:voice-tts') === '1' };
+
+// Graba hasta stop() o hasta que el VAD vea silencio tras haber oído voz. → { stop, result: Promise<{blob, mime, spoke, ms}> }
+async function voiceRecord(onLevel) {
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) throw new Error('Este navegador no puede grabar audio (¿http sin localhost?)');
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'].find((m) => MediaRecorder.isTypeSupported(m));
+  const rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+  const chunks = [];
+  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  const ac = new AudioContext(), an = ac.createAnalyser();
+  an.fftSize = 1024;
+  ac.createMediaStreamSource(stream).connect(an);
+  const buf = new Float32Array(an.fftSize);
+  const t0 = performance.now();
+  let spoke = false, lastVoice = t0, stopped = false, resolve, timer;
+  const result = new Promise((r) => { resolve = r; });
+  const stop = () => { if (stopped) return; stopped = true; clearInterval(timer); if (rec.state !== 'inactive') rec.stop(); };
+  rec.onstop = () => { stream.getTracks().forEach((t) => t.stop()); ac.close().catch(() => {}); resolve({ blob: new Blob(chunks, { type: rec.mimeType || 'audio/webm' }), mime: rec.mimeType || 'audio/webm', spoke, ms: performance.now() - t0 }); };
+  timer = setInterval(() => {
+    an.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (const x of buf) sum += x * x;
+    const rms = Math.sqrt(sum / buf.length), now = performance.now();
+    if (rms > VAD.threshold) { spoke = true; lastVoice = now; }
+    onLevel?.(rms);
+    if ((spoke && now - lastVoice > VAD.silenceMs) || now - t0 > VAD.maxMs) stop();
+  }, 50);
+  rec.start();
+  return { stop, result };
+}
+const blobB64 = (blob) => new Promise((ok, ko) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1] || ''); r.onerror = ko; r.readAsDataURL(blob); });
+const voiceTranscribe = async (r) => api('POST', '/api/guide/stt', { audio: await blobB64(r.blob), mime: r.mime, lang: S.settings.sttLang || 'es' });
+const voiceLevel = (rms) => guideRoots.forEach((r) => r.el.querySelector('.g-vlevel')?.style.setProperty('--lv', Math.min(1, rms * 8).toFixed(2)));
+
+// on=true empieza a grabar en el chat `el`; on=false lo termina (soltar 🎤 / espacio) y manda el audio a transcribir.
+async function voiceHold(on, el) {
+  if (!on) { V.holding = false; V.wantStop = true; V.rec?.stop(); return; }
+  if (V.state !== 'idle' || G.busy) return;
+  V.holding = true; V.wantStop = false; V.state = 'rec'; V.root = el;
+  voiceSpeak(null);
+  guideRender();
+  try { V.rec = await voiceRecord(voiceLevel); }
+  catch (e) { V.state = 'idle'; V.holding = false; guideRender(); return toast(/Permission|NotAllowed/i.test(e.name + e.message) ? 'Sin permiso de micrófono: concédelo al sitio en el navegador' : 'No puedo usar el micrófono: ' + e.message, 'error'); }
+  if (V.wantStop) V.rec.stop(); // soltó antes de que el navegador diera el micro
+  const r = await V.rec.result;
+  V.rec = null; V.holding = false;
+  if (r.ms < VAD.minMs) { V.state = 'idle'; guideRender(); return; }
+  V.state = 'stt'; guideRender();
+  let text = '';
+  try { text = (await voiceTranscribe(r)).text; } catch { /* api() ya mostró el toast */ V.state = 'idle'; guideRender(); return; }
+  V.state = 'idle';
+  guideRender();
+  if (!text) return toast('No te he oído: prueba otra vez');
+  const ta = V.root.querySelector('textarea');
+  ta.value = (ta.value.trim() ? ta.value.trim() + ' ' : '') + text;
+  ta.dispatchEvent(new Event('input'));
+  if (voicePref.review() || G.busy) ta.focus(); // el usuario corrige y pulsa Intro
+  else V.root.querySelector('form').requestSubmit();
+}
+
+// TTS opcional: solo respuestas cortas y sin código. voiceSpeak(null) calla.
+function voiceSpeak(text) {
+  if (!window.speechSynthesis) return;
+  speechSynthesis.cancel();
+  if (!text || !voicePref.tts() || text.length > 320 || /```/.test(text)) return;
+  const plain = text.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[*_`#>]/g, '').replace(/\s+/g, ' ').trim();
+  if (!plain) return;
+  const u = new SpeechSynthesisUtterance(plain);
+  u.lang = ({ es: 'es-ES', en: 'en-US', ca: 'ca-ES', fr: 'fr-FR', de: 'de-DE', pt: 'pt-PT', it: 'it-IT' })[S.settings.sttLang] || navigator.language || 'es-ES';
+  speechSynthesis.speak(u);
+}
+
+// Ajustes ▸ «Probar micrófono»: graba (corta sola tras el silencio), enseña el nivel y la transcripción con su latencia.
+let voiceTestRec = null;
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-voice-test]');
+  if (!b) return;
+  if (voiceTestRec) return voiceTestRec.stop();
+  const out = $('#voice-test');
+  out.textContent = 'Pidiendo el micrófono…';
+  try {
+    voiceTestRec = await voiceRecord((rms) => { out.innerHTML = `🔴 Habla ahora… <i class="g-vlevel" style="--lv:${Math.min(1, rms * 8).toFixed(2)}"></i>`; });
+    b.textContent = '■ Parar';
+    const r = await voiceTestRec.result;
+    voiceTestRec = null; b.textContent = '🎤 Probar micrófono';
+    if (!r.spoke) { out.textContent = `No he oído voz por encima del umbral (${(r.ms / 1000).toFixed(1)} s grabados). Revisa el micrófono del sistema.`; return; }
+    out.textContent = '⏳ Transcribiendo…';
+    const t = await voiceTranscribe(r);
+    out.innerHTML = `✓ <b>«${esc(t.text || '(vacío)')}»</b> <span class="muted">· ${esc(t.provider)} · ${t.ms} ms · audio ${(r.ms / 1000).toFixed(1)} s</span>`;
+  } catch (err) { voiceTestRec = null; b.textContent = '🎤 Probar micrófono'; out.textContent = '✗ ' + (err.message || 'No se pudo grabar'); }
+});
 
 // ── Pintado ─────────────────────────────────────────────────────────────────
 // Pestañas de administración (Oficina / Tareas / Agentes), recordadas por navegador.
@@ -709,6 +825,14 @@ Pasos, convenciones y ejemplos…</textarea>
     <label>Agentes trabajando a la vez (máx.)</label><input name="maxParallel" type="number" min="1" max="8" value="${S.settings.maxParallel}" />
     <div class="section-title">🧭 Guía (FT-6)</div>
     <label>Modelo de Claude con el que conversa el Guía</label>${modelSelect('guideModel', 'claude', S.settings.guideModel || '')}
+    <div class="section-title">🎤 Voz (FT-9)</div>
+    <label>Transcripción (STT) <span id="stt-info" class="muted"></span></label>
+    <select name="sttProvider"><option value="local-cmd" ${S.settings.sttProvider !== 'openai' ? 'selected' : ''}>Local · faster-whisper / AO_STT_CMD</option><option value="openai" ${S.settings.sttProvider === 'openai' ? 'selected' : ''}>OpenAI · /v1/audio/transcriptions</option></select>
+    <label>Idioma hablado</label>
+    <select name="sttLang">${[['es', 'Español'], ['en', 'English'], ['ca', 'Català'], ['fr', 'Français'], ['de', 'Deutsch'], ['pt', 'Português'], ['it', 'Italiano'], ['auto', 'Detectar']].map(([k, n]) => `<option value="${k}" ${(S.settings.sttLang || 'es') === k ? 'selected' : ''}>${n}</option>`).join('')}</select>
+    <label><input type="checkbox" name="voiceReview" ${voicePref.review() ? 'checked' : ''} /> Revisar antes de enviar (el texto dictado queda en la caja)</label>
+    <label><input type="checkbox" name="voiceTts" ${voicePref.tts() ? 'checked' : ''} /> Leer en voz alta las respuestas cortas del Guía (solo en este navegador)</label>
+    <div style="display:flex;gap:8px;align-items:center"><button type="button" class="small" data-voice-test>🎤 Probar micrófono</button><span id="voice-test" class="muted"></span></div>
     <div class="section-title">🛡 Guide Agent — qué puede hacer sin preguntarte (FT-4)</div>
     <label>Acciones que ponen a trabajar o pausan al equipo (ejecutar)</label>
     <select name="guideExecute"><option value="auto" ${S.guidePolicy?.execute === 'auto' ? 'selected' : ''}>Automático</option><option value="confirm" ${S.guidePolicy?.execute === 'confirm' ? 'selected' : ''}>Pedir confirmación</option></select>
@@ -727,6 +851,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <hr style="border-color:var(--line);margin:16px 0" />
     <button type="button" class="danger small" data-delete-project>Borrar el proyecto «${esc(project()?.name)}»</button>
     ${buttons()}`, async (f) => {
+    safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0');
     await api('POST', '/api/settings', { ...f, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guidePolicy: { execute: f.guideExecute, write: f.guideWrite } });
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
@@ -975,6 +1100,7 @@ document.addEventListener('click', async (e) => {
 
 document.addEventListener('click', (e) => {
   if (e.target.closest('[data-action="settings"]')) {
+    api('GET', '/api/guide/stt').then((st) => { const el = $('#stt-info'); if (el) el.innerHTML = st.providers.map((p) => `· ${esc(p.name)}: ${p.ok ? '<span class="ok">disponible</span>' : `<span class="bad" title="${esc(p.reason)}">no disponible</span>`}`).join(' '); }).catch(() => {});
     setTimeout(() => { refreshEngines(); clearInterval(enginesTimer); enginesTimer = setInterval(refreshEngines, 2500); renderBoardCfg(); }, 50);
     api('GET', '/api/flows').then((flows) => {
       const sel = $('#import-flow');

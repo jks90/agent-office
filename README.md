@@ -92,7 +92,7 @@ Intervenir en un agente que trabaja (sección 6.3 de la especificación del Guid
 - **Constraints**: `task.constraints[] = {text, at, origin}` (`POST /api/tasks/:id/constraints` o `constraint:true` en el mensaje). Van **siempre** en `buildPrompt` («Restricciones del cliente (obligatorias…)»), también tras Devolver o reintentar. El modal de la tarea las lista. Evento `UserInstructionAdded` (`kind: 'message'|'constraint'`).
 - **UI**: botones ⏸ Pausar / ▶ Reanudar / ✉ Mensaje en la tarjeta del agente, el cajón y el modal de la tarea.
 
-## 🧭 Guía (FT-6 · FT-12)
+## 🧭 Guía (FT-6 · FT-9 · FT-12)
 
 Mapa rápido (cada pieza es una tarea y tiene su sección en este README): eventos **FT-1** · contexto de la UI **FT-2** · contexto de flow-test **FT-3** (en el repo flow-test) · tools, políticas y MCP **FT-4** · control de workers **FT-5** · chat y proveedores **FT-6** · Task Capture **FT-7** · e2e **FT-11** · documentación **FT-12**. Cómo encaja todo: flow `flowtest/arquitectura-guide.flow.json` del workspace (Mermaid de arquitectura, eventos y permisos + cajitas ejecutables contra `/api/context`, `/api/events` y `/api/guide/tool`) y, comparado con la especificación, `AgentOffice - Guía y oficina de agentes.md` en la carpeta docs/ del proyecto (12-flowtest).
 
@@ -105,9 +105,19 @@ Ejemplos reales (uno por flujo; el Guide los resuelve con las tools de FT-4):
 | C · intervenir | «Páralo un momento» / «dile que no toque esa clase» | `task.pause` (luego `task.resume`) / `agent.message` con `constraint:true` |
 | D · mostrar | «Enséñame lo que ha cambiado» | `agent.getModifiedFiles` + `app.openArtifact` (diff) y `flowtest.show` si es un flow |
 
-**Voz: no implementada.** Es la fase 2 de la especificación (push-to-talk + VAD + STT). Cuando exista será otra entrada al mismo `POST /api/guide/chat`; hoy el Guide solo entiende texto.
+**Voz (FT-9)**: otra entrada al mismo `POST /api/guide/chat`; no hay un pipeline aparte.
 
-**Variables de entorno de la Guía**: `AO_GUIDE_FAKE=1` (registra el proveedor de pruebas `fake`, solo para e2e), `AO_CLAUDE_BIN` (binario `claude`, también lo usa el proveedor `claude-cli`), `AO_URL` y `AO_TOKEN` (las lee `bin/ao-mcp.mjs` para llegar a la API; el token solo hace falta si AgentOffice escucha fuera de loopback, `AO_HOST=0.0.0.0`, y entonces se lee de `data/.token`), `AO_ASK_TIMEOUT_MIN` (preguntas al cliente). Ajustes (`POST /api/settings`): `guideProvider`, `guideModel`, `guidePolicy`.
+- **UI**: botón 🎤 junto a la caja del chat (mantener pulsado) o **barra espaciadora con la caja vacía** (mantener). `MediaRecorder` (`audio/webm;codecs=opus`, con alternativas si el navegador no lo soporta) y un **VAD** simple en el cliente (`AnalyserNode`, RMS > 0,02): corta solo tras **700 ms de silencio** una vez oída la voz, con tope de **30 s**; soltar también corta. El audio va a `POST /api/guide/stt` y el texto se inserta en la caja y se envía como si se hubiera escrito. La transcripción es una petición normal: la UI no se bloquea. Si no se oye nada: «No te he oído».
+- **Ajustes ▸ 🎤 Voz**: proveedor STT (`local-cmd`/`openai`, con su disponibilidad), idioma hablado (`settings.sttProvider`, `settings.sttLang`; por defecto `local-cmd`/`es`), «revisar antes de enviar» (el texto queda en la caja para corregirlo), «leer en voz alta» y **🎤 Probar micrófono** (nivel, texto, proveedor y latencia). Las dos casillas son preferencias del navegador (`localStorage`), no del servidor.
+- **TTS opcional**: `speechSynthesis` del navegador lee las respuestas **cortas** (≤ 320 caracteres, sin bloques de código) al terminar el turno. Apagado por defecto; empezar a hablar o enviar algo lo calla.
+- **API**: `GET /api/guide/stt` → `{provider, lang, providers:[{name,label,ok,reason?}]}`; `POST /api/guide/stt {audio: base64, mime, lang?}` → `{text, lang, ms, provider}` (400 sin audio, 413 si pasa de ~9 MB, 503 si el proveedor no está disponible). Pasa por el token como el resto.
+- **Proveedores** (`server/guide/stt/`, interfaz `SttProvider { transcribe(buffer, mime, lang) → {text, lang, ms}, available() }`):
+  - `local-cmd.js`: ejecuta `AO_STT_CMD <fichero> <idioma>` (con comillas si hay espacios) y toma el stdout como texto (o JSON `{"text","lang"}`); sin `AO_STT_CMD` usa `python3 bin/stt-whisper.py` (**faster-whisper**: `pip install faster-whisper`; `AO_WHISPER_MODEL` por defecto `base`, `AO_WHISPER_DEVICE` `cpu|cuda`). Un script que imprima un texto fijo basta para probar sin micrófono.
+  - `openai.js`: `/v1/audio/transcriptions` (`whisper-1`, `AO_STT_OPENAI_MODEL`; `AO_OPENAI_BASE` para otro endpoint). La clave sale de `getApiKey('openai')` en `server/engines/auth.js`: `OPENAI_API_KEY`, la guardada en `.ai-keys.json` o la de Codex en `~/.codex/auth.json`.
+- **Navegador**: el micrófono solo se concede en `localhost` o `https`; con `AO_HOST=0.0.0.0` por http sin TLS el 🎤 avisa de que no puede grabar.
+- **Prueba**: `node scripts/voice-e2e.mjs [captura.png]` (sin micrófono ni Claude): `AO_STT_CMD` → script con texto fijo «¿Cómo va?», proveedor `fake` del Guide y el micrófono falso de Chrome (necesita `puppeteer-core` y Chrome; sin ellos solo prueba la API). Comprueba el flujo 🎤 → texto en el chat → respuesta, «revisar antes de enviar», la barra espaciadora y los errores del STT.
+
+**Variables de entorno de la Guía**: `AO_GUIDE_FAKE=1` (registra el proveedor de pruebas `fake`, solo para e2e), `AO_CLAUDE_BIN` (binario `claude`, también lo usa el proveedor `claude-cli`), `AO_URL` y `AO_TOKEN` (las lee `bin/ao-mcp.mjs` para llegar a la API; el token solo hace falta si AgentOffice escucha fuera de loopback, `AO_HOST=0.0.0.0`, y entonces se lee de `data/.token`), `AO_ASK_TIMEOUT_MIN` (preguntas al cliente). Ajustes (`POST /api/settings`): `guideProvider`, `guideModel`, `guidePolicy`, `sttProvider`, `sttLang` (voz, FT-9; también `AO_STT_CMD`, `AO_WHISPER_MODEL`, `AO_WHISPER_DEVICE`).
 
 **Contrato con flow-test (FT-3 ↔ FT-2/FT-4, revisado en FT-12)**: flow-test (`AgentsPanel.tsx`) manda `flowtest:context {activeTab, focusedNode, selection, consoleTail, runStatus, sidePanel}` al cargar el iframe, al recibir `agentoffice:ready` y en cada cambio; AgentOffice lo aplana al `host` del contexto (`flow, filePath, node, nodeId, nodeLabel, consoleTail, running…`), manda `agentoffice:ready` al arrancar embebido y, para `flowtest.show`, emite `agentoffice:navigate {flow, node}` (y `agentoffice:openDiff {text}` queda disponible en flow-test para un diff). La documentación de FT-12 detectó que los dos lados no coincidían; corregido en AgentOffice en `747fc4f`.
 
@@ -140,8 +150,9 @@ server/index.js     HTTP + API REST + SSE (/events)
 server/team.js      proyectos, agentes, tareas, planificador, revisión
 server/events.js    Activity Stream tipado (FT-1)
 server/context.js   contexto de la UI para el Guide Agent (FT-2)
-server/guide/       Guide Agent: tools + política + auditoría (FT-4), chats, prompt y proveedores (FT-6)
+server/guide/       Guide Agent: tools + política + auditoría (FT-4), chats, prompt y proveedores (FT-6), voz STT en stt/ (FT-9)
 bin/ao-mcp.mjs      servidor MCP stdio del Guide (FT-4)
+bin/stt-whisper.py  STT local con faster-whisper (FT-9)
 server/git.js       worktrees, commit, diff, merge
 server/engines/     demo · claude · codex (+ describe.js: herramienta → frase del bocadillo)
 public/office.js    la oficina: pixel art en canvas, rutas por pasillos, bocadillos
