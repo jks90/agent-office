@@ -202,8 +202,7 @@ try {
   const mk = async (project, title, role) => (await post('/api/tasks', { projectId: project.id, title, role, description: 'e2e' })).body;
   const tEv = await mk(A, 'Tarea de eventos', 'back');
   const tPause = await mk(A, 'Tarea para pausar', 'front');
-  const tMsg = await mk(A, 'Tarea para mensaje', 'qa');
-  check('las tareas nacen con código legible', [tEv, tPause, tMsg].every((t) => new RegExp(`^${PA}-\\d+$`).test(t.code || '')), [tEv.code, tPause.code, tMsg.code].join(','));
+  check('las tareas nacen con código legible', [tEv, tPause].every((t) => new RegExp(`^${PA}-\\d+$`).test(t.code || '')), [tEv.code, tPause.code].join(','));
   check('POST /api/tasks sin título se rechaza (400)', (await post('/api/tasks', { projectId: A.id, role: 'back' })).status === 400);
   await post(`/api/projects/${A.id}/run`, { running: true });
 
@@ -229,6 +228,8 @@ try {
 
   // agent.message con constraint: el demo no admite entrada en caliente → reencola la MISMA tarea.
   section('Flujo C · agent.message con constraint (demo reencola)');
+  // La tarea se crea AQUÍ (no al principio): el demo tarda un tiempo aleatorio y si ya hubiera terminado no estaría «doing».
+  const tMsg = await mk(A, 'Tarea para mensaje', 'qa');
   const msgTask = await until(async () => { const t = await taskByCode(tMsg.code); return t?.status === 'doing' ? t : null; });
   const msgAgent = msgTask && await agentOf(msgTask);
   await post('/api/settings', { guidePolicy: { write: 'auto' } });
@@ -246,7 +247,8 @@ try {
   // Esperar a que la tarea de eventos termine y comprobar el orden.
   const evTask = await until(async () => { const t = await taskByCode(tEv.code); return t?.status === 'review' ? t : null; });
   check('la tarea de eventos llega a «review»', !!evTask);
-  const evs = (await get(`/api/events?taskId=${tEv.code}&limit=500`)).body;
+  // El AgentCompleted se emite justo tras poner la tarea en «review»: se espera (hasta 3 s) a que sea el último evento.
+  const evs = (await until(async () => { const l = (await get(`/api/events?taskId=${tEv.code}&limit=500`)).body; return l.at(-1)?.type === 'AgentCompleted' ? l : null; }, 3000)) || (await get(`/api/events?taskId=${tEv.code}&limit=500`)).body;
   const types = evs.map((e) => e.type);
   const firstAt = (t) => types.indexOf(t);
   const order = ['TaskCreated', 'TaskAssigned', 'AgentStarted', 'AgentToolStarted', 'AgentToolFinished', 'AgentArtifactCreated', 'AgentCompleted'];
