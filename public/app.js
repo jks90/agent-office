@@ -72,9 +72,13 @@ function render() {
 function renderTeam() {
   $('#team').innerHTML = team().map((a) => `
     <div class="member ${a.id === drawerAgent ? 'sel' : ''}" style="--c:${S.roles[a.role]?.color}" data-agent="${a.id}">
-      <div class="top"><span class="dot ${a.status}"></span><b>${esc(a.name)}</b> ${roleChip(a.role)}<span class="eng">${esc(a.engine)}</span></div>
-      <div class="act">${a.status === 'working' ? esc(a.activity) : 'En la zona de descanso ☕'}</div>
-    </div>`).join('') || '<p class="muted">Sin agentes. Contrata a alguien.</p>';
+      <div class="top">
+        <span class="avatar">${esc(a.name).charAt(0).toUpperCase()}</span>
+        <div class="member-main"><b>${esc(a.name)}</b><div class="act">${a.status === 'working' ? esc(a.activity) : 'En la zona de descanso ☕'}</div></div>
+        <span class="eng">${esc(a.engine)}</span>
+      </div>
+      <div class="member-foot">${roleChip(a.role)}<span class="state ${a.status}"><span class="dot ${a.status}"></span>${a.status === 'working' ? 'Trabajando' : 'Descansando'}</span></div>
+    </div>`).join('') || '<p class="empty">Sin agentes todavía. Contrata a alguien para empezar.</p>';
 }
 
 const COLS = [
@@ -89,7 +93,7 @@ function renderBoard() {
   $('#board').innerHTML = COLS.map(([st, label, c]) => {
     const items = list.filter((t) => t.status === st || (st === 'todo' && t.status === 'failed'))
       .sort((a, b) => (st === 'done' ? b.updatedAt - a.updatedAt : a.createdAt - b.createdAt));
-    return `<div class="col" style="--c:${c}"><h4>${label}<span>${items.length}</span></h4><div class="cards">${items.map(card).join('')}</div></div>`;
+    return `<div class="col" style="--c:${c}"><h4><span>${label}</span><span class="count">${items.length}</span></h4><div class="cards">${items.map(card).join('') || '<div class="empty">Nada por aquí</div>'}</div></div>`;
   }).join('');
 }
 
@@ -107,10 +111,10 @@ function card(t) {
   }
   if (t.status === 'failed') acts.push(`<button class="small" data-reject="${t.id}">↻ Reintentar</button>`);
   if (['todo', 'failed', 'done'].includes(t.status)) acts.push(`<button class="small danger" data-del="${t.id}">Borrar</button>`);
-  return `<div class="card ${t.status}">
-    <div class="meta">${roleChip(t.role)} <span>#${t.id}</span>${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}</div>
+  return `<div class="card ${t.status}" style="--c:${S.roles[t.role]?.color}">
+    <div class="card-head">${roleChip(t.role)} <span class="task-id">#${t.id}</span>${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}</div>
     <div class="t">${esc(t.title)}</div>
-    <div class="meta">${agent ? `👤 ${esc(agent.name)}` : ''} ${deps ? `<span>depende de ${deps}</span>` : ''}${t.costUsd ? ` <span>💲${t.costUsd.toFixed(3)}</span>` : ''}</div>
+    <div class="meta">${agent ? `<span>👤 ${esc(agent.name)}</span>` : ''}${deps ? `<span>depende de ${deps}</span>` : ''}${t.costUsd ? ` <span>💲${t.costUsd.toFixed(3)}</span>` : ''}</div>
     ${t.status === 'doing' && agent ? `<div class="live">● ${esc(agent.activity)}</div>` : ''}
     ${t.summary && t.status !== 'doing' ? `<div class="sum">${esc(t.summary)}</div>` : ''}
     ${t.error ? `<div class="err">${esc(t.error)}</div>` : ''}
@@ -141,7 +145,7 @@ function renderDrawer() {
   }
   d.dataset.agent = a.id;
   d.innerHTML = `
-    <div class="head"><h2>${esc(a.name)}</h2>${roleChip(a.role)}<div class="spacer"></div><button class="ghost small" data-close>✕</button></div>
+    <div class="head"><span class="avatar" style="--c:${S.roles[a.role]?.color}">${esc(a.name).charAt(0).toUpperCase()}</span><h2>${esc(a.name)}</h2>${roleChip(a.role)}<div class="spacer"></div><button class="ghost small" data-close>✕</button></div>
     <div class="grid">
       <span class="muted">Estado</span><span data-f="status"></span>
       <span class="muted">Tarea</span><span data-f="task"></span>
@@ -167,8 +171,17 @@ function renderLog() {
   if (!el) return;
   const stick = el.scrollTop + el.clientHeight >= el.scrollHeight - 30;
   el.innerHTML = (logs.get(drawerAgent) || []).map((l) =>
-    `<div><span class="ts">${new Date(l.ts).toLocaleTimeString()}</span> ${esc(l.line)}</div>`).join('') || '<span class="muted">Aún no ha hecho nada.</span>';
+    `<div class="log-line ${logKind(l.line)}"><span class="ts">${new Date(l.ts).toLocaleTimeString()}</span> ${esc(l.line)}</div>`).join('') || '<span class="muted">Aún no ha hecho nada.</span>';
   if (stick) el.scrollTop = el.scrollHeight;
+}
+
+function logKind(line) {
+  const s = String(line ?? '').trim();
+  if (/^(⚠|❌)/.test(s) || /\b(error|failed|fall[oó]|exception)\b/i.test(s)) return 'error';
+  if (/^🔧/.test(s) || /\b(tool|herramienta|exec|command)\b/i.test(s)) return 'tool';
+  if (/^💬/.test(s) || /\b(message|mensaje|assistant|user)\b/i.test(s)) return 'message';
+  if (/^(✋|✅)/.test(s) || /\b(done|hecho|milestone|hito|aprob)/i.test(s)) return 'milestone';
+  return '';
 }
 
 // ── Diálogos ───────────────────────────────────────────────────────────────
