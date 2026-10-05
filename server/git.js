@@ -54,8 +54,10 @@ function linkNodeModules(repoPath, dir) {
 export async function commitAll(dir, message, author) {
   await git(dir, 'add', '-A');
   if (!(await git(dir, 'status', '--porcelain'))) return false;
+  const files = (await git(dir, 'diff', '--cached', '--name-only')).split('\n').filter(Boolean); // FT-1: ficheros del commit
   await exec('git', ['-C', dir, '-c', `user.name=${author}`, '-c', 'user.email=agent-office@local', 'commit', '-m', message]);
-  return true;
+  const sha = await git(dir, 'rev-parse', '--short', 'HEAD');
+  return { files, sha };
 }
 
 export const diffStat = (repo, task) => git(repo.path, 'diff', '--stat', `${repo.baseBranch}...${task.branch}`);

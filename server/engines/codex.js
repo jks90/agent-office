@@ -1,7 +1,7 @@
 // Motor Codex: `codex exec --json` en el worktree de la tarea (sandbox workspace-write).
 import { spawn, execFileSync } from 'node:child_process';
 import readline from 'node:readline';
-import { firstLine } from './describe.js';
+import { firstLine, toolSummary } from './describe.js';
 
 // Codex envuelve cada orden en `/usr/bin/zsh -lc "…"`: en el bocadillo solo interesa la orden.
 const unwrap = (cmd) => {
@@ -20,7 +20,7 @@ function bwrapWorks() {
   return sandboxOk;
 }
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, images = [], env: extraEnv = {}, onActivity, onLog }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, images = [], env: extraEnv = {}, onActivity, onLog, onTool = () => {} }) {
   const noSandbox = !bwrapWorks();
   const sandbox = mode === 'plan' ? 'read-only' : 'workspace-write';
   const args = ['exec', '--json', '--skip-git-repo-check', '-C', cwd, ...(noSandbox ? ['--dangerously-bypass-approvals-and-sandbox'] : ['-s', sandbox])];
@@ -44,6 +44,16 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, images = [], e
     const it = ev.item;
     if ((ev.type === 'item.started' || ev.type === 'item.completed') && it) {
       const started = ev.type === 'item.started';
+      // Activity Stream (FT-1): herramientas con id, nombre y resumen sin contenido sensible
+      const tool = { command_execution: ['Bash', { command: unwrap(it.command) }], file_change: ['Edit', { file_path: it.changes?.[0]?.path }], mcp_tool_call: [`mcp__${it.server}__${it.tool}`, {}], web_search: ['WebSearch', { query: it.query }] }[it.type];
+      if (tool) {
+        const call = { callId: it.id, tool: tool[0], summary: toolSummary(...tool) };
+        if (started) onTool({ phase: 'started', ...call });
+        else {
+          if (it.type === 'file_change') onTool({ phase: 'started', ...call }); // file_change solo llega completado
+          onTool({ phase: 'finished', callId: it.id, ok: it.type === 'command_execution' ? !it.exit_code : it.status !== 'failed' });
+        }
+      }
       switch (it.type) {
         case 'command_execution':
           if (started) { onActivity(`Ejecutando \`${firstLine(unwrap(it.command), 50)}\``); onLog('🔧 $ ' + unwrap(it.command)); }

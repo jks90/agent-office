@@ -4,6 +4,7 @@ import path from 'node:path';
 import * as store from './store.js';
 import * as codes from './codes.js';
 import * as questions from './questions.js';
+import * as events from './events.js';
 import * as git from './git.js';
 import { allRoles, roleOf } from './roles.js';
 import { parseTasks } from './engines/describe.js';
@@ -230,6 +231,8 @@ export function fire(id) {
 export function stopAgent(id) {
   const job = jobs.get(id);
   if (!job) throw fail(409, 'Ese agente no está trabajando');
+  const t = get().tasks.find((x) => x.id === job.taskId);
+  events.emit('AgentPaused', events.ctxOf(t, { id }), { reason: 'stopped-by-user' });
   job.stop();
 }
 
@@ -252,6 +255,7 @@ export function createTask({ projectId, title, description = '', role, repo = nu
   codes.assignCode(s.tasks, p, task);
   task.feedbackImages = copyImages(task, images);
   s.tasks.push(task);
+  events.emit('TaskCreated', events.ctxOf(task), { title: task.title, role: task.role, kind: task.kind, status: task.status, dependsOn: task.dependsOn, source: task.source?.kind || null });
   changed();
   if (!source) boards.createRemote(p, task).catch(() => {});
   tick();
@@ -326,6 +330,7 @@ export async function approve(id) {
   }
   t.status = 'done';
   t.updatedAt = Date.now();
+  events.emit('TaskReviewed', events.ctxOf(t), { decision: 'approved', merged: !!t.branch });
   changed();
   reflect(t, `✅ Aprobada en AgentOffice${t.summary ? `\n\n${t.summary.slice(0, 1500)}` : ''}`);
   tick();
@@ -338,6 +343,8 @@ export async function reject(id, feedback = '', images = [], attachments = []) {
   // La rama y el worktree se conservan: el agente corrige sobre su intento anterior.
   if (feedback.trim()) t.feedback = [t.feedback, feedback.trim()].filter(Boolean).join('\n');
   t.feedbackImages = copyImages(t, images);
+  events.emit('TaskReviewed', events.ctxOf(t), { decision: 'rejected', feedback: feedback.trim().slice(0, 500) });
+  if (feedback.trim()) events.emit('UserInstructionAdded', events.ctxOf(t), { kind: 'feedback', text: feedback.trim().slice(0, 500) });
   Object.assign(t, { status: 'todo', agentId: null, diffStat: '', error: null, updatedAt: Date.now() });
   changed();
   reflect(t, feedback.trim() ? `↩ Devuelta en AgentOffice: ${feedback.trim().slice(0, 1000)}` : undefined);
@@ -521,13 +528,18 @@ async function runTask(p, agent, t) {
   Object.assign(agent, { status: 'working', taskId: t.id, activity: t.kind === 'plan' ? 'Leyendo el objetivo' : 'Preparando su copia del repo' });
   changed();
   log(agent.id, `▶ ${t.code || '#' + t.id} ${t.title}`);
+  const ev = events.ctxOf(t, agent);
+  events.emit('TaskAssigned', ev, { agentName: agent.name, role: agent.role, attempt: t.attempts });
+  events.emit('AgentStarted', ev, { engine: agent.engine, attempt: t.attempts });
+  if (t.attempts > 1) events.emit('AgentResumed', ev, { reason: 'retry', attempt: t.attempts });
   reflect(t, `▶ ${agent.name} (${roleOf(agent.role)?.label || agent.role}) empieza a trabajar en AgentOffice`);
 
   let engineId;
-  try { engineId = pickEngine(agent); } catch (e) { Object.assign(t, { status: 'failed', error: e.message, agentId: null }); Object.assign(agent, { status: 'idle', taskId: null, activity: '' }); jobs.delete(agent.id); log(agent.id, '❌ ' + e.message); changed(); return; }
+  try { engineId = pickEngine(agent); } catch (e) { Object.assign(t, { status: 'failed', error: e.message, agentId: null }); Object.assign(agent, { status: 'idle', taskId: null, activity: '' }); jobs.delete(agent.id); log(agent.id, '❌ ' + e.message); events.emit('AgentFailed', ev, { error: e.message.slice(0, 500) }); changed(); return; }
   const engine = ENGINES[engineId] || demo;
   const real = engineId !== 'demo';
   agent.activeEngine = engineId;
+  events.emit('AgentProgress', ev, { activity: `Motor ${engineId}`, engine: engineId });
   if (agent.engine === 'auto') log(agent.id, `🤖 Motor automático → ${engineId}`);
   const role = roleOf(agent.role) || roleOf('back');
   const roles = teamRoles(p);
@@ -556,7 +568,8 @@ async function runTask(p, agent, t) {
       model: modelFor(engineId, agent, role),
       mcpUrl: ['qa', 'docs'].includes(role.kind) ? mcpUrl() : null, // QA y documentalista hablan con flow-test por MCP
       env: { ...engineEnv(engineId), AO_URL: `http://127.0.0.1:${process.env.AO_PORT || 7420}`, AO_TASK: t.id, AO_AGENT: agent.name },
-      onActivity: (text) => { agent.activity = text; changed(); },
+      onActivity: (text) => { agent.activity = text; events.emit('AgentProgress', ev, { activity: text }); changed(); },
+      onTool: (c) => events.emit(c.phase === 'started' ? 'AgentToolStarted' : 'AgentToolFinished', ev, c.phase === 'started' ? { callId: c.callId, tool: c.tool, summary: c.summary } : { callId: c.callId, ok: c.ok }),
       onLog: (line) => log(agent.id, line),
     });
     jobs.set(agent.id, { stop: job.stop, taskId: t.id, engine: engineId });
@@ -577,21 +590,27 @@ async function runTask(p, agent, t) {
       }
       t.summary = `${ids.length} tareas creadas para el equipo.`;
       t.status = 'done';
+      events.emit('AgentCompleted', ev, { status: 'done', summary: t.summary, costUsd: t.costUsd });
       log(agent.id, `✅ Plan listo: ${ids.length} tareas`);
     } else {
       if (t.branch) {
-        await git.commitAll(cwd, t.code ? `${t.code}: ${t.title}` : `${t.title} (#${t.id})`, `${agent.name} (${role.label})`);
+        const c = await git.commitAll(cwd, t.code ? `${t.code}: ${t.title}` : `${t.title} (#${t.id})`, `${agent.name} (${role.label})`);
         t.diffStat = await git.diffStat(repo, t);
+        for (const f of c?.files || []) events.emit('AgentFileModified', ev, { path: f });
+        events.emit('AgentArtifactCreated', ev, { kind: 'commit', branch: t.branch, repo: repo.key, sha: c?.sha || null, files: c?.files || [], diffStat: t.diffStat.slice(-500) });
       } else {
         t.diffStat = res.diffStat || '';
+        events.emit('AgentArtifactCreated', ev, { kind: 'diff', diffStat: t.diffStat.slice(-500) });
       }
       t.status = 'review';
+      events.emit('AgentCompleted', ev, { status: 'review', summary: (t.summary || '').slice(0, 500), costUsd: t.costUsd });
       log(agent.id, '✋ Terminado: esperando tu revisión');
       reflect(t, `✋ ${agent.name} terminó; pendiente de revisión en AgentOffice.${t.diffStat ? `\n\n\`\`\`\n${t.diffStat.slice(0, 800)}\n\`\`\`` : ''}`);
     }
   } catch (e) {
     t.status = 'failed';
     t.error = e.message;
+    events.emit('AgentFailed', ev, { error: String(e.message).slice(0, 500) });
     log(agent.id, '❌ ' + e.message);
     reflect(t, `❌ Falló en AgentOffice: ${String(e.message).slice(0, 500)}`);
   } finally {

@@ -16,6 +16,7 @@ import * as skills from './skills.js';
 import { draftTask } from './ai-draft.js';
 import crypto2 from 'node:crypto';
 import { saveRole, deleteRole } from './roles.js';
+import * as activity from './events.js';
 
 const PORT = Number(process.env.AO_PORT || 7420);
 const HOST = process.env.AO_HOST || '127.0.0.1'; // lanza procesos con tus permisos: solo local
@@ -82,6 +83,8 @@ const gated = (fn) => async (m, b) => {
 
 const routes = [
   ['GET', /^\/api\/state$/, () => snapshot()],
+  // Activity Stream tipado (FT-1)
+  ['GET', /^\/api\/events$/, (_, __, q) => activity.list(q)],
   // Cuentas de los motores de IA (login OAuth/clave API, logout)
   ['GET', /^\/api\/engines$/, () => auth.enginesStatus()],
   ['GET', /^\/api\/engines\/models$/, () => auth.enginesModels()],
@@ -164,10 +167,12 @@ function events(req, res) {
   send('logs', store.allLogs());
   const onState = () => send('state', snapshot());
   const onLog = (entry) => send('log', entry);
+  const onActivity = (ev) => send('activity', ev); // FT-1
   store.bus.on('state', onState);
   store.bus.on('log', onLog);
+  store.bus.on('activity', onActivity);
   const ping = setInterval(() => res.write(': ping\n\n'), 20000);
-  req.on('close', () => { clearInterval(ping); store.bus.off('state', onState); store.bus.off('log', onLog); });
+  req.on('close', () => { clearInterval(ping); store.bus.off('state', onState); store.bus.off('log', onLog); store.bus.off('activity', onActivity); });
 }
 
 // Adjuntos subidos (solo dentro de data/uploads) para verlos desde la tarjeta
@@ -203,7 +208,7 @@ http.createServer(async (req, res) => {
   const route = routes.find(([m, re]) => m === req.method && re.test(pathname));
   if (!route) return res.writeHead(404, { 'content-type': 'application/json' }).end('{"error":"Ruta desconocida"}');
   try {
-    const out = await route[2](pathname.match(route[1]).slice(1), req.method === 'GET' ? {} : await readBody(req));
+    const out = await route[2](pathname.match(route[1]).slice(1), req.method === 'GET' ? {} : await readBody(req), Object.fromEntries(new URL(req.url, 'http://x').searchParams));
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(out ?? { ok: true }));
   } catch (e) {
     res.writeHead(e.status || 500, { 'content-type': 'application/json' }).end(JSON.stringify({ error: e.message, gated: e.gated, suite: e.suite }));
