@@ -1,5 +1,3 @@
-import { Office } from './office.js';
-
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -8,6 +6,8 @@ let projectId = safeGet('ao:project');
 let drawerAgent = null;
 const logs = new Map();
 
+const useLegacy = new URLSearchParams(location.search).get('r') === '2d' || safeGet('ao:renderer') === '2d';
+const { Office } = await import(useLegacy ? './office.js' : './office3d.js');
 const office = new Office($('#office'), { onAgentClick: (id) => openDrawer(id) });
 
 function safeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
