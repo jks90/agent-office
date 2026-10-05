@@ -61,6 +61,17 @@ function connectEvents() {
     logs.set(entry.agentId, arr);
     if (drawerAgent === entry.agentId) renderLog();
   });
+  // Órdenes del Guide Agent (FT-4): llegan por SSE `ui` (navegar, abrir tarea/agente, enseñar un flow en flow-test).
+  es.addEventListener('ui', (e) => {
+    const c = JSON.parse(e.data);
+    if (c.client && c.client !== CLIENT_ID) return; // dirigida a otra pestaña
+    const goProject = (id) => { if (id && S.projects.some((p) => p.id === id) && id !== projectId) { projectId = id; safeSet('ao:project', id); closeDrawer(); render(); } };
+    if ($('#dialog').open && c.type !== 'flowtest.show') $('#dialog').close();
+    if (c.type === 'navigate') { goProject(c.projectId); showTab(c.view); }
+    else if (c.type === 'openTask') { const t = S.tasks.find((x) => x.id === c.taskId); if (t) { goProject(t.projectId); showTab('tasks'); openTask(t.id); } }
+    else if (c.type === 'selectAgent') { showTab('agents'); openDrawer(c.agentId); }
+    else if (c.type === 'flowtest.show' && EMBEDDED) window.parent.postMessage({ type: 'flowtest:show', flow: c.flow, node: c.node }, location.origin);
+  });
   es.addEventListener('error', () => {
     if (es.readyState !== EventSource.CLOSED) return; // CONNECTING: el navegador ya reintenta solo
     setTimeout(connectEvents, esRetry);
@@ -68,18 +79,6 @@ function connectEvents() {
   });
 }
 connectEvents();
-
-// Órdenes del Guide Agent (FT-4): llegan por SSE `ui` (navegar, abrir tarea/agente, enseñar un flow en flow-test).
-es.addEventListener('ui', (e) => {
-  const c = JSON.parse(e.data);
-  if (c.client && c.client !== CLIENT_ID) return; // dirigida a otra pestaña
-  const goProject = (id) => { if (id && S.projects.some((p) => p.id === id) && id !== projectId) { projectId = id; safeSet('ao:project', id); closeDrawer(); render(); } };
-  if ($('#dialog').open && c.type !== 'flowtest.show') $('#dialog').close();
-  if (c.type === 'navigate') { goProject(c.projectId); showTab(c.view); }
-  else if (c.type === 'openTask') { const t = S.tasks.find((x) => x.id === c.taskId); if (t) { goProject(t.projectId); showTab('tasks'); openTask(t.id); } }
-  else if (c.type === 'selectAgent') { showTab('agents'); openDrawer(c.agentId); }
-  else if (c.type === 'flowtest.show' && EMBEDDED) window.parent.postMessage({ type: 'flowtest:show', flow: c.flow, node: c.node }, location.origin);
-});
 
 const project = () => S.projects.find((p) => p.id === projectId);
 const team = () => { const ids = new Set(project()?.team || []); return S.agents.filter((a) => ids.has(a.id)); };
