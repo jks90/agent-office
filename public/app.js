@@ -740,6 +740,7 @@ const BOARD_LABELS = { github: 'GitHub Issues', trello: 'Trello', jira: 'Jira' }
 // ── Resumen de la empresa ───────────────────────────────────────────────────
 // Una tabla con TODOS los proyectos (no solo el seleccionado): encendido o parado, tareas por columna, equipo, quién
 // trabaja en qué, libres, coste y última actividad. Se repinta con cada `state` del SSE, así que siempre está al día.
+let sumShowEmpty = false;
 const SUM_COLS = [['backlog', 'Backlog'], ['todo', 'Por hacer'], ['doing', 'En curso'], ['review', 'Revisión'], ['done', 'Hecho'], ['failed', 'Fallidas']];
 function renderSummary() {
   const el = $('#summary');
@@ -756,6 +757,9 @@ function renderSummary() {
     const open = qs.filter((q) => q.projectId === p.id).length;
     return { p, ts, team, busy, free, last, cost, open };
   }).sort((x, y) => (y.p.running - x.p.running) || (y.busy.length - x.busy.length) || (y.last - x.last));
+  // Carpetas del workspace sin equipo ni tareas: plegadas en una línea (se despliegan con un clic)
+  const idle = rows.filter((r) => !r.ts.length && !r.team.length && !r.p.running);
+  const shown = sumShowEmpty ? rows : rows.filter((r) => !idle.includes(r));
   const n = (st) => all.filter((t) => t.status === st).length;
   const working = agents.filter((a) => a.status === 'working').length, paused = agents.filter((a) => a.status === 'paused').length;
   const kpi = (v, l, cls = '') => `<div class="kpi ${cls}"><b>${v}</b><span>${l}</span></div>`;
@@ -769,7 +773,7 @@ function renderSummary() {
     </div>
     <table class="repos summary">
       <thead><tr><th>Proyecto</th><th>Estado</th>${SUM_COLS.map(([, l]) => `<th class="num">${l}</th>`).join('')}<th>Equipo</th><th>Trabajando en</th><th>Libres</th><th class="num">Coste</th><th>Actividad</th></tr></thead>
-      <tbody>${rows.map(({ p, ts, team, busy, free, last, cost, open }) => `
+      <tbody>${shown.map(({ p, ts, team, busy, free, last, cost, open }) => `
         <tr data-sum-project="${p.id}" class="${p.id === projectId ? 'sel' : ''}">
           <td><b>${esc(p.name)}</b>${p.folder && p.folder !== p.name ? ` <span class="muted">(${esc(p.folder)})</span>` : ''} <span class="muted">${esc(p.prefixDefault || '')}</span>${open ? ` <span title="preguntas pendientes">❓${open}</span>` : ''}</td>
           <td><button class="small ${p.running ? 'on' : 'ghost'}" data-sum-run="${p.id}" title="${p.running ? 'Parar el equipo' : 'Poner a trabajar'}">${p.running ? '🟢 En marcha' : '⏸ Parado'}</button></td>
@@ -779,12 +783,13 @@ function renderSummary() {
           <td>${free.length ? esc(free.map((a) => a.name).join(', ')) : '<span class="muted">—</span>'}</td>
           <td class="num">${cost ? cost.toFixed(2) + ' $' : '·'}</td>
           <td class="muted">${last ? 'hace ' + ago(last) : '—'}</td>
-        </tr>`).join('')}</tbody>
+        </tr>`).join('')}${idle.length ? `<tr class="idle-row"><td colspan="${SUM_COLS.length + 7}"><button class="small ghost" data-sum-empty>${sumShowEmpty ? '▾ Ocultar' : '▸ Mostrar'} ${idle.length} proyectos sin equipo ni tareas (${esc(idle.map((r) => r.p.name).join(', '))})</button></td></tr>` : ''}</tbody>
     </table>
     <p class="muted" style="margin:8px 2px">Clic en una fila: abre sus tareas. Los datos llegan por SSE: la tabla se actualiza sola.</p>`;
-  const sc = $('#tab-summary-count'); if (sc) sc.textContent = n('review') + qs.length || '';
+  const sc = $('#tab-summary-count'); if (sc) sc.textContent = (all.filter((t) => t.status === 'review' && S.projects.find((p) => p.id === t.projectId)?.running).length + qs.length) || ''; // solo lo que pide acción: revisiones de proyectos en marcha + preguntas
 }
 document.addEventListener('click', async (e) => {
+  if (e.target.closest('[data-sum-empty]')) { sumShowEmpty = !sumShowEmpty; renderSummary(); return; }
   const run = e.target.closest('[data-sum-run]');
   if (run) { e.stopPropagation(); const p = S.projects.find((x) => x.id === run.dataset.sumRun); try { await api('POST', `/api/projects/${p.id}/run`, { running: !p.running }); toast(p.running ? `${p.name}: equipo parado` : `${p.name}: equipo en marcha`); } catch { /* el toast ya avisó */ } return; }
   const row = e.target.closest('tr[data-sum-project]');
