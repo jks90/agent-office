@@ -30,7 +30,7 @@ escribe un objetivo, pulsa **Encargar al PO** y luego **▶ Poner a trabajar**.
 | Motor | Cómo se lanza | Permisos |
 |---|---|---|
 | `demo` | simulado | — |
-| `claude` | `claude -p --output-format stream-json` en el worktree | herramientas de lectura/edición + `Bash` limitado (npm, node, git status/diff/add/commit, curl…); `--strict-mcp-config`: no hereda tus MCP globales |
+| `claude` | `claude -p --output-format stream-json` en el worktree | lectura/edición + shell de andar por casa (node, npm, git sin push, grep, sed, cp…; sin rm/sudo/docker/ssh); `--strict-mcp-config`: no hereda tus MCP globales; puede ver sus capturas con `scripts/preview.mjs` |
 | `codex` | `codex exec --json -s workspace-write` en el worktree | sandbox de Codex (el PO, `read-only`) |
 
 Cada agente elige motor y modelo desde su panel (clic en el personaje o en su ficha).
@@ -55,6 +55,13 @@ data/state.json     estado (gitignored)
 - El QA trabaja sobre la rama base, así que solo ve lo que ya has aprobado (por eso depende de esas tareas).
 - Sin tope de gasto todavía: se muestra el coste por tarea (Claude) pero no se corta.
 
+## La oficina
+
+Dos renderizadores con la misma API (`Office`): **3D isométrico** por defecto (`public/office3d.js`, three.js + modelos glTF de Kenney, personajes animados, etiquetas HTML proyectadas) y **2D pixel art** (`public/office.js`, sprites Kenney) con `?r=2d` en la URL o `localStorage['ao:renderer'] = '2d'`.
+
+Para verla sin navegador (y para que un agente pueda ver lo que pinta): `node scripts/preview.mjs out.png --wait 15000` levanta un servidor temporal con un equipo demo, captura la oficina con Chrome headless (WebGL por SwiftShader) e imprime los errores de consola y los fps. `--full` captura la página entera, `--query r=2d` fuerza el 2D.
+
 ## Créditos
 
-- Sprites de la oficina: [Kenney](https://kenney.nl) — *Roguelike Indoors* y *Roguelike Characters*, licencia CC0 (`public/assets/kenney/`). Mapa de tiles en `docs/assets-kenney.md`.
+- 3D: [Kenney](https://kenney.nl) *Furniture Kit* y *Mini Characters* (CC0, `public/assets/3d/`), [three.js](https://threejs.org) (MIT, `public/vendor/three/`).
+- 2D: [Kenney](https://kenney.nl) *Roguelike Indoors* y *Roguelike Characters* (CC0, `public/assets/kenney/`). Mapa de tiles en `docs/assets-kenney.md`.
