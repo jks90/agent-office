@@ -120,7 +120,7 @@ dialog select[multiple].tall { height: 160px; }
 .team-head[data-section] { cursor: pointer; user-select: none; }
 .team-head[data-section] h3::before { content: '▾'; display: inline-block; width: 14px; color: var(--muted); transition: transform .15s; }
 .team-head[data-section].collapsed h3::before { transform: rotate(-90deg); }
-.team-head[data-section].collapsed + .section-body { display: none; }
+.team-head[data-section].collapsed + .section-body { display: none !important; }
 .team-head[data-section] button { cursor: pointer; }
 .skills-box h4 { cursor: pointer; user-select: none; }
 .skills-box h4::before { content: '▾'; display: inline-block; width: 14px; }
