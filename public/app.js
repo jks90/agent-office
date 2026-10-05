@@ -332,6 +332,7 @@ const COLS = [
   ['done', 'Hecho', '#4ade80'],
 ];
 
+const expanded = new Set(); // tarjetas con el detalle abierto
 let taskFilter = '';
 $('#task-filter').addEventListener('input', (e) => { taskFilter = e.target.value.trim().toLowerCase(); renderBoard(); });
 function renderBoard() {
@@ -365,8 +366,16 @@ function card(t) {
     <div class="t">${esc(t.title)}</div>
     <div class="meta">${agent ? `<span>👤 ${esc(agent.name)}</span>` : ''}${deps ? `<span>depende de ${deps}</span>` : ''}${t.costUsd ? ` <span>💲${t.costUsd.toFixed(3)}</span>` : ''}</div>
     ${t.status === 'doing' && agent ? `<div class="live">● ${esc(agent.activity)}</div>` : ''}
-    ${t.summary && t.status !== 'doing' ? `<div class="sum">${esc(t.summary)}</div>` : ''}
+    ${t.summary && t.status !== 'doing' && !expanded.has(t.id) ? `<div class="sum">${esc(t.summary)}</div>` : ''}
     ${t.error ? `<div class="err">${esc(t.error)}</div>` : ''}
+    <button class="small ghost expand" data-expand="${t.id}">${expanded.has(t.id) ? '▴ Ocultar detalle' : '▾ Ver qué va a hacer'}</button>
+    ${expanded.has(t.id) ? `<div class="detail">
+      <div class="dt">Descripción</div><div class="dd">${esc(t.description || '(sin descripción)')}</div>
+      ${t.feedback ? `<div class="dt">Comentarios de revisión</div><div class="dd">${esc(t.feedback)}</div>` : ''}
+      ${t.summary ? `<div class="dt">Resumen del agente</div><div class="dd">${esc(t.summary)}</div>` : ''}
+      ${t.diffStat ? `<div class="dt">Cambios</div><pre class="dd">${esc(t.diffStat)}</pre>` : ''}
+      ${(t.feedbackImages?.length || t.files?.length) ? `<div class="dt">Adjuntos</div><div class="dd">${[...(t.feedbackImages || []), ...(t.files || [])].map((f) => esc(f.split('/').pop())).join(' · ')}</div>` : ''}
+    </div>` : ''}
     ${acts.length ? `<div class="acts">${acts.join('')}</div>` : ''}
   </div>`;
 }
@@ -788,6 +797,7 @@ document.addEventListener('click', async (e) => {
     return;
   }
   if (d.approve) return api('POST', `/api/tasks/${d.approve}/approve`).then(() => toast('Tarea aprobada ✓'));
+  if (d.expand) { expanded.has(d.expand) ? expanded.delete(d.expand) : expanded.add(d.expand); renderBoard(); return; }
   if (d.ready) return api('PATCH', `/api/tasks/${d.ready}`, { status: 'todo' });
   if (d.edit) return editTask(d.edit);
   if (d.aiDraft !== undefined) {

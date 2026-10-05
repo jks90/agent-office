@@ -39,6 +39,7 @@ setInterval(() => checkSuite().then(() => store.changed()).catch(() => {}), 5 * 
 // Proyectos = carpetas del workspace de flow-test (al arrancar, cada 5 min y con POST /api/sync).
 const sync = () => team.syncWorkspace().then((r) => { if (r.created) console.log(`📁 ${r.created} proyecto(s) nuevo(s) desde flow-test: ${r.folders.join(', ')}`); }).catch((e) => console.log(`📁 sin sincronizar: ${e.message}`));
 checkSuite().then(sync);
+auth.cachedEnginesStatus(); // precargar las sesiones de los motores para el motor automático
 setInterval(sync, 5 * 60 * 1000).unref();
 // Tableros online con autoSync: cada 5 min.
 setInterval(() => { for (const p of store.get().projects) if (p.board?.autoSync) team.syncBoard(p.id).catch(() => {}); }, 5 * 60 * 1000).unref();

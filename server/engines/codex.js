@@ -1,5 +1,5 @@
 // Motor Codex: `codex exec --json` en el worktree de la tarea (sandbox workspace-write).
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import readline from 'node:readline';
 import { firstLine } from './describe.js';
 
@@ -9,8 +9,22 @@ const unwrap = (cmd) => {
   return m ? m[2] : String(cmd ?? '');
 };
 
+// El sandbox de Codex (bwrap, espacios de usuario) no funciona cuando AgentOffice corre como servicio de systemd
+// («setting up uid map: Permission denied»). Se comprueba una vez; si falla, Codex corre sin sandbox (como Claude aquí):
+// el aislamiento lo da el worktree y la revisión humana.
+let sandboxOk = null;
+function bwrapWorks() {
+  if (sandboxOk !== null) return sandboxOk;
+  try { execFileSync('bwrap', ['--unshare-user', '--dev-bind', '/', '/', 'true'], { stdio: 'ignore', timeout: 5000 }); sandboxOk = true; }
+  catch { sandboxOk = false; }
+  return sandboxOk;
+}
+
 export function start({ cwd, prompt, system, model, mode, mcpUrl, images = [], env: extraEnv = {}, onActivity, onLog }) {
-  const args = ['exec', '--json', '--skip-git-repo-check', '-C', cwd, '-s', mode === 'plan' ? 'read-only' : 'workspace-write'];
+  const noSandbox = !bwrapWorks();
+  const sandbox = mode === 'plan' ? 'read-only' : 'workspace-write';
+  const args = ['exec', '--json', '--skip-git-repo-check', '-C', cwd, ...(noSandbox ? ['--dangerously-bypass-approvals-and-sandbox'] : ['-s', sandbox])];
+  if (noSandbox) onLog('⚠ Codex sin sandbox (bwrap no disponible bajo el servicio): aislamiento por worktree + revisión');
   if (model) args.push('-m', model);
   if (mcpUrl && mode !== 'plan') args.push('-c', `mcp_servers.flow_test.url="${mcpUrl}"`);
   for (const img of images) args.push(`--image=${img}`); // con «=» para que -i (variádico) no se trague el «-»

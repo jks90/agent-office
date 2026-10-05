@@ -197,6 +197,10 @@ body.embedded header { padding-top: 8px; padding-bottom: 8px; }
 .card .ext { color: #93c5fd; text-decoration: none; }
 .repo-chip { font-size: 11px; color: var(--muted); }
 .col[style*="#94a3b8"] .card { opacity: .85; }
+.card .expand { margin-top: 6px; font-size: 11px; }
+.card .detail { margin-top: 6px; border-top: 1px solid var(--line); padding-top: 6px; font-size: 12px; }
+.card .detail .dt { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-top: 6px; }
+.card .detail .dd { white-space: pre-wrap; color: #c7cbe0; max-height: 320px; overflow: auto; margin: 2px 0 0; font: inherit; }
 .card .acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--s-3); padding-top: var(--s-2); border-top: 1px solid var(--line-soft); }
 .card .live { color: #b8f4d8; font-size: 12px; margin-top: var(--s-2); }
 .empty { color: var(--muted); border: 1px dashed var(--line); border-radius: var(--r-md); padding: var(--s-3); text-align: center; background: rgba(255,255,255,.02); }

@@ -21,7 +21,7 @@ const MODEL_OF = { claude: /^(sonnet|opus|haiku|claude-)/i, codex: /^(gpt-|o[0-9
 function pickEngine(agent) {
   if (agent.engine !== 'auto') return agent.engine;
   const st = cachedEnginesStatus();
-  const ok = (e) => st ? !!st[e]?.loggedIn : true; // sin estado aún: optimista
+  const ok = (e) => st ? !!st[e]?.loggedIn : e === 'claude'; // sin estado aún (arranque): solo Claude
   const load = (e) => [...jobs.values()].filter((j) => j.engine === e).length;
   const candidates = ['claude', 'codex'].filter(ok).sort((a, b) => load(a) - load(b) || (a === 'claude' ? -1 : 1));
   if (!candidates.length) throw new Error('Motor automático: ni Claude ni Codex tienen sesión (Ajustes ▸ Motores de IA)');
