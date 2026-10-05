@@ -87,6 +87,130 @@ const projectsOf = (agentId) => S.projects.filter((p) => (p.team || []).includes
 const tasks = () => S.tasks.filter((t) => t.projectId === projectId);
 const roleChip = (role) => `<span class="chip" style="--c:${S.roles[role]?.color}">${esc(S.roles[role]?.label || role)}</span>`;
 
+// ── Guía 🧭 (FT-6) ──────────────────────────────────────────────────────────
+// Chat con el Guide Agent (server/guide). Un solo estado `G` pintado en dos sitios: la vista «Guía» (con lista de chats)
+// y un cajón flotante disponible en cualquier vista (Ctrl+G). La conversación va por POST /api/guide/chat (SSE); las
+// confirmaciones de las tools salen por el modal de preguntas de siempre (snapshot SSE), no por aquí.
+const G = { chats: [], chatId: null, messages: [], busy: false, panelOpen: false, loaded: false };
+const guideRoots = []; // contenedores montados: { el, panel }
+const GUIDE_HINTS = ['Créame una tarea para solucionar esto', '¿Cómo va?', '¿Qué está haciendo ahora mismo?', 'Enséñame lo que ha cambiado'];
+
+function guideMount(el, panel) {
+  if (guideRoots.some((r) => r.el === el)) return;
+  el.innerHTML = `<div class="guide">
+    <div class="g-list"><button class="small" data-g="new">＋ Nuevo chat</button><div class="g-chats"></div></div>
+    <div class="g-main">
+      <div class="g-head"><b class="g-title">🧭 Guía</b>${panel ? '<select class="g-pick" title="Chats"></select><button class="ghost small" data-g="new">＋</button><button class="ghost small" data-g="close" title="Cerrar (Ctrl+G)">✕</button>' : ''}</div>
+      <div class="g-msgs"></div>
+      <form class="g-form"><textarea rows="1" placeholder="Pídeme algo…" title="Intro envía · Mayús+Intro salto de línea"></textarea><button class="g-send">Enviar</button><button type="button" class="ghost g-stop" data-g="stop" hidden>■ Parar</button></form>
+    </div></div>`;
+  guideRoots.push({ el, panel });
+  const ta = el.querySelector('textarea');
+  el.querySelector('form').onsubmit = (e) => { e.preventDefault(); const t = ta.value.trim(); if (t && !G.busy) { ta.value = ''; ta.style.height = ''; guideSend(t); } };
+  ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); el.querySelector('form').requestSubmit(); } });
+  ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 140) + 'px'; });
+  el.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-g], [data-gchat], [data-ghint]');
+    if (!b) return;
+    if (b.dataset.g === 'new') guideNew();
+    else if (b.dataset.g === 'stop') guideStop();
+    else if (b.dataset.g === 'close') guideToggle(false);
+    else if (b.dataset.gchat) guideOpen(b.dataset.gchat);
+    else if (b.dataset.ghint) { ta.value = b.dataset.ghint; ta.focus(); }
+  });
+  el.addEventListener('toggle', (e) => { const d = e.target.closest?.('.g-tool'); if (d && G.messages[d.dataset.i]) G.messages[d.dataset.i].open = d.open; }, true); // el pintado rehace el HTML: recordar qué tool call está desplegada
+  el.querySelector('.g-pick')?.addEventListener('change', (e) => (e.target.value ? guideOpen(e.target.value) : guideNew()));
+  guideRender();
+}
+
+function guideRender() {
+  const fab = $('#guide-fab');
+  fab.hidden = activeTab === 'guide' || G.panelOpen;
+  fab.classList.toggle('busy', G.busy);
+  for (const { el, panel } of guideRoots) {
+    if (panel && $('#guide-panel').hidden) continue;
+    const msgs = el.querySelector('.g-msgs');
+    const atBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 60;
+    msgs.innerHTML = G.messages.length ? G.messages.map((m, i) => guideMsg(m, i)).join('') + (G.busy ? '<div class="g-typing">🧭 trabajando…</div>' : '')
+      : `<div class="g-empty"><h3>🧭 Guía</h3><p>Entiendo lo que estás viendo y puedo crear tareas, contarte cómo van, pararlas o enseñarte lo que han cambiado.</p><div class="g-hint">${GUIDE_HINTS.map((h) => `<button data-ghint="${esc(h)}">${esc(h)}</button>`).join('')}</div></div>`;
+    if (atBottom || G.busy) msgs.scrollTop = msgs.scrollHeight;
+    const cur = G.chats.find((c) => c.id === G.chatId);
+    el.querySelector('.g-title').textContent = panel ? '🧭' : '🧭 ' + (cur?.title || 'Nuevo chat');
+    el.querySelector('.g-chats').innerHTML = G.chats.map((c) => `<button class="g-chat ${c.id === G.chatId ? 'sel' : ''}" data-gchat="${c.id}" title="${esc(c.title)}">${c.busy ? '⏳ ' : ''}${esc(c.title)}</button>`).join('') || '<p class="muted small">Sin chats todavía</p>';
+    const pick = el.querySelector('.g-pick');
+    if (pick) pick.innerHTML = `<option value="">＋ Nuevo chat</option>${G.chats.map((c) => `<option value="${c.id}" ${c.id === G.chatId ? 'selected' : ''}>${esc(c.title.slice(0, 40))}</option>`).join('')}`;
+    el.querySelector('.g-send').hidden = G.busy;
+    el.querySelector('.g-stop').hidden = !G.busy;
+    el.querySelector('textarea').disabled = G.busy;
+  }
+}
+
+function guideMsg(m, i) {
+  if (m.role === 'user') return `<div class="g-msg user">${esc(m.text)}</div>`;
+  if (m.role === 'assistant') return `<div class="g-msg assistant">${md(m.text)}</div>`;
+  if (m.role === 'error') return `<div class="g-msg error ${m.stopped ? 'stopped' : ''}">${m.stopped ? '■ ' : '⚠ '}${esc(m.text)}</div>`;
+  const state = m.ok == null ? '<span class="st">⏳</span>' : m.ok ? '<span class="st ok">✓</span>' : '<span class="st bad">✗</span>';
+  const args = Object.keys(m.args || {}).length ? JSON.stringify(m.args) : '';
+  return `<details class="g-tool" data-i="${i}" ${m.open ? 'open' : ''}><summary>🔧 <b>${esc(m.name)}</b><span class="args">${esc(args.slice(0, 120))}</span>${state}</summary>
+    <pre>${esc(JSON.stringify(m.args || {}, null, 1))}</pre>${m.result != null ? `<pre class="${m.ok ? '' : 'bad'}">${esc(m.result.slice(0, 4000))}</pre>` : ''}</details>`;
+}
+
+async function guideRefresh() { try { G.chats = await api('GET', '/api/guide/chats'); } catch { /* sin servidor */ } G.loaded = true; guideRender(); }
+async function guideOpen(id) {
+  if (G.busy) return toast('Espera a que el Guía termine o pulsa «Parar»');
+  G.chatId = id; safeSet('ao:guide-chat', id);
+  try { G.messages = (await api('GET', `/api/guide/chats/${id}`)).messages; } catch { G.chatId = null; G.messages = []; }
+  guideRender();
+}
+function guideNew() { if (G.busy) return; G.chatId = null; G.messages = []; safeSet('ao:guide-chat', ''); guideRender(); guideRoots.forEach((r) => r.el.querySelector('textarea').focus()); }
+async function guideShow() {
+  guideMount($('#view-guide'), false);
+  if (!G.loaded) { await guideRefresh(); const last = safeGet('ao:guide-chat'); if (last && !G.chatId && G.chats.some((c) => c.id === last)) await guideOpen(last); }
+  guideRender();
+  requestAnimationFrame(() => $('#view-guide textarea')?.focus());
+}
+function guideToggle(open = !G.panelOpen) {
+  if (activeTab === 'guide') { $('#view-guide textarea')?.focus(); return; }
+  G.panelOpen = open;
+  const p = $('#guide-panel');
+  p.hidden = !open;
+  if (open) { guideMount(p, true); guideShow().then(() => p.querySelector('textarea')?.focus()); }
+  guideRender();
+}
+$('#guide-fab').addEventListener('click', () => guideToggle(true));
+document.addEventListener('keydown', (e) => { if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'g') { e.preventDefault(); guideToggle(); } });
+
+async function guideSend(text) {
+  G.busy = true;
+  G.messages.push({ role: 'user', text });
+  guideRender();
+  const push = (m) => { G.messages.push(m); guideRender(); };
+  try {
+    const r = await fetch(BASE + 'api/guide/chat', { method: 'POST', headers: { 'content-type': 'application/json', 'x-ao-client': CLIENT_ID }, body: JSON.stringify({ chatId: G.chatId, text }) });
+    if (!r.ok) { const j = await r.json().catch(() => ({})); push({ role: 'error', text: j.error || r.statusText }); return; }
+    const reader = r.body.getReader(), dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const data = buf.slice(0, i).match(/^data: (.*)$/m); buf = buf.slice(i + 2);
+        if (!data) continue;
+        const ev = JSON.parse(data[1]);
+        if (ev.type === 'chat') { G.chatId = ev.chat.id; safeSet('ao:guide-chat', G.chatId); guideRefresh(); }
+        else if (ev.type === 'text') push({ role: 'assistant', text: ev.text });
+        else if (ev.type === 'tool_call') push({ role: 'tool', id: ev.id, name: ev.name, args: ev.args, ok: null, result: null });
+        else if (ev.type === 'tool_result') { const m = G.messages.findLast((x) => x.role === 'tool' && x.id === ev.id); if (m) { m.ok = ev.ok; m.result = ev.result; } guideRender(); }
+        else if (ev.type === 'error') push({ role: 'error', text: ev.error, stopped: !!ev.stopped });
+      }
+    }
+  } catch (e) { push({ role: 'error', text: 'Se cortó la conexión con el servidor: ' + e.message }); }
+  finally { G.busy = false; guideRender(); guideRefresh(); }
+}
+function guideStop() { if (G.chatId) api('POST', '/api/guide/stop', { chatId: G.chatId }); }
+
 // ── Pintado ─────────────────────────────────────────────────────────────────
 // Pestañas de administración (Oficina / Tareas / Agentes), recordadas por navegador.
 let skillsData = null; // catálogo e inventario de skills (se carga al abrir Agentes)
@@ -110,7 +234,8 @@ document.addEventListener('change', (e) => {
   if (eng) { const ms = eng.closest('form')?.querySelector('.model-select'); if (ms) ms.outerHTML = modelSelect(ms.name, eng.value, '').replace(/<input[^>]*>$/, ''); }
 });
 const pickModel = (f) => (f.model === '__other' ? (f.model_other || '').trim() : f.model || '');
-let activeTab = safeGet('ao:tab') || 'office';
+const VIEW_PARAM = new URLSearchParams(location.search).get('view'); // ?view=guide (botón «Guía» de flow-test, FT-3)
+let activeTab = ['office', 'tasks', 'agents', 'guide'].includes(VIEW_PARAM) ? VIEW_PARAM : safeGet('ao:tab') || 'office';
 function showTab(tab) {
   activeTab = tab;
   safeSet('ao:tab', tab);
@@ -118,6 +243,7 @@ function showTab(tab) {
   document.querySelectorAll('.view').forEach((v) => { v.hidden = v.id !== 'view-' + tab; });
   if (tab === 'office') requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
   if (tab === 'agents') renderSkills();
+  if (tab === 'guide') guideShow(); else guideRender();
   publishContext();
 }
 $('#sidebar').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) showTab(b.dataset.tab); });
@@ -542,6 +668,8 @@ Pasos, convenciones y ejemplos…</textarea>
     <label>URL de flow-test (la suite; su MCP se usa para el QA)</label><input name="flowTestUrl" value="${esc(S.settings.flowTestUrl)}" placeholder="http://localhost:9998" />
     <label>Carpeta del workspace de flow-test en esta máquina (para deducir los repos de cada proyecto por sus enlaces)</label><input name="workspaceHostDir" value="${esc(S.settings.workspaceHostDir || '')}" placeholder="~/JksDocs/workspace" />
     <label>Agentes trabajando a la vez (máx.)</label><input name="maxParallel" type="number" min="1" max="8" value="${S.settings.maxParallel}" />
+    <div class="section-title">🧭 Guía (FT-6)</div>
+    <label>Modelo de Claude con el que conversa el Guía</label>${modelSelect('guideModel', 'claude', S.settings.guideModel || '')}
     <div class="section-title">🛡 Guide Agent — qué puede hacer sin preguntarte (FT-4)</div>
     <label>Acciones que ponen a trabajar o pausan al equipo (ejecutar)</label>
     <select name="guideExecute"><option value="auto" ${S.guidePolicy?.execute === 'auto' ? 'selected' : ''}>Automático</option><option value="confirm" ${S.guidePolicy?.execute === 'confirm' ? 'selected' : ''}>Pedir confirmación</option></select>
@@ -560,7 +688,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <hr style="border-color:var(--line);margin:16px 0" />
     <button type="button" class="danger small" data-delete-project>Borrar el proyecto «${esc(project()?.name)}»</button>
     ${buttons()}`, async (f) => {
-    await api('POST', '/api/settings', { ...f, guidePolicy: { execute: f.guideExecute, write: f.guideWrite } });
+    await api('POST', '/api/settings', { ...f, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guidePolicy: { execute: f.guideExecute, write: f.guideWrite } });
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
     if (repos.map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|') !== cur) await api('PATCH', `/api/projects/${projectId}`, { repos });

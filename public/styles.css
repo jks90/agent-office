@@ -289,3 +289,40 @@ dialog.question .q-context { color: var(--muted); font-size: 13px; margin-bottom
 .q-opt:hover { border-color: #fbbf24; background: #2a2410; }
 .task-qa .qa { padding: 6px 0; border-top: 1px dashed var(--line); }
 .task-qa .q { font-weight: 600; } .task-qa .a { color: #a7f3d0; margin-top: 2px; }
+
+/* Guide Agent (FT-6): vista «Guía» + cajón flotante (Ctrl+G) */
+.guide { flex: 1; min-height: 0; display: flex; background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--r-lg); overflow: hidden; }
+.guide .g-list { width: 220px; flex: none; border-right: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: 4px; padding: var(--s-2); overflow-y: auto; background: var(--panel3); }
+.guide .g-list button.g-chat { text-align: left; background: transparent; color: var(--muted); border: 1px solid transparent; font-weight: 500; font-size: 13px; padding: 7px 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.guide .g-list button.g-chat:hover, .guide .g-list button.g-chat.sel { color: var(--text); background: var(--panel); border-color: var(--line); }
+.guide .g-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.guide .g-head { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-2) var(--s-3); border-bottom: 1px solid var(--line-soft); }
+.guide .g-head b { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.guide .g-msgs { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-3); display: flex; flex-direction: column; gap: var(--s-2); }
+.guide .g-empty { margin: auto; text-align: center; color: var(--muted); max-width: 420px; }
+.guide .g-empty .g-hint { display: flex; flex-direction: column; gap: 6px; margin-top: var(--s-3); }
+.guide .g-empty .g-hint button { background: var(--panel2); color: var(--text); border: 1px solid var(--line); font-weight: 500; text-align: left; }
+.g-msg { max-width: 88%; padding: 8px 12px; border-radius: var(--r-lg); line-height: 1.45; overflow-wrap: anywhere; }
+.g-msg p { margin: 0 0 6px; } .g-msg p:last-child { margin-bottom: 0; }
+.g-msg.user { align-self: flex-end; background: var(--accent); color: var(--accent-ink); border-bottom-right-radius: 3px; white-space: pre-wrap; }
+.g-msg.assistant { align-self: flex-start; background: var(--panel); border: 1px solid var(--line-soft); border-bottom-left-radius: 3px; }
+.g-msg.error { align-self: flex-start; background: rgba(255,119,119,.08); border: 1px solid rgba(255,119,119,.38); color: #ffb3b3; }
+.g-msg.error.stopped { background: var(--panel3); border-color: var(--line); color: var(--muted); }
+.g-tool { align-self: flex-start; max-width: 88%; width: 88%; background: var(--panel3); border: 1px solid var(--line-soft); border-radius: var(--r-md); font-size: 12px; }
+.g-tool summary { cursor: pointer; padding: 5px 9px; display: flex; gap: 8px; align-items: center; color: var(--muted); list-style: none; }
+.g-tool summary::-webkit-details-marker { display: none; }
+.g-tool summary b { color: var(--text); font-family: ui-monospace, monospace; }
+.g-tool summary .args { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-tool .st.ok { color: var(--ok); } .g-tool .st.bad { color: var(--err); }
+.g-tool pre { margin: 0; padding: 6px 9px; border-top: 1px dashed var(--line); max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+.g-tool pre.bad { color: #ffb3b3; }
+.g-typing { align-self: flex-start; color: var(--muted); font-size: 12px; padding: 2px 6px; }
+.guide .g-form { display: flex; gap: var(--s-2); padding: var(--s-2) var(--s-3); border-top: 1px solid var(--line-soft); align-items: flex-end; }
+.guide .g-form textarea { resize: none; flex: 1; max-height: 140px; }
+#guide-fab { position: fixed; right: 18px; bottom: 18px; z-index: 15; width: 48px; height: 48px; border-radius: 50%; font-size: 22px; padding: 0; box-shadow: var(--shadow); }
+#guide-panel { position: fixed; right: 18px; bottom: 76px; z-index: 30; width: min(440px, calc(100vw - 24px)); height: min(620px, calc(100vh - 100px)); display: flex; box-shadow: 0 18px 55px rgba(0,0,0,.55); border-radius: var(--r-lg); }
+#guide-panel[hidden], #guide-fab[hidden] { display: none; }
+#guide-panel .guide { width: 100%; }
+#guide-panel .guide .g-list { display: none; }
+#view-guide .guide { margin: 0; }
+@media (max-width: 760px) { .guide .g-list { display: none; } }
