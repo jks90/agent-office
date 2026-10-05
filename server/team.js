@@ -356,7 +356,10 @@ export function updateTask(id, patch) {
     if (patch.repo && !(p.repos || []).some((r) => r.key === patch.repo)) throw fail(400, `El proyecto no tiene el repo «${patch.repo}»`);
     t.repo = patch.repo || null;
   }
-  if (patch.status && ['backlog', 'todo'].includes(patch.status) && ['backlog', 'todo', 'failed'].includes(t.status)) {
+  if (patch.status && patch.status !== t.status) {
+    // FT-27: antes un cambio no permitido se ignoraba en silencio; ahora avisa con el motivo.
+    if (!['backlog', 'todo'].includes(patch.status)) throw fail(409, 'A esa columna no se mueve a mano: «En curso» la ocupa el agente, y «Revisión»/«Hecho» se alcanzan al terminar (Aprobar / Devolver en la tarjeta)');
+    if (!['backlog', 'todo', 'failed'].includes(t.status)) throw fail(409, 'Solo se mueven entre Backlog y Por hacer las tareas que no han empezado; esta ya está en curso, en revisión o hecha');
     t.status = patch.status;
     t.error = null;
     reflect(t);

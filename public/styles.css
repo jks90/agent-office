@@ -356,3 +356,8 @@ table.summary td.zero { color: var(--line); }
 table.summary td.st-doing { color: #93c5fd; font-weight: 700; } table.summary td.st-review { color: #fbbf24; font-weight: 700; } table.summary td.st-failed { color: #f87171; font-weight: 700; } table.summary td.st-done { color: var(--ok); }
 table.summary .busy { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 table.summary button.small.on { background: color-mix(in srgb, var(--ok) 20%, transparent); border-color: var(--ok); color: #b8f4d8; }
+
+/* FT-27: arrastrar tarjetas entre columnas */
+.card[draggable=true] { cursor: grab; }
+.card.dragging { opacity: .45; }
+.col.drop-over { outline: 2px dashed var(--c); outline-offset: -4px; background: color-mix(in srgb, var(--c) 8%, var(--surface)); }
