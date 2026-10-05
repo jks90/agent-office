@@ -92,7 +92,7 @@ export async function* chat({ chatId, text, client = null }) {
   if (!slot || slot.model !== model || slot.name !== name) {
     slot?.provider.stop();
     const provider = PROVIDERS[name].create();
-    provider.start({ system: SYSTEM, model, resume: c.provider === name ? c.sessionId : null, history: c.messages, cwd: store.DATA_DIR });
+    provider.start({ system: SYSTEM, model, resume: c.provider === name ? c.sessionId : null, history: c.messages, cwd: store.DATA_DIR, chatId: c.id });
     slot = { provider, model, name };
     providers.set(c.id, slot);
   }

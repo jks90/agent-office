@@ -12,6 +12,7 @@ import { prefixOf } from '../codes.js';
 import { draftTask } from '../ai-draft.js';
 import { cleanContext } from '../task-context.js';
 import * as integ from './integrations.js';
+import { getProvider } from '../desktop/index.js';
 import { gate, audit, summarize, POLICIES } from './policy.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
@@ -79,6 +80,14 @@ const gitFiles = async (t) => {
   const out = await git.git(repo.path, 'diff', '--name-only', `${repo.baseBranch}...${t.branch}`);
   return { files: out ? out.split('\n') : [], base: repo.baseBranch, branch: t.branch };
 };
+
+// ── Escritorio (FT-22) · regla «solo fuera»: si la ventana activa es flow-test/AgentOffice no se devuelve nada del escritorio ──
+const INSIDE_RE = () => new RegExp(`flowtest|agentoffice|agent office|(localhost|127\\.0\\.0\\.1):${process.env.AO_PORT || 7420}\\b`, 'i');
+const INSIDE = { inside: true, hint: 'usa app.getContext' };
+const isInside = (w) => !!w && INSIDE_RE().test(`${w.title || ''} ${w.app || ''}`);
+// Se ejecuta antes de la política: si el usuario está dentro de la app no hay nada que confirmar.
+const outsideOnly = async () => (isInside(await getProvider().getActive()) ? INSIDE : null);
+const clip = (w) => ({ ...w, title: String(w.title || '').slice(0, 200) });
 
 // ── Registro ────────────────────────────────────────────────────────────────
 const T = (name, description, input, policy, handler, extra = {}) => ({ name, description, input, policy, handler, ...extra });
@@ -178,6 +187,16 @@ export const tools = [
   T('terminal.execute', 'Ejecuta un comando en la raíz de un repo/worktree, sin shell (nada de ; & | > $ ni sustituciones). Solo la lista blanca de los workers (npm, node, git status/diff/log/add/commit…, ls, cat, grep…; sin rm, sudo, docker, ssh ni git push). Timeout 60 s y salida recortada.', obj({ repo: str('Clave del repo'), task: str('Código de la tarea (corre en su worktree)'), cmd: str('Comando, p. ej. «git status --short»') }, ['cmd']), 'execute', (a) => integ.terminalExecute(a)),
   T('browser.open', 'Abre una URL http(s) en el navegador del usuario (xdg-open).', obj({ url: str('URL') }, ['url']), 'navigate', (a) => integ.browserOpen(a)),
 
+  // — Escritorio (FT-22): delegan en server/desktop/ —
+  T('window.getActive', 'Ventana activa del escritorio del usuario (id, título, app, pid). Si es flow-test/AgentOffice responde {inside:true} y hay que usar app.getContext.', obj(), 'read',
+    async () => { const w = await getProvider().getActive(); return isInside(w) ? INSIDE : clip(w); }),
+  T('window.list', 'Ventanas abiertas del escritorio (id, título recortado a 200 car., app, pid, active). Si la activa es flow-test/AgentOffice responde {inside:true}.', obj(), 'read',
+    async () => { const d = getProvider(); if (isInside(await d.getActive())) return INSIDE; return (await d.list()).map(clip); }),
+  T('screen.capture', 'Captura el escritorio (o una ventana) a un PNG en data/desktop/captures. Devuelve ruta y metadatos, nunca la imagen. Pide confirmación la primera vez por sesión. Si la activa es flow-test/AgentOffice responde {inside:true}.',
+    obj({ target: { type: 'string', enum: ['screen', 'window'], description: 'screen (por defecto) o window' }, windowId: str('Id de ventana (opcional, con target=window)') }), 'read',
+    async ({ target, windowId }) => { const r = await getProvider().capture({ target: target || 'screen', windowId }); return { path: r.path, width: r.width, height: r.height, bytes: r.bytes, tool: r.tool, ts: r.ts }; },
+    { confirmOnce: true, precheck: outsideOnly }),
+
   // — Ejecución y borrado —
   T('project.run', 'Pone a trabajar (running=true) o pausa (false) al equipo del proyecto.', obj({ projectId: str('Id o nombre del proyecto'), running: { type: 'boolean' } }, ['projectId', 'running']), 'execute',
     ({ projectId, running }) => { const p = findProject(projectId); team.setRunning(p.id, running); return { projectId: p.id, running: !!p.running }; }),
@@ -189,7 +208,7 @@ export const tools = [
 const byName = new Map(tools.map((t) => [t.name, t]));
 for (const t of tools) if (!POLICIES.includes(t.policy)) throw new Error(`Política inválida en ${t.name}`);
 
-export const describe = () => tools.map(({ name, description, input, policy, pending }) => ({ name, description, input, policy, ...(pending ? { pending: true } : {}) }));
+export const describe = () => tools.map(({ name, description, input, policy, pending, confirmOnce }) => ({ name, description, input, policy, ...(pending ? { pending: true } : {}), ...(confirmOnce ? { confirmOnce: true } : {}) }));
 
 // Validación mínima de JSON Schema (object/required/type/enum/additionalProperties) para no depender de nada.
 function validate(schema, args, where = 'args') {
@@ -211,13 +230,14 @@ export async function run(name, args = {}, ctx = {}) {
   const tool = byName.get(name);
   if (!tool) throw fail(404, `Tool desconocida: ${name}`);
   const t0 = Date.now();
-  const entry = { ts: t0, tool: name, args: summarize(args), policy: tool.policy, mode: null, confirmed: null, via: ctx.via || 'api', client: ctx.client || null };
+  const entry = { ts: t0, tool: name, args: summarize(args), policy: tool.policy, mode: null, confirmed: null, via: ctx.via || 'api', client: ctx.client || null, ...(ctx.chatId ? { chatId: ctx.chatId } : {}) };
   const done = (result, extra = {}) => audit({ ...entry, result, ms: Date.now() - t0, ...extra });
   try {
     if (!args || typeof args !== 'object' || Array.isArray(args)) throw fail(400, 'args debe ser un objeto');
     validate(tool.input, args);
     if (tool.pending) return tool.handler(args, ctx);
-    const g = await gate(tool, args);
+    if (tool.precheck) { const early = await tool.precheck(args, ctx); if (early) { done('ok'); return early; } }
+    const g = await gate(tool, args, ctx);
     Object.assign(entry, g);
     if (g.confirmed === false) throw fail(403, `El usuario rechazó «${name}»`);
     const out = await tool.handler(args, ctx);

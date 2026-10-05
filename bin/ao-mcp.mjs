@@ -5,12 +5,12 @@
 //   echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | node bin/ao-mcp.mjs
 //   claude -p --mcp-config '{"mcpServers":{"agentoffice":{"command":"node","args":["bin/ao-mcp.mjs"],"env":{"AO_URL":"http://127.0.0.1:7420"}}}}'
 //
-// Entorno: AO_URL (por defecto http://127.0.0.1:7420), AO_TOKEN (opcional, solo fuera del loopback).
+// Entorno: AO_URL (por defecto http://127.0.0.1:7420), AO_TOKEN (opcional, solo fuera del loopback), AO_CHAT_ID (chat del Guide, FT-22: clave de confirmOnce).
 // Los nombres MCP no admiten «.» (^[a-zA-Z0-9_-]+$): `task.create` se publica como `task_create` y se traduce al llamar.
 import readline from 'node:readline';
 
 const base = (process.env.AO_URL || 'http://127.0.0.1:7420').replace(/\/$/, '');
-const headers = { 'content-type': 'application/json', 'x-ao-via': 'mcp', ...(process.env.AO_TOKEN ? { 'x-ao-token': process.env.AO_TOKEN } : {}) };
+const headers = { 'content-type': 'application/json', 'x-ao-via': 'mcp', ...(process.env.AO_CHAT_ID ? { 'x-ao-chat': process.env.AO_CHAT_ID } : {}), ...(process.env.AO_TOKEN ? { 'x-ao-token': process.env.AO_TOKEN } : {}) };
 const PROTOCOL = '2025-06-18';
 const mcpName = (n) => n.replace(/\./g, '_');
 
