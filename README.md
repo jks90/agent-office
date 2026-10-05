@@ -48,6 +48,7 @@ Además de las líneas de texto por agente (`log`), el servidor emite **eventos 
 | `AgentPaused` / `AgentResumed` | el usuario para al agente / vuelve tras una respuesta o un reintento (`reason`) |
 | `AgentFailed` / `AgentCompleted` | fin de la ejecución (`error` / `status, summary, costUsd`) |
 | `TaskReviewed` | *Aprobar* o *Devolver* (`decision:'approved'\|'rejected'`) |
+| `TaskUpdatedFromBase` / `TaskConflict` | FT-19: la base se fusionó en la rama de la tarea (`base, behind`) / chocó (`base, files, behind`) |
 
 - **Consulta**: `GET /api/events?taskId=&agentId=&projectId=&since=&limit=` (`taskId` acepta id o código; `since` = id de evento o timestamp en ms; `limit` por defecto 200, máx. 2000). Devuelve los más recientes en orden cronológico.
 - **SSE**: `/events` emite `event: activity` por cada evento (los clientes que no lo conocen lo ignoran).
@@ -69,6 +70,7 @@ El Guide no es un worker: es la capa de conversación/supervisión por encima de
 
 - **Registro** (`server/guide/tools.js`): `{name, description, input (JSON Schema), policy, handler(args, ctx)}`. `GET /api/guide/tools` lo lista. Familias: `app.*` (`getContext`, `navigate`, `openTask`, `selectAgent`, `openArtifact`), `flowtest.show`, `project.list/run`, `task.list/get/create/update/assign/getStatus/delete`, `agent.list/status/getLastActions/getModifiedFiles/getArtifacts`.
 - **Control de workers** (FT-5): `task.pause/resume/stop`, `task.addConstraint` y `agent.message` ya funcionan (ver «Control de workers»).
+- **Fusión** (FT-19): `task.updateFromBase` (execute) — ver «Fusión sin conflictos a mano».
 - **Pendientes (501)**: `flowtest.deleteFlow` (flow-test aún no expone el borrado). Están registradas y devuelven 501 sin pedir confirmación.
 - **Políticas** (`server/guide/policy.js`): `read` y `navigate` automáticas; `execute` y `write` según `settings.guidePolicy = {execute:'auto'|'confirm', write:'auto'|'confirm'}` (por defecto `execute=auto`, `write=confirm`; se cambia en Ajustes ▸ 🛡 Guide Agent); `irreversible` (`task.delete`) **siempre** pide confirmación.
 - **Confirmación**: reutiliza `questions.js` con `kind:'confirm'` (opciones Sí/No, sin respuesta libre, sin tarea asociada). El modal existente la pinta con 🛡; si se rechaza, la tool responde 403 y no hace nada. Sin respuesta en 10 min cuenta como «No».
@@ -152,6 +154,16 @@ El **Guide Agent** es la capa de conversación, contexto, supervisión y navegac
 - **Prueba de humo**: `node scripts/guide-smoke.mjs` levanta un servidor temporal con motor demo y un stub de `/access`, y por cada proveedor (`claude-cli`, `anthropic-api`, `openai-api`; `--provider X` para uno) abre un chat, manda las cuatro frases y comprueba las tools llamadas y sus efectos en el estado (tarea creada, órdenes `ui`, chat guardado, contrato de eventos, coste/tokens). El «LLM» es un **mock HTTP incluido en el script** (protocolos de Anthropic y OpenAI; el `claude` del CLI también le habla vía `ANTHROPIC_BASE_URL`), así que no gasta nada; con `--real` usa el LLM de verdad (`claude` con sesión o claves en el entorno). Para las APIs comprueba además el protocolo (tools con nombres válidos, `cache_control`, cabeceras de clave, `tool_result` en el historial, modelo de Ajustes). Sale con código 1 si algo falla.
 - **e2e determinista (FT-11)**: `node scripts/guide-e2e.mjs` (sin Claude ni dependencias; ~1 min) arranca el servidor con `AO_DATA_DIR`/`HOME` temporales, motor demo, un flow-test de pega y el proveedor de pruebas `fake` (`server/guide/providers/fake.js`, solo con `AO_GUIDE_FAKE=1`; el guion de tool calls va en el mensaje: `texto ::[{"tool":"task.list","args":{}}]`). Cubre contexto, orden de eventos, flujos A–D, políticas (irreversible/write confirm/auto, auditoría), pausa/reanudación, `agent.message` con constraint y el chat SSE, con sus rechazos. Un `claude` falso (`AO_CLAUDE_BIN`) escribe ficheros reales en una rama para el flujo D. La API viva está documentada en el flow `flowtest/guide-api.flow.json` del workspace (solo lecturas; el token de AgentOffice va en la variable `aoToken`).
 
+## Fusión sin conflictos a mano (FT-19)
+
+Las tareas nacen de la rama base en su worktree; si varias tocan los mismos ficheros, al aprobar la fusión chocaba y había que resolverla a mano. Ahora lo gestiona el plugin:
+
+- **Comprobación previa**: cada tarea en revisión con rama lleva `behind` (commits de la base que no tiene) y `conflicts[]` (solo rutas que chocarían al fusionar). Se calcula en el servidor con `git merge-tree --write-tree` (git ≥ 2.38; con git antiguo, `merge-tree` clásico), no toca índice ni worktrees, se recalcula solo cuando cambia la base o la rama (cada 10 s y tras cada aprobación) y viaja por el SSE. La tarjeta y el modal muestran los chips «desfasada N commits» y «⚠ conflicto en X».
+- **Actualizar con main** (botón en la tarjeta/modal, `POST /api/tasks/:id/update-from-base` y tool del Guide `task.updateFromBase`, policy execute): `git merge --no-edit <base>` dentro del worktree de la tarea. Si entra limpio se recalcula el diffStat y queda lista para aprobar (`TaskUpdatedFromBase`). Si choca se aborta el merge y la tarea vuelve al agente (misma rama y worktree, como *Devolver*) con el feedback: «Tu rama choca con main en: …; haz `git merge main` en tu worktree, resuelve los conflictos conservando lo de ambos lados, verifica y vuelve a confirmar» (`TaskConflict`). El agente tiene `Bash(git merge *)` en la lista blanca (rebase no).
+- **Al aprobar**: si la rama está desfasada se actualiza antes de fusionar; si choca no se aprueba (409) y se devuelve como arriba.
+- **Al arrancar** una tarea cuya rama ya existe (reintento) y la base avanzó, se actualiza primero; si choca, el conflicto va en el prompt.
+- e2e: `node scripts/merge-e2e.mjs` (claude falso que edita la misma línea en varias tareas; una acaba devuelta con el feedback, el agente falso lo resuelve y la fusión sale limpia).
+
 ## Motores
 
 | Motor | Cómo se lanza | Permisos |
@@ -196,7 +208,7 @@ server/engines/allowlist.js  lista blanca de shell compartida por el motor Claud
 bin/ao-mcp.mjs      servidor MCP stdio del Guide (FT-4)
 bin/stt-whisper.py  STT local con faster-whisper (FT-9)
 server/desktop/     DesktopProvider: ventana activa/lista/captura, linux X11+Wayland GNOME, fake (FT-20); capture.js guarda capturas (FT-21)
-server/git.js       worktrees, commit, diff, merge
+server/git.js       worktrees, commit, diff, merge, estado frente a la base y actualizar con ella (FT-19)
 server/engines/     demo · claude · codex (+ describe.js: herramienta → frase del bocadillo)
 public/office.js    la oficina: pixel art en canvas, rutas por pasillos, bocadillos
 public/app.js       tablero, equipo, panel del agente, diálogos

@@ -356,3 +356,9 @@ table.summary td.zero { color: var(--line); }
 table.summary td.st-doing { color: #93c5fd; font-weight: 700; } table.summary td.st-review { color: #fbbf24; font-weight: 700; } table.summary td.st-failed { color: #f87171; font-weight: 700; } table.summary td.st-done { color: var(--ok); }
 table.summary .busy { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 table.summary button.small.on { background: color-mix(in srgb, var(--ok) 20%, transparent); border-color: var(--ok); color: #b8f4d8; }
+
+/* FT-19: rama en revisión desfasada / con conflicto frente a la base */
+.merge-row { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+.merge-chip { font-size: 11px; padding: 1px 7px; border-radius: 12px; overflow-wrap: anywhere; }
+.merge-chip.behind { background: #fbbf2422; color: #fbbf24; border: 1px solid #fbbf2455; }
+.merge-chip.conflict { background: #ef444422; color: #f87171; border: 1px solid #ef444455; }
