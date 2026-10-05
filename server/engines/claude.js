@@ -18,7 +18,7 @@ const PLAN_TOOLS = ['Read', 'Glob', 'Grep'];
 export function start({ cwd, prompt, system, model, mode, mcpUrl, onActivity, onLog }) {
   const tools = [...(mode === 'plan' ? PLAN_TOOLS : WORK_TOOLS)];
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--append-system-prompt', system];
-  if (model) args.push('--model', model);
+  args.push('--model', model || 'sonnet'); // nunca heredar el modelo por defecto de la sesión del usuario (puede no estar disponible en -p)
   // --strict-mcp-config: el agente NO hereda los MCP globales del usuario; solo flow-test para el QA.
   const mcpServers = {};
   if (mcpUrl && mode !== 'plan') {
