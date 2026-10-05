@@ -36,25 +36,38 @@ function toast(text, kind = '') {
 }
 
 // ── Tiempo real ─────────────────────────────────────────────────────────────
-const es = new EventSource(BASE + 'events');
-es.addEventListener('state', (e) => {
-  S = JSON.parse(e.data);
-  if (!S.projects.some((p) => p.id === projectId)) projectId = S.projects[0]?.id ?? null;
-  render();
-  renderQuestions();
-});
-es.addEventListener('logs', (e) => {
-  for (const [id, arr] of Object.entries(JSON.parse(e.data))) logs.set(id, arr);
-  if (drawerAgent) renderLog();
-});
-es.addEventListener('log', (e) => {
-  const entry = JSON.parse(e.data);
-  const arr = logs.get(entry.agentId) || [];
-  arr.push(entry);
-  if (arr.length > 400) arr.shift();
-  logs.set(entry.agentId, arr);
-  if (drawerAgent === entry.agentId) renderLog();
-});
+// El EventSource reconecta solo ante cortes de red, pero un error HTTP (p. ej. el 502 del proxy de flow-test mientras
+// el servidor se reinicia) lo cierra para siempre: aquí se vuelve a abrir con espera creciente para que la vista no se
+// quede congelada. Al reconectar llegan `state` y `logs` completos, así que no se pierde nada.
+let esRetry = 1000;
+function connectEvents() {
+  const es = new EventSource(BASE + 'events');
+  es.addEventListener('open', () => { esRetry = 1000; });
+  es.addEventListener('state', (e) => {
+    S = JSON.parse(e.data);
+    if (!S.projects.some((p) => p.id === projectId)) projectId = S.projects[0]?.id ?? null;
+    render();
+    renderQuestions();
+  });
+  es.addEventListener('logs', (e) => {
+    for (const [id, arr] of Object.entries(JSON.parse(e.data))) logs.set(id, arr);
+    if (drawerAgent) renderLog();
+  });
+  es.addEventListener('log', (e) => {
+    const entry = JSON.parse(e.data);
+    const arr = logs.get(entry.agentId) || [];
+    arr.push(entry);
+    if (arr.length > 400) arr.shift();
+    logs.set(entry.agentId, arr);
+    if (drawerAgent === entry.agentId) renderLog();
+  });
+  es.addEventListener('error', () => {
+    if (es.readyState !== EventSource.CLOSED) return; // CONNECTING: el navegador ya reintenta solo
+    setTimeout(connectEvents, esRetry);
+    esRetry = Math.min(esRetry * 2, 15000);
+  });
+}
+connectEvents();
 
 const project = () => S.projects.find((p) => p.id === projectId);
 const team = () => { const ids = new Set(project()?.team || []); return S.agents.filter((a) => ids.has(a.id)); };
