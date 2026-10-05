@@ -102,7 +102,9 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv 
     message(text) {
       if (child.stdin.destroyed || child.stdin.writableEnded) return false;
       cancelClose();
-      child.stdin.write(userMsg(`INSTRUCCIÓN DEL CLIENTE (prioritaria): ${text}\n(Confírmala citándola literalmente en tu siguiente mensaje y cúmplela de aquí en adelante.)`));
+      // Redacción neutra a propósito: un encabezado en mayúsculas tipo «INSTRUCCIÓN… prioritaria… confírmala literalmente» hace que
+      // el modelo lo trate como inyección y lo rechace (probado con el CLI real).
+      child.stdin.write(userMsg(`El cliente (quien revisa tu trabajo) añade esta indicación para lo que queda de la tarea: «${text}». Aplícala a partir de ahora y menciónala en tu resumen final.`));
       return true;
     },
     stop() { stopped = true; cancelClose(); signal('SIGTERM'); signal('SIGCONT'); setTimeout(() => signal('SIGKILL'), 3000).unref(); }, // SIGCONT: un grupo parado no recibe SIGTERM

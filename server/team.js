@@ -39,6 +39,8 @@ export const STATUSES = ['backlog', 'todo', 'doing', 'review', 'done', 'failed']
 
 const { get, changed, newId, log } = store;
 const jobs = new Map(); // agentId -> { stop, taskId, engine, pid?, pause?, resume?, message?, requeue? }
+// Al apagar el servidor se matan los motores en marcha: van `detached` (grupo propio) y fuera de systemd sobrevivirían.
+store.onShutdown(() => { for (const j of jobs.values()) { try { j.stop?.(); } catch { /* ya terminó */ } } });
 
 const DEFAULT_TEAM = [
   { name: 'Olivia', role: 'po' },
@@ -565,7 +567,7 @@ function askBlock(t) {
 // FT-5: restricciones del cliente (siempre) y mensajes recibidos en la ejecución anterior (si se reencoló).
 const clientBlock = (t) => [
   (t.constraints || []).length ? `\nRestricciones del cliente (obligatorias, aplican a todo el trabajo):\n${t.constraints.map((c) => `- ${c.text}`).join('\n')}` : '',
-  (t.pendingMessages || []).length ? `\nINSTRUCCIÓN DEL CLIENTE (prioritaria), recibida mientras trabajabas:\n${t.pendingMessages.map((m) => `- ${m.text}`).join('\n')}` : '',
+  (t.pendingMessages || []).length ? `\nIndicaciones que el cliente añadió mientras trabajabas (aplícalas):\n${t.pendingMessages.map((m) => `- ${m.text}`).join('\n')}` : '',
 ].join('');
 
 function buildPrompt(p, agent, t) {
