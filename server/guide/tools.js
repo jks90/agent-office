@@ -72,6 +72,7 @@ const gitFiles = async (t) => {
   const p = projectOf(t);
   const repo = p && team.repoOfTask(p, t);
   if (!t.branch || !repo) return { files: [], note: t.branch ? 'La tarea no tiene repo' : 'La tarea no tiene rama (motor demo o sin empezar)' };
+  if (!(await git.branchExists(repo, t.branch))) return { files: [], branch: t.branch, note: `La rama ${t.branch} ya se fusionó en ${repo.baseBranch} y se borró (tarea ${t.status}); los ficheros están en el diffStat de la tarea y en git log de ${repo.key}` };
   const out = await git.git(repo.path, 'diff', '--name-only', `${repo.baseBranch}...${t.branch}`);
   return { files: out ? out.split('\n') : [], base: repo.baseBranch, branch: t.branch };
 };
@@ -146,7 +147,8 @@ export const tools = [
       const t = taskFrom(a);
       const p = projectOf(t), repo = p && team.repoOfTask(p, t);
       let commits = [];
-      if (t.branch && repo) { const out = await git.git(repo.path, 'log', '--format=%h %s', `${repo.baseBranch}..${t.branch}`); commits = out ? out.split('\n') : []; }
+      if (t.branch && repo && await git.branchExists(repo, t.branch)) { const out = await git.git(repo.path, 'log', '--format=%h %s', `${repo.baseBranch}..${t.branch}`); commits = out ? out.split('\n') : []; }
+      else if (t.branch && repo) { const out = await git.git(repo.path, 'log', '--format=%h %s', '--grep', `Merge branch '${t.branch}'`, '-1'); commits = out ? [out + ' (ya fusionada)'] : []; }
       return { task: t.code || t.id, branch: t.branch || null, summary: t.summary, diffStat: t.diffStat, commits };
     }),
 
