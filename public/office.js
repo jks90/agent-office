@@ -1,24 +1,32 @@
-// La oficina en 2D: pixel art dibujado a mano en un canvas (sin sprites ni librerías).
+// La oficina en 2D: pixel art con sprites Kenney CC0 y algunos elementos dinámicos dibujados a mano.
 // Coordenadas lógicas W×H; cada unidad son S píxeles reales. El texto se pinta a resolución nativa.
 const W = 320, H = 208, S = 3;
 const SPINE = 244;          // pasillo vertical entre las mesas y la zona de descanso
 const WALL = 44;
 const SPEED = 46;           // unidades por segundo
 const DOOR = { x: 247, y: 50 };
+const TILE = 16;
+const STEP = 17;
 
 const DESKS = [
-  { x: 16, y: 80 }, { x: 72, y: 80 }, { x: 128, y: 80 }, { x: 184, y: 80 },
-  { x: 16, y: 146 }, { x: 72, y: 146 }, { x: 128, y: 146 }, { x: 184, y: 146 },
+  { x: 16, y: 80 }, { x: 80, y: 80 }, { x: 144, y: 80 },
+  { x: 16, y: 144 }, { x: 80, y: 144 }, { x: 144, y: 144 },
 ];
-const seatOf = (d) => ({ x: d.x + 32, y: d.y + 3, corr: d.y - 12 });
-const BOARD_SPOTS = [{ x: 118, y: 58 }, { x: 154, y: 58 }];
+const seatOf = (d) => ({ x: d.x + 24, y: d.y + 16, corr: d.y + 48 });
+const BOARD_SPOTS = [{ x: 112, y: 64 }, { x: 160, y: 64 }];
 const LOUNGE = [
-  { x: 266, y: 182 }, { x: 282, y: 182 }, { x: 298, y: 182 }, { x: 302, y: 112 },
-  { x: 262, y: 124 }, { x: 286, y: 146 }, { x: 270, y: 156 }, { x: 304, y: 146 },
+  { x: 256, y: 176 }, { x: 288, y: 176 }, { x: 304, y: 144 }, { x: 256, y: 128 },
+  { x: 272, y: 112 }, { x: 304, y: 112 }, { x: 240, y: 160 }, { x: 288, y: 144 },
 ];
 
-const SKIN = ['#f1c7a3', '#e0ac85', '#c68863', '#8d5a3b', '#f6d5bd'];
-const HAIR = ['#2b1d16', '#6b3f22', '#c9a227', '#9a3412', '#111827', '#d6d3d1', '#7c2d12'];
+const SKIN_ROWS = [0, 1, 2];
+const HAIR_SETS = [
+  { row: 0, cols: [19, 20, 21, 22] },
+  { row: 0, cols: [23, 24, 25, 26] },
+  { row: 4, cols: [19, 20, 21, 22] },
+  { row: 4, cols: [23, 24, 25, 26] },
+  { row: 8, cols: [19, 20, 21, 22] },
+];
 const hash = (s) => [...String(s)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
 
 export class Office {
@@ -33,11 +41,24 @@ export class Office {
     this.roles = {};
     this.title = '';
     this.chars = new Map();
+    this.spriteCache = new Map();
+    this.assetsReady = false;
+    this.indoor = this.loadSprite('assets/kenney/indoor.png');
+    this.characters = this.loadSprite('assets/kenney/characters.png');
     this.selected = null;
     this.last = performance.now();
     canvas.addEventListener('click', (e) => { const id = this.hit(e); if (id) onAgentClick?.(id); });
     canvas.addEventListener('mousemove', (e) => { canvas.style.cursor = this.hit(e) ? 'pointer' : 'default'; });
     requestAnimationFrame(this.frame);
+  }
+
+  loadSprite(src) {
+    const img = new Image();
+    img.onload = () => {
+      if (this.indoor?.complete && this.characters?.complete) this.assetsReady = true;
+    };
+    img.src = src;
+    return img;
   }
 
   update({ agents, tasks, roles, title, selected }) {
@@ -133,24 +154,32 @@ export class Office {
     this.ctx.fillRect(Math.round(x * S), Math.round(y * S), Math.round(w * S), Math.round(h * S));
   }
 
+  tile(img, col, row, dx, dy) {
+    this.ctx.drawImage(img, col * STEP, row * STEP, TILE, TILE, Math.round(dx * S), Math.round(dy * S), TILE * S, TILE * S);
+  }
+
+  tileCtx(ctx, img, col, row, dx, dy) {
+    ctx.drawImage(img, col * STEP, row * STEP, TILE, TILE, Math.round(dx), Math.round(dy), TILE, TILE);
+  }
+
   draw(now) {
     const ctx = this.ctx;
     ctx.clearRect(0, 0, W * S, H * S);
+    if (!this.assetsReady) {
+      this.drawFloorOnly();
+      return;
+    }
     this.drawRoom(now);
 
     // Todo lo que tiene profundidad se ordena por su «pie» (y) para que se tape bien.
     const items = [];
     DESKS.forEach((d, i) => {
       const owner = this.agents[i];
-      items.push({ y: d.y + 14, draw: () => this.drawDesk(d, owner, now) });
-      items.push({ y: d.y - 1, draw: () => this.drawChair(d) });
+      items.push({ y: d.y + 12, draw: () => this.drawDesk(d, owner) });
+      items.push({ y: d.y + 16, draw: () => this.drawChair(d) });
+      items.push({ y: d.y + 33, draw: () => this.drawMonitor(d, owner, now) });
     });
-    items.push({ y: 67, draw: () => this.drawBookshelf(266, 46) });
-    items.push({ y: 141, draw: () => this.drawFloorLamp(312, 140, now) });
-    items.push({ y: 172, draw: () => this.drawSofaBack(now) });
-    items.push({ y: 196, draw: () => this.drawSofaFront() });
-    items.push({ y: 112, draw: () => this.drawPlant(306, 108) });
-    items.push({ y: 196, draw: () => this.drawPlant(246, 194) });
+    this.drawStaticSprites(items, now);
     this.agents.forEach((a) => {
       const c = this.chars.get(a.id);
       if (c && now >= c.enterAt) items.push({ y: c.y, draw: () => this.drawChar(a, c, now) });
@@ -163,18 +192,9 @@ export class Office {
 
   drawRoom(now) {
     // Suelo de tarima
-    this.px(0, WALL, W, H - WALL, '#c69b70');
-    for (let y = WALL; y < H; y += 6) {
-      this.px(0, y, W, 0.5, '#ac8059');
-      const off = ((y / 6) % 2) * 20;
-      for (let x = off; x < W; x += 40) this.px(x, y, 0.5, 6, '#ac8059');
-      for (let x = (off + 13) % 40; x < W; x += 40) this.px(x, y + 2, 5, 0.5, 'rgba(255,255,255,.12)');
-    }
+    this.drawFloorOnly();
     // Alfombra de la zona de descanso
-    this.px(250, 98, 66, 100, '#415a77');
-    this.px(253, 101, 60, 94, '#5f7f8e');
-    for (let yy = 106; yy < 190; yy += 12) for (let xx = 258; xx < 308; xx += 12) this.px(xx, yy, 6, 2, '#91b0aa');
-    this.px(260, 120, 46, 46, 'rgba(255,255,255,.08)');
+    if (this.assetsReady) this.drawRug(240, 112);
     // Pared
     this.px(0, 0, W, WALL, '#596076');
     this.px(0, 0, W, 3, '#3b4057');
@@ -197,26 +217,51 @@ export class Office {
       }
     }
     // Cuadros y reloj
-    this.px(66, 12, 14, 16, '#1f2937'); this.px(68, 14, 10, 12, '#c4b5fd'); this.px(70, 22, 6, 2, '#7c3aed');
+    if (this.assetsReady) {
+      this.tile(this.indoor, 18, 0, 64, 12);
+      this.tile(this.indoor, 19, 12, 272, 12);
+      this.tile(this.indoor, 20, 12, 288, 12);
+    } else {
+      this.px(66, 12, 14, 16, '#1f2937'); this.px(68, 14, 10, 12, '#c4b5fd'); this.px(70, 22, 6, 2, '#7c3aed');
+      this.px(260, 13, 16, 14, '#1f2937'); this.px(262, 15, 12, 10, '#fed7aa');
+    }
     this.px(181, 13, 12, 12, '#1f2937'); this.px(183, 15, 8, 8, '#f8fafc'); this.px(187, 17, 1, 4, '#111827'); this.px(187, 20, 3, 1, '#111827');
-    this.px(260, 13, 16, 14, '#1f2937'); this.px(262, 15, 12, 10, '#fed7aa'); this.px(264, 20, 8, 1, '#fb923c');
     // Pizarra con el tablero de tareas en directo
     this.drawWhiteboard();
     // Puerta
     this.px(236, 12, 20, 32, '#5b3a22');
     this.px(238, 14, 16, 30, '#7a4f2e');
     this.px(251, 28, 2, 2, '#fbbf24');
-    // Cafetera y encimera
-    this.px(266, 36, 50, 8, '#6b7280');
-    this.px(266, 36, 50, 2, '#9ca3af');
-    this.px(296, 20, 14, 16, '#1f2937');
-    this.px(298, 23, 10, 5, '#374151');
-    this.px(300, 30, 6, 4, '#111827');
-    this.px(306, 22, 2, 2, Math.floor(now / 600) % 2 ? '#ef4444' : '#7f1d1d');
-    this.px(274, 30, 6, 6, '#e5e7eb');
-    this.px(282, 32, 4, 4, '#fde68a');
+    // Cocina/café con sprites, vapor a mano
+    if (this.assetsReady) {
+      this.tile(this.indoor, 13, 14, 256, 12);
+      this.tile(this.indoor, 13, 15, 256, 28);
+      this.tile(this.indoor, 14, 14, 288, 20);
+      this.tile(this.indoor, 14, 15, 288, 36);
+      this.tile(this.indoor, 0, 12, 272, 28);
+      this.tile(this.indoor, 1, 12, 304, 28);
+    } else {
+      this.px(266, 36, 50, 8, '#6b7280');
+      this.px(296, 20, 14, 16, '#1f2937');
+    }
+    this.px(278, 30, 5, 6, '#e5e7eb');
+    this.px(284, 32, 4, 4, '#fde68a');
     const steam = Math.floor(now / 260) % 3;
-    for (let i = 0; i < 3; i++) this.px(276 + i * 4, 25 - ((steam + i) % 3) * 2, 1, 3, 'rgba(255,255,255,.55)');
+    for (let i = 0; i < 3; i++) this.px(279 + i * 3, 25 - ((steam + i) % 3) * 2, 1, 3, 'rgba(255,255,255,.55)');
+  }
+
+  drawFloorOnly() {
+    this.px(0, WALL, W, H - WALL, '#c69b70');
+    for (let y = WALL; y < H; y += 6) {
+      this.px(0, y, W, 0.5, '#ac8059');
+      const off = ((y / 6) % 2) * 20;
+      for (let x = off; x < W; x += 40) this.px(x, y, 0.5, 6, '#ac8059');
+      for (let x = (off + 13) % 40; x < W; x += 40) this.px(x, y + 2, 5, 0.5, 'rgba(255,255,255,.12)');
+    }
+  }
+
+  drawRug(x, y) {
+    for (let ry = 0; ry < 4; ry++) for (let rx = 0; rx < 4; rx++) this.tile(this.indoor, 23 + rx, 4 + ry, x + rx * 16, y + ry * 16);
   }
 
   drawWhiteboard() {
@@ -250,210 +295,203 @@ export class Office {
   }
 
   drawChair(d) {
-    this.px(d.x + 27, d.y - 3, 11, 2, 'rgba(0,0,0,.18)');
-    this.px(d.x + 27, d.y - 13, 10, 7, '#4b5563');
-    this.px(d.x + 28, d.y - 12, 8, 5, '#ef4444');
-    this.px(d.x + 29, d.y - 11, 6, 2, '#fca5a5');
-    this.px(d.x + 31, d.y - 6, 2, 3, '#1f2937');
-    this.px(d.x + 27, d.y - 3, 10, 3, '#b91c1c');
-    this.px(d.x + 28, d.y, 1, 3, '#111827');
-    this.px(d.x + 36, d.y, 1, 3, '#111827');
+    this.px(d.x + 17, d.y + 17, 14, 4, 'rgba(0,0,0,.16)');
+    this.tile(this.indoor, 1, 3, d.x + 16, d.y + 16);
   }
 
-  drawDesk(d, owner, now) {
-    const working = owner?.status === 'working';
-    this.px(d.x + 2, d.y + 12, 42, 5, 'rgba(0,0,0,.18)');
-    // Monitor
-    this.px(d.x + 3, d.y - 13, 20, 13, '#111827');
-    this.px(d.x + 5, d.y - 11, 16, 9, owner ? (working ? '#07111f' : '#1e293b') : '#374151');
-    this.px(d.x + 6, d.y - 10, 5, 1, 'rgba(255,255,255,.35)');
-    if (working) {
-      const colors = ['#60a5fa', '#f472b6', '#34d399', '#fbbf24', '#a78bfa'];
-      const t = Math.floor(now / 350);
-      for (let i = 0; i < 4; i++) {
-        const w = 3 + ((t + i * 7 + d.x) % 9);
-        this.px(d.x + 6 + (i % 2) * 2, d.y - 10 + i * 2, w, 1, colors[(t + i) % colors.length]);
-      }
-    } else if (owner) {
-      this.px(d.x + 11, d.y - 8, 4, 3, '#334155');
-    }
-    this.px(d.x + 12, d.y, 3, 2, '#1f2937');
-    // Tablero de la mesa
-    this.px(d.x - 1, d.y - 1, 46, 3, '#d6a36f');
-    this.px(d.x, d.y + 2, 44, 4, '#a87146');
-    this.px(d.x, d.y + 6, 44, 8, '#7c4f30');
-    this.px(d.x + 4, d.y + 7, 10, 1, 'rgba(255,255,255,.16)');
-    this.px(d.x + 2, d.y + 13, 2, 1, '#5b3a22');
-    this.px(d.x + 40, d.y + 13, 2, 1, '#5b3a22');
-    this.px(d.x + 26, d.y + 1, 11, 2, '#d1d5db');
-    this.px(d.x + 39, d.y, 3, 3, '#f3f4f6');
+  drawDesk(d, owner) {
+    this.px(d.x + 2, d.y + 30, 44, 5, 'rgba(0,0,0,.18)');
+    this.tile(this.indoor, 0, 0, d.x, d.y);
+    this.tile(this.indoor, 1, 0, d.x + 16, d.y);
+    this.tile(this.indoor, 2, 0, d.x + 32, d.y);
+    this.tile(this.indoor, 0, 1, d.x, d.y + 16);
+    this.tile(this.indoor, 1, 1, d.x + 16, d.y + 16);
+    this.tile(this.indoor, 2, 1, d.x + 32, d.y + 16);
+    this.px(d.x + 26, d.y + 13, 11, 2, '#d1d5db');
+    this.px(d.x + 39, d.y + 12, 3, 3, '#f3f4f6');
     if (owner) {
       const role = this.roles[owner.role];
-      this.px(d.x + 2, d.y + 5.5, 22, 5, role?.color || '#999');
+      this.px(d.x + 4, d.y + 22, 22, 5, role?.color || '#999');
       const ctx = this.ctx;
       ctx.font = `700 ${3.2 * S}px ui-sans-serif, system-ui`;
       ctx.fillStyle = '#111827';
       ctx.textBaseline = 'middle';
-      ctx.fillText(owner.name.slice(0, 9), (d.x + 3) * S, (d.y + 8.2) * S);
+      ctx.fillText(owner.name.slice(0, 9), (d.x + 5) * S, (d.y + 24.7) * S);
     }
   }
 
+  drawMonitor(d, owner, now) {
+    const working = owner?.status === 'working';
+    // Monitor
+    this.px(d.x + 5, d.y + 2, 14, 10, '#111827');
+    this.px(d.x + 6, d.y + 3, 12, 7, owner ? (working ? '#07111f' : '#1e293b') : '#374151');
+    this.px(d.x + 7, d.y + 4, 4, 1, 'rgba(255,255,255,.35)');
+    if (working) {
+      const colors = ['#60a5fa', '#f472b6', '#34d399', '#fbbf24', '#a78bfa'];
+      const t = Math.floor(now / 350);
+      for (let i = 0; i < 4; i++) {
+        const w = 2 + ((t + i * 7 + d.x) % 7);
+        this.px(d.x + 7 + (i % 2) * 2, d.y + 4 + i * 1.5, w, 1, colors[(t + i) % colors.length]);
+      }
+    } else if (owner) {
+      this.px(d.x + 10, d.y + 5, 4, 3, '#334155');
+    }
+    this.px(d.x + 12, d.y + 12, 3, 2, '#1f2937');
+  }
+
   drawBookshelf(x, y) {
-    this.px(x - 1, y - 1, 48, 22, 'rgba(0,0,0,.15)');
-    this.px(x, y, 46, 20, '#5b3a22');
-    this.px(x + 2, y + 2, 42, 4, '#7a4f2e');
-    this.px(x + 2, y + 10, 42, 4, '#7a4f2e');
-    const books = ['#ef4444', '#f59e0b', '#22c55e', '#38bdf8', '#a78bfa'];
-    for (let i = 0; i < 14; i++) this.px(x + 4 + i * 3, y + 3 + (i % 2) * 8, 2, 7, books[i % books.length]);
+    this.px(x + 2, y + 30, 30, 4, 'rgba(0,0,0,.14)');
+    this.tile(this.indoor, 12, 0, x, y);
+    this.tile(this.indoor, 13, 0, x + 16, y);
+    this.tile(this.indoor, 12, 1, x, y + 16);
+    this.tile(this.indoor, 13, 1, x + 16, y + 16);
   }
 
   drawFloorLamp(x, y, now) {
-    const glow = Math.floor(now / 900) % 2 ? 'rgba(254,240,138,.18)' : 'rgba(254,240,138,.12)';
-    this.px(x - 10, y - 28, 22, 18, glow);
-    this.px(x - 5, y - 28, 12, 8, '#facc15');
-    this.px(x - 3, y - 26, 8, 5, '#fde68a');
-    this.px(x + 1, y - 20, 2, 18, '#334155');
-    this.px(x - 5, y - 2, 14, 2, '#334155');
+    const glow = Math.floor(now / 900) % 2 ? 'rgba(254,240,138,.14)' : 'rgba(254,240,138,.09)';
+    this.px(x - 7, y - 21, 20, 24, glow);
+    this.tile(this.indoor, 20, 5, x, y - 16);
+    this.tile(this.indoor, 20, 4, x, y - 32);
   }
 
   drawSofaBack(now) {
-    this.px(257, 165, 52, 10, 'rgba(0,0,0,.2)');
-    this.px(258, 164, 50, 10, '#5b21b6');
-    this.px(260, 166, 46, 3, '#8b5cf6');
-    this.px(270, 170, 12, 8, '#f97316');
-    this.px(286, 170, 12, 8, Math.floor(now / 700) % 2 ? '#22c55e' : '#16a34a');
+    this.px(254, 176, 50, 5, 'rgba(0,0,0,.18)');
+    this.tile(this.indoor, 16, 8, 256, 160);
+    this.tile(this.indoor, 17, 8, 272, 160);
+    this.tile(this.indoor, 18, 8, 288, 160);
   }
   drawSofaFront() {
-    this.px(256, 178, 54, 9, '#6d28d9');
-    this.px(256, 178, 54, 2, '#a78bfa');
-    this.px(254, 168, 5, 18, '#4c1d95');
-    this.px(308, 168, 5, 18, '#4c1d95');
-    this.px(259, 186, 4, 3, '#2e1065');
-    this.px(303, 186, 4, 3, '#2e1065');
+    this.tile(this.indoor, 16, 9, 256, 176);
+    this.tile(this.indoor, 17, 9, 272, 176);
+    this.tile(this.indoor, 18, 9, 288, 176);
   }
   drawPlant(x, y) {
-    const sway = Math.sin(performance.now() / 850 + x) > 0 ? 1 : 0;
-    this.px(x - 5, y - 1, 10, 2, 'rgba(0,0,0,.16)');
-    this.px(x - 4, y - 6, 8, 6, '#78350f');
-    this.px(x - 3, y - 5, 6, 4, '#92400e');
-    this.px(x - 7 + sway, y - 15, 5, 9, '#15803d');
-    this.px(x - 2, y - 18, 4, 12, '#22c55e');
-    this.px(x + 2 - sway, y - 14, 6, 8, '#16a34a');
-    this.px(x - 1, y - 17, 1, 8, 'rgba(255,255,255,.18)');
+    this.px(x + 3, y + 14, 10, 2, 'rgba(0,0,0,.16)');
+    this.tile(this.indoor, 16, 0, x, y);
+  }
+
+  drawStaticSprites(items, now) {
+    items.push({ y: 78, draw: () => this.drawBookshelf(272, 46) });
+    items.push({ y: 78, draw: () => this.drawBookshelf(224, 46) });
+    items.push({ y: 160, draw: () => this.drawFloorLamp(304, 144, now) });
+    items.push({ y: 176, draw: () => this.drawSofaBack(now) });
+    items.push({ y: 196, draw: () => this.drawSofaFront() });
+    items.push({ y: 112, draw: () => this.drawPlant(224, 112) });
+    items.push({ y: 208, draw: () => this.drawPlant(240, 176) });
+    items.push({ y: 144, draw: () => this.drawRoundTable(272, 128) });
+  }
+
+  drawRoundTable(x, y) {
+    this.tile(this.indoor, 1, 2, x, y - 16);
+    this.tile(this.indoor, 0, 2, x, y + 16);
+    this.tile(this.indoor, 2, 2, x - 16, y);
+    this.tile(this.indoor, 3, 2, x + 32, y);
+    this.tile(this.indoor, 3, 0, x, y);
+    this.tile(this.indoor, 4, 0, x + 16, y);
+    this.tile(this.indoor, 3, 1, x, y + 16);
+    this.tile(this.indoor, 4, 1, x + 16, y + 16);
   }
 
   drawChar(a, c, now) {
     const h = hash(a.name + a.id);
-    const skin = SKIN[h % SKIN.length];
-    const hair = HAIR[(h >> 3) % HAIR.length];
-    const shirt = this.roles[a.role]?.color || '#999';
     const x = c.x, y = c.y;
     const sitting = !c.moving && c.key === 'desk';
     const typing = sitting && a.status === 'working';
     const step = c.moving ? Math.floor(now / 140) % 2 : 0;
-    const bob = !c.moving && !typing ? Math.sin(now / 500 + h) * 0.3 : 0;
-    const face = typing ? 'up' : (c.face || 'down');
-    const outline = '#111827';
-    const shade = shadeColor(shirt, -28);
-    const hi = shadeColor(shirt, 28);
+    const bob = c.moving ? (step ? -1.5 : 0) : (!typing ? Math.sin(now / 500 + h) * 0.5 : 0);
+    const faceLeft = c.face === 'left';
 
-    if (this.selected === a.id) { this.px(x - 8, y - 2, 16, 2, 'rgba(250,204,21,.75)'); this.px(x - 6, y, 12, 2, 'rgba(250,204,21,.35)'); }
-    this.px(x - 5, y - 1, 10, 2, 'rgba(0,0,0,.24)');
-    // Piernas
-    if (!sitting) {
-      if (face === 'left' || face === 'right') {
-        const stride = step ? -1 : 1;
-        this.px(x - 3, y - 6, 5, 6, outline);
-        this.px(x - 2, y - 5, 2, 5, '#2d3142');
-        this.px(x + stride, y - 5, 2, 4, '#374151');
-        this.px(x - 3, y - 1, 4, 1, outline);
-        this.px(x + stride - 1, y - 1.5, 5, 1, outline);
-      } else {
-        this.px(x - 4, y - 6, 3, 6, outline);
-        this.px(x + 1, y - 6, 3, 6, outline);
-        this.px(x - 3, y - 5, 2, step ? 4 : 5, '#2d3142');
-        this.px(x + 2, y - 5, 2, step ? 5 : 4, '#2d3142');
-        this.px(x - 4, y - (step ? 1.5 : 1), 4, 1, outline);
-        this.px(x + 1, y - (step ? 1 : 1.5), 4, 1, outline);
-      }
+    if (this.selected === a.id) {
+      this.px(x - 8, y + 1, 16, 2, 'rgba(250,204,21,.75)');
+      this.px(x - 6, y + 3, 12, 2, 'rgba(250,204,21,.35)');
     }
-    const by = y - (sitting ? 3 : 0) + bob;
-    // Cuerpo y brazos
-    if (face === 'left' || face === 'right') {
-      const s = face === 'right' ? 1 : -1;
-      this.px(x - 4, by - 12, 8, 8, outline);
-      this.px(x - 3, by - 11, 6, 6, shirt);
-      this.px(x - 2, by - 10, 2, 4, hi);
-      this.px(x + s, by - 11, 2, 6, shade);
+    this.px(x - 6, y + 2, 12, 3, 'rgba(0,0,0,.24)');
+
+    const canvas = this.agentSprite(a, sitting ? 'back' : 'front');
+    const dx = Math.round((x - 8) * S);
+    const dy = Math.round((y - 16 + bob) * S);
+    const ctx = this.ctx;
+    ctx.save();
+    if (faceLeft && !sitting) {
+      ctx.translate(dx + TILE * S, dy);
+      ctx.scale(-1, 1);
+      ctx.drawImage(canvas, 0, 0, TILE * S, TILE * S);
     } else {
-      this.px(x - 5, by - 12, 10, 8, outline);
-      this.px(x - 4, by - 11, 8, 6, shirt);
-      this.px(x - 3, by - 10, 2, 4, hi);
-      this.px(x + 2, by - 11, 2, 6, shade);
+      ctx.drawImage(canvas, dx, dy, TILE * S, TILE * S);
     }
+    ctx.restore();
+
     if (typing) {
       const k = Math.floor(now / 160) % 2;
-      this.px(x - 6, by - 10, 2, 4, outline);
-      this.px(x + 4, by - 10, 2, 4, outline);
-      this.px(x - 5, by - 10, 2, 3, shade);
-      this.px(x + 3, by - 10, 2, 3, shade);
-      this.px(x - 4, by - 7 - k * 0.6, 3, 1.5, skin);
-      this.px(x + 1, by - 7 - (1 - k) * 0.6, 3, 1.5, skin);
-    } else {
-      const sw = c.moving ? (step ? 0.8 : -0.8) : 0;
-      if (face === 'left' || face === 'right') {
-        const s = face === 'right' ? 1 : -1;
-        this.px(x - s * 4, by - 11 - sw, 2, 6, outline);
-        this.px(x - s * 3.5, by - 11 - sw, 1.5, 5, shade);
-        this.px(x - s * 3.5, by - 6 - sw, 1.5, 1.2, skin);
-        this.px(x + s * 3, by - 10 + sw, 2, 5, outline);
-        this.px(x + s * 2, by - 10 + sw, 1.5, 4, shade);
-        this.px(x + s * 2, by - 6 + sw, 1.5, 1.2, skin);
-      } else {
-        this.px(x - 6, by - 11 + sw, 2, 6, outline);
-        this.px(x + 4, by - 11 - sw, 2, 6, outline);
-        this.px(x - 5, by - 11 + sw, 1.5, 5, shade);
-        this.px(x + 3.5, by - 11 - sw, 1.5, 5, shade);
-        this.px(x - 5, by - 6 + sw, 1.5, 1.2, skin);
-        this.px(x + 3.5, by - 6 - sw, 1.5, 1.2, skin);
-      }
+      this.px(x - 5, y - 5 - k, 4, 1.5, '#f1c7a3');
+      this.px(x + 1, y - 5 - (1 - k), 4, 1.5, '#f1c7a3');
     }
-    // Cabeza
-    this.px(x - 4, by - 18, 8, 8, outline);
-    this.px(x - 3, by - 17, 6, 6, skin);
-    if (face === 'up') {
-      this.px(x - 4, by - 19, 8, 5, hair);
-      this.px(x - 3, by - 15, 6, 3, hair);
-    } else if (face === 'left' || face === 'right') {
-      const s = face === 'right' ? 1 : -1;
-      this.px(x - 4, by - 18, 8, 5, outline);
-      this.px(x - 3, by - 17, 6, 6, skin);
-      this.px(x - 4, by - 19, 8, 4, hair);
-      this.px(x - s * 4, by - 16, 3, 5, hair);
-      this.px(x + s * 3, by - 15, 2, 2, skin);
-      this.px(x + s * 3, by - 13, 1, 1, shadeColor(skin, -25));
-      this.px(x - s * 1, by - 18, 3, 1, shadeColor(hair, 24));
-    } else {
-      this.px(x - 3.5, by - 18.5, 7, 2.8, hair);
-      this.px(x - 3.5, by - 16, 1, 2.5, hair);
-      this.px(x + 2.5, by - 16, 1, 2.5, hair);
-      this.px(x - 1, by - 18.8, 3, 1, shadeColor(hair, 24));
-    }
-    const look = face === 'right' ? 0.8 : face === 'left' ? -0.8 : 0;
-    const blink = Math.floor(now / 100 + h) % 40 === 0;
-    if (!blink && face !== 'up') {
-      this.px(x - 1.8 + look, by - 14.5, 1, 1, '#1f2937');
-      this.px(x + 0.8 + look, by - 14.5, 1, 1, '#1f2937');
-    }
-    if (face === 'left' || face === 'right') this.px(x + (face === 'right' ? 2 : -3), by - 12.5, 1.5, 0.7, '#9f5f46');
-    else if (face !== 'up') this.px(x - 0.5 + look, by - 12.5, 2, 0.7, '#9f5f46');
-    // Accesorio de cada rol
-    if (a.role === 'po') { this.px(x - 0.5, by - 11, 1, 4, '#e11d48'); this.px(x - 1.5, by - 7, 3, 1, '#be123c'); }
-    if (a.role === 'back') { this.px(x - 4, by - 16, 1, 3, '#111827'); this.px(x + 3, by - 16, 1, 3, '#111827'); this.px(x - 3.5, by - 18.6, 7, 0.8, '#111827'); }
-    if (a.role === 'front') { this.px(x - 4, by - 19, 8, 2, '#f59e0b'); this.px(x + (face === 'left' ? -5 : 2), by - 18, 3, 1, '#f59e0b'); }
-    if (a.role === 'qa' && face !== 'up') { this.px(x - 2.5 + look, by - 15, 2, 2, 'rgba(15,23,42,.8)'); this.px(x + 0.5 + look, by - 15, 2, 2, 'rgba(15,23,42,.8)'); this.px(x - 0.5 + look, by - 14.5, 1, 0.5, '#0f172a'); }
-    // Taza de café cuando descansan
-    if (!c.moving && a.status !== 'working' && c.key?.startsWith('lounge')) this.px(x + 4, by - 8, 2, 2, '#f8fafc');
+    if (!c.moving && a.status !== 'working' && c.key?.startsWith('lounge')) this.px(x + 5, y - 7, 2, 2, '#f8fafc');
+  }
+
+  agentSprite(a, view) {
+    const key = `${a.id}:${a.role}:${view}:${this.roles[a.role]?.color || ''}`;
+    if (this.spriteCache.has(key)) return this.spriteCache.get(key);
+    const h = hash(a.name + a.id);
+    const canvas = document.createElement('canvas');
+    canvas.width = TILE * S;
+    canvas.height = TILE * S;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.scale(S, S);
+
+    const skinRow = SKIN_ROWS[h % SKIN_ROWS.length];
+    const shirtCol = 6 + ((h >> 3) % 4);
+    const hairSet = HAIR_SETS[(h >> 5) % HAIR_SETS.length];
+    const hairCol = view === 'back' ? 22 : hairSet.cols[(h >> 8) % hairSet.cols.length];
+    const hairRow = hairSet.row + ((h >> 10) & 1);
+
+    this.tileCtx(ctx, this.characters, view === 'back' ? 1 : 0, skinRow, 0, 0);
+    this.drawTintedShirt(ctx, shirtCol, 0, this.roles[a.role]?.color || '#999999');
+    this.tileCtx(ctx, this.characters, hairCol, hairRow, 0, 0);
+
+    if (a.role === 'po') this.drawTie(ctx);
+    if (a.role === 'back') this.drawHeadphones(ctx);
+    if (a.role === 'front') this.tileCtx(ctx, this.characters, 28, 7, 0, 0);
+    if (a.role === 'qa' && view !== 'back') this.drawGlasses(ctx);
+
+    this.spriteCache.set(key, canvas);
+    return canvas;
+  }
+
+  drawTintedShirt(ctx, col, row, color) {
+    const tmp = document.createElement('canvas');
+    tmp.width = TILE;
+    tmp.height = TILE;
+    const tctx = tmp.getContext('2d');
+    tctx.imageSmoothingEnabled = false;
+    this.tileCtx(tctx, this.characters, col, row, 0, 0);
+    tctx.globalCompositeOperation = 'source-atop';
+    tctx.fillStyle = `${color}8c`;
+    tctx.fillRect(0, 0, TILE, TILE);
+    tctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(tmp, 0, 0);
+  }
+
+  drawTie(ctx) {
+    ctx.fillStyle = '#e11d48';
+    ctx.fillRect(7, 7, 2, 5);
+    ctx.fillStyle = '#be123c';
+    ctx.fillRect(6, 11, 4, 1);
+  }
+
+  drawHeadphones(ctx) {
+    ctx.fillStyle = '#111827';
+    ctx.fillRect(4, 3, 1, 4);
+    ctx.fillRect(11, 3, 1, 4);
+    ctx.fillRect(5, 2, 6, 1);
+  }
+
+  drawGlasses(ctx) {
+    ctx.fillStyle = 'rgba(15,23,42,.85)';
+    ctx.fillRect(5, 5, 3, 2);
+    ctx.fillRect(9, 5, 3, 2);
+    ctx.fillRect(8, 6, 1, 1);
   }
 
   drawLabels(a, c, now) {
