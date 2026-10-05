@@ -1,5 +1,6 @@
 // AgentOffice: servidor HTTP sin dependencias — estáticos, API REST y SSE (/events).
 import http from 'node:http';
+import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -42,6 +43,24 @@ setInterval(sync, 5 * 60 * 1000).unref();
 // Tableros online con autoSync: cada 5 min.
 setInterval(() => { for (const p of store.get().projects) if (p.board?.autoSync) team.syncBoard(p.id).catch(() => {}); }, 5 * 60 * 1000).unref();
 
+// Documentos de oficina → texto plano al lado (los agentes solo leen texto): .docx/.odt por su XML, .pdf con pdftotext si existe.
+export function extractText(file) {
+  const ext = path.extname(file).toLowerCase();
+  try {
+    let txt = null;
+    if (ext === '.docx' || ext === '.odt') {
+      const xml = execFileSync('unzip', ['-p', file, ext === '.docx' ? 'word/document.xml' : 'content.xml'], { maxBuffer: 50e6 }).toString('utf8');
+      txt = xml.replace(/<\/w:p>|<\/text:p>|<\/text:h>/g, '\n').replace(/<w:tab\/>|<text:tab\/>/g, '\t').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/\n{3,}/g, '\n\n').trim();
+    } else if (ext === '.pdf') {
+      try { txt = execFileSync('pdftotext', ['-layout', file, '-'], { maxBuffer: 50e6 }).toString('utf8').trim(); } catch { return null; }
+    }
+    if (!txt) return null;
+    const out = file + '.txt';
+    fs.writeFileSync(out, txt);
+    return { name: path.basename(out), path: out, size: fs.statSync(out).size, derived: true };
+  } catch { return null; }
+}
+
 const snapshot = () => ({ ...store.get(), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo() });
 
 async function readBody(req) {
@@ -71,6 +90,8 @@ const routes = [
   ['POST', /^\/api\/projects$/, (_, b) => team.createProject(b)],
   ['DELETE', /^\/api\/projects\/(\w+)$/, ([id]) => team.deleteProject(id)],
   ['PATCH', /^\/api\/projects\/(\w+)$/, ([id], b) => team.updateProject(id, b)],
+  // Resumen compacto de las tareas de un proyecto (para seguimiento desde flows de flow-test)
+  ['GET', /^\/api\/projects\/(\w+)\/tasks$/, ([id]) => { const s = store.get(); return s.tasks.filter((t) => t.projectId === id).map((t) => ({ id: t.id, status: t.status, kind: t.kind, role: t.role, repo: t.repo, agent: s.agents.find((a) => a.id === t.agentId)?.name || null, title: t.title, dependsOn: t.dependsOn, costUsd: t.costUsd, summary: (t.summary || '').slice(0, 300), updatedAt: t.updatedAt })); }],
   ['POST', /^\/api\/projects\/(\w+)\/import-flow$/, ([id], b) => team.importFlow(id, b.path)],
   ['GET', /^\/api\/flows$/, () => team.listFlows()],
   ['POST', /^\/api\/sync$/, () => team.syncWorkspace()],
@@ -105,8 +126,8 @@ const routes = [
       const name = String(f.name || 'adjunto').replace(/[^\w.\-áéíóúñÁÉÍÓÚÑ ]+/g, '_').slice(0, 120) || 'adjunto';
       const dest = path.join(dir, name);
       fs.writeFileSync(dest, Buffer.from(String(f.data || '').replace(/^data:[^;]+;base64,/, ''), 'base64'));
-      return { name, path: dest, size: fs.statSync(dest).size };
-    });
+      return { name, path: dest, size: fs.statSync(dest).size, text: extractText(dest) };
+    }).flatMap((f) => (f.text ? [{ name: f.name, path: f.path, size: f.size }, f.text] : [f]));
   }],
   ['POST', /^\/api\/tasks\/draft$/, gated((_, b) => draftTask(b))],
   ['DELETE', /^\/api\/tasks\/(\w+)$/, ([id]) => team.deleteTask(id)],
