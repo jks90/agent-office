@@ -101,6 +101,17 @@ export async function pull(cfg) {
   });
 }
 
+// Renombrar las opciones de «Status» del Project a las columnas de AgentOffice (reemplaza la lista:
+// los items pierden su valor, por eso el llamador vuelve a colocar cada tarea después).
+export async function alignColumns(cfg, names) {
+  const p = await projectInfo(cfg);
+  const colors = ['GRAY', 'YELLOW', 'BLUE', 'ORANGE', 'GREEN'];
+  const opts = names.map((n, i) => `{name: ${JSON.stringify(n)}, color: ${colors[i] || 'GRAY'}, description: ""}`).join(', ');
+  await gh('api', 'graphql', '-f', `query=mutation { updateProjectV2Field(input: { fieldId: ${JSON.stringify(p.statusFieldId)}, singleSelectOptions: [${opts}] }) { projectV2Field { ... on ProjectV2SingleSelectField { id } } } }`);
+  projCache.clear();
+  return { config: { ...cfg, columns: names.join(', ') } };
+}
+
 // Mover la issue a la columna del Project (añadiéndola si no estaba).
 async function setProjectColumn(cfg, issueNumber, status) {
   const p = await projectInfo(cfg);

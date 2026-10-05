@@ -378,7 +378,7 @@ export function tick() {
     for (const t of todo) {
       if (slots <= 0) break;
       if (!depsDone(t)) continue;
-      const agent = team.find((a) => a.role === t.role && !jobs.has(a.id));
+      const agent = team.find((a) => !jobs.has(a.id) && (a.role === t.role || (roleOf(a.role)?.handles || []).includes(t.role)));
       if (!agent) continue;
       slots--;
       runTask(p, agent, t);

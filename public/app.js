@@ -132,7 +132,8 @@ function renderTeam() {
       ${task ? `<div class="task">▶ #${task.id} ${esc(task.title)}</div>` : ''}
       <div class="meta"><span>${done} entregadas</span>${cost ? `<span>≈ ${cost.toFixed(2)} $</span>` : ''}${r?.custom ? `<span title="${esc(r.description || '')}">rol de fichero · ${esc(r.source)}</span>` : ''}</div>
       <div class="acts">
-        <button class="small ghost" data-agent="${a.id}">Registro / editar</button>
+        <button class="small ghost" data-agent="${a.id}">Registro</button>
+        <button class="small ghost" data-agent-edit="${a.id}" title="Nombre, rol, motor y modelo">✎ Editar</button>
         ${a.status === 'working' ? `<button class="small danger" data-stop="${a.id}">⏹ Parar</button>` : ''}
         <button class="small danger" data-fire="${a.id}">Despedir</button>
       </div>
@@ -360,6 +361,12 @@ const actions = {
 const BOARD_LABELS = { github: 'GitHub Issues', trello: 'Trello', jira: 'Jira' };
 const ago = (ts) => { const m = Math.round((Date.now() - ts) / 60000); return m < 1 ? 'un momento' : m < 60 ? `${m} min` : `${Math.round(m / 60)} h`; };
 let boardKinds = null;
+function boardMsg(b) {
+  const parts = [];
+  if (b.job) parts.push((b.job.running ? '⇪ exportando ' : 'exportación ') + b.job.done + '/' + b.job.total + (b.job.failed ? ' · ' + b.job.failed + ' fallos (' + esc(b.job.lastError || '') + ')' : ''));
+  parts.push(b.lastError ? '⚠ ' + esc(b.lastError) : esc(b.lastInfo || ''));
+  return parts.filter(Boolean).join(' · ');
+}
 async function renderBoardCfg(kindOverride) {
   const el = $('#board-cfg');
   if (!el) return;
@@ -381,13 +388,13 @@ async function renderBoardCfg(kindOverride) {
     <div class="acts">
       <button type="button" class="small" data-board-save>Guardar y probar</button>
       ${def.canCreateBoard && !cfg.project ? '<button type="button" class="small ghost" data-board-create title="Crea un GitHub Project nuevo con las columnas Backlog / Todo / In Progress / In Review / Done, lo enlaza al repo y lo deja configurado aquí">＋ Crear Project en GitHub</button>' : ''}
-      ${b?.kind === kind ? '<button type="button" class="small ghost" data-board-sync>↻ Sincronizar ahora</button><button type="button" class="small danger" data-board-off>Desconectar</button>' : ''}
-      <span class="muted" id="board-msg">${b?.kind === kind ? (b.lastError ? '⚠ ' + esc(b.lastError) : esc(b.lastInfo || '')) : ''}</span>
+      ${b?.kind === kind ? `<button type="button" class="small ghost" data-board-sync>↻ Sincronizar ahora</button>${kind === 'github' && cfg.project ? '<button type="button" class="small ghost" data-board-align title="Renombra las columnas del Project a Backlog / Por hacer / En curso / Revisión / Hecho y recoloca las tareas sincronizadas">⇄ Columnas como aquí</button>' : ''}<button type="button" class="small ghost" data-board-export title="Crea una tarjeta por cada tarea que aún no tiene, en su columna">⇪ Exportar ${tasks().filter((t) => !t.source && t.kind !== 'plan').length} tareas sin tarjeta</button><button type="button" class="small danger" data-board-off>Desconectar</button>` : ''}
+      <span class="muted" id="board-msg">${b?.kind === kind ? boardMsg(b) : ''}</span>
     </div>` : ''}`;
   $('#board-kind').onchange = (e) => renderBoardCfg(e.target.value);
 }
 document.addEventListener('click', async (e) => {
-  const el = e.target.closest('[data-board-save],[data-board-sync],[data-board-off],[data-board-create]');
+  const el = e.target.closest('[data-board-save],[data-board-sync],[data-board-off],[data-board-create],[data-board-align],[data-board-export]');
   if (!el) return;
   e.preventDefault();
   const d = el.dataset;
@@ -409,6 +416,16 @@ document.addEventListener('click', async (e) => {
       const r = await api('POST', `/api/projects/${projectId}/board/create`, { kind, config, secrets });
       toast(r.info);
       renderBoardCfg();
+    }
+    if (d.boardAlign !== undefined) {
+      if (!confirm('Se renombrarán las columnas del Project a Backlog / Por hacer / En curso / Revisión / Hecho (los items se recolocan después). ¿Seguimos?')) return;
+      const r = await api('POST', `/api/projects/${projectId}/board/align`); toast(`Columnas alineadas · ${r.placed} tarjetas recolocadas`); renderBoardCfg();
+    }
+    if (d.boardExport !== undefined) {
+      const n = tasks().filter((t) => !t.source && t.kind !== 'plan').length;
+      if (!n) return toast('Todas las tareas tienen ya tarjeta');
+      if (!confirm(`Se crearán ${n} tarjetas/issues en el tablero online (una por tarea sin tarjeta), en su columna. Tarda ~1 s por tarjeta. ¿Seguimos?`)) return;
+      await api('POST', `/api/projects/${projectId}/board/export`); toast('Exportando en segundo plano…'); renderBoardCfg();
     }
     if (d.boardSync !== undefined) { const r = await api('POST', `/api/projects/${projectId}/board/sync`); toast(`Sincronizado: ${r.total} tarjetas · ${r.created} nuevas · ${r.updated} actualizadas · ${r.pushed} enviadas`); if ($('#board-cfg')) renderBoardCfg(); }
     if (d.boardOff !== undefined) { if (confirm('¿Desconectar el tablero online? Las tareas se quedan; dejan de sincronizarse.')) { await api('POST', `/api/projects/${projectId}/board`, { kind: '' }); renderBoardCfg(); } }
@@ -488,6 +505,22 @@ document.addEventListener('click', (e) => {
   }
 });
 
+// Editar un agente desde su tarjeta (nombre, rol, motor, modelo).
+function editAgent(id) {
+  const a = S.agents.find((x) => x.id === id);
+  if (!a) return;
+  dialog(`
+    <h3>✎ ${esc(a.name)}</h3>
+    <label>Nombre</label><input name="name" value="${esc(a.name)}" required autofocus />
+    <label>Rol</label><select name="role">${roleOptions(a.role)}</select>
+    <div class="grid2">
+      <div><label>Motor</label><select name="engine">${engineOptions(a.engine)}</select></div>
+      <div><label>Modelo</label><input name="model" value="${esc(a.model || '')}" placeholder="por defecto del rol / sonnet" /></div>
+    </div>
+    ${a.status === 'working' ? '<p class="muted">Está trabajando: los cambios se aplican a partir de su siguiente tarea.</p>' : ''}
+    ${buttons('Guardar')}`, async (f) => { await api('PATCH', `/api/agents/${id}`, f); toast('Agente actualizado'); });
+}
+
 // Editar una tarea desde su tarjeta.
 function editTask(id) {
   const t = S.tasks.find((x) => x.id === id);
@@ -526,6 +559,7 @@ function parseRepos(text) {
 
 document.addEventListener('click', async (e) => {
   const el = e.target.closest('button, [data-agent]');
+  if (el?.dataset.agentEdit) { editAgent(el.dataset.agentEdit); return; }
   if (!el) return;
   const d = el.dataset;
   if (d.action === 'suite') { S.suite = await api('GET', '/api/suite'); renderSuite(); return toast(S.suite.ok ? `flow-test OK · ${S.suite.plan || S.suite.mode}` : S.suite.reason, S.suite.ok ? '' : 'error'); }
@@ -540,6 +574,7 @@ document.addEventListener('click', async (e) => {
   if (d.approve) return api('POST', `/api/tasks/${d.approve}/approve`).then(() => toast('Tarea aprobada ✓'));
   if (d.ready) return api('PATCH', `/api/tasks/${d.ready}`, { status: 'todo' });
   if (d.edit) return editTask(d.edit);
+  if (d.agentEdit) return editAgent(d.agentEdit);
   if (d.park) return api('PATCH', `/api/tasks/${d.park}`, { status: 'backlog' });
   if (d.del) { if (confirm('¿Borrar la tarea?')) api('DELETE', `/api/tasks/${d.del}`); return; }
   if (d.reject) {

@@ -122,6 +122,44 @@ export async function pushStatus(project, task, comment) {
 }
 export function pushStatusSoon(project, task, comment) { pushStatus(project, task, comment).catch((e) => { if (project.board) { project.board.lastError = `push #${task.id}: ${e.message}`; store.changed(); } }); }
 
+// Igualar el tablero remoto al de AgentOffice: (a) columnas con nuestros nombres (si el conector lo permite),
+// (b) una tarjeta por cada tarea que no tenga, en su columna. Corre en segundo plano con progreso en project.board.job.
+export const AO_COLUMNS = ['Backlog', 'Por hacer', 'En curso', 'Revisión', 'Hecho'];
+export async function alignColumns(project) {
+  const { kind, cfg, sec } = ctx(project);
+  if (!kind.alignColumns) throw fail(400, 'Este tablero no permite renombrar columnas desde aquí');
+  let r;
+  try { r = await (kind.secretFields.length ? kind.alignColumns(cfg, sec, AO_COLUMNS) : kind.alignColumns(cfg, AO_COLUMNS)); } catch (e) { throw fail(502, e.message); }
+  project.board.config = r.config;
+  // Recolocar lo que ya estaba sincronizado (el reemplazo de opciones vacía el valor de cada item).
+  const mine = store.get().tasks.filter((t) => t.projectId === project.id && t.source?.kind === kind.id);
+  let placed = 0;
+  for (const t of mine) { await pushStatus(project, t).then(() => placed++).catch(() => {}); }
+  store.changed();
+  return { columns: AO_COLUMNS, placed };
+}
+
+export function exportAll(project) {
+  const { kind, cfg, sec } = ctx(project);
+  if (project.board.job?.running) throw fail(409, 'Ya hay una exportación en marcha');
+  const pending = store.get().tasks.filter((t) => t.projectId === project.id && !t.source && t.kind !== 'plan');
+  const job = { running: true, total: pending.length, done: 0, failed: 0, startedAt: Date.now(), lastError: null };
+  project.board.job = job; store.changed();
+  (async () => {
+    for (const t of pending) {
+      try {
+        const r = await call(kind, 'create', cfg, sec, { title: t.title, description: t.description, status: t.status === 'failed' ? 'todo' : t.status });
+        t.source = { kind: kind.id, id: r.id, url: r.url, remoteStatus: t.status, pushedStatus: t.status };
+        job.done++;
+      } catch (e) { job.failed++; job.lastError = `«${t.title.slice(0, 60)}»: ${e.message.slice(0, 200)}`; }
+      store.changed();
+      await new Promise((r) => setTimeout(r, 900)); // límite de creación de contenido de GitHub (~80/min)
+    }
+    job.running = false; job.finishedAt = Date.now(); store.changed();
+  })();
+  return job;
+}
+
 // Título/descripción editados aquí → fuera (si no, el siguiente pull los pisaría).
 export function pushContentSoon(project, task) {
   if (!project?.board || task.source?.kind !== project.board.kind) return;

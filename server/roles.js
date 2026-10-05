@@ -74,6 +74,7 @@ function loadDir(dir, source, out) {
         label: labelOf(id), color: PALETTE[hash(id) % PALETTE.length], kind: kindOf(id, meta),
         description: meta.description || '', model: MODEL_MAP[meta.model] || meta.model || '',
         tools: meta.tools ? meta.tools.split(',').map((t) => t.trim()).filter(Boolean) : null,
+        handles: meta.handles ? meta.handles.split(',').map((t) => t.trim()).filter(Boolean) : [],
         system: body.slice(0, 40_000), source, file: full, custom: true,
       };
     } catch { /* fichero ilegible: se ignora */ }
