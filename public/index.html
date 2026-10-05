@@ -10,7 +10,7 @@
 </head>
 <body>
   <header>
-    <div class="brand"><span class="brand-mark">🏢</span><b>AgentOffice</b><span class="tagline">tu empresa, gestionada por IAs</span></div>
+    <div class="brand"><span class="brand-mark">🏢</span><b id="brand-name">AgentOffice</b><span class="tagline">tu empresa, gestionada por IAs</span></div>
     <div class="project-bar">
       <select id="project"></select>
       <button data-action="sync" class="ghost" title="Los proyectos son las carpetas de flows/ de tu flow-test (la raíz = default). Vuelve a leerlas ahora">↻ Carpetas</button>
@@ -20,6 +20,10 @@
     <button id="suite" data-action="suite" class="ghost suite" title="Estado de flow-test (la suite)"></button>
     <button id="run" data-action="toggle-run"></button>
     <button data-action="settings" class="ghost" title="Ajustes">⚙</button>
+    <span class="embed-only">
+      <a id="embed-open" class="ghost icon-btn" target="_blank" rel="noopener" title="Abrir en una pestaña">↗</a>
+      <button id="embed-close" class="ghost icon-btn" title="Cerrar (Esc)">✕</button>
+    </span>
   </header>
 
   <div class="shell">
