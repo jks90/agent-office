@@ -12,7 +12,7 @@ import { prefixOf } from '../codes.js';
 import { gate, audit, summarize, POLICIES } from './policy.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
-const VIEWS = ['office', 'tasks', 'agents', 'settings'];
+const VIEWS = ['office', 'tasks', 'agents', 'guide', 'settings'];
 const str = (description) => ({ type: 'string', description });
 const obj = (properties = {}, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
 
@@ -85,7 +85,7 @@ export const tools = [
   // — App / navegación —
   T('app.getContext', 'Qué está viendo el usuario ahora: vista, proyecto, tarea abierta, agente seleccionado, últimos eventos y contexto de flow-test.', obj({ client: str('Id de cliente (opcional; por defecto el más reciente)') }), 'read',
     ({ client }) => context.get(client)),
-  T('app.navigate', 'Lleva la UI a una vista (office|tasks|agents|settings) y, si se indica, a un proyecto.', obj({ view: { type: 'string', enum: VIEWS }, projectId: str('Id o nombre del proyecto (opcional)') }, ['view']), 'navigate',
+  T('app.navigate', 'Lleva la UI a una vista (office|tasks|agents|guide|settings) y, si se indica, a un proyecto.', obj({ view: { type: 'string', enum: VIEWS }, projectId: str('Id o nombre del proyecto (opcional)') }, ['view']), 'navigate',
     ({ view, projectId }, ctx) => ({ ...ui({ type: 'navigate', view, projectId: projectId ? findProject(projectId).id : null }, ctx), view }) ),
   T('app.openTask', 'Abre en la UI el modal de una tarea.', obj({ code: str('Código de la tarea, p. ej. FT-4') }, ['code']), 'navigate',
     ({ code }, ctx) => { const t = findTask(code); return { ...ui({ type: 'openTask', taskId: t.id, projectId: t.projectId }, ctx), task: t.code || t.id }; }),

@@ -91,6 +91,16 @@ Intervenir en un agente que trabaja (sección 6.3 de la especificación del Guid
 - **Mensaje en caliente**: `POST /api/agents/:id/message {text, constraint?}`. **Claude** corre con `--input-format stream-json` y stdin abierto: el prompt inicial es el primer mensaje de usuario y el mensaje se inyecta como otro, precedido de «INSTRUCCIÓN DEL CLIENTE (prioritaria):». Con stdin abierto el CLI no sale solo, así que se cierra 2,5 s tras un `result` si no arranca otro turno; manda el último `result`. **Codex/demo** (sin entrada en caliente): se registra el mensaje, se para al agente y se reencola la misma tarea (misma rama/worktree) con el mensaje en el prompt (`pendingMessages`, se consumen al lanzarse).
 - **Constraints**: `task.constraints[] = {text, at, origin}` (`POST /api/tasks/:id/constraints` o `constraint:true` en el mensaje). Van **siempre** en `buildPrompt` («Restricciones del cliente (obligatorias…)»), también tras Devolver o reintentar. El modal de la tarea las lista. Evento `UserInstructionAdded` (`kind: 'message'|'constraint'`).
 - **UI**: botones ⏸ Pausar / ▶ Reanudar / ✉ Mensaje en la tarjeta del agente, el cajón y el modal de la tarea.
+## Guía (FT-6)
+
+El **Guide Agent** es la capa de conversación, contexto, supervisión y navegación por encima del orquestador (`team.js`): no es un worker, no duplica tareas ni bus, y usa las tools de FT-4 (políticas y auditoría incluidas). Nunca controla la UI con capturas: solo órdenes `ui` estructuradas.
+
+- **Servicio** (`server/guide/index.js`): chats persistentes en `data/guide/<id>.json` (mensajes, tool calls con su resultado, contexto de cada turno, `sessionId` del proveedor). Cada turno lleva `<app_context>` (`GET /api/context`, FT-2, con el `host` de flow-test si lo hay) y `<eventos_desde_tu_ultimo_turno>` (Activity Stream, FT-1) para que no pregunte lo que ya está a la vista. El system prompt (rol «guía») está en `server/guide/prompt.js`.
+- **Proveedor** (`server/guide/providers/`): interfaz `GuideProvider { start({system, tools, model, resume}), send({text, context}) → stream de {type:'text'|'tool_call'|'tool_result'|'done'|'error', …}, stop() }`; el dominio no depende de ningún LLM. El primero, `claude-cli.js`, lanza `claude -p --input-format stream-json --output-format stream-json` con la sesión **viva** entre mensajes (se cierra tras 10 min ocioso y se retoma con `--resume <session_id>`), `--tools ""` (sin Bash/Edit/Write), `--strict-mcp-config` con `bin/ao-mcp.mjs` (FT-4) y `--allowedTools mcp__agentoffice`. Modelo: Ajustes ▸ 🧭 Guía (`settings.guideModel`, por defecto `sonnet`); proveedor: `settings.guideProvider` (por defecto `claude-cli`).
+- **API**: `GET /api/guide/chats` (lista), `GET /api/guide/chats/:id` (chat completo), `DELETE /api/guide/chats/:id`, `POST /api/guide/chat {chatId?, text}` (SSE: `chat` con el id, y los eventos del proveedor; el turno sigue aunque el navegador se desconecte; 409 si ese chat ya está respondiendo), `POST /api/guide/stop {chatId}`. El cliente se identifica con `x-ao-client` para que el contexto sea el de su pestaña.
+- **UI**: vista **🧭 Guía** en la barra lateral (también `?view=guide`, para el botón de flow-test de FT-3) con lista de chats, y un **cajón flotante** en cualquier vista (botón 🧭 o **Ctrl+G**). Burbujas, tool calls plegables con argumentos y resultado, botón «■ Parar». Las confirmaciones de las tools (FT-4) salen por el modal de preguntas de siempre. `app.navigate` acepta la vista `guide`.
+- **Flujos** (probados con `scripts/guide-smoke.mjs`): A «Créame una tarea para solucionar esto» → `task.create` contextualizada; B «¿Cómo va?» → `task.getStatus`/`agent.getLastActions`; C «Páralo» → `task.stop` (501 hasta FT-5, y lo cuenta tal cual); D «Enséñame lo que ha cambiado» → `agent.getModifiedFiles` + `app.openArtifact` (y `flowtest.show` si es un flow).
+- **Prueba de humo**: `node scripts/guide-smoke.mjs` levanta un servidor temporal con motor demo y un stub de `/access`, abre un chat REAL con Claude (necesita `claude` con sesión; gasta unos pocos tokens), manda las cuatro frases y comprueba las tools llamadas y sus efectos en el estado (tarea creada, órdenes `ui`, chat guardado). Sale con código 1 si algo falla.
 
 ## Motores
 
@@ -110,7 +120,7 @@ server/index.js     HTTP + API REST + SSE (/events)
 server/team.js      proyectos, agentes, tareas, planificador, revisión
 server/events.js    Activity Stream tipado (FT-1)
 server/context.js   contexto de la UI para el Guide Agent (FT-2)
-server/guide/       tools tipadas + política + auditoría del Guide Agent (FT-4)
+server/guide/       Guide Agent: tools + política + auditoría (FT-4), chats, prompt y proveedores (FT-6)
 bin/ao-mcp.mjs      servidor MCP stdio del Guide (FT-4)
 server/git.js       worktrees, commit, diff, merge
 server/engines/     demo · claude · codex (+ describe.js: herramienta → frase del bocadillo)

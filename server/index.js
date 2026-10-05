@@ -20,6 +20,7 @@ import * as activity from './events.js';
 import * as context from './context.js';
 import * as guideTools from './guide/tools.js';
 import * as guidePolicy from './guide/policy.js';
+import * as guide from './guide/index.js';
 
 const PORT = Number(process.env.AO_PORT || 7420);
 const HOST = process.env.AO_HOST || '127.0.0.1'; // lanza procesos con tus permisos: solo local
@@ -94,6 +95,11 @@ const routes = [
   // Tool Registry + Policy Layer del Guide Agent (FT-4): lo usan la UI, las pruebas y bin/ao-mcp.mjs
   ['GET', /^\/api\/guide\/tools$/, () => guideTools.describe()],
   ['POST', /^\/api\/guide\/tool$/, (_, b, __, req) => guideTools.run(String(b.name || ''), b.args ?? {}, { client: req.headers['x-ao-client'] || null, via: req.headers['x-ao-via'] || 'api' })],
+  // Guide Agent (FT-6): chats persistentes; la conversación (POST /api/guide/chat, SSE) se atiende en `guideChat`
+  ['GET', /^\/api\/guide\/chats$/, () => guide.listChats()],
+  ['GET', /^\/api\/guide\/chats\/([\w-]+)$/, ([id]) => guide.getChat(id)],
+  ['DELETE', /^\/api\/guide\/chats\/([\w-]+)$/, ([id]) => guide.deleteChat(id)],
+  ['POST', /^\/api\/guide\/stop$/, (_, b) => guide.stop(String(b.chatId || ''))],
   // Cuentas de los motores de IA (login OAuth/clave API, logout)
   ['GET', /^\/api\/engines$/, () => auth.enginesStatus()],
   ['GET', /^\/api\/engines\/models$/, () => auth.enginesModels()],
@@ -168,6 +174,7 @@ const routes = [
     if (typeof b.flowTestUrl === 'string' && b.flowTestUrl.trim()) st.flowTestUrl = b.flowTestUrl.trim().replace(/\/+$/, '').replace(/\/mcp$/, '');
     if (typeof b.workspaceHostDir === 'string') st.workspaceHostDir = b.workspaceHostDir.trim();
     if (b.maxParallel) st.maxParallel = Math.max(1, Math.min(8, Number(b.maxParallel) || 4));
+    if (typeof b.guideModel === 'string') st.guideModel = b.guideModel.trim();
     if (b.guidePolicy && typeof b.guidePolicy === 'object') guidePolicy.setPolicy(b.guidePolicy);
     store.changed();
     return st;
@@ -213,6 +220,22 @@ function serveStatic(req, res) {
   fs.createReadStream(file).pipe(res);
 }
 
+// POST /api/guide/chat {chatId?, text} → SSE con los eventos del proveedor (chat|text|tool_call|tool_result|done|error).
+// El turno sigue aunque el navegador se desconecte (el resultado queda en el chat guardado).
+async function guideChat(req, res) {
+  let b;
+  try { b = await readBody(req); } catch (e) { return res.writeHead(e.status || 400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: e.message })); }
+  const it = guide.chat({ chatId: b.chatId, text: b.text, client: req.headers['x-ao-client'] || null });
+  let first;
+  try { first = await it.next(); } catch (e) { return res.writeHead(e.status || 500, { 'content-type': 'application/json' }).end(JSON.stringify({ error: e.message })); }
+  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+  const send = (ev) => { if (!res.writableEnded && !res.destroyed) res.write(`event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`); };
+  try {
+    for (let r = first; !r.done; r = await it.next()) send(r.value);
+  } catch (e) { send({ type: 'error', error: e.message }); }
+  res.end();
+}
+
 http.createServer(async (req, res) => {
   const { pathname } = new URL(req.url, 'http://x');
   if (TOKEN && !isLoopback(req) && req.headers['x-ao-token'] !== TOKEN) {
@@ -221,6 +244,7 @@ http.createServer(async (req, res) => {
   if (pathname === '/events') return events(req, res);
   if (pathname === '/api/file') return serveUpload(req, res);
   if (!pathname.startsWith('/api/')) return serveStatic(req, res);
+  if (pathname === '/api/guide/chat' && req.method === 'POST') return guideChat(req, res);
   const route = routes.find(([m, re]) => m === req.method && re.test(pathname));
   if (!route) return res.writeHead(404, { 'content-type': 'application/json' }).end('{"error":"Ruta desconocida"}');
   try {
