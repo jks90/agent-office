@@ -70,7 +70,7 @@ function connectEvents() {
     if (c.type === 'navigate') { goProject(c.projectId); showTab(c.view); }
     else if (c.type === 'openTask') { const t = S.tasks.find((x) => x.id === c.taskId); if (t) { goProject(t.projectId); showTab('tasks'); openTask(t.id); } }
     else if (c.type === 'selectAgent') { showTab('agents'); openDrawer(c.agentId); }
-    else if (c.type === 'flowtest.show' && EMBEDDED) window.parent.postMessage({ type: 'flowtest:show', flow: c.flow, node: c.node }, location.origin);
+    else if (c.type === 'flowtest.show' && EMBEDDED) window.parent.postMessage({ type: 'agentoffice:navigate', flow: c.flow, node: c.node || undefined }, location.origin); // lo que escucha AgentsPanel.tsx (FT-3)
   });
   es.addEventListener('error', () => {
     if (es.readyState !== EventSource.CLOSED) return; // CONNECTING: el navegador ya reintenta solo
@@ -1248,8 +1248,16 @@ $('#dialog').addEventListener('close', () => { openTaskId = null; publishContext
 $('#project').addEventListener('change', publishContext);
 window.addEventListener('message', (e) => {
   if (e.origin !== location.origin || e.source !== window.parent || window.parent === window || e.data?.type !== 'flowtest:context') return;
-  const { flow, filePath, node, consoleTail, dirty, running } = e.data;
-  hostCtx = { flow, filePath, node, consoleTail, dirty, running };
+  // Forma real que manda AgentsPanel.tsx (FT-3): {activeTab{id,name,filePath,dirty}, focusedNode{id,name,kind,status}|null, selection[], consoleTail[], runStatus, sidePanel}.
+  // Se aplana al `host` que leen context.js / task-context.js (FT-12 detectó que antes se leían campos que flow-test no manda).
+  const d = e.data, tab = d.activeTab || null, fn = d.focusedNode || null;
+  hostCtx = {
+    flow: d.flow ?? tab?.name ?? null, filePath: d.filePath ?? tab?.filePath ?? null, dirty: d.dirty ?? tab?.dirty ?? false,
+    node: d.node ?? fn?.name ?? null, nodeId: fn?.id ?? null, nodeLabel: fn?.name ?? null, nodeKind: fn?.kind ?? null, nodeStatus: fn?.status ?? null,
+    selection: Array.isArray(d.selection) ? d.selection.slice(0, 20) : [], consoleTail: Array.isArray(d.consoleTail) ? d.consoleTail.slice(-20) : [],
+    running: d.running ?? (d.runStatus === 'running'), sidePanel: d.sidePanel ?? null,
+  };
   publishContext();
 });
 publishContext();
+if (EMBEDDED) { try { window.parent.postMessage({ type: 'agentoffice:ready' }, location.origin); } catch { /* padre de otro origen */ } } // flow-test responde con su contexto (FT-3)
