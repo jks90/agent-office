@@ -2,18 +2,10 @@
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 import { describeTool, toolSummary, firstLine } from './describe.js';
+import { BASH_TOOLS } from './allowlist.js';
 
-// Lectura/edición + shell de andar por casa (sin rm, sudo, docker, ssh ni git push).
-const WORK_TOOLS = [
-  'Read', 'Edit', 'MultiEdit', 'Write', 'Glob', 'Grep', 'TodoWrite',
-  'Bash(npm *)', 'Bash(npx *)', 'Bash(node *)', 'Bash(python3 *)', 'Bash(curl *)', 'Bash(timeout *)',
-  'Bash(ls *)', 'Bash(cat *)', 'Bash(head *)', 'Bash(tail *)', 'Bash(wc *)', 'Bash(grep *)', 'Bash(rg *)', 'Bash(find *)',
-  'Bash(sed *)', 'Bash(awk *)', 'Bash(sort *)', 'Bash(uniq *)', 'Bash(cut *)', 'Bash(tr *)', 'Bash(xargs *)', 'Bash(diff *)',
-  'Bash(du *)', 'Bash(file *)', 'Bash(stat *)', 'Bash(date *)', 'Bash(echo *)', 'Bash(printf *)', 'Bash(true)', 'Bash(sleep *)',
-  'Bash(mkdir *)', 'Bash(cp *)', 'Bash(mv *)', 'Bash(touch *)', 'Bash(cd *)', 'Bash(pwd)',
-  'Bash(git status*)', 'Bash(git diff*)', 'Bash(git log*)', 'Bash(git show*)', 'Bash(git add*)', 'Bash(git commit*)', 'Bash(git branch*)',
-  'Bash(git rm *)', 'Bash(git mv *)', 'Bash(git restore *)', // borrar/mover/deshacer ficheros del worktree (reversible por git; sin `rm` genérico)
-];
+// Lectura/edición + shell de andar por casa (sin rm, sudo, docker, ssh ni git push; lista blanca compartida con terminal.execute del Guide, FT-10).
+const WORK_TOOLS = ['Read', 'Edit', 'MultiEdit', 'Write', 'Glob', 'Grep', 'TodoWrite', ...BASH_TOOLS];
 const PLAN_TOOLS = ['Read', 'Glob', 'Grep'];
 
 export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv = {}, onActivity, onLog, onTool = () => {} }) {
