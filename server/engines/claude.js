@@ -1,12 +1,17 @@
 // Motor Claude Code: `claude -p --output-format stream-json` en el worktree de la tarea.
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 import { describeTool, toolSummary, firstLine } from './describe.js';
 import { BASH_TOOLS } from './allowlist.js';
 
 // Lectura/edición + shell de andar por casa (sin rm, sudo, docker, ssh ni git push; lista blanca compartida con terminal.execute del Guide, FT-10).
 const WORK_TOOLS = ['Read', 'Edit', 'MultiEdit', 'Write', 'Glob', 'Grep', 'TodoWrite', ...BASH_TOOLS];
-const PLAN_TOOLS = ['Read', 'Glob', 'Grep'];
+// El planificador no escribe código, pero sí puede preguntar al cliente (bin/ao-ask.mjs) y leer el repo con el shell básico.
+const ASK_RULE = `Bash(node ${path.join(ROOT, 'bin', 'ao-ask.mjs')} *)`;
+const PLAN_TOOLS = ['Read', 'Glob', 'Grep', ASK_RULE, 'Bash(ls *)', 'Bash(cat *)', 'Bash(head *)', 'Bash(sed -n *)', 'Bash(grep *)', 'Bash(find *)', 'Bash(wc *)', 'Bash(git log*)', 'Bash(git status*)', 'Bash(git diff*)'];
 
 export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv = {}, onActivity, onLog, onTool = () => {} }) {
   const tools = [...(mode === 'plan' ? PLAN_TOOLS : WORK_TOOLS)];
