@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as store from './store.js';
 import { prefixOf } from './codes.js';
+import * as questions from './questions.js';
 import * as team from './team.js';
 import { allRoles } from './roles.js';
 import { checkSuite, suiteInfo } from './suite.js';
@@ -63,7 +64,7 @@ export function extractText(file) {
   } catch { return null; }
 }
 
-const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo() }; };
+const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), questions: questions.list() }; };
 
 async function readBody(req) {
   const limit = req.url.startsWith('/api/upload') ? 40e6 : 1e6; // adjuntos en base64 (≈30 MB de ficheros)
@@ -118,6 +119,11 @@ const routes = [
   ['POST', /^\/api\/projects\/(\w+)\/board\/sync$/, gated(([id]) => team.syncBoard(id))],
   ['POST', /^\/api\/projects\/(\w+)\/board\/sync-all$/, gated(([id]) => team.syncAll(id))],
   ['PATCH', /^\/api\/tasks\/([\w-]+)$/, ([id], b) => team.updateTask(id, b)],
+  // Preguntas de los agentes al usuario (bin/ao-ask.mjs ↔ modal de la UI)
+  ['GET', /^\/api\/questions$/, () => questions.list()],
+  ['POST', /^\/api\/questions$/, (_, b) => questions.ask(b)],
+  ['POST', /^\/api\/questions\/(\w+)\/wait$/, ([id], b) => questions.wait(id, Math.min(55_000, Number(b.ms) || 50_000))],
+  ['POST', /^\/api\/questions\/(\w+)\/answer$/, ([id], b) => questions.answer(id, b.answer)],
   ['POST', /^\/api\/projects\/(\w+)\/run$/, gated(([id], b) => team.setRunning(id, b.running))],
   ['POST', /^\/api\/projects\/(\w+)\/goal$/, gated(([id], b) => team.planGoal(id, b.goal, { attachments: b.attachments, title: b.title }))],
   ['POST', /^\/api\/tasks$/, gated((_, b) => team.createTask(b))],

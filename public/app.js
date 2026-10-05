@@ -39,6 +39,7 @@ es.addEventListener('state', (e) => {
   S = JSON.parse(e.data);
   if (!S.projects.some((p) => p.id === projectId)) projectId = S.projects[0]?.id ?? null;
   render();
+  renderQuestions();
 });
 es.addEventListener('logs', (e) => {
   for (const [id, arr] of Object.entries(JSON.parse(e.data))) logs.set(id, arr);
@@ -534,6 +535,41 @@ Pasos, convenciones y ejemplos…</textarea>
 };
 // Tras abrir Ajustes, rellenar el selector de flows con los del flow-test conectado.
 const BOARD_LABELS = { github: 'GitHub Issues', trello: 'Trello', jira: 'Jira' };
+
+// ── Preguntas de los agentes ──────────────────────────────────────────────
+// Un agente que necesita una decisión tuya la manda por `ao-ask`; llega en S.questions. Se abre un modal con las
+// opciones (o respuesta libre); si lo cierras sin contestar queda un aviso fijo arriba para volver a abrirlo.
+const qSnoozed = new Set();
+let qOpen = null;
+function renderQuestions() {
+  const qs = S.questions || [];
+  const bar = $('#questions-bar');
+  if (bar) {
+    bar.innerHTML = qs.map((q) => `<button class="qbar" data-q="${q.id}">❓ <b>${esc(q.agentName)}</b> (${esc(q.taskCode || q.taskId)}) te pregunta: ${esc(q.question.slice(0, 90))}${q.question.length > 90 ? '…' : ''} — <u>responder</u></button>`).join('');
+    bar.hidden = !qs.length;
+  }
+  if (qOpen && !qs.some((q) => q.id === qOpen)) { qOpen = null; if ($('#dialog').open && $('#dialog').className === 'question') $('#dialog').close(); }
+  const next = qs.find((q) => !qSnoozed.has(q.id));
+  if (next && !qOpen && !$('#dialog').open) openQuestion(next.id);
+}
+function openQuestion(id) {
+  const q = (S.questions || []).find((x) => x.id === id);
+  if (!q) return;
+  const t = S.tasks.find((x) => x.id === q.taskId);
+  qOpen = id;
+  dialog(`
+    <div class="task-head"><b>❓ ${esc(q.agentName)}</b> <span>${esc(q.taskCode || q.taskId)}</span>${t ? ` <span class="muted">${esc(t.title.slice(0, 70))}</span>` : ''}<div class="spacer"></div><span class="muted">${new Date(q.createdAt).toLocaleTimeString()}</span></div>
+    <h3 class="q-text">${esc(q.question)}</h3>
+    ${q.context ? `<div class="q-context">${md(q.context)}</div>` : ''}
+    ${q.options.length ? `<div class="q-opts">${q.options.map((o) => `<button type="button" class="q-opt" data-answer="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}
+    ${q.allowCustom ? `<label>${q.options.length ? 'U otra respuesta' : 'Tu respuesta'}</label><textarea name="answer" rows="3" placeholder="Escribe la respuesta para el agente…" ${q.options.length ? '' : 'autofocus'}></textarea>` : ''}
+    <div class="row"><button class="ghost" value="cancel">Más tarde</button>${q.allowCustom ? '<button>Responder</button>' : ''}</div>`,
+    async (f) => { if (!f.answer?.trim()) throw new Error('vacía'); await api('POST', `/api/questions/${id}/answer`, { answer: f.answer }); qOpen = null; toast(`Respuesta enviada a ${q.agentName}`); }, 'question');
+  const dlg = $('#dialog');
+  dlg.querySelectorAll('.q-opt').forEach((b) => { b.onclick = async () => { await api('POST', `/api/questions/${id}/answer`, { answer: b.dataset.answer }); qOpen = null; dlg.close(); toast(`Respuesta enviada a ${q.agentName}`); }; });
+  dlg.addEventListener('close', () => { if (qOpen === id) { qSnoozed.add(id); qOpen = null; } }, { once: true });
+}
+document.addEventListener('click', (e) => { const b = e.target.closest('[data-q]'); if (b) { qSnoozed.delete(b.dataset.q); openQuestion(b.dataset.q); } });
 // Código legible de la tarea (GL-7); las muy antiguas sin código enseñan el id.
 const tcode = (t) => t?.code || ('#' + (t?.id || '?'));
 const ago = (ts) => { const m = Math.round((Date.now() - ts) / 60000); return m < 1 ? 'un momento' : m < 60 ? `${m} min` : `${Math.round(m / 60)} h`; };
@@ -787,6 +823,7 @@ function openTask(id) {
     <div class="task-title" tabindex="-1" autofocus>${esc(t.title)}</div>
     <div class="task-sec"><h4>${t.kind === 'plan' ? 'Encargo al PO' : 'Qué va a hacer'}</h4><div class="md">${md(t.description)}</div></div>
     ${att.length ? `<div class="task-sec"><h4>Adjuntos</h4><div class="task-attach">${att.map((f) => /\.(png|jpe?g|webp|gif)$/i.test(f) ? `<a href="${fileUrl(f)}" target="_blank" rel="noopener"><img src="${fileUrl(f)}" alt="" /></a>` : `<a href="${fileUrl(f)}" target="_blank" rel="noopener">📄 ${esc(f.split('/').pop())}</a>`).join('')}</div></div>` : ''}
+    ${(t.questions || []).length ? `<div class="task-sec task-qa"><h4>Conversación con el agente</h4>${t.questions.map((q) => `<div class="qa"><div class="q">❓ ${esc(q.question)}</div><div class="a">${q.answer == null ? '<span class="muted">sin respuesta (se decidió solo)</span>' : '💬 ' + esc(q.answer)}</div></div>`).join('')}</div>` : ''}
     ${deps || dependents ? `<div class="task-sec task-deps"><h4>Dependencias</h4>${deps ? `<div>Depende de: ${deps}</div>` : ''}${dependents ? `<div>Bloquea a: ${dependents}</div>` : ''}</div>` : ''}
     ${t.feedback ? `<div class="task-sec"><h4>Comentarios de revisión</h4><div class="md">${md(t.feedback)}</div></div>` : ''}
     ${t.summary ? `<div class="task-sec"><h4>Resumen del agente</h4><div class="md">${md(t.summary)}</div></div>` : ''}

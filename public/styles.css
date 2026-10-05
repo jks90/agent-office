@@ -276,3 +276,16 @@ dialog.wide { width: min(1000px, 94vw); }
   #drawer { padding: var(--s-4); }
   .card .meta { flex-wrap: wrap; white-space: normal; }
 }
+
+/* Preguntas de los agentes */
+#questions-bar { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+#questions-bar .qbar { text-align: left; background: #3b2f0b; border: 1px solid #a16207; color: #fde68a; padding: 9px 12px; border-radius: var(--r-md); cursor: pointer; }
+#questions-bar .qbar:hover { background: #4a3a0e; }
+dialog.question { width: min(640px, 94vw); border-color: #a16207; }
+dialog.question .q-text { font-size: 18px; margin: 10px 0 6px; line-height: 1.35; }
+dialog.question .q-context { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+.q-opts { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 12px; }
+.q-opt { text-align: left; padding: 10px 12px; border-radius: var(--r-md); border: 1px solid var(--line); background: var(--panel2); color: var(--text); cursor: pointer; font-size: 14px; }
+.q-opt:hover { border-color: #fbbf24; background: #2a2410; }
+.task-qa .qa { padding: 6px 0; border-top: 1px dashed var(--line); }
+.task-qa .q { font-weight: 600; } .task-qa .a { color: #a7f3d0; margin-top: 2px; }

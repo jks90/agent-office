@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as store from './store.js';
 import * as codes from './codes.js';
+import * as questions from './questions.js';
 import * as git from './git.js';
 import { allRoles, roleOf } from './roles.js';
 import { parseTasks } from './engines/describe.js';
@@ -458,6 +459,18 @@ setInterval(tick, 1500).unref();
 
 const teamRoles = (p) => [...new Set(teamOf(p).filter((a) => roleOf(a.role)?.kind !== 'planner').map((a) => a.role))];
 
+// Cómo preguntar al cliente desde la tarea (bin/ao-ask.mjs espera la respuesta y la imprime) + lo ya respondido.
+function askBlock(t) {
+  const prev = (t.questions || []).filter((q) => q.answer != null);
+  return [
+    '',
+    'PREGUNTAR AL CLIENTE: si una decisión es suya (no se resuelve leyendo el código ni el documento: reglas de negocio, nombres que verá el usuario, qué opción prefiere), pregunta ANTES de implementar con:',
+    `  node ${path.join(store.ROOT, 'bin', 'ao-ask.mjs')} "¿Pregunta cerrada?" --opt "Opción A" --opt "Opción B" [--context "qué cambia con cada opción"]`,
+    'El comando se queda esperando (puede tardar minutos) e imprime la respuesta elegida o escrita; úsala y sigue. Una pregunta cada vez, máximo 3 por tarea, con opciones concretas. Si imprime «SIN RESPUESTA», decide tú con el criterio más conservador y déjalo bien visible en el resumen final.',
+    prev.length ? `Respuestas del cliente ya dadas en esta tarea (no vuelvas a preguntarlas):\n${prev.map((q) => `- ${q.question} → ${q.answer}`).join('\n')}` : '',
+  ].join('\n');
+}
+
 function buildPrompt(p, agent, t) {
   if (t.kind === 'plan') {
     const roles = teamRoles(p);
@@ -474,6 +487,7 @@ function buildPrompt(p, agent, t) {
       t.feedbackImages?.length ? `Imágenes adjuntas a la petición (míralas; están en ${t.feedbackImages.join(', ')}).` : '',
       t.files?.length ? `Ficheros adjuntos a la petición (léelos): ${t.files.join(', ')}.` : '',
       'Si la petición es una sola cosa concreta, devuelve UNA tarea (no la trocees sin motivo). Decide tú a qué rol y repo va.',
+      askBlock(t),
       'Responde SOLO con un bloque JSON (máximo 6 tareas):',
       '```json',
       `[{"title": "…", "description": "qué hacer y cómo saber que está bien", "role": "${roles.join('|')}", ${repos.length > 1 ? `"repo": "${repos.map((r) => r.key).join('|')}", ` : ''}"dependsOn": [índices de tareas anteriores de esta lista]}]`,
@@ -495,6 +509,7 @@ function buildPrompt(p, agent, t) {
     t.reused ? 'En esta rama ya está tu intento anterior (mira `git log` y `git diff` contra la rama base): parte de él y corrige lo que pide la revisión, sin rehacer lo que ya estaba bien.' : '',
     'Lo que dejes sin confirmar se confirmará solo al terminar.',
     t.code ? `Cita el código ${t.code} en lo que documentes (changelog, README, flows, tablero) para que la tarea se pueda rastrear.` : '',
+    askBlock(t),
     'Al acabar, responde con un resumen breve: qué cambiaste y cómo lo probaste.',
   ].join('\n');
 }
@@ -540,7 +555,7 @@ async function runTask(p, agent, t) {
       system: role.system,
       model: modelFor(engineId, agent, role),
       mcpUrl: ['qa', 'docs'].includes(role.kind) ? mcpUrl() : null, // QA y documentalista hablan con flow-test por MCP
-      env: engineEnv(engineId),
+      env: { ...engineEnv(engineId), AO_URL: `http://127.0.0.1:${process.env.AO_PORT || 7420}`, AO_TASK: t.id, AO_AGENT: agent.name },
       onActivity: (text) => { agent.activity = text; changed(); },
       onLog: (line) => log(agent.id, line),
     });
@@ -580,6 +595,7 @@ async function runTask(p, agent, t) {
     log(agent.id, '❌ ' + e.message);
     reflect(t, `❌ Falló en AgentOffice: ${String(e.message).slice(0, 500)}`);
   } finally {
+    questions.cancelForTask(t.id);
     jobs.delete(agent.id);
     t.updatedAt = Date.now();
     Object.assign(agent, { status: 'idle', taskId: null, activity: '', activeEngine: null });
