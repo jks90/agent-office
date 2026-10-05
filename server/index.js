@@ -71,7 +71,7 @@ export function extractText(file) {
   } catch { return null; }
 }
 
-const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), questions: questions.list(), guidePolicy: guidePolicy.getPolicy() }; };
+const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), questions: questions.list(), guidePolicy: guidePolicy.getPolicy(), guideProviders: guide.providerInfo() }; };
 
 async function readBody(req) {
   const limit = req.url.startsWith('/api/upload') ? 40e6 : req.url.startsWith('/api/guide/stt') ? 12e6 : 1e6; // adjuntos y audio del Guide (FT-9) en base64
@@ -186,6 +186,10 @@ const routes = [
     if (guide.providerNames().includes(b.guideProvider)) st.guideProvider = b.guideProvider;
     if (stt.providerNames().includes(b.sttProvider)) st.sttProvider = b.sttProvider; // FT-9
     if (typeof b.sttLang === 'string' && /^(auto|[a-z]{2})$/.test(b.sttLang.trim())) st.sttLang = b.sttLang.trim();
+    if (b.guideModels && typeof b.guideModels === 'object') { // modelo por proveedor del Guide (FT-8)
+      st.guideModels = { ...st.guideModels };
+      for (const n of guide.providerNames()) if (typeof b.guideModels[n] === 'string') { const v = b.guideModels[n].trim(); if (v) st.guideModels[n] = v; else delete st.guideModels[n]; }
+    }
     if (b.guidePolicy && typeof b.guidePolicy === 'object') guidePolicy.setPolicy(b.guidePolicy);
     store.changed();
     return st;
