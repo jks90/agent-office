@@ -8,6 +8,7 @@ import * as team from './team.js';
 import { allRoles } from './roles.js';
 import { checkSuite, suiteInfo } from './suite.js';
 import * as auth from './engines/auth.js';
+import * as boards from './boards/index.js';
 
 const PORT = Number(process.env.AO_PORT || 7420);
 const HOST = process.env.AO_HOST || '127.0.0.1'; // lanza procesos con tus permisos: solo local
@@ -34,6 +35,8 @@ setInterval(() => checkSuite().then(() => store.changed()).catch(() => {}), 5 * 
 const sync = () => team.syncWorkspace().then((r) => { if (r.created) console.log(`📁 ${r.created} proyecto(s) nuevo(s) desde flow-test: ${r.folders.join(', ')}`); }).catch((e) => console.log(`📁 sin sincronizar: ${e.message}`));
 checkSuite().then(sync);
 setInterval(sync, 5 * 60 * 1000).unref();
+// Tableros online con autoSync: cada 5 min.
+setInterval(() => { for (const p of store.get().projects) if (p.board?.autoSync) team.syncBoard(p.id).catch(() => {}); }, 5 * 60 * 1000).unref();
 
 const snapshot = () => ({ ...store.get(), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo() });
 
@@ -65,6 +68,12 @@ const routes = [
   ['POST', /^\/api\/projects\/(\w+)\/import-flow$/, ([id], b) => team.importFlow(id, b.path)],
   ['GET', /^\/api\/flows$/, () => team.listFlows()],
   ['POST', /^\/api\/sync$/, () => team.syncWorkspace()],
+  // Tableros online por proyecto
+  ['GET', /^\/api\/boards\/kinds$/, () => boards.describe()],
+  ['GET', /^\/api\/projects\/(\w+)\/board$/, ([id]) => boards.publicBoard(store.get().projects.find((p) => p.id === id) || {})],
+  ['POST', /^\/api\/projects\/(\w+)\/board$/, ([id], b) => boards.saveBoard(store.get().projects.find((p) => p.id === id), b)],
+  ['POST', /^\/api\/projects\/(\w+)\/board\/test$/, ([id]) => boards.testBoard(store.get().projects.find((p) => p.id === id))],
+  ['POST', /^\/api\/projects\/(\w+)\/board\/sync$/, gated(([id]) => team.syncBoard(id))],
   ['PATCH', /^\/api\/tasks\/(\w+)$/, ([id], b) => team.updateTask(id, b)],
   ['POST', /^\/api\/projects\/(\w+)\/run$/, gated(([id], b) => team.setRunning(id, b.running))],
   ['POST', /^\/api\/projects\/(\w+)\/goal$/, gated(([id], b) => team.planGoal(id, b.goal))],

@@ -10,6 +10,7 @@ import * as claude from './engines/claude.js';
 import * as codex from './engines/codex.js';
 import { suiteOk, mcpUrl, flowTestUrl } from './suite.js';
 import { engineEnv } from './engines/auth.js';
+import * as boards from './boards/index.js';
 
 const ENGINES = { demo, claude, codex };
 export const ENGINE_IDS = Object.keys(ENGINES);
@@ -191,9 +192,14 @@ export function createTask({ projectId, title, description = '', role, repo = nu
   task.feedbackImages = copyImages(task, images);
   s.tasks.push(task);
   changed();
+  if (!source) boards.createRemote(p, task).catch(() => {});
   tick();
   return task;
 }
+
+// Tableros online: sincronizar (pull + push de lo cambiado aquí) y reflejar cambios de estado.
+export const syncBoard = (projectId) => boards.syncBoard(findOr404(get().projects, projectId, 'Proyecto'), { createTask, roles: allRoles() });
+const reflect = (t, comment) => { const p = projectOf(t); if (p?.board && t.source?.kind === p.board.kind) boards.pushStatusSoon(p, t, comment); };
 
 export function updateTask(id, patch) {
   const s = get();
@@ -210,6 +216,7 @@ export function updateTask(id, patch) {
   if (patch.status && ['backlog', 'todo'].includes(patch.status) && ['backlog', 'todo', 'failed'].includes(t.status)) {
     t.status = patch.status;
     t.error = null;
+    reflect(t);
   }
   if (Array.isArray(patch.dependsOn)) t.dependsOn = patch.dependsOn.filter((d) => d !== id && s.tasks.some((x) => x.id === d));
   t.updatedAt = Date.now();
@@ -249,6 +256,7 @@ export async function approve(id) {
   t.status = 'done';
   t.updatedAt = Date.now();
   changed();
+  reflect(t, `✅ Aprobada en AgentOffice${t.summary ? `\n\n${t.summary.slice(0, 1500)}` : ''}`);
   tick();
 }
 
@@ -260,6 +268,7 @@ export async function reject(id, feedback = '', images = []) {
   t.feedbackImages = copyImages(t, images);
   Object.assign(t, { status: 'todo', agentId: null, diffStat: '', error: null, updatedAt: Date.now() });
   changed();
+  reflect(t, feedback.trim() ? `↩ Devuelta en AgentOffice: ${feedback.trim().slice(0, 1000)}` : undefined);
   tick();
 }
 
@@ -419,6 +428,7 @@ async function runTask(p, agent, t) {
   Object.assign(agent, { status: 'working', taskId: t.id, activity: t.kind === 'plan' ? 'Leyendo el objetivo' : 'Preparando su copia del repo' });
   changed();
   log(agent.id, `▶ #${t.id} ${t.title}`);
+  reflect(t, `▶ ${agent.name} (${roleOf(agent.role)?.label || agent.role}) empieza a trabajar en AgentOffice`);
 
   const engine = ENGINES[agent.engine] || demo;
   const real = agent.engine !== 'demo';
@@ -479,11 +489,13 @@ async function runTask(p, agent, t) {
       }
       t.status = 'review';
       log(agent.id, '✋ Terminado: esperando tu revisión');
+      reflect(t, `✋ ${agent.name} terminó; pendiente de revisión en AgentOffice.${t.diffStat ? `\n\n\`\`\`\n${t.diffStat.slice(0, 800)}\n\`\`\`` : ''}`);
     }
   } catch (e) {
     t.status = 'failed';
     t.error = e.message;
     log(agent.id, '❌ ' + e.message);
+    reflect(t, `❌ Falló en AgentOffice: ${String(e.message).slice(0, 500)}`);
   } finally {
     jobs.delete(agent.id);
     t.updatedAt = Date.now();

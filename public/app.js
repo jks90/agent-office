@@ -108,6 +108,8 @@ function render() {
   $('#tab-agents-count').textContent = team().length || '';
   $('#tab-summary').innerHTML = `${ts.filter((t) => t.status === 'doing').length} en curso<br>${ts.filter((t) => t.status === 'review').length} por revisar<br>${working.length}/${team().length} agentes trabajando`;
   $('#office-live').textContent = working.length ? working.map((a) => `${a.name}: ${a.activity}`).join('  ·  ') : 'Nadie está trabajando ahora mismo';
+  const b = p?.board;
+  $('#board-chip').innerHTML = b ? `🔗 ${esc(BOARD_LABELS[b.kind] || b.kind)} · <a href="${esc(b.url || '#')}" target="_blank" rel="noopener">${esc(b.config.repo || b.config.boardId || b.config.projectKey || '')}</a> · ${b.syncedAt ? 'hace ' + ago(b.syncedAt) : 'sin sincronizar'}${b.lastError ? ` <span class="bad" title="${esc(b.lastError)}">⚠</span>` : ''} <button class="small ghost" data-board-sync title="Sincronizar ahora">↻</button>` : '';
   if (drawerAgent) renderDrawer();
 }
 
@@ -209,7 +211,7 @@ function card(t) {
   if (t.status === 'todo') acts.push(`<button class="small ghost" data-park="${t.id}">← Backlog</button>`);
   if (['todo', 'failed', 'done'].includes(t.status)) acts.push(`<button class="small danger" data-del="${t.id}">Borrar</button>`);
   return `<div class="card ${t.status}" style="--c:${S.roles[t.role]?.color}">
-    <div class="card-head">${roleChip(t.role)} <span class="task-id">#${t.id}</span>${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? ` <span class="repo-chip">📁 ${esc(t.repo || '?')}</span>` : ''}${t.source ? ` <span title="Importada del tablero «${esc(t.source.flow)}» · columna ${esc(t.source.column)}">🗂</span>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}</div>
+    <div class="card-head">${roleChip(t.role)} <span class="task-id">#${t.id}</span>${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? ` <span class="repo-chip">📁 ${esc(t.repo || '?')}</span>` : ''}${t.source?.flow ? ` <span title="Importada del tablero «${esc(t.source.flow)}» · columna ${esc(t.source.column)}">🗂</span>` : ''}${t.source?.url ? ` <a class="ext" href="${esc(t.source.url)}" target="_blank" rel="noopener" title="${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} · ${esc(t.source.id)}${t.source.remoteStatus ? ' · fuera: ' + esc(t.source.remoteStatus) : ''}">🔗 ${esc(t.source.id)}</a>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}</div>
     <div class="t">${esc(t.title)}</div>
     <div class="meta">${agent ? `<span>👤 ${esc(agent.name)}</span>` : ''}${deps ? `<span>depende de ${deps}</span>` : ''}${t.costUsd ? ` <span>💲${t.costUsd.toFixed(3)}</span>` : ''}</div>
     ${t.status === 'doing' && agent ? `<div class="live">● ${esc(agent.activity)}</div>` : ''}
@@ -337,6 +339,9 @@ const actions = {
     <label>URL de flow-test (la suite; su MCP se usa para el QA)</label><input name="flowTestUrl" value="${esc(S.settings.flowTestUrl)}" placeholder="http://localhost:9998" />
     <label>Agentes trabajando a la vez (máx.)</label><input name="maxParallel" type="number" min="1" max="8" value="${S.settings.maxParallel}" />
     <hr style="border-color:var(--line);margin:16px 0" />
+    <div class="section-title">🔗 Tablero online del proyecto «${esc(project()?.name)}»</div>
+    <div id="board-cfg" class="board-cfg"><p class="muted">Cargando…</p></div>
+    <div class="section-title">📁 Proyecto</div>
     <label>Repositorios del proyecto «${esc(project()?.name)}» (uno por línea: <code>clave = ruta @ roles</code>)</label>
     <textarea name="repos" rows="3">${esc((project()?.repos || []).map((r) => `${r.key} = ${r.path}${r.roles?.length ? ' @ ' + r.roles.join(',') : ''}`).join('\n'))}</textarea>
     <label>Importar un tablero de flow-test (notas = tarjetas; las columnas «En revisión»/«Hecho» conservan su estado, el resto entra en Backlog)</label>
@@ -351,6 +356,54 @@ const actions = {
   }),
 };
 // Tras abrir Ajustes, rellenar el selector de flows con los del flow-test conectado.
+const BOARD_LABELS = { github: 'GitHub Issues', trello: 'Trello', jira: 'Jira' };
+const ago = (ts) => { const m = Math.round((Date.now() - ts) / 60000); return m < 1 ? 'un momento' : m < 60 ? `${m} min` : `${Math.round(m / 60)} h`; };
+let boardKinds = null;
+async function renderBoardCfg(kindOverride) {
+  const el = $('#board-cfg');
+  if (!el) return;
+  boardKinds = boardKinds || await api('GET', '/api/boards/kinds');
+  const b = await api('GET', `/api/projects/${projectId}/board`);
+  const kind = kindOverride ?? b?.kind ?? '';
+  const def = boardKinds.find((k) => k.id === kind);
+  const cfg = b?.kind === kind ? b.config : {};
+  const field = (f, val, secret) => `<label>${esc(f.label)}${f.required ? ' *' : ''}</label>` + (f.options
+    ? `<select name="${secret ? 's:' : 'c:'}${f.key}">${f.options.map((o) => `<option ${o === (val ?? f.default) ? 'selected' : ''}>${o}</option>`).join('')}</select>`
+    : `<input name="${secret ? 's:' : 'c:'}${f.key}" value="${esc(val ?? f.default ?? '')}" placeholder="${esc(f.placeholder || '')}" ${secret ? 'type="password" autocomplete="off"' : ''} />`);
+  el.innerHTML = `
+    <label>Tipo</label>
+    <select id="board-kind"><option value="">— sin tablero online —</option>${boardKinds.map((k) => `<option value="${k.id}" ${k.id === kind ? 'selected' : ''}>${esc(k.label)}</option>`).join('')}</select>
+    ${def ? `<div class="grid2">${def.fields.map((f) => field(f, cfg[f.key])).join('')}${def.secretFields.map((f) => field(f, b?.kind === kind ? b.secrets?.[f.key] : '', true)).join('')}</div>
+    ${def.id === 'github' ? '<p class="muted" style="margin:8px 0 0">Usa la sesión de <code>gh</code> de esta máquina. Estados: etiquetas <code>ao:todo</code>, <code>ao:doing</code>, <code>ao:review</code>; cerrada = hecho.</p>' : ''}
+    <label class="check"><input type="checkbox" id="board-autosync" ${b?.kind === kind ? (b.autoSync ? 'checked' : '') : 'checked'} /> Sincronizar solo cada 5 min</label>
+    <label class="check"><input type="checkbox" id="board-pushnew" ${b?.kind === kind ? (b.pushNew ? 'checked' : '') : 'checked'} /> Crear fuera las tareas nuevas del PO o a mano</label>
+    <div class="acts">
+      <button type="button" class="small" data-board-save>Guardar y probar</button>
+      ${b?.kind === kind ? '<button type="button" class="small ghost" data-board-sync>↻ Sincronizar ahora</button><button type="button" class="small danger" data-board-off>Desconectar</button>' : ''}
+      <span class="muted" id="board-msg">${b?.kind === kind ? (b.lastError ? '⚠ ' + esc(b.lastError) : esc(b.lastInfo || '')) : ''}</span>
+    </div>` : ''}`;
+  $('#board-kind').onchange = (e) => renderBoardCfg(e.target.value);
+}
+document.addEventListener('click', async (e) => {
+  const el = e.target.closest('[data-board-save],[data-board-sync],[data-board-off]');
+  if (!el) return;
+  e.preventDefault();
+  const d = el.dataset;
+  try {
+    if (d.boardSave !== undefined) {
+      const kind = $('#board-kind').value;
+      const config = {}, secrets = {};
+      $('#board-cfg').querySelectorAll('[name]').forEach((i) => { const [t, k] = i.name.split(':'); (t === 's' ? secrets : config)[k] = i.value; });
+      await api('POST', `/api/projects/${projectId}/board`, { kind, config, secrets, autoSync: $('#board-autosync')?.checked, pushNew: $('#board-pushnew')?.checked });
+      const r = await api('POST', `/api/projects/${projectId}/board/test`);
+      toast(`Conectado: ${r.info}`);
+      renderBoardCfg();
+    }
+    if (d.boardSync !== undefined) { const r = await api('POST', `/api/projects/${projectId}/board/sync`); toast(`Sincronizado: ${r.total} tarjetas · ${r.created} nuevas · ${r.updated} actualizadas · ${r.pushed} enviadas`); if ($('#board-cfg')) renderBoardCfg(); }
+    if (d.boardOff !== undefined) { if (confirm('¿Desconectar el tablero online? Las tareas se quedan; dejan de sincronizarse.')) { await api('POST', `/api/projects/${projectId}/board`, { kind: '' }); renderBoardCfg(); } }
+  } catch { /* toast */ }
+});
+
 let enginesTimer = null;
 async function refreshEngines() {
   const el = $('#engines');
@@ -413,7 +466,7 @@ document.addEventListener('click', async (e) => {
 
 document.addEventListener('click', (e) => {
   if (e.target.closest('[data-action="settings"]')) {
-    setTimeout(() => { refreshEngines(); clearInterval(enginesTimer); enginesTimer = setInterval(refreshEngines, 2500); }, 50);
+    setTimeout(() => { refreshEngines(); clearInterval(enginesTimer); enginesTimer = setInterval(refreshEngines, 2500); renderBoardCfg(); }, 50);
     api('GET', '/api/flows').then((flows) => {
       const sel = $('#import-flow');
       const folder = project()?.folder;
