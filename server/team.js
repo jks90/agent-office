@@ -8,6 +8,7 @@ import * as events from './events.js';
 import * as git from './git.js';
 import { allRoles, roleOf } from './roles.js';
 import { parseTasks } from './engines/describe.js';
+import { addUsage } from './usage.js';
 import * as demo from './engines/demo.js';
 import * as claude from './engines/claude.js';
 import * as codex from './engines/codex.js';
@@ -658,6 +659,8 @@ async function runTask(p, agent, t) {
 
     const prompt = buildPrompt(p, agent, t);
     t.pendingMessages = []; // ya van en el prompt
+    const baseUsage = t.usage || null; // FT-26: consumo de intentos anteriores; t.usage es acumulado y se actualiza en vivo
+    agent.usage = null; // sesión nueva
     const job = engine.start({
       agent, task: t, project: p, cwd, mode: t.kind === 'plan' ? 'plan' : 'work', goal: t.goal, roles,
       prompt,
@@ -669,6 +672,7 @@ async function runTask(p, agent, t) {
       onActivity: (text) => { agent.activity = text; events.emit('AgentProgress', ev, { activity: text }); changed(); },
       onTool: (c) => events.emit(c.phase === 'started' ? 'AgentToolStarted' : 'AgentToolFinished', ev, c.phase === 'started' ? { callId: c.callId, tool: c.tool, summary: c.summary } : { callId: c.callId, ok: c.ok }),
       onLog: (line) => log(agent.id, line),
+      onUsage: (u) => { agent.usage = { ...u, engine: engineId, taskId: t.id }; t.usage = addUsage(baseUsage, u); changed(); }, // FT-26
     });
     const entry = jobs.get(agent.id);
     Object.assign(entry, { stop: job.stop, engine: engineId, pid: job.pid, pause: job.pause, resume: job.resume, message: job.message });

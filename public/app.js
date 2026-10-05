@@ -872,6 +872,17 @@ const BOARD_LABELS = { github: 'GitHub Issues', trello: 'Trello', jira: 'Jira' }
 // Una tabla con TODOS los proyectos (no solo el seleccionado): encendido o parado, tareas por columna, equipo, quién
 // trabaja en qué, libres, coste y última actividad. Se repinta con cada `state` del SSE, así que siempre está al día.
 let sumShowEmpty = false;
+// Consumo de tokens (FT-26): «48,2k tok»; la barra solo existe si el CLI informó la ventana de contexto (Claude); Codex no la da → «n/d».
+const fmtTok = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) : n >= 1e3 ? (n / 1e3).toFixed(1) : String(n)).replace('.', ',') + (n >= 1e6 ? 'M' : n >= 1e3 ? 'k' : '') + ' tok';
+const fmtN = (n) => fmtTok(n).replace(' tok', '');
+function usageHtml(a) {
+  const u = a.usage;
+  if (!u || !Number.isFinite(u.total)) return `<div class="tokrow"><b>${esc(a.name)}</b> <span class="muted" title="Aún sin cifras de esta sesión (o el motor no las informa)">n/d</span></div>`;
+  const pct = u.limit && u.used != null ? Math.min(100, Math.round((u.used / u.limit) * 100)) : null;
+  const tip = `${a.name} (${u.engine || a.activeEngine || '?'}) · entrada ${u.input} · salida ${u.output} · caché ${u.cache} · total ${u.total}${u.limit ? ` · contexto ${u.used}/${u.limit}` : ' · límite: n/d (el CLI no lo informa)'}${u.costUsd != null ? ` · ${u.costUsd.toFixed(3)} $` : ''}`;
+  const bar = pct == null ? '<span class="muted">límite n/d</span>' : `<span class="tokbar ${pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : ''}"><i style="width:${pct}%"></i></span><span class="muted">${pct}% · quedan ${fmtN(Math.max(0, u.limit - u.used))}</span>`;
+  return `<div class="tokrow ${a.status === 'idle' ? 'old' : ''}" title="${esc(tip)}"><b>${esc(a.name)}</b> <span class="tok">${fmtTok(u.total)}</span> <span class="muted">↓${fmtN(u.input)} ↑${fmtN(u.output)} ⚡${fmtN(u.cache)}</span>${bar}</div>`;
+}
 const SUM_COLS = [['backlog', 'Backlog'], ['todo', 'Por hacer'], ['doing', 'En curso'], ['review', 'Revisión'], ['done', 'Hecho'], ['failed', 'Fallidas']];
 function renderSummary() {
   const el = $('#summary');
@@ -886,7 +897,8 @@ function renderSummary() {
     const last = Math.max(0, ...ts.map((t) => t.updatedAt || 0));
     const cost = ts.reduce((n, t) => n + (t.costUsd || 0), 0);
     const open = qs.filter((q) => q.projectId === p.id).length;
-    return { p, ts, team, busy, free, last, cost, open };
+    const tokens = ts.reduce((n, t) => n + (t.usage?.total || 0), 0);
+    return { p, ts, team, busy, free, last, cost, open, tokens };
   }).sort((x, y) => (y.p.running - x.p.running) || (y.busy.length - x.busy.length) || (y.last - x.last));
   // Carpetas del workspace sin equipo ni tareas: plegadas en una línea (se despliegan con un clic)
   const idle = rows.filter((r) => !r.ts.length && !r.team.length && !r.p.running);
@@ -903,8 +915,8 @@ function renderSummary() {
       ${kpi((all.reduce((s, t) => s + (t.costUsd || 0), 0)).toFixed(2) + ' $', 'coste acumulado')}
     </div>
     <table class="repos summary">
-      <thead><tr><th>Proyecto</th><th>Estado</th>${SUM_COLS.map(([, l]) => `<th class="num">${l}</th>`).join('')}<th>Equipo</th><th>Trabajando en</th><th>Libres</th><th class="num">Coste</th><th>Actividad</th></tr></thead>
-      <tbody>${shown.map(({ p, ts, team, busy, free, last, cost, open }) => `
+      <thead><tr><th>Proyecto</th><th>Estado</th>${SUM_COLS.map(([, l]) => `<th class="num">${l}</th>`).join('')}<th>Equipo</th><th>Trabajando en</th><th>Libres</th><th>Tokens por sesión</th><th class="num">Coste</th><th>Actividad</th></tr></thead>
+      <tbody>${shown.map(({ p, ts, team, busy, free, last, cost, open, tokens }) => `
         <tr data-sum-project="${p.id}" class="${p.id === projectId ? 'sel' : ''}">
           <td><b>${esc(p.name)}</b>${p.folder && p.folder !== p.name ? ` <span class="muted">(${esc(p.folder)})</span>` : ''} <span class="muted">${esc(p.prefixDefault || '')}</span>${open ? ` <span title="preguntas pendientes">❓${open}</span>` : ''}</td>
           <td><button class="small ${p.running ? 'on' : 'ghost'}" data-sum-run="${p.id}" title="${p.running ? 'Parar el equipo' : 'Poner a trabajar'}">${p.running ? '🟢 En marcha' : '⏸ Parado'}</button></td>
@@ -912,9 +924,10 @@ function renderSummary() {
           <td>${team.length ? `${team.length} <span class="muted">${esc(team.map((a) => a.name).join(', '))}</span>` : '<span class="muted">sin equipo</span>'}</td>
           <td>${busy.length ? busy.map(({ a, t }) => `<div class="busy"><span class="dot ${a.status}"></span>${esc(a.name)}${t ? ` → <b>${esc(tcode(t))}</b> <span class="muted" title="${esc(t.title)}">${esc(t.title.slice(0, 40))}${t.title.length > 40 ? '…' : ''}</span>` : ''}${a.status === 'paused' ? ' <span class="muted">(en pausa)</span>' : ''}</div>`).join('') : '<span class="muted">—</span>'}</td>
           <td>${free.length ? esc(free.map((a) => a.name).join(', ')) : '<span class="muted">—</span>'}</td>
+          <td>${team.some((a) => a.usage) || tokens ? `${tokens ? `<div class="tokrow"><b>Total</b> <span class="tok">${fmtTok(tokens)}</span></div>` : ''}${team.filter((a) => a.usage || a.status !== 'idle').map(usageHtml).join('')}` : '<span class="muted">n/d</span>'}</td>
           <td class="num">${cost ? cost.toFixed(2) + ' $' : '·'}</td>
           <td class="muted">${last ? 'hace ' + ago(last) : '—'}</td>
-        </tr>`).join('')}${idle.length ? `<tr class="idle-row"><td colspan="${SUM_COLS.length + 7}"><button class="small ghost" data-sum-empty>${sumShowEmpty ? '▾ Ocultar' : '▸ Mostrar'} ${idle.length} proyectos sin equipo ni tareas (${esc(idle.map((r) => r.p.name).join(', '))})</button></td></tr>` : ''}</tbody>
+        </tr>`).join('')}${idle.length ? `<tr class="idle-row"><td colspan="${SUM_COLS.length + 8}"><button class="small ghost" data-sum-empty>${sumShowEmpty ? '▾ Ocultar' : '▸ Mostrar'} ${idle.length} proyectos sin equipo ni tareas (${esc(idle.map((r) => r.p.name).join(', '))})</button></td></tr>` : ''}</tbody>
     </table>
     <p class="muted" style="margin:8px 2px">Clic en una fila: abre sus tareas. Los datos llegan por SSE: la tabla se actualiza sola.</p>`;
   const sc = $('#tab-summary-count'); if (sc) sc.textContent = (all.filter((t) => t.status === 'review' && S.projects.find((p) => p.id === t.projectId)?.running).length + qs.length) || ''; // solo lo que pide acción: revisiones de proyectos en marcha + preguntas

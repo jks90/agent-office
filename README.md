@@ -163,6 +163,20 @@ El **Guide Agent** es la capa de conversación, contexto, supervisión y navegac
 Cada agente elige motor y modelo desde su panel (clic en el personaje o en su ficha).
 Variables: `AO_PORT` (7420), `AO_HOST` (127.0.0.1), `AO_DATA_DIR`, `AO_CLAUDE_BIN`, `AO_CODEX_BIN`.
 
+## Consumo de tokens (FT-26)
+
+El Resumen muestra, por agente y sesión, los tokens gastados (↓ entrada · ↑ salida · ⚡ caché · total) y un total por proyecto, en vivo por el mismo SSE `state` (`agent.usage`, y `task.usage` acumulado entre intentos). Solo se guardan cifras, nunca prompts ni transcripts. Lógica en `server/usage.js`; prueba: `node scripts/usage-e2e.mjs`.
+
+| | Claude Code | Codex |
+|---|---|---|
+| Entrada / salida / caché | `message.usage` de cada evento `assistant` del stream-json (dedupe por `message.id`) y `usage` del `result` final (caché = lectura + creación) | `usage` de `turn.completed` de `codex exec --json` (entrada = `input_tokens` − `cached_input_tokens`; salida incluye razonamiento) |
+| Total | entrada + salida + caché | ídem |
+| Límite / restante | ventana de contexto (`modelUsage[modelo].contextWindow` del `result`, barra amarilla ≥70 %, roja ≥90 %); aparece al terminar el primer turno. La cuota del plan (Session/Weekly) no la expone `claude -p` | n/d: el stream no informa ventana ni cuota |
+| Coste | `total_cost_usd` del `result` (en el tooltip) | n/d |
+| Frecuencia | por mensaje | solo al terminar cada turno |
+
+El motor `demo` no consume tokens: aparece «n/d».
+
 ## DesktopProvider (FT-20)
 
 `server/desktop/` abstrae el escritorio del usuario (ventana activa, lista de ventanas, captura). `getProvider()` elige por `process.platform`: `linux` → `linux.js`; darwin/win32 → provider `unsupported` (error 501 «aún no disponible en <so>»); `AO_DESKTOP=fake` → `fake.js` con ventanas y captura fijas para pruebas. Contrato (cabecera de `index.js`): `{ id, session, available(): {ok, missing[]}, getActive(): {id, title, app, pid}, list(): [{id, title, app, pid, active}], capture(opts) }`.

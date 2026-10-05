@@ -2,6 +2,7 @@
 import { spawn, execFileSync } from 'node:child_process';
 import readline from 'node:readline';
 import { firstLine, toolSummary } from './describe.js';
+import { codexTracker } from '../usage.js';
 
 // Codex envuelve cada orden en `/usr/bin/zsh -lc "…"`: en el bocadillo solo interesa la orden.
 const unwrap = (cmd) => {
@@ -20,7 +21,7 @@ function bwrapWorks() {
   return sandboxOk;
 }
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, images = [], env: extraEnv = {}, onActivity, onLog, onTool = () => {} }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, images = [], env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
   const noSandbox = !bwrapWorks();
   const sandbox = mode === 'plan' ? 'read-only' : 'workspace-write';
   const args = ['exec', '--json', '--skip-git-repo-check', '-C', cwd, ...(noSandbox ? ['--dangerously-bypass-approvals-and-sandbox'] : ['-s', sandbox])];
@@ -36,11 +37,14 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, images = [], e
   let lastMessage = '';
   let failure = null;
   let stopped = false;
+  const tracker = codexTracker();
   const stderr = [];
 
   readline.createInterface({ input: child.stdout }).on('line', (line) => {
     let ev;
     try { ev = JSON.parse(line); } catch { if (line.trim()) onLog(line); return; }
+    const u = tracker.feed(ev); // FT-26: solo cifras de uso
+    if (u) onUsage(u);
     const it = ev.item;
     if ((ev.type === 'item.started' || ev.type === 'item.completed') && it) {
       const started = ev.type === 'item.started';
