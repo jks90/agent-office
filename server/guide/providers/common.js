@@ -84,7 +84,7 @@ export function createHttpProvider(adapter) {
             const name = realName(c.name);
             yield { type: 'tool_call', id: c.id, name, args: c.args };
             let ok = true, result;
-            try { result = JSON.stringify(await run(name, c.args, { client, via: 'guide-' + adapter.who })) ?? 'null'; }
+            try { result = JSON.stringify(await run(name, c.args, { client, chatId: opts.chatId, via: 'guide-' + adapter.who })) ?? 'null'; }
             catch (e) { ok = false; result = String(e.message).slice(0, 2000); }
             if (stopped) throw Object.assign(new Error('stopped'), { name: 'AbortError' });
             turn.calls.push({ id: c.id, name, args: c.args, ok, result });

@@ -25,7 +25,7 @@ export function create() {
   const stderr = [];
 
   function spawnChild() {
-    const mcpServers = { [MCP_SERVER]: { command: process.execPath, args: [path.join(ROOT, 'bin/ao-mcp.mjs')], env: { AO_URL: `http://127.0.0.1:${process.env.AO_PORT || 7420}`, ...(process.env.AO_TOKEN ? { AO_TOKEN: process.env.AO_TOKEN } : {}) } } };
+    const mcpServers = { [MCP_SERVER]: { command: process.execPath, args: [path.join(ROOT, 'bin/ao-mcp.mjs')], env: { AO_URL: `http://127.0.0.1:${process.env.AO_PORT || 7420}`, ...(process.env.AO_TOKEN ? { AO_TOKEN: process.env.AO_TOKEN } : {}), ...(opts.chatId ? { AO_CHAT_ID: opts.chatId } : {}) } } };
     const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--system-prompt', opts.system];
     args.push('--model', opts.model || 'sonnet');
     args.push('--tools', '', '--permission-mode', 'dontAsk', '--disable-slash-commands'); // sin Bash/Edit/Write: el Guide no es un worker

@@ -96,7 +96,7 @@ const routes = [
   ['POST', /^\/api\/context$/, (_, b, __, req) => context.publish(req.headers['x-ao-client'], b)],
   // Tool Registry + Policy Layer del Guide Agent (FT-4): lo usan la UI, las pruebas y bin/ao-mcp.mjs
   ['GET', /^\/api\/guide\/tools$/, () => guideTools.describe()],
-  ['POST', /^\/api\/guide\/tool$/, (_, b, __, req) => guideTools.run(String(b.name || ''), b.args ?? {}, { client: req.headers['x-ao-client'] || null, via: req.headers['x-ao-via'] || 'api' })],
+  ['POST', /^\/api\/guide\/tool$/, (_, b, __, req) => guideTools.run(String(b.name || ''), b.args ?? {}, { client: req.headers['x-ao-client'] || null, chatId: req.headers['x-ao-chat'] || null, via: req.headers['x-ao-via'] || 'api' })],
   // Guide Agent (FT-6): chats persistentes; la conversación (POST /api/guide/chat, SSE) se atiende en `guideChat`
   ['GET', /^\/api\/guide\/chats$/, () => guide.listChats()],
   ['GET', /^\/api\/guide\/chats\/([\w-]+)$/, ([id]) => guide.getChat(id)],

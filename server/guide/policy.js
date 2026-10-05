@@ -39,15 +39,23 @@ export function summarize(v, depth = 0) {
   return v;
 }
 
+// FT-22 · confirmOnce: tools `read` con `confirmOnce:true` piden confirmación la primera vez por sesión (clave = chatId del Guide
+// o, por API/MCP, x-ao-client) y luego pasan solas. Solo en memoria: se olvida al reiniciar. Sin clave, se pregunta siempre.
+const confirmedOnce = new Set();
+const onceKey = (tool, ctx) => { const k = ctx?.chatId || ctx?.client; return k ? `${tool.name.split('.')[0]}:${k}` : null; };
+
 // Pide confirmación si la política lo exige. Devuelve { mode, confirmed } (confirmed=null si no hizo falta).
-export async function gate(tool, args) {
-  const mode = modeOf(tool.policy);
+export async function gate(tool, args, ctx = {}) {
+  let mode = modeOf(tool.policy);
+  const key = tool.confirmOnce ? onceKey(tool, ctx) : null;
+  if (tool.confirmOnce && mode === 'auto' && !(key && confirmedOnce.has(key))) mode = 'confirmOnce';
   if (mode === 'auto') return { mode, confirmed: null };
   const detail = JSON.stringify(summarize(args), null, 2);
   const confirmed = await questions.confirm({
     question: `El Guide quiere ejecutar «${tool.name}» (${tool.policy}). ¿Lo permites?`,
     context: `${tool.description}\n\n\`\`\`json\n${detail}\n\`\`\``,
   });
+  if (confirmed && mode === 'confirmOnce' && key) confirmedOnce.add(key);
   return { mode, confirmed };
 }
 
