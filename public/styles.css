@@ -363,3 +363,8 @@ table.summary .busy { display: flex; align-items: center; gap: 6px; white-space:
 .tokbar { display: inline-block; width: 60px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
 .tokbar i { display: block; height: 100%; background: var(--ok); } .tokbar.warn i { background: #fbbf24; } .tokbar.bad i { background: #f87171; }
 table.summary button.small.on { background: color-mix(in srgb, var(--ok) 20%, transparent); border-color: var(--ok); color: #b8f4d8; }
+
+/* FT-27: arrastrar tarjetas entre columnas */
+.card[draggable=true] { cursor: grab; }
+.card.dragging { opacity: .45; }
+.col.drop-over { outline: 2px dashed var(--c); outline-offset: -4px; background: color-mix(in srgb, var(--c) 8%, var(--surface)); }

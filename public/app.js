@@ -633,9 +633,36 @@ function renderBoard() {
   $('#board').innerHTML = COLS.map(([st, label, c]) => {
     const items = list.filter((t) => t.status === st || (st === 'todo' && t.status === 'failed'))
       .sort((a, b) => (st === 'done' ? b.updatedAt - a.updatedAt : a.createdAt - b.createdAt));
-    return `<div class="col" style="--c:${c}"><h4><span>${label}</span><span class="count">${items.length}</span></h4><div class="cards">${items.map(card).join('') || '<div class="empty">Nada por aquí</div>'}</div></div>`;
+    return `<div class="col" data-col="${st}" style="--c:${c}"><h4><span>${label}</span><span class="count">${items.length}</span></h4><div class="cards">${items.map(card).join('') || '<div class="empty">Nada por aquí</div>'}</div></div>`;
   }).join('');
 }
+
+// FT-27: arrastrar tarjetas entre columnas (delegación en #board: sobrevive a cada re-render por SSE).
+// Solo Backlog ↔ Por hacer; cualquier otro destino muestra un aviso en vez de fallar callado.
+const MOVABLE = ['backlog', 'todo', 'failed'];
+const COL_NAME = Object.fromEntries(COLS.map(([st, label]) => [st, label]));
+async function moveTask(id, status) {
+  const t = S.tasks.find((x) => x.id === id);
+  if (!t) return;
+  if (t.status === status) return;
+  if (!MOVABLE.includes(t.status)) return toast(`${tcode(t)} ${t.status === 'doing' ? 'está en curso: para al agente antes de moverla' : 'está en «' + (COL_NAME[t.status] || t.status) + '»: usa Aprobar / Devolver en la tarjeta'}`, 'error');
+  if (!['backlog', 'todo'].includes(status)) return toast(`No se puede mover a «${COL_NAME[status]}» a mano: esa columna la gestiona el agente al ejecutar la tarea`, 'error');
+  try { await api('PATCH', `/api/tasks/${id}`, { status }); toast(`${tcode(t)} → ${COL_NAME[status]}`); } catch { /* api() ya mostró el aviso */ }
+}
+let dragId = null;
+$('#board').addEventListener('dragstart', (e) => {
+  const c = e.target.closest?.('.card[data-task]'); if (!c) return;
+  dragId = c.dataset.task; c.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', dragId);
+});
+$('#board').addEventListener('dragend', () => { dragId = null; document.querySelectorAll('.dragging,.drop-over').forEach((x) => x.classList.remove('dragging', 'drop-over')); });
+$('#board').addEventListener('dragover', (e) => { const col = e.target.closest?.('.col'); if (!col || !dragId) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; col.classList.add('drop-over'); });
+$('#board').addEventListener('dragleave', (e) => { const col = e.target.closest?.('.col'); if (col && !col.contains(e.relatedTarget)) col.classList.remove('drop-over'); });
+$('#board').addEventListener('drop', (e) => {
+  const col = e.target.closest?.('.col'); if (!col || !dragId) return;
+  e.preventDefault(); const id = dragId; dragId = null; col.classList.remove('drop-over');
+  moveTask(id, col.dataset.col);
+});
 
 function card(t) {
   const agent = S.agents.find((a) => a.id === t.agentId);
@@ -653,8 +680,10 @@ function card(t) {
   if (t.status !== 'doing') acts.unshift(`<button class="small ghost" data-edit="${t.id}" title="Editar título, descripción, rol, repo y dependencias">✎</button>`);
   if (t.status === 'backlog') acts.push(`<button class="small" data-ready="${t.id}">→ Por hacer</button>`);
   if (t.status === 'todo') acts.push(`<button class="small ghost" data-park="${t.id}">← Backlog</button>`);
+  if (t.status === 'failed') acts.push(`<button class="small ghost" data-park="${t.id}" title="Devolver al Backlog">← Backlog</button>`);
+  if (['review', 'done'].includes(t.status)) acts.push(`<button class="small ghost" data-nomove="${t.id}" title="Mover a otra columna">⇄ Mover a…</button>`);
   if (['todo', 'failed', 'done'].includes(t.status)) acts.push(`<button class="small danger" data-del="${t.id}">Borrar</button>`);
-  return `<div class="card ${t.status}" style="--c:${S.roles[t.role]?.color}">
+  return `<div class="card ${t.status}" data-task="${t.id}" draggable="${['backlog', 'todo', 'failed'].includes(t.status)}" style="--c:${S.roles[t.role]?.color}">
     <div class="card-head">${roleChip(t.role)} <span class="task-id" title="Código de la tarea (rama ao/${t.code || t.id}; cítalo en commits y docs)">${esc(tcode(t))}</span>${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? ` <span class="repo-chip">📁 ${esc(t.repo || '?')}</span>` : ''}${t.source?.flow ? ` <span title="Importada del tablero «${esc(t.source.flow)}» · columna ${esc(t.source.column)}">🗂</span>` : ''}${(t.feedbackImages?.length || t.files?.length) ? ` <span title="${esc([...(t.feedbackImages || []), ...(t.files || [])].map((f) => f.split('/').pop()).join(', '))}">📎${(t.feedbackImages?.length || 0) + (t.files?.length || 0)}</span>` : ''}${t.source?.url ? ` <a class="ext" href="${esc(t.source.url)}" target="_blank" rel="noopener" title="${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} · ${esc(t.source.id)}${t.source.remoteStatus ? ' · fuera: ' + esc(t.source.remoteStatus) : ''}">🔗 ${esc(t.source.id)}</a>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}</div>
     <div class="t">${esc(t.title)}</div>
     ${t.context ? `<div class="meta">${bornFrom(t)}</div>` : ''}
@@ -1331,6 +1360,7 @@ document.addEventListener('click', async (e) => {
   if (d.skillDel) return api('DELETE', `/api/skills/${d.skillDel}`).then(() => { toast('Quitada del catálogo'); renderSkills(true); });
   if (d.skillEdit) return editSkill(d.skillEdit);
   if (d.agentEdit) return editAgent(d.agentEdit);
+  if (d.nomove) return moveTask(d.nomove, 'backlog');
   if (d.park) return api('PATCH', `/api/tasks/${d.park}`, { status: 'backlog' });
   if (d.del) { if (confirm('¿Borrar la tarea?')) api('DELETE', `/api/tasks/${d.del}`); return; }
   if (d.reject) {
