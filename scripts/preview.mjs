@@ -6,6 +6,7 @@
 //   node scripts/preview.mjs out.png --wait 20000    # más tiempo (p. ej. para que alguien se siente)
 //   node scripts/preview.mjs out.png --full          # la página entera, no solo la oficina
 //   node scripts/preview.mjs out.png --query "x=1"   # parámetros extra en la URL
+//   node scripts/preview.mjs out.png --building      # el EDIFICIO (FT-46): 3 proyectos con equipo y 1 sin él, ?view=building
 //
 // Imprime también los errores de consola de la página. Pensado para que un agente pueda VER lo que
 // pinta: captura → mirar el PNG → corregir → repetir. Necesita `npm install` (puppeteer-core) y Chrome/Chromium.
@@ -23,6 +24,7 @@ const opt = (name, def) => { const i = args.indexOf('--' + name); return i >= 0 
 const wait = Number(opt('wait', 12000));
 const query = opt('query', '');
 const full = args.includes('--full');
+const building = args.includes('--building');
 const port = 7490 + Math.floor(Math.random() * 100);
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-preview-'));
 
@@ -48,12 +50,28 @@ const api = async (method, p, body) => {
 let browser;
 try {
   for (let i = 0; i < 50; i++) { try { await fetch(base + '/api/state'); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
-  const { projects } = await api('GET', '/api/state');
-  const pid = projects[0].id;
+  // Los proyectos llegan del workspace de flow-test en segundo plano: si aún no hay ninguno, creamos el demo
+  // (el primer proyecto ficha al equipo base) para que la captura no dependa de flow-test.
+  let demo = (await api('GET', '/api/state')).projects[0];
+  if (!demo) demo = await api('POST', '/api/projects', { name: 'Demo — Tienda online' });
+  if (!demo.team?.length) for (const [name, role] of [['Olga', 'po'], ['Bruno', 'back'], ['Fina', 'front'], ['Quim', 'qa']]) await api('POST', '/api/agents', { name, role, engine: 'demo', projectId: demo.id });
+  const pid = demo.id;
   // Equipo en marcha: PO planificando, back y front en su mesa, QA en la zona de descanso.
   await api('POST', `/api/projects/${pid}/goal`, { goal: 'Alta de clientes con email y verificación' });
   for (const role of ['back', 'front']) await api('POST', '/api/tasks', { projectId: pid, role, title: `Prueba de ${role}` });
   await api('POST', `/api/projects/${pid}/run`, { running: true });
+  if (building) {
+    // Más plantas: «Facturación» en marcha con 2 trabajando, «Intranet» parada con cola, «Sin equipo» no debe salir.
+    const fact = await api('POST', '/api/projects', { name: 'Facturación' });
+    for (const [name, role] of [['Ada', 'po'], ['Linus', 'back'], ['Grace', 'front'], ['Edsger', 'qa']]) await api('POST', '/api/agents', { name, role, engine: 'demo', projectId: fact.id });
+    await api('POST', `/api/projects/${fact.id}/goal`, { goal: 'Facturas recurrentes con IVA' });
+    for (const t of ['Modelo de factura', 'Pantalla de facturas']) await api('POST', '/api/tasks', { projectId: fact.id, role: t.startsWith('Modelo') ? 'back' : 'front', title: t });
+    await api('POST', `/api/projects/${fact.id}/run`, { running: true });
+    const intra = await api('POST', '/api/projects', { name: 'Intranet' });
+    for (const [name, role] of [['Margaret', 'po'], ['Dennis', 'back']]) await api('POST', '/api/agents', { name, role, engine: 'demo', projectId: intra.id });
+    for (const t of ['Login SSO', 'Directorio de empleados', 'Calendario']) await api('POST', '/api/tasks', { projectId: intra.id, role: 'back', title: t });
+    await api('POST', '/api/projects', { name: 'Sin equipo' });
+  }
 
   browser = await puppeteer.launch({
     executablePath: chrome, headless: 'new',
@@ -65,9 +83,11 @@ try {
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   page.on('console', (m) => { if (['error', 'warning'].includes(m.type())) errors.push(`${m.type()}: ${m.text()}`); });
   page.on('requestfailed', (r) => errors.push(`request failed: ${r.url()} ${r.failure()?.errorText || ''}`));
-  const url = `${base}/${query ? '?' + query : ''}`;
+  const qs = [building ? 'view=building' : '', query].filter(Boolean).join('&');
+  const url = `${base}/${qs ? '?' + qs : ''}`;
   await page.goto(url, { waitUntil: 'networkidle2' });
   await new Promise((r) => setTimeout(r, wait));
+  if (building) console.log('🏢 ' + JSON.stringify(await page.evaluate(() => ({ dataset: document.querySelector('#office')?.dataset.officeMode, labels: [...document.querySelectorAll('.o3d-floor')].map((e) => e.textContent) }))));
   const fps = await page.evaluate(() => new Promise((res) => { let n = 0; const t0 = performance.now(); const f = () => { n++; if (performance.now() - t0 < 1000) requestAnimationFrame(f); else res(n); }; requestAnimationFrame(f); }));
   const target = full ? page : (await page.$('.office-wrap')) || page;
   await target.screenshot({ path: out });

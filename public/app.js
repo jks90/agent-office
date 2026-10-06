@@ -12,6 +12,7 @@ const logs = new Map();
 import { Office } from './office3d.js';
 import { dictationSupported, createDictation, insertAtCursor } from './dictation.js'; // dictado por voz (FT-43)
 const office = new Office($('#office'), { onAgentClick: (id) => openDrawer(id) });
+window.aoOffice = office; // para QA: aoOffice.debugState() / setMode() (FT-46)
 
 function safeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
 function safeSet(k, v) { try { localStorage.setItem(k, v); } catch { /* sin almacenamiento */ } }
@@ -469,6 +470,7 @@ document.addEventListener('change', (e) => {
 const pickModel = (f) => (f.model === '__other' ? (f.model_other || '').trim() : f.model || '');
 const VIEW_PARAM = new URLSearchParams(location.search).get('view'); // ?view=guide (botón «Guía» de flow-test, FT-3)
 let activeTab = ['office', 'tasks', 'agents', 'guide'].includes(VIEW_PARAM) ? VIEW_PARAM : safeGet('ao:tab') || 'office';
+if (VIEW_PARAM === 'building') { activeTab = 'office'; office.setMode('building'); } // oficina como edificio (FT-46; temporal hasta FT-47)
 function showTab(tab) {
   activeTab = tab;
   safeSet('ao:tab', tab);
@@ -520,7 +522,7 @@ function render() {
   run.classList.toggle('on', !!p?.running);
   run.disabled = !p;
 
-  office.update({ agents: team(), tasks: tasks(), roles: S.roles, title: p?.name || '', selected: drawerAgent });
+  office.update({ agents: team(), tasks: tasks(), roles: S.roles, title: p?.name || '', selected: drawerAgent, projects: S.projects, allAgents: S.agents, allTasks: S.tasks }); // projects/allAgents/allTasks: modo edificio (FT-46)
   renderSuite();
   renderTeam();
   renderRepos();
