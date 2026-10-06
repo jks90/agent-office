@@ -221,10 +221,11 @@ const GUIDE_HINTS = ['Créame una tarea para solucionar esto', '¿Cómo va?', '�
 
 function guideMount(el, panel) {
   if (guideRoots.some((r) => r.el === el)) return;
-  el.innerHTML = `<div class="guide">
-    <div class="g-list"><button class="small" data-g="new">＋ Nuevo chat</button><div class="g-chats"></div></div>
+  el.innerHTML = `<div class="guide ${panel ? 'panel' : ''}">
+    <div class="g-list" tabindex="0" title="↑/↓ cambian de chat · Supr borra · Ctrl+N nuevo"><div class="g-lhead"><button class="small" data-g="new" title="Nuevo chat (Ctrl+N)">＋<span class="g-lbl"> Nuevo chat</span></button><button class="ghost small g-fold" data-g="fold"></button></div><div class="g-chats"></div><button class="ghost small g-delall" data-g="delall">Borrar todos…</button></div>
+    <div class="g-grip" title="Arrastra para ensanchar · doble clic = ancho por defecto"></div>
     <div class="g-main">
-      <div class="g-head"><b class="g-title">🧭 Guía</b><button class="ghost small g-ear" data-g="ear" hidden></button>${panel ? '<select class="g-pick" title="Chats"></select><button class="ghost small" data-g="new">＋</button><button class="ghost small" data-g="close" title="Cerrar (Ctrl+G)">✕</button>' : ''}</div>
+      <div class="g-head"><b class="g-title">🧭 Guía</b><button class="ghost small g-ear" data-g="ear" hidden></button><span class="g-pickbar"><select class="g-pick" title="Chats"></select><button class="ghost small" data-g="new">＋</button><button class="ghost small g-pdel" data-g="delcur" title="Borrar este chat">🗑</button></span>${panel ? '<button class="ghost small" data-g="close" title="Cerrar (Ctrl+G)">✕</button>' : ''}</div>
       <div class="g-msgs"></div>
       <div class="g-voice" hidden><span class="g-vtxt"></span><i class="g-vlevel"></i></div>
       <form class="g-form"><button type="button" class="ghost g-mic" data-g="mic" title="Mantén pulsado para hablar (o barra espaciadora con la caja vacía)">🎤</button><textarea rows="1" placeholder="Pídeme algo…" title="Intro envía · Mayús+Intro salto de línea · barra espaciadora con la caja vacía = hablar"></textarea><button class="g-send">Enviar</button><button type="button" class="ghost g-stop" data-g="stop" hidden>■ Parar</button></form>
@@ -244,17 +245,42 @@ function guideMount(el, panel) {
   mic.addEventListener('keyup', (e) => { if (e.key === ' ') voiceHold(false); });
   ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 140) + 'px'; });
   el.addEventListener('click', (e) => {
-    const b = e.target.closest('[data-g], [data-gchat], [data-ghint]');
+    const b = e.target.closest('[data-g], [data-gchat], [data-gdel], [data-ghint]');
     if (!b) return;
     if (b.dataset.g === 'new') guideNew();
+    else if (b.dataset.g === 'fold') guideFold();
+    else if (b.dataset.g === 'delall') guideDeleteAll();
+    else if (b.dataset.g === 'delcur') { if (G.chatId) guideDelete(G.chatId); }
+    else if (b.dataset.gdel) guideDelete(b.dataset.gdel);
     else if (b.dataset.g === 'stop') guideStop();
     else if (b.dataset.g === 'close') guideToggle(false);
     else if (b.dataset.g === 'ear') wakeSet(false);
     else if (b.dataset.g === 'play') ttsSpeak(G.messages[b.dataset.i]?.text, Number(b.dataset.i));
-    else if (b.dataset.gchat) guideOpen(b.dataset.gchat);
+    else if (b.dataset.gchat) guideOpen(b.dataset.gchat).then(() => el.querySelector('.g-chat.sel')?.focus()); // el pintado rehace la lista: se devuelve el foco para el teclado (FT-51)
     else if (b.dataset.ghint) { ta.value = b.dataset.ghint; ta.focus(); }
   });
   el.addEventListener('toggle', (e) => { const d = e.target.closest?.('.g-tool'); if (d && G.messages[d.dataset.i]) G.messages[d.dataset.i].open = d.open; }, true); // el pintado rehace el HTML: recordar qué tool call está desplegada
+  // Lista de chats (FT-51): tirador (ratón y dedo) y teclado
+  const grip = el.querySelector('.g-grip');
+  grip.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); grip.setPointerCapture(e.pointerId);
+    const x0 = e.clientX, w0 = GL.w;
+    const move = (ev) => guideListWidth(w0 + ev.clientX - x0);
+    const up = () => { grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', up); grip.removeEventListener('pointercancel', up); safeSet('ao:guideListW', String(GL.w)); };
+    grip.addEventListener('pointermove', move); grip.addEventListener('pointerup', up); grip.addEventListener('pointercancel', up);
+  });
+  grip.addEventListener('dblclick', () => { guideListWidth(220); safeSet('ao:guideListW', '220'); });
+  el.querySelector('.g-list').addEventListener('keydown', async (e) => {
+    if (e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'n') { e.preventDefault(); guideNew(); return; }
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    const i = G.chats.findIndex((c) => c.id === G.chatId);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const next = G.chats[e.key === 'ArrowDown' ? Math.min(G.chats.length - 1, i + 1) : Math.max(0, i - 1)];
+      if (next && next.id !== G.chatId) await guideOpen(next.id);
+      el.querySelector('.g-chat.sel')?.focus();
+    } else if (e.key === 'Delete' && i >= 0) { e.preventDefault(); await guideDelete(G.chatId); el.querySelector('.g-list').focus(); }
+  });
   el.querySelector('.g-pick')?.addEventListener('change', (e) => (e.target.value ? guideOpen(e.target.value) : guideNew()));
   guideRender();
 }
@@ -272,7 +298,14 @@ function guideRender() {
     if (atBottom || G.busy) msgs.scrollTop = msgs.scrollHeight;
     const cur = G.chats.find((c) => c.id === G.chatId);
     el.querySelector('.g-title').textContent = panel ? '🧭' : '🧭 ' + (cur?.title || 'Nuevo chat');
-    el.querySelector('.g-chats').innerHTML = G.chats.map((c) => `<button class="g-chat ${c.id === G.chatId ? 'sel' : ''}" data-gchat="${c.id}" title="${esc(c.title)}">${c.busy ? '⏳ ' : ''}${esc(c.title)}</button>`).join('') || '<p class="muted small">Sin chats todavía</p>';
+    const lock = (c) => c.busy || (G.busy && c.id === G.chatId); // un turno en curso no se borra
+    el.querySelector('.g-chats').innerHTML = G.chats.map((c) => `<div class="g-row ${c.id === G.chatId ? 'sel' : ''}"><button class="g-chat ${c.id === G.chatId ? 'sel' : ''}" data-gchat="${c.id}" title="${esc(c.title)}${c.updatedAt ? ' · ' + esc(new Date(c.updatedAt).toLocaleString()) : ''}">${c.busy ? '⏳ ' : ''}${esc(c.title)}</button><button class="ghost g-del" data-gdel="${c.id}" ${lock(c) ? 'disabled' : ''} title="${lock(c) ? 'Hay un turno en curso: espera o pulsa «Parar»' : 'Borrar este chat'}">🗑</button></div>`).join('') || '<p class="muted small">Sin chats todavía</p>';
+    el.querySelector('.g-list').classList.toggle('min', GL.min);
+    const fold = el.querySelector('.g-fold');
+    fold.textContent = GL.min ? '▶' : '◀'; fold.title = GL.min ? 'Expandir la lista' : 'Plegar la lista';
+    el.querySelector('.g-delall').disabled = !G.chats.length;
+    const pdel = el.querySelector('.g-pdel');
+    pdel.disabled = !cur || lock(cur); pdel.title = cur && lock(cur) ? 'Hay un turno en curso: espera o pulsa «Parar»' : 'Borrar este chat';
     const pick = el.querySelector('.g-pick');
     if (pick) pick.innerHTML = `<option value="">＋ Nuevo chat</option>${G.chats.map((c) => `<option value="${c.id}" ${c.id === G.chatId ? 'selected' : ''}>${esc(c.title.slice(0, 40))}</option>`).join('')}`;
     el.querySelector('.g-send').hidden = G.busy;
@@ -298,11 +331,38 @@ function guideMsg(m, i) {
     <pre>${esc(JSON.stringify(m.args || {}, null, 1))}</pre>${m.result != null ? `<pre class="${m.ok ? '' : 'bad'}">${esc(m.result.slice(0, 4000))}</pre>` : ''}</details>`;
 }
 
-async function guideRefresh() { try { G.chats = await api('GET', '/api/guide/chats'); } catch { /* sin servidor */ } G.loaded = true; guideRender(); }
+const guideGone = new Set(); // ids borrados: una carga de la lista en vuelo no los resucita (FT-51)
+async function guideRefresh() { try { G.chats = (await api('GET', '/api/guide/chats')).filter((c) => !guideGone.has(c.id)); } catch { /* sin servidor */ } G.loaded = true; guideRender(); }
 async function guideOpen(id) {
   if (G.busy) return toast('Espera a que el Guía termine o pulsa «Parar»');
   ttsStop(); G.chatId = id; safeSet('ao:guide-chat', id);
   try { G.messages = (await api('GET', `/api/guide/chats/${id}`)).messages; } catch { G.chatId = null; G.messages = []; }
+  guideRender();
+}
+// Lista de chats (FT-51): ancho y plegado se recuerdan en localStorage
+const GL = { w: 220, min: safeGet('ao:guideListMin') === '1' };
+function guideListWidth(w) { GL.w = Math.max(160, Math.min(480, Math.round(w) || 220)); document.documentElement.style.setProperty('--g-list-w', GL.w + 'px'); }
+guideListWidth(Number(safeGet('ao:guideListW')) || 220);
+function guideFold() { GL.min = !GL.min; safeSet('ao:guideListMin', GL.min ? '1' : '0'); guideRender(); }
+async function guideDelete(id) {
+  const c = G.chats.find((x) => x.id === id);
+  if (!c) return;
+  if (c.busy || (G.busy && id === G.chatId)) return toast('Hay un turno en curso: espera o pulsa «Parar»');
+  if (!confirm(`¿Borrar «${c.title}»?`)) return;
+  try { await api('DELETE', `/api/guide/chats/${id}`); } catch (e) { return toast(e.message || 'No se pudo borrar', 'err'); }
+  guideGone.add(id); G.chats = G.chats.filter((x) => x.id !== id);
+  if (id === G.chatId) { ttsStop(); G.chatId = null; G.messages = []; safeSet('ao:guide-chat', ''); }
+  guideRender();
+}
+async function guideDeleteAll() {
+  const del = G.chats.filter((c) => !c.busy && !(G.busy && c.id === G.chatId));
+  if (!del.length) return toast('No hay chats que se puedan borrar ahora');
+  if (!confirm(`¿Borrar ${del.length === G.chats.length ? 'todos los chats' : `${del.length} chats (los que tienen un turno en curso se conservan)`}? No se puede deshacer.`)) return;
+  for (const c of del) { try { await api('DELETE', `/api/guide/chats/${c.id}`); } catch { /* ya no existía */ } }
+  const ids = new Set(del.map((c) => c.id));
+  ids.forEach((i) => guideGone.add(i));
+  G.chats = G.chats.filter((c) => !ids.has(c.id));
+  if (ids.has(G.chatId)) { G.chatId = null; G.messages = []; safeSet('ao:guide-chat', ''); }
   guideRender();
 }
 function guideNew() { if (G.busy) return; ttsStop(); G.chatId = null; G.messages = []; safeSet('ao:guide-chat', ''); guideRender(); guideRoots.forEach((r) => r.el.querySelector('textarea').focus()); }

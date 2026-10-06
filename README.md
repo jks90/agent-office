@@ -116,6 +116,8 @@ Fase 4 de la especificación (preferencia 2: API/CLI antes que visión). Nuevas 
 Prueba: `node scripts/integrations-e2e.mjs` (55 comprobaciones, sin Claude: servidor temporal, repo git de pega, IDE/navegador falsos que registran sus argumentos). Incluye `rm -rf`, encadenados y rutas fuera del repo rechazados, `.env`/`data/`/symlinks, tope de 200 KB y timeout.
 
 ## 🧭 Guía (FT-6 · FT-9 · FT-12)
+- **Lista de chats (FT-51)**: en la vista Guía la columna de chats se ensancha arrastrando su borde (160–480 px, doble clic = 220; `ao:guideListW`), se pliega a una tira con ◀/▶ (`ao:guideListMin`), cada chat tiene 🗑 (con confirmación; no con un turno en curso) y «Borrar todos…»; con el foco en la lista: ↑/↓ cambian de chat, Supr borra, Ctrl+N nuevo. En móvil y en el cajón flotante queda el selector con 🗑.
+
 
 Mapa rápido (cada pieza es una tarea y tiene su sección en este README): eventos **FT-1** · contexto de la UI **FT-2** · contexto de flow-test **FT-3** (en el repo flow-test) · tools, políticas y MCP **FT-4** · control de workers **FT-5** · chat y proveedores **FT-6** · proveedores API **FT-8** · Task Capture **FT-7** · e2e **FT-11** · documentación **FT-12**. Cómo encaja todo: flow `flowtest/arquitectura-guide.flow.json` del workspace (Mermaid de arquitectura, eventos y permisos + cajitas ejecutables contra `/api/context`, `/api/events` y `/api/guide/tool`) y, comparado con la especificación, `AgentOffice - Guía y oficina de agentes.md` en la carpeta docs/ del proyecto (12-flowtest).
 

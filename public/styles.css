@@ -340,9 +340,25 @@ dialog.question .q-context { color: var(--muted); font-size: 13px; margin-bottom
 
 /* Guide Agent (FT-6): vista «Guía» + cajón flotante (Ctrl+G) */
 .guide { flex: 1; min-height: 0; display: flex; background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--r-lg); overflow: hidden; }
-.guide .g-list { width: 220px; flex: none; border-right: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: 4px; padding: var(--s-2); overflow-y: auto; background: var(--panel3); }
-.guide .g-list button.g-chat { text-align: left; background: transparent; color: var(--muted); border: 1px solid transparent; font-weight: 500; font-size: 13px; padding: 7px 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.guide .g-list button.g-chat:hover, .guide .g-list button.g-chat.sel { color: var(--text); background: var(--panel); border-color: var(--line); }
+.guide .g-list { width: var(--g-list-w, 220px); position: relative; flex: none; border-right: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: 4px; padding: var(--s-2); overflow-y: auto; background: var(--panel3); }
+.guide .g-list button.g-chat { flex: 1; min-width: 0; text-align: left; background: transparent; color: inherit; border: 0; font-weight: 500; font-size: 13px; padding: 7px 9px; white-space: normal; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; }
+.guide .g-list:focus-visible { outline: 1px solid var(--line); outline-offset: -1px; }
+.guide .g-lhead { display: flex; gap: 4px; } .guide .g-lhead > button:first-child { flex: 1; }
+.guide .g-row { display: flex; align-items: center; color: var(--muted); border: 1px solid transparent; border-radius: var(--r-md); }
+.guide .g-row:hover, .guide .g-row.sel { color: var(--text); background: var(--panel); border-color: var(--line); }
+.guide .g-del { flex: none; padding: 2px 6px; font-size: 12px; opacity: 0; border: 0; }
+.guide .g-row:hover .g-del, .guide .g-row:focus-within .g-del { opacity: 1; }
+.guide .g-del:disabled { cursor: not-allowed; opacity: .35 !important; }
+@media (hover: none) { .guide .g-del { opacity: 1; } }
+.guide .g-delall { margin-top: auto; flex: none; }
+.guide .g-grip { flex: none; width: 5px; margin-left: -3px; z-index: 1; cursor: col-resize; touch-action: none; background: transparent; }
+.guide .g-grip:hover, .guide .g-grip:active { background: var(--line); }
+.guide .g-list.min { width: 36px; padding: var(--s-2) 3px; align-items: center; overflow: hidden; }
+.guide .g-list.min .g-lhead { flex-direction: column; } .guide .g-list.min .g-lhead > button { padding-left: 0; padding-right: 0; width: 28px; flex: none; }
+.guide .g-list.min .g-chats, .guide .g-list.min .g-delall, .guide .g-list.min .g-lbl { display: none; }
+.guide .g-list.min + .g-grip { display: none; }
+.guide .g-pickbar { display: none; gap: 4px; align-items: center; min-width: 0; }
+.guide .g-pickbar .g-pick { min-width: 0; max-width: 150px; }
 .guide .g-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .guide .g-head { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-2) var(--s-3); border-bottom: 1px solid var(--line-soft); }
 .guide .g-head b { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -389,9 +405,10 @@ dialog.question .q-context { color: var(--muted); font-size: 13px; margin-bottom
 .guide .g-ear[hidden] { display: none; }
 #guide-panel[hidden], #guide-fab[hidden] { display: none; }
 #guide-panel .guide { width: 100%; }
-#guide-panel .guide .g-list { display: none; }
+#guide-panel .guide .g-list, #guide-panel .guide .g-grip { display: none; }
+#guide-panel .guide .g-pickbar { display: flex; }
 #view-guide .guide { margin: 0; }
-@media (max-width: 760px) { .guide .g-list { display: none; } }
+@media (max-width: 760px) { .guide .g-list, .guide .g-grip { display: none; } .guide .g-pickbar { display: flex; } }
 
 /* Resumen de la empresa */
 .summary-kpis { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
