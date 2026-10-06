@@ -641,9 +641,33 @@ export async function listFlows() {
 }
 
 // ── Planificador ───────────────────────────────────────────────────────────
+// FT-50 · Quién hará una tarea (regla única del planificador y de la tarjeta): el agente fijado con «Asignar a…»
+// (`assignedAgentId`), o los del equipo del proyecto cuyo rol es el de la tarea o lo atiende (`handles`); libre antes que
+// ocupado. Función pura: `agents` son los agentes de la empresa (se filtran por `project.team`), `roles` el catálogo ya
+// cargado (evita releer los .md por tarea) y `isBusy` cómo saber si un agente está ocupado (el planificador mira sus jobs).
+export function plannedAgentFor(project, task, agents, { roles = allRoles(), isBusy = (a) => a.status !== 'idle' } = {}) {
+  const ids = new Set(project?.team || []);
+  const fits = (a) => task.assignedAgentId ? a.id === task.assignedAgentId : (a.role === task.role || (roles[a.role]?.handles || []).includes(task.role));
+  const candidates = (agents || []).filter((a) => ids.has(a.id) && fits(a));
+  return candidates.find((a) => !isBusy(a)) || candidates[0] || null;
+}
+// Campos calculados para el snapshot (no se persisten): `plannedAgentId` y, si nadie puede hacerla, `plannedReason`.
+export function withPlannedAgents(s) {
+  const roles = allRoles();
+  return s.tasks.map((t) => {
+    if (!['backlog', 'todo', 'failed'].includes(t.status)) return t;
+    const p = s.projects.find((x) => x.id === t.projectId);
+    const a = plannedAgentFor(p, t, s.agents, { roles });
+    const assigned = t.assignedAgentId && s.agents.find((x) => x.id === t.assignedAgentId);
+    const reason = a ? null : assigned ? `${assigned.name} ya no está en el equipo del proyecto` : `sin agente para el rol ${roles[t.role]?.label || t.role} en el equipo`;
+    return { ...t, plannedAgentId: a?.id || null, plannedReason: reason };
+  });
+}
+
 export function tick() {
   const s = get();
   if (!suiteOk()) return; // sin flow-test vigente, el equipo no arranca nada
+  const roles = allRoles();
   for (const p of s.projects) {
     if (!p.running) continue;
     const team = teamOf(p);
@@ -652,8 +676,8 @@ export function tick() {
     for (const t of todo) {
       if (slots <= 0) break;
       if (!depsDone(t)) continue;
-      const agent = team.find((a) => !jobs.has(a.id) && (t.assignedAgentId ? a.id === t.assignedAgentId : (a.role === t.role || (roleOf(a.role)?.handles || []).includes(t.role))));
-      if (!agent) continue;
+      const agent = plannedAgentFor(p, t, team, { roles, isBusy: (a) => jobs.has(a.id) }); // FT-50: la misma regla que ve el usuario en la tarjeta
+      if (!agent || jobs.has(agent.id)) continue;
       const q = quotaCheck(agent);
       if (q.wait) continue;
       if (!q.ok) { quotaHold(p, agent, t, q); continue; }
