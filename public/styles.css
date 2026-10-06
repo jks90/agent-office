@@ -141,7 +141,8 @@ dialog select[multiple].tall { height: 160px; }
 .skill-group { cursor: pointer; user-select: none; }
 .skill-group::before { content: '▾'; display: inline-block; width: 12px; }
 .skill-group.collapsed::before { transform: rotate(-90deg); }
-.skill-group.collapsed ~ .skill[data-group] { display: none; }
+/* cada grupo envuelve sus filas: plegar uno no oculta los de debajo (antes «~» escondía todas las filas siguientes) */
+.skill-group.collapsed + .grp-items { display: none; }
 .team-head h3 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
 #bench { padding-bottom: 2px; }
 #bench .bench-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--s-2); margin-bottom: var(--s-3); }
