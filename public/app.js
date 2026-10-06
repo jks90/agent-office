@@ -939,7 +939,7 @@ function render() {
   $('#tab-tasks-review').textContent = nRev ? `✋${nRev}` : '';
   // El chip cuenta las revisiones del proyecto ACTIVO; si este no tiene y otros sí, lo dice explícitamente («en otros proyectos»).
   // 🔔 de la barra: los avisos de «Para ti» (lo que te espera a ti, de todos los proyectos visibles); clic → esa vista
-  const rc = $('#review-chip'), inbox = inboxItems().filter((i) => i.kind !== 'quota' && !i.imported);
+  const rc = $('#review-chip'), inbox = inboxItems().filter((i) => !['quota', 'coordlog'].includes(i.kind) && !i.imported);
   rc.hidden = !inbox.length;
   rc.textContent = `🔔 ${inbox.length}`;
   rc.title = `Para ti: ${Object.entries(inbox.reduce((m, i) => ((m[i.kind] = (m[i.kind] || 0) + 1), m), {})).map(([k, n]) => `${n} ${INBOX_KIND[k][1].toLowerCase()}`).join(' · ')}`;
@@ -1448,6 +1448,10 @@ function inboxItems() {
     if (t && !vis.has(t.projectId)) continue;
     items.push({ kind: 'question', p: t && vis.get(t.projectId), t, q, sort: 0 });
   }
+  for (const p of vis.values()) { // 🧑‍✈️ coordinador: sugerencias pendientes y cambios de las últimas 24 h
+    for (const x of p.coordSuggest || []) items.push({ kind: 'coord', p, x, sort: 1 });
+    for (const x of (p.coordLog || []).filter((e) => Date.now() - e.at < 24 * 3600e3).slice(-8).reverse()) items.push({ kind: 'coordlog', p, x, sort: 5 });
+  }
   for (const t of S.tasks) {
     const p = vis.get(t.projectId);
     if (!p) continue;
@@ -1465,16 +1469,20 @@ const INBOX_KIND = {
   failed: ['❌', 'Fallidas', 'No terminaron bien'],
   manual: ['👤', 'Tareas manuales tuyas', 'Tareas que no hace ningún agente'],
   quota: ['⏸', 'Pausadas por cuota', 'Siguen solas al reiniciarse la cuota (solo aviso)'],
+  coord: ['🧑‍✈️', 'Sugerencias del coordinador', 'Cambios de plantilla o de motor para que el tablero avance'],
+  coordlog: ['🧑‍✈️', 'Lo que hizo el coordinador (24 h)', 'Cambios que aplicó solo (solo aviso)'],
 };
 function renderInbox() {
   const items = inboxItems();
-  const urgent = items.filter((i) => i.kind !== 'quota' && !i.imported).length;
+  const urgent = items.filter((i) => !['quota', 'coordlog'].includes(i.kind) && !i.imported).length;
   const badge = $('#tab-inbox-count'); if (badge) badge.textContent = urgent || '';
   const el = $('#inbox');
   if (!el || $('#view-inbox').hidden) return;
   const act = (i) => {
     const t = i.t, b = (attr, txt, cls = 'ghost', id = t?.id) => `<button class="small ${cls}" data-${attr}="${id}">${txt}</button>`;
     if (i.kind === 'question') return b('q-answer', 'Contestar', '', i.q.id) + (t ? b('open', 'Ver la tarea') : '');
+    if (i.kind === 'coord') return b('coord-apply', 'Aplicar', 'ok', i.p.id);
+    if (i.kind === 'coordlog') return '';
     if (i.kind === 'review' || i.kind === 'cut') return b('open', 'Abrir') + b('diff', 'Ver diff') + b('approve', '✓ Aprobar', 'ok') + b('reject', '↩ Devolver') + (t.reviewNote && /falló|veredicto válido/.test(t.reviewNote) ? b('review-again', '🔎 Revisar otra vez') : '');
     if (i.kind === 'failed') return b('open', 'Abrir') + b('reject', '↻ Reintentar', '');
     if (i.kind === 'quota') return b('open', 'Abrir') + b('resume-now', '▶ Reanudar ya');
@@ -1482,6 +1490,7 @@ function renderInbox() {
   };
   const row = (i) => {
     const t = i.t;
+    if (i.kind === 'coord' || i.kind === 'coordlog') return `<div class="inbox-row"><div class="inbox-main"><div class="inbox-what">${esc(i.x.why)}</div><div class="muted inbox-why">${esc(i.p.name)} · hace ${waitTxt(i.x.at)}</div></div><div class="inbox-acts">${act(i)}</div></div>`;
     const what = i.kind === 'question' ? esc(i.q.question || i.q.text || '') : esc(t.title);
     const why = i.kind === 'question' ? `${esc(S.agents.find((a) => a.id === i.q.agentId)?.name || 'Un agente')}${t ? ` · ${esc(tcode(t))}` : ''}`
       : i.kind === 'failed' ? esc((t.error || '').split('\n')[0].slice(0, 160))
@@ -1982,6 +1991,8 @@ Pasos, convenciones y ejemplos…</textarea>
     <label>Prefijo de los códigos de tarea del proyecto «${esc(project()?.name)}» (p. ej. <code>GL</code> → GL-1, GL-2…; las tareas ya numeradas no cambian)</label><input name="prefix" value="${esc(project()?.prefix || "")}" placeholder="${esc(project()?.prefixDefault || "")}" maxlength="5" style="text-transform:uppercase;width:120px" />
     <label>Revisión de las tareas de «${esc(project()?.name)}» (con revisión automática, lo que una tarea desbloquea no espera a que tú la mires)</label>
     <select name="reviewPolicy">${[['', `Igual que la empresa (${REVIEW_LABEL[S.settings.reviewPolicy || 'manual']})`], ['manual', REVIEW_LABEL.manual], ['auto-qa', REVIEW_LABEL['auto-qa']], ['auto', REVIEW_LABEL.auto]].map(([v, l]) => `<option value="${v}" ${(project()?.reviewPolicy || '') === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+    <label>🧑‍✈️ Coordinador del equipo de «${esc(project()?.name)}» (reglas fijas, sin IA: refuerza el rol que tiene trabajo listo y nadie libre, cambia a motor automático a quien se queda sin cuota y manda al banquillo a quien lleva rato sin nada que hacer)</label>
+    <select name="coordinator">${[['', 'Apagado'], ['suggest', 'Solo sugerir (en 🔔 Para ti, con «Aplicar»)'], ['auto', 'Automático (lo hace solo y lo apunta en 🔔 Para ti)']].map(([v, l]) => `<option value="${v}" ${(project()?.coordinator || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
     <label>Revisión por defecto de la empresa (proyectos con «Igual que la empresa»)</label>
     <select name="reviewPolicyAll">${['manual', 'auto-qa', 'auto'].map((v) => `<option value="${v}" ${(S.settings.reviewPolicy || 'manual') === v ? 'selected' : ''}>${esc(REVIEW_LABEL[v])}</option>`).join('')}</select>
     <p class="muted" style="margin:2px 0 8px">Nunca se aprueban solas las tareas con «revisión obligatoria», las cortadas por tope o atasco, las que tocan ficheros sensibles ni las que el revisor devolvió dos veces: esas te esperan a ti.</p>
@@ -2003,6 +2014,7 @@ Pasos, convenciones y ejemplos…</textarea>
     if ((f.prefix || '').toUpperCase() !== (project()?.prefix || '')) await api('PATCH', `/api/projects/${projectId}`, { prefix: f.prefix });
     { const hidden = S.projects.filter((x) => !f['vis_' + x.id]).map((x) => x.id); if (hidden.join() !== (S.settings.hiddenProjects || []).join()) await api('POST', '/api/settings', { hiddenProjects: hidden }); }
     if ((f.reviewPolicyAll || 'manual') !== (S.settings.reviewPolicy || 'manual')) await api('POST', '/api/settings', { reviewPolicy: f.reviewPolicyAll });
+    if ((f.coordinator || '') !== (project()?.coordinator || '')) await api('PATCH', `/api/projects/${projectId}`, { coordinator: f.coordinator || '' });
     if ((f.reviewPolicy || '') !== (project()?.reviewPolicy || '')) await api('PATCH', `/api/projects/${projectId}`, { reviewPolicy: f.reviewPolicy || '' });
   }),
 };
@@ -2767,6 +2779,7 @@ document.addEventListener('click', async (e) => {
     return;
   }
   if (d.qAnswer) return openQuestion(d.qAnswer);
+  if (d.coordApply) return api('POST', `/api/projects/${d.coordApply}/coordinate`).then((r) => toast(r.applied?.length ? `🧑‍✈️ ${r.applied.join(' · ')}` : 'Nada que cambiar ahora'));
   if (d.reviewAgain) return api('POST', `/api/tasks/${d.reviewAgain}/review-again`).then(() => toast('Revisión automática relanzada'));
   if (d.cmemEdit !== undefined) return editClaudeMemory(d.cmemRepo, d.cmemEdit);
   if (d.cmemDel) { if (confirm(`¿Borrar la memoria «${d.cmemDel}»? (también su línea del índice)`)) api('DELETE', cmemUrl(d.cmemRepo, d.cmemDel)).then(() => { toast('Memoria borrada'); renderClaudeMemory(true); }); return; }

@@ -221,6 +221,7 @@ const routes = [
   ['GET', /^\/api\/projects\/(\w+)\/claude-memory\/file$/, ([id], _, q) => memory.claudeRead(repoPath(id, q.repo), q.name)],
   ['PUT', /^\/api\/projects\/(\w+)\/claude-memory\/file$/, ([id], b, q) => memory.claudeWrite(repoPath(id, q.repo), q.name, b.text)],
   ['DELETE', /^\/api\/projects\/(\w+)\/claude-memory\/file$/, ([id], _, q) => memory.claudeDelete(repoPath(id, q.repo), q.name)],
+  ['POST', /^\/api\/projects\/(\w+)\/coordinate$/, ([id]) => team.coordinateNow(id)], // 🧑‍✈️ aplicar la sugerencia / pasada ahora
   ['POST', /^\/api\/tasks\/([\w-]+)\/review-again$/, ([id]) => team.reReview(id)], // relanzar la revisión automática
   ['POST', /^\/api\/tasks\/(\w+)\/resume-now$/, ([id]) => team.resumeNow(id)], // FT-66: «Reanudar ya» una tarea pausada por cuota
   ['POST', /^\/api\/upload$/, (_, b) => uploads.save(b.files, extractText)], // FT-95: saneado y con límites

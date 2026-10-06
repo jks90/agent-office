@@ -31,6 +31,7 @@ import * as compact from './compact.js';
 import * as stuck from './stuck.js';
 import * as review from './review.js'; // FT-56
 import * as toolcat from './toolcatalog.js';
+import * as coord from './coordinator.js';
 import * as ladder from './model-ladder.js';
 
 const ENGINES = { demo, claude, codex, local }; // FT-54: local = IA local (LM Studio/Ollama) por el runner de Codex
@@ -241,6 +242,7 @@ export async function updateProject(id, patch) {
   if (patch.name?.trim()) p.name = patch.name.trim();
   if (patch.folder !== undefined) p.folder = patch.folder || null;
   if (patch.prefix !== undefined) p.prefix = codes.normalizePrefix(patch.prefix) || null; // las tareas ya numeradas conservan su código
+  if (patch.coordinator !== undefined) p.coordinator = ['suggest', 'auto'].includes(patch.coordinator) ? patch.coordinator : null; // 🧑‍✈️ apagado | sugerir | automático
   if (patch.reviewPolicy !== undefined) { // '' = la de la empresa · manual | auto-qa | auto
     p.reviewPolicy = review.POLICIES.includes(patch.reviewPolicy) ? patch.reviewPolicy : null;
     reviewPending(p);
@@ -954,9 +956,76 @@ export function tick() {
       activeRepos.add(repoKey);
       runTask(p, agent, t);
     }
+    coordinate(p);
   }
 }
 setInterval(tick, 1500).unref();
+
+// ── 🧑‍✈️ Coordinador del equipo (server/coordinator.js decide; aquí se aplica o se sugiere) ──────────────────────────────
+const COORD_EVERY = 2 * 60_000, COORD_COOLDOWN = 10 * 60_000;
+const busySeen = new Map(); // agente → última vez visto trabajando (o la primera vez visto, tras arrancar)
+const FREE_NAMES = ['Alba', 'Bruno', 'Celia', 'Dani', 'Eva', 'Fran', 'Gala', 'Hugo', 'Inés', 'Jon', 'Lara', 'Marco', 'Nerea', 'Omar', 'Pau', 'Rita', 'Saúl', 'Tea', 'Unai', 'Vega', 'Yago', 'Zoe'];
+const freeName = () => FREE_NAMES.find((n) => !get().agents.some((a) => a.name === n)) || `Agente ${get().agents.length + 1}`;
+function coordSnapshot(p) {
+  const s = get(), team = teamOf(p), now = Date.now();
+  for (const a of team) if (jobs.has(a.id) || !busySeen.has(a.id)) busySeen.set(a.id, now);
+  const st = cachedEnginesStatus();
+  const engineOk = Object.fromEntries(['claude', 'codex'].map((e) => [e, (st ? !!st[e]?.loggedIn : e === 'claude') && !quota.gate(e).block]));
+  const onTeam = new Set(s.projects.flatMap((x) => x.team || []));
+  return { team, bench: s.agents.filter((a) => !onTeam.has(a.id)), tasks: s.tasks.filter((t) => t.projectId === p.id), roles: allRoles(), engineOk,
+    busy: new Set(team.filter((a) => jobs.has(a.id)).map((a) => a.id)), idleSince: Object.fromEntries(team.map((a) => [a.id, busySeen.get(a.id)])), now,
+    margin: { claude: quota.margin('claude'), codex: quota.margin('codex') } };
+}
+function coordNote(p, entry) {
+  (p.coordLog ||= []).push({ at: Date.now(), ...entry });
+  p.coordLog = p.coordLog.slice(-30);
+  log(null, `🧑‍✈️ ${p.name}: ${entry.why}`);
+  events.emit('TeamAdjusted', { projectId: p.id }, entry);
+}
+// Aplica las acciones del plan (sin pasar por setTeam/hire, que llamarían a tick() desde dentro de tick()).
+export function applyCoordination(p, actions) {
+  const s = get();
+  for (const x of actions) {
+    const a = x.agentId && s.agents.find((y) => y.id === x.agentId);
+    if (x.type === 'engine' && a) a.engine = 'auto';
+    else if (x.type === 'bench' && a) p.team = p.team.filter((id) => id !== a.id);
+    else if (x.type === 'sign' && a && p.team.length < coord.MAX_DESKS && !p.team.includes(a.id)) p.team.push(a.id);
+    else if (x.type === 'hire' && p.team.length < coord.MAX_DESKS) {
+      const rm = roleOf(x.role)?.model || '';
+      const fits = rm && (x.engine === 'claude' ? MODEL_OF.claude.test(rm) : !MODEL_OF.claude.test(rm)); // el modelo del rol solo si es de ese motor
+      const agent = newAgent({ name: freeName(), role: x.role, engine: x.engine, model: fits ? rm : (x.engine === 'claude' ? 'sonnet' : '') });
+      s.agents.push(agent); p.team.push(agent.id);
+      x.why += ` (${agent.name})`;
+    } else continue;
+    coordNote(p, { type: x.type, why: x.why, auto: true });
+  }
+  delete p.coordSuggest;
+  changed();
+}
+function coordinate(p) {
+  if (!['suggest', 'auto'].includes(p.coordinator)) return;
+  const now = Date.now();
+  if (now - (p.coordCheckAt || 0) < COORD_EVERY) return;
+  p.coordCheckAt = now;
+  const actions = coord.plan(coordSnapshot(p));
+  const staffing = actions.some((x) => x.type !== 'engine');
+  if (staffing && now - (p.coordAt || 0) < COORD_COOLDOWN) return; // un cambio de plantilla cada 10 min como mucho
+  if (!actions.length) { if (p.coordSuggest) { delete p.coordSuggest; changed(); } return; }
+  if (p.coordinator === 'suggest') {
+    const sig = actions.map((x) => x.why).join('|');
+    if ((p.coordSuggest || []).map((x) => x.why).join('|') !== sig) { p.coordSuggest = actions.map((x) => ({ ...x, at: now })); log(null, `🧑‍✈️ ${p.name} (sugerencia): ${actions.map((x) => x.why).join(' · ')}`); changed(); }
+    return;
+  }
+  if (staffing) p.coordAt = now;
+  applyCoordination(p, actions);
+}
+// «Aplicar» una sugerencia (Para ti) o forzar una pasada ahora.
+export function coordinateNow(projectId) {
+  const p = findOr404(get().projects, projectId, 'Proyecto');
+  const actions = p.coordSuggest?.length ? p.coordSuggest : coord.plan(coordSnapshot(p));
+  if (actions.length) { p.coordAt = Date.now(); applyCoordination(p, actions); tick(); }
+  return { applied: actions.map((x) => x.why) };
+}
 
 // FT-63: una tarea nueva que parece grande (muchas piezas, «y además…», estimación cercana al tope) no se lanza entera: se manda al PO
 // como «Planificar:» para que la trocee, y la original queda en Backlog enlazada (`splitInto`). Se evalúa una sola vez por tarea.
