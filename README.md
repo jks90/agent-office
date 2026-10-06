@@ -326,3 +326,12 @@ Si un agente se queda sin cuota de la suscripción mientras trabaja (Claude: «u
 - `tick()` reparte primero las pausadas y las relanza solas cuando pasa la hora y `quota.gate()` da margen (si no, mueve la hora), con el mismo agente, en su rama y con `--resume` de su sesión en Claude; el prompt le dice que continúe donde lo dejó. Con motor `auto` y `settings.quotaFailover` (activo por defecto) sigue antes con el otro motor si tiene cuota. `AgentResumed {reason:'quota-reset'}`.
 - El proyecto sigue «en marcha» y el estado sobrevive a reinicios del servicio.
 - Prueba: `node scripts/quota-pause-e2e.mjs` (claude falso que se corta y luego termina, mock de cuota, reinicio del servidor durante la espera, «Reanudar ya»).
+
+## 🧠 Memoria de los agentes (FT-75)
+
+Cada tarea empezaba de cero. Ahora cada agente tiene una memoria corta por proyecto, y el proyecto otra común (`server/memory.js`, ficheros `data/memory/<proyecto>/agent-<id>.md` y `project.md`, una lección por línea con su código de tarea):
+- **De dónde salen, sin llamadas extra al modelo:** al terminar, el agente puede cerrar su resumen con «LECCIONES:» y 1–2 viñetas (≤160 caracteres; «[proyecto]» para la común) — se guardan y se quitan del resumen —, y la primera frase de cada «Devolver» se guarda como «Corrección de revisión».
+- **Dónde van:** en la parte estable del prompt, tras el briefing del repo (se lee de caché), con la regla «si algo contradice el código actual, manda el código».
+- **Para que salga rentable:** tope de ≈1 500 tokens por fichero (`MAX_CHARS` = 6 000; al pasarse se descartan las más antiguas) y deduplicado (≥80 % de palabras en común).
+- **Control:** sección «🧠 Memoria» en la ficha del agente para verla y editarla (`GET/PUT /api/memory/:projectId[?agent=id]`), interruptor en Ajustes (`agentMemory`).
+- Prueba: `node scripts/memory-e2e.mjs` (11 checks). Su efecto en el coste entra en el benchmark de FT-61 (variante con y sin memoria).

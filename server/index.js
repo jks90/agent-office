@@ -25,6 +25,7 @@ import { getProvider as desktopProvider } from './desktop/index.js';
 import * as stt from './guide/stt/index.js';
 import * as wake from './guide/stt/wake.js';
 import * as quota from './quota.js';
+import * as memory from './memory.js';
 import * as claudeEngine from './engines/claude.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
@@ -172,6 +173,9 @@ const routes = [
   ['POST', /^\/api\/projects\/(\w+)\/run$/, gated(([id], b) => team.setRunning(id, b.running))],
   ['POST', /^\/api\/projects\/(\w+)\/goal$/, gated(([id], b) => team.planGoal(id, b.goal, { attachments: b.attachments, title: b.title }))],
   ['POST', /^\/api\/tasks$/, gated((_, b) => team.createTask(b))],
+  // FT-75 · memoria de los agentes: GET/PUT /api/memory/:projectId[?agent=<id>] {text}
+  ['GET', /^\/api\/memory\/(\w+)$/, ([pid], _, q) => ({ text: memory.read(pid, q.agent || null), max: memory.MAX_CHARS })],
+  ['PUT', /^\/api\/memory\/(\w+)$/, ([pid], b, q) => ({ text: memory.write(pid, q.agent || null, b.text) })],
   ['POST', /^\/api\/tasks\/(\w+)\/resume-now$/, ([id]) => team.resumeNow(id)], // FT-66: «Reanudar ya» una tarea pausada por cuota
   ['POST', /^\/api\/upload$/, (_, b) => {
     const dir = path.join(store.DATA_DIR, 'uploads', crypto2.randomBytes(6).toString('hex'));
@@ -203,6 +207,7 @@ const routes = [
     if (typeof b.flowTestUrl === 'string' && b.flowTestUrl.trim()) st.flowTestUrl = b.flowTestUrl.trim().replace(/\/+$/, '').replace(/\/mcp$/, '');
     if (typeof b.workspaceHostDir === 'string') st.workspaceHostDir = b.workspaceHostDir.trim();
     if (typeof b.quotaGuard === 'boolean') st.quotaGuard = b.quotaGuard; // FT-45
+    if (typeof b.agentMemory === 'boolean') st.agentMemory = b.agentMemory; // FT-75
     if (b.maxTaskUsd !== undefined) st.maxTaskUsd = Math.max(0.5, Math.min(50, Number(b.maxTaskUsd) || 3)); // tope de gasto por intento de tarea
     if (['low', 'medium', 'high'].includes(b.agentEffort)) st.agentEffort = b.agentEffort;
     if (b.maxParallel) st.maxParallel = Math.max(1, Math.min(8, Number(b.maxParallel) || 4));
