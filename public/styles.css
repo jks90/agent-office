@@ -339,6 +339,11 @@ dialog.question .q-context { color: var(--muted); font-size: 13px; margin-bottom
 .g-tool pre { margin: 0; padding: 6px 9px; border-top: 1px dashed var(--line); max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
 .g-tool pre.bad { color: #ffb3b3; }
 .g-typing { align-self: flex-start; color: var(--muted); font-size: 12px; padding: 2px 6px; }
+/* ▶ escuchar la respuesta (FT-52) */
+.g-play { float: right; margin: 2px 0 0 8px; font-size: 12px; padding: 0 7px; line-height: 20px; min-width: 26px; opacity: .65; }
+.g-msg:hover .g-play, .g-play.on, .g-play:focus-visible { opacity: 1; }
+.g-play.on { color: var(--accent); }
+.g-play:disabled { opacity: .3; cursor: not-allowed; }
 .g-meta { align-self: flex-start; color: var(--muted); font-size: 11px; padding: 0 6px; }
 .guide .g-form { display: flex; gap: var(--s-2); padding: var(--s-2) var(--s-3); border-top: 1px solid var(--line-soft); align-items: flex-end; }
 .guide .g-form textarea { resize: none; flex: 1; max-height: 140px; }
