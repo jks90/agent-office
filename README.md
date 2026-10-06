@@ -391,6 +391,30 @@ Si un agente se queda sin cuota de la suscripción mientras trabaja (Claude: «u
 - El proyecto sigue «en marcha» y el estado sobrevive a reinicios del servicio.
 - Prueba: `node scripts/quota-pause-e2e.mjs` (claude falso que se corta y luego termina, mock de cuota, reinicio del servidor durante la espera, «Reanudar ya»).
 
+## 📈 Observabilidad de costes (FT-76)
+
+Objetivo: que una tarea hecha por los agentes cueste **igual o menos** que hacerla en una sesión interactiva de Claude Code, con datos para afinar.
+
+**Qué se mide.** Cada turno de cada tarea (Claude y Codex) se anota en `data/costs/<proyectoId>/<tareaId>.jsonl`: `ts, attempt, engine, model, role, turn, input, cacheRead, cacheWrite, output, costUsd, tool, tools[{name,file,bytes,image}], bytes, image`. Claude: `message.usage` de cada mensaje `assistant` del stream-json (un turno por `message.id`) y los `tool_result` de la herramienta (bytes devueltos, imágenes). Codex: eventos `item.completed` + `turn.completed` (la entrada fresca = `input_tokens − cached_input_tokens`). `t.usage`/`t.costUsd` (FT-26) siguen siendo el acumulado; los motores solo ganan un hook `onEvent(ev)`.
+
+**Precios.** `server/pricing.js` (US$/Mtok por modelo: input, cacheRead, cacheWrite, output; coincidencia por fragmento del id, modelo desconocido → tarifa Sonnet). Se sobreescriben con `data/pricing.json` (`{"opus": {"input": 5, ...}}`). En **API** el coste es el que se paga; en **suscripción** no se paga por token, pero el coste calculado con tarifas de API es la unidad común para comparar agente vs interactivo (y `total_cost_usd` del CLI cuando existe sigue en `t.costUsd`). _Pendiente: % de cuota consumido por tarea._
+
+**Desglose por causa** (`breakdown()`): lo que cuesta un turno es reenviar todo el contexto + generar la salida. La salida va a «Salida»; el coste del contexto de cada turno se reparte entre lo que lo compone: el **arranque** (contexto del turno 1: system prompt, memoria, skills, herramientas), y lo que devolvió cada herramienta en turnos anteriores (**lecturas** por fichero, **comandos**/e2e, **imágenes** ≈1 500 tokens; bytes/4 como estimación de tokens). Los intentos anteriores al último (tirados o devueltos) van enteros a **reintentos**. Es una atribución estimada, no una medida exacta; la suma siempre iguala el coste total.
+
+**KPI** (`GET /api/costs`): **coste por tarea aprobada** (incluye intentos fallidos/devueltos) por rol, modelo, motor y proyecto; % aprobadas a la primera (`t.returns` cuenta las devoluciones); gasto en intentos tirados y por devolución; ahorro por caché; tendencia de 7 días; por tarea: turnos, curva de contexto, % de caché, ficheros más caros.
+
+**Línea base interactiva.** `POST /api/costs/baseline {code, title?, transcript?, costUsd?, files?, lines?}` importa el coste por turnos de un transcript de Claude Code (`~/.claude/projects/**/*.jsonl`, solo bajo `~/.claude`; un mensaje por id) o un coste manual. Ejemplo: `curl -XPOST :7420/api/costs/baseline -d '{"code":"FT-66","transcript":"~/.claude/projects/-home-…-flow-test/<sesión>.jsonl","lines":220}'`. La comparación se normaliza por **$/línea cambiada** cuando hay `lines` en ambos lados (las del agente salen del `diffStat`); si no, por coste medio por tarea.
+
+**Cómo leerlo y afinar.** 📊 Resumen ▸ **💸 Costes**: KPI arriba (y si se cumple el objetivo), recomendaciones, objetivo semana a semana, tablas por rol/modelo/motor/proyecto y por tarea la barra apilada (arranque · lecturas · comandos · imágenes · salida · reintentos) con la curva de contexto; clic en una fila abre la tarea, cuya ficha («Ver la tarea») repite el desglose y los ficheros más caros. Reglas de recomendación (`recommend()`): arranque ≥40 %, reintentos ≥25 %, comandos ≥30 %, imágenes ≥15 %, un fichero ≥15 % del coste de un proyecto, un modelo barato con ≥20 pts menos de aprobadas a la primera que otro del mismo rol (≥3 tareas cada uno), y objetivo incumplido.
+
+**Objetivo.** Ajustes ▸ «Objetivo de costes» (`costTargetPct`, 100 por defecto): coste por tarea aprobada ≤ X % del interactivo; la pestaña lo muestra global y semana a semana (lunes).
+
+**Export y flow-test.** `GET /api/costs/export[?format=csv]` (una fila por turno), `GET /api/costs/:proyectoId/:tarea` (detalle por turno) y `GET /api/costs` para el flow `costes-agentes.flow.json`.
+
+**Prueba:** `node scripts/costs-e2e.mjs [captura.png]` (claude falso con usos conocidos en dos intentos con imagen, Codex falso, línea base por transcript, pestaña sin errores de consola).
+
+**Fuera de esta entrega (siguientes fases):** ahorro de RTK (`rtk gain`) y coste de memoria/briefing por separado, % de cuota por tarea, alertas (2× la mediana del rol, presupuesto diario/semanal), experimentos A/B con el benchmark FT-61 e informe inicial con las tareas FT-xx históricas (esas no tienen telemetría por turno; solo su `costUsd`).
+
 ## 🧠 Memoria de los agentes (FT-75)
 
 Cada tarea empezaba de cero. Ahora cada agente tiene una memoria corta por proyecto, y el proyecto otra común (`server/memory.js`, ficheros `data/memory/<proyecto>/agent-<id>.md` y `project.md`, una lección por línea con su código de tarea):

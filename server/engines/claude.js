@@ -28,7 +28,7 @@ const RTK_BIN = [process.env.AO_RTK_BIN, path.join(os.homedir(), '.local/bin/rtk
 export const rtkBin = () => RTK_BIN;
 export const rtkAvailable = () => !!RTK_BIN && process.env.AO_RTK !== 'off';
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kind, roleTools, hasSkills, budgetUsd, effort, resumeSession, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kind, roleTools, hasSkills, budgetUsd, effort, resumeSession, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {}, onEvent = () => {} }) {
   // FT-59: --tools limita las herramientas DISPONIBLES (sus definiciones no se envían); --allowedTools, lo que se permite sin preguntar.
   const scope = claudeScope({ kind, mode, roleTools, hasSkills });
   const tools = [...scope.allowed];
@@ -88,6 +88,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kin
     let ev;
     try { ev = JSON.parse(line); } catch { if (line.trim()) onLog(line); return; }
     if (closeTimer && ev.type !== 'result') cancelClose(); // otro turno en marcha
+    onEvent(ev); // FT-76: telemetría por turno
     const u = tracker.feed(ev); // FT-26: solo cifras de uso
     if (u) onUsage(u);
     if (ev.type === 'assistant') {

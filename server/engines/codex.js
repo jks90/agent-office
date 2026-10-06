@@ -39,7 +39,7 @@ function bwrapWorks() {
   return sandboxOk;
 }
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kind, images = [], budgetUsd, maxTokens, effort, resumeSession, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kind, images = [], budgetUsd, maxTokens, effort, resumeSession, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {}, onEvent = () => {} }) {
   const noSandbox = !bwrapWorks();
   const sandbox = mode === 'plan' ? 'read-only' : 'workspace-write';
   const args = ['exec', '--json', '--skip-git-repo-check', '-C', cwd, ...(noSandbox ? ['--dangerously-bypass-approvals-and-sandbox'] : ['-s', sandbox])];
@@ -78,6 +78,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kin
   readline.createInterface({ input: child.stdout }).on('line', (line) => {
     let ev;
     try { ev = JSON.parse(line); } catch { if (line.trim()) onLog(line); return; }
+    onEvent(ev); // FT-76: telemetría por turno
     const u = tracker.feed(ev); // FT-26: solo cifras de uso
     if (u) {
       onUsage(u);

@@ -1371,6 +1371,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <label>Agentes trabajando a la vez (máx.)</label><input name="maxParallel" type="number" min="1" max="8" value="${S.settings.maxParallel}" />
     <div class="grid2"><div><label>Tope de gasto por tarea (US$, por intento; al pasarlo se corta)</label><input name="maxTaskUsd" type="number" min="0.5" max="50" step="0.5" value="${S.settings.maxTaskUsd || 3}" /></div>
     <div><label>Esfuerzo de los agentes (más = más tokens)</label><select name="agentEffort">${['low', 'medium', 'high'].map((v) => `<option value="${v}" ${(S.settings.agentEffort || 'medium') === v ? 'selected' : ''}>${({ low: 'bajo', medium: 'medio (recomendado)', high: 'alto' })[v]}</option>`).join('')}</select></div></div>
+    <label>Objetivo de costes (FT-76): coste por tarea aprobada ≤ X % del interactivo</label><input name="costTargetPct" type="number" min="10" max="500" step="5" value="${S.settings.costTargetPct || 100}" />
     <label><input type="checkbox" name="cacheAffinity" ${S.settings.cacheAffinity !== false ? 'checked' : ''} /> Agrupar tareas del mismo repo y rol seguidas para aprovechar la caché del prompt (FT-64)</label>
     <label><input type="checkbox" name="stuckGuard" ${S.settings.stuckGuard !== false ? 'checked' : ''} /> Detectar agentes atascados: aviso y, si sigue, parar y pasar a Revisión (FT-62)</label>
     <div class="grid2"><div><label>Mismo comando/lectura (veces)</label><input name="stuckRepeat" type="number" min="2" max="20" value="${S.settings.stuckRepeat || 3}" /></div>
@@ -1478,9 +1479,59 @@ function renderQuotaChip() {
   el.title = 'Cuota restante de las suscripciones (peor ventana de cada motor). Clic: abre el Resumen';
 }
 const SUM_COLS = [['backlog', 'Backlog'], ['todo', 'Por hacer'], ['doing', 'En curso'], ['review', 'Revisión'], ['done', 'Hecho'], ['failed', 'Fallidas']];
+// ── 💸 Costes (FT-76) ──────────────────────────────────────────────────────
+// Datos de GET /api/costs; se piden al abrir la pestaña y cuando cambia el coste acumulado (llega por el SSE), sin polling.
+let sumView = 'general', costsData = null, costsSig = '';
+const usd = (n) => (n == null ? 'n/d' : n.toFixed(n < 1 ? 3 : 2) + ' $');
+const CAUSES = [['arranque', 'Arranque', '#64748b'], ['lecturas', 'Lecturas', '#38bdf8'], ['comandos', 'Comandos', '#fbbf24'], ['imagenes', 'Imágenes', '#c084fc'], ['salida', 'Salida', '#34d399'], ['reintentos', 'Reintentos', '#f87171']];
+const stackBar = (b) => !b || !b.total ? '' : `<div class="cost-stack" title="${esc(CAUSES.map(([k, l]) => `${l} ${usd(b[k])}`).join(' · '))}">${CAUSES.filter(([k]) => b[k] > 0).map(([k, l, c]) => `<i style="width:${(100 * b[k] / b.total).toFixed(1)}%;background:${c}" title="${l} ${usd(b[k])}"></i>`).join('')}</div>`;
+const causeLegend = () => `<div class="cost-legend">${CAUSES.map(([, l, c]) => `<span><i style="background:${c}"></i>${l}</span>`).join('')}</div>`;
+function spark(vals) {
+  if (!vals?.length) return '';
+  const max = Math.max(...vals) || 1, w = 160, h = 28;
+  return `<svg class="cost-curve" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline fill="none" stroke="#38bdf8" stroke-width="1.5" points="${vals.map((v, i) => `${vals.length > 1 ? (i * w) / (vals.length - 1) : w / 2},${(h - 2 - (v / max) * (h - 4)).toFixed(1)}`).join(' ')}"/></svg>`;
+}
+function costDetailHtml(d) {
+  if (!d.telemetry) return `<span class="muted">Sin telemetría por turno (tarea anterior a FT-76). Coste total: ${usd(d.costUsd)}</span>`;
+  const b = d.breakdown;
+  return `<div>Total <b>${usd(d.costUsd)}</b> · intento aceptado (${d.attempts}º) ${usd(d.acceptedUsd)} · tirado ${usd(d.discardedUsd)} · ${d.turns} turnos · caché ${d.cachePct} % (ahorró ${usd(d.cacheSavedUsd)})</div>${stackBar(b)}${causeLegend()}
+    <div class="muted">Contexto por turno (tokens) ${spark(d.curve)} ${d.curve.length ? fmtN(d.curve.at(-1)) : ''}</div>
+    ${b.files.length ? `<table class="repos"><thead><tr><th>Ficheros que más costaron</th><th class="num">≈ $</th></tr></thead><tbody>${b.files.slice(0, 5).map((f) => `<tr><td><code>${esc(f.file)}</code></td><td class="num">${usd(f.usd)}</td></tr>`).join('')}</tbody></table>` : ''}
+    <p class="muted" style="margin:4px 0 0">El reparto por causa es una atribución estimada (README «Observabilidad de costes»).</p>`;
+}
+const groupTable = (title, rows) => `<table class="repos"><thead><tr><th>${title}</th><th class="num">Aprobadas</th><th class="num">Coste</th><th class="num">$/aprobada</th><th class="num">1ª vez</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.key)}</td><td class="num">${r.tasks}</td><td class="num">${usd(r.costUsd)}</td><td class="num">${usd(r.perApprovedUsd)}</td><td class="num">${r.firstTryPct} %</td></tr>`).join('') || '<tr><td colspan="5" class="muted">sin tareas aprobadas</td></tr>'}</tbody></table>`;
+function costsHtml(d) {
+  if (!d) return '<p class="muted">Leyendo costes…</p>';
+  const k = d.kpi, kp = (v, l, cls = '') => `<div class="kpi ${cls}"><b>${v}</b><span>${l}</span></div>`;
+  const cmp = k.ratioLinePct ?? k.ratioPct;
+  const tr = d.trend7d.map((x) => x.perApprovedUsd);
+  return `<div class="summary-kpis">
+      ${kp(usd(k.perApprovedUsd), `coste por tarea aprobada (${k.approved})`)}
+      ${kp(k.interactiveUsd != null ? usd(k.interactiveUsd) : 'n/d', 'interactivo (línea base)')}
+      ${kp(cmp != null ? cmp + ' %' : 'n/d', `agente vs interactivo · objetivo ≤ ${k.targetPct} %${k.ratioLinePct != null ? ' (por línea)' : ''}`, k.meetsTarget == null ? '' : k.meetsTarget ? 'on' : 'bad')}
+      ${kp(k.firstTryPct != null ? k.firstTryPct + ' %' : 'n/d', 'aprobadas a la primera')}
+      ${kp(usd(k.discardedUsd), 'gastado en intentos tirados', k.discardedUsd > 0 ? 'warn' : '')}${kp(usd(k.cacheSavedUsd), 'ahorro por caché')}
+      <div class="kpi"><b>${spark(tr)}</b><span>tendencia 7 días ($/aprobada)</span></div>
+    </div>
+    ${d.recommendations.length ? `<div class="section-title">💡 Recomendaciones</div><ul class="cost-recs">${d.recommendations.map((r) => `<li>${esc(r.text)}</li>`).join('')}</ul>` : ''}
+    <div class="section-title">Objetivo semana a semana</div>
+    ${d.weekly.length ? `<div class="cost-weeks">${d.weekly.map((w) => `<span class="chip" style="--c:${w.meetsTarget == null ? '#94a3b8' : w.meetsTarget ? '#34d399' : '#f87171'}" title="${w.approved} aprobadas · ${usd(w.perApprovedUsd)}">${esc(w.week)} · ${w.ratioPct != null ? w.ratioPct + ' %' : 'sin base'}</span>`).join(' ')}</div>` : '<span class="muted">sin tareas aprobadas</span>'}
+    <div class="grid2" style="gap:14px"><div>${groupTable('Rol', d.byRole)}</div><div>${groupTable('Modelo', d.byModel)}</div><div>${groupTable('Motor', d.byEngine)}</div><div>${groupTable('Proyecto', d.byProject)}</div></div>
+    <div class="section-title">Por tarea (desglose por causa)</div>${causeLegend()}
+    <table class="repos"><thead><tr><th>Tarea</th><th>Estado</th><th class="num">Coste</th><th>Desglose</th><th class="num">Turnos</th><th class="num">Caché</th><th>Contexto</th></tr></thead><tbody>${d.tasks.slice(0, 40).map((t) => `<tr data-cost-task="${esc(t.taskId)}"><td><b>${esc(t.code || t.taskId)}</b> <span class="muted">${esc((t.title || '').slice(0, 40))}</span></td><td>${esc(t.status)}</td><td class="num">${usd(t.costUsd)}</td><td style="min-width:160px">${t.breakdown ? stackBar(t.breakdown) : '<span class="muted">sin telemetría</span>'}</td><td class="num">${t.turns || '·'}</td><td class="num">${t.telemetry ? t.cachePct + ' %' : '·'}</td><td>${t.curve ? spark(t.curve) : ''}</td></tr>`).join('')}</tbody></table>
+    <p class="muted" style="margin:8px 2px">Línea base interactiva: ${d.baseline.length ? esc(d.baseline.map((b) => `${b.code} ${usd(b.costUsd)}`).join(' · ')) : 'sin importar (POST /api/costs/baseline con el transcript de Claude Code)'}. Export: <a href="/api/costs/export?format=csv" target="_blank">CSV</a> · <a href="/api/costs/export" target="_blank">JSON</a></p>`;
+}
+const sumTabs = () => `<div class="sum-tabs"><button class="small ${sumView === 'general' ? 'on' : 'ghost'}" data-sum-view="general">📋 General</button><button class="small ${sumView === 'costs' ? 'on' : 'ghost'}" data-sum-view="costs">💸 Costes</button></div>`;
+function renderCosts(el) {
+  const sig = S.tasks.map((t) => `${t.id}:${t.costUsd}:${t.status}`).join('|');
+  if (sig !== costsSig) { costsSig = sig; api('GET', '/api/costs').then((d) => { costsData = d; if (sumView === 'costs') renderSummary(); }).catch(() => {}); }
+  el.innerHTML = sumTabs() + costsHtml(costsData);
+}
+
 function renderSummary() {
   const el = $('#summary');
   if (!el) return;
+  if (sumView === 'costs') return renderCosts(el);
   const all = S.tasks, agents = S.agents, qs = S.questions || [];
   const byId = (id) => agents.find((a) => a.id === id);
   const rows = [...S.projects].map((p) => {
@@ -1500,7 +1551,7 @@ function renderSummary() {
   const n = (st) => all.filter((t) => t.status === st).length;
   const working = agents.filter((a) => a.status === 'working').length, paused = agents.filter((a) => a.status === 'paused').length;
   const kpi = (v, l, cls = '') => `<div class="kpi ${cls}"><b>${v}</b><span>${l}</span></div>`;
-  el.innerHTML = `
+  el.innerHTML = sumTabs() + `
     <div class="summary-kpis">
       ${kpi(S.projects.filter((p) => p.running).length + '/' + S.projects.length, 'proyectos en marcha', 'on')}
       ${kpi(`${working}${paused ? ' +' + paused + '⏸' : ''}/${agents.length}`, 'agentes trabajando', working ? 'on' : '')}
@@ -1528,6 +1579,10 @@ function renderSummary() {
   const sc = $('#tab-summary-count'); if (sc) sc.textContent = (all.filter((t) => t.status === 'review' && S.projects.find((p) => p.id === t.projectId)?.running).length + qs.length) || ''; // solo lo que pide acción: revisiones de proyectos en marcha + preguntas
 }
 document.addEventListener('click', async (e) => {
+  const sv = e.target.closest('[data-sum-view]');
+  if (sv) { sumView = sv.dataset.sumView; costsSig = ''; renderSummary(); return; }
+  const ct = e.target.closest('[data-cost-task]');
+  if (ct) { openTask(ct.dataset.costTask); return; }
   if (e.target.closest('[data-sum-empty]')) { sumShowEmpty = !sumShowEmpty; renderSummary(); return; }
   const fb = e.target.closest('[data-sum-failed]');
   if (fb) { e.stopPropagation(); failedDialog(fb.dataset.sumFailed === 'all' ? null : fb.dataset.sumFailed); return; }
@@ -1847,8 +1902,10 @@ function openTask(id) {
     ${mergeChips(t) ? `<div class="task-sec"><h4>Estado frente a ${esc(baseOf(t))}</h4><div>${mergeChips(t)}</div>${(t.conflicts || []).length ? `<ul>${t.conflicts.map((f) => `<li><code>${esc(f)}</code></li>`).join('')}</ul>` : ''}</div>` : ''}
     ${t.diffStat ? `<div class="task-sec"><h4>Cambios en la rama ${esc(t.branch || '')}</h4><pre class="md">${esc(t.diffStat)}</pre></div>` : ''}
     ${t.error ? `<div class="task-sec"><h4>Error</h4><div class="md bad">${esc(t.error)}</div></div>` : ''}
+    ${t.costUsd > 0 ? '<div class="task-sec" id="task-costs"><h4>💸 Coste (FT-76)</h4><span class="muted">leyendo…</span></div>' : ''}
     <div class="task-acts">${acts.join('')}<div class="spacer"></div><button class="ghost" value="cancel">Cerrar</button></div>`, null, 'task');
   openTaskId = id;
+  if (t.costUsd > 0) api('GET', `/api/costs/${t.projectId}/${t.id}`).then((d) => { const el = $('#task-costs'); if (el) el.innerHTML = '<h4>💸 Coste (FT-76)</h4>' + costDetailHtml(d); }).catch(() => {});
   publishContext();
 }
 
