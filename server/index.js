@@ -12,6 +12,7 @@ import * as review from './review.js'; // FT-56
 import * as toolcat from './toolcatalog.js';
 import * as costs from './costs.js'; // FT-76
 import * as ponytail from './ponytail.js'; // FT-86
+import * as uploads from './uploads.js'; // FT-95
 import { allRoles } from './roles.js';
 import { checkSuite, suiteInfo } from './suite.js';
 import * as auth from './engines/auth.js';
@@ -222,16 +223,7 @@ const routes = [
   ['DELETE', /^\/api\/projects\/(\w+)\/claude-memory\/file$/, ([id], _, q) => memory.claudeDelete(repoPath(id, q.repo), q.name)],
   ['POST', /^\/api\/tasks\/([\w-]+)\/review-again$/, ([id]) => team.reReview(id)], // relanzar la revisión automática
   ['POST', /^\/api\/tasks\/(\w+)\/resume-now$/, ([id]) => team.resumeNow(id)], // FT-66: «Reanudar ya» una tarea pausada por cuota
-  ['POST', /^\/api\/upload$/, (_, b) => {
-    const dir = path.join(store.DATA_DIR, 'uploads', crypto2.randomBytes(6).toString('hex'));
-    fs.mkdirSync(dir, { recursive: true });
-    return (b.files || []).slice(0, 10).map((f) => {
-      const name = String(f.name || 'adjunto').replace(/[^\w.\-áéíóúñÁÉÍÓÚÑ ]+/g, '_').slice(0, 120) || 'adjunto';
-      const dest = path.join(dir, name);
-      fs.writeFileSync(dest, Buffer.from(String(f.data || '').replace(/^data:[^;]+;base64,/, ''), 'base64'));
-      return { name, path: dest, size: fs.statSync(dest).size, text: extractText(dest) };
-    }).flatMap((f) => (f.text ? [{ name: f.name, path: f.path, size: f.size }, f.text] : [f]));
-  }],
+  ['POST', /^\/api\/upload$/, (_, b) => uploads.save(b.files, extractText)], // FT-95: saneado y con límites
   ['POST', /^\/api\/tasks\/draft$/, gated((_, b) => draftTask(b))],
   ['DELETE', /^\/api\/tasks\/([\w-]+)$/, ([id]) => team.deleteTask(id)],
   ['POST', /^\/api\/tasks\/([\w-]+)\/approve$/, ([id]) => team.approve(id)],
@@ -338,7 +330,7 @@ function serveStatic(req, res) {
 async function guideChat(req, res) {
   let b;
   try { b = await readBody(req); } catch (e) { return res.writeHead(e.status || 400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: e.message })); }
-  const it = guide.chat({ chatId: b.chatId, text: b.text, client: req.headers['x-ao-client'] || null });
+  const it = guide.chat({ chatId: b.chatId, text: b.text, attachments: b.attachments, client: req.headers['x-ao-client'] || null });
   let first;
   try { first = await it.next(); } catch (e) { return res.writeHead(e.status || 500, { 'content-type': 'application/json' }).end(JSON.stringify({ error: e.message })); }
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });

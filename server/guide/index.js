@@ -9,6 +9,7 @@ import * as context from '../context.js';
 import * as activity from '../events.js';
 import { SYSTEM } from './prompt.js';
 import * as review from '../review.js';
+import { resolveRefs } from '../uploads.js'; // FT-95
 import * as claudeCli from './providers/claude-cli.js';
 import * as anthropicApi from './providers/anthropic-api.js';
 import * as openaiApi from './providers/openai-api.js';
@@ -86,12 +87,15 @@ function appContext(client) {
 
 // ── Un turno de conversación ───────────────────────────────────────────────
 // Generador de eventos {type:'chat', chat} · {type:'text'|'tool_call'|'tool_result'|'done'|'error', …}.
-export async function* chat({ chatId, text, client = null }) {
+export async function* chat({ chatId, text, attachments, client = null }) {
   text = String(text || '').trim();
-  if (!text) throw fail(400, 'Falta el texto');
+  const files = resolveRefs(attachments); // FT-95: referencias a data/uploads (POST /api/upload)
+  if (!text && !files.length) throw fail(400, 'Falta el texto');
+  const shown = text || 'Adjuntos';
+  if (files.length) text = `${text}\n\nAdjuntos (ficheros locales, léelos con tus herramientas si hace falta):\n${files.map((f) => `- ${f.name}: ${f.path}`).join('\n')}`.trim();
   const cur = chatId ? readChat(chatId) : null;
   if (cur && active.has(cur.id)) throw fail(409, 'Este chat ya está respondiendo: espera o pulsa «Parar»');
-  const c = cur || { id: 'g_' + store.newId(), title: text.slice(0, 60), createdAt: Date.now(), updatedAt: Date.now(), sessionId: null, provider: null, lastEventTs: 0, messages: [] };
+  const c = cur || { id: 'g_' + store.newId(), title: shown.slice(0, 60), createdAt: Date.now(), updatedAt: Date.now(), sessionId: null, provider: null, lastEventTs: 0, messages: [] };
   const name = store.get().settings.guideProvider || 'claude-cli';
   if (!PROVIDERS[name]) throw fail(400, `Proveedor de Guide desconocido: ${name}`);
   const model = modelFor(name);
@@ -110,7 +114,7 @@ export async function* chat({ chatId, text, client = null }) {
   const turnStart = Date.now();
   const prompt = `<app_context>\n${JSON.stringify(ctx, null, 1).slice(0, 12_000)}\n</app_context>\n${eventsBlock(c.lastEventTs)}${pendingReview()}`;
   const { host, ...ctxLite } = ctx; // en el chat guardado, sin el contexto de flow-test (puede ser grande)
-  c.messages.push({ role: 'user', ts: turnStart, text, context: { ...ctxLite, task: ctx.task && { code: ctx.task.code, title: ctx.task.title, status: ctx.task.status }, agent: ctx.agent && { name: ctx.agent.name }, project: ctx.project && { name: ctx.project.name }, hasHost: !!host } });
+  c.messages.push({ role: 'user', ts: turnStart, text: shown, ...(files.length ? { attachments: files } : {}), context: { ...ctxLite, task: ctx.task && { code: ctx.task.code, title: ctx.task.title, status: ctx.task.status }, agent: ctx.agent && { name: ctx.agent.name }, project: ctx.project && { name: ctx.project.name }, hasHost: !!host } });
   c.updatedAt = turnStart;
   saveChat(c);
   yield { type: 'chat', chat: { id: c.id, title: c.title } };
