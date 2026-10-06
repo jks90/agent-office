@@ -10,6 +10,7 @@ import { describeTool, toolSummary, toolKey, firstLine } from './describe.js';
 import { RTK_RULES } from './allowlist.js';
 import { claudeScope } from './toolscope.js';
 import { claudeTracker } from '../usage.js';
+import { SERVER_NAME } from '../codeindex.js';
 
 // Subagente explorador (FT-65): solo lectura (Read/Grep/Glob + shell de lectura de la lista blanca), modelo barato.
 export const EXPLORER = {
@@ -27,7 +28,7 @@ const RTK_BIN = [process.env.AO_RTK_BIN, path.join(os.homedir(), '.local/bin/rtk
 export const rtkBin = () => RTK_BIN;
 export const rtkAvailable = () => !!RTK_BIN && process.env.AO_RTK !== 'off';
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, kind, roleTools, hasSkills, budgetUsd, effort, resumeSession, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kind, roleTools, hasSkills, budgetUsd, effort, resumeSession, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
   // FT-59: --tools limita las herramientas DISPONIBLES (sus definiciones no se envían); --allowedTools, lo que se permite sin preguntar.
   const scope = claudeScope({ kind, mode, roleTools, hasSkills });
   const tools = [...scope.allowed];
@@ -46,6 +47,10 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, kind, roleTool
   if (mcpUrl && scope.mcp) {
     mcpServers['flow-test'] = { type: 'http', url: mcpUrl };
     tools.push('mcp__flow-test');
+  }
+  if (codeIndex) { // FT-58: índice de código local (stdio); solo lectura de símbolos
+    mcpServers[SERVER_NAME] = { type: 'stdio', command: codeIndex.command, args: [], env: codeIndex.env };
+    tools.push(`mcp__${SERVER_NAME}`);
   }
   args.push('--strict-mcp-config', '--mcp-config', JSON.stringify({ mcpServers }));
   // FT-65: subagente «explorador» (solo lectura, haiku): lee en SU contexto y devuelve un resumen; lo leído no se reenvía en cada turno del agente.

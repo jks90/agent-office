@@ -22,6 +22,7 @@ import * as quota from './quota.js';
 import { briefingFor } from './briefing.js';
 import { detectQuotaHit } from './quota-pause.js';
 import * as memory from './memory.js';
+import * as codeindex from './codeindex.js';
 import * as compact from './compact.js';
 import * as stuck from './stuck.js';
 
@@ -830,10 +831,10 @@ function buildPrompt(p, agent, t) {
     p.folder ? `Carpeta del proyecto en el workspace de flow-test: «${p.folder}/» (ahí viven sus flows y su documentación; guarda ahí lo que generes con flow-test).` : '',
     'Trabajas en una copia aislada del repo (git worktree), en tu propia rama. No cambies de rama ni hagas push.',
     'Lo que dejes sin confirmar se confirmará solo al terminar.',
-    (() => { const r = repoOfTask(p, t); return r?.path ? '\n' + briefingFor(r.path) + '\n' : ''; })(),
+    (() => { const r = repoOfTask(p, t); return r?.path ? '\n' + briefingFor(r.path) + (t.codeIndexOn ? '\n' + codeindex.BRIEFING_LINE : '') + '\n' : ''; })(), // FT-58: aviso del índice de código
     get().settings.agentMemory !== false ? memory.promptBlock(p.id, agent.id) : '', // FT-75: lecciones de tareas anteriores
     askRules(),
-    economyBlock(),
+    economyBlock(t.codeIndexOn),
     get().settings.agentMemory !== false ? memory.PROMPT_ASK : '',
     'Al acabar, responde con un resumen breve: qué cambiaste y cómo lo probaste.',
     '',
@@ -860,10 +861,11 @@ function buildPrompt(p, agent, t) {
 
 // Reglas para gastar menos tokens (cada turno reenvía TODO lo leído: un fichero de 140 KB leído entero pesa ~35k tokens
 // en cada paso que queda). Medido el 6 OCT: las tareas de UI rondaban los 6 $ por leer ficheros enteros y repetir capturas/e2e.
-function economyBlock() {
+function economyBlock(codeIndexOn) {
   return [
     '',
     'Gasta pocos tokens (cada fichero que lees se reenvía en todos los pasos siguientes):',
+    codeIndexOn ? codeindex.ECONOMY_RULE : '', // FT-58
     '- Ficheros grandes (más de ~400 líneas, p. ej. public/app.js, public/office3d.js, server/team.js, README.md): NUNCA los leas enteros. Localiza con Grep (-n) y lee solo el tramo con Read offset/limit.',
     '- No vuelvas a leer lo que ya leíste; no hagas `cat` de ficheros largos ni de salidas largas: recorta con `| tail -30`, `| head`, `grep`.',
     '- Pruebas: ejecuta el e2e/verificación UNA vez cuando creas que está bien; repite solo si falló. Capturas de pantalla: como mucho 1 (otra solo si la primera muestra un fallo), y solo si la tarea es visual.',
@@ -923,6 +925,9 @@ async function runTask(p, agent, t) {
     }
     if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true });
 
+    // FT-58: índice de código del repo (se reindexa si cambió HEAD); sin él o si falla, el agente trabaja como siempre
+    const codeIndex = repo?.path && codeindex.enabled(s.settings) ? await codeindex.ensure(repo.key, repo.path, (m) => log(agent.id, m)) : null;
+    t.codeIndexOn = !!codeIndex;
     // FT-63: la ejecución se repite por «segmentos». Si el contexto pasa del umbral se pide el estado (NOTAS.md), se corta y se
     // relanza con un contexto limpio y las notas en el prompt. Sin umbral alcanzado hay un solo segmento, como siempre.
     const at = t.kind === 'plan' ? 0 : compact.threshold(s.settings.compactAt);
@@ -972,6 +977,7 @@ async function runTask(p, agent, t) {
       maxTokens: Number(s.settings.maxTaskTokens) > 0 ? Number(s.settings.maxTaskTokens) : null, // FT-57: tope en tokens (Codex; por defecto el equivalente a budgetUsd)
       budgetUsd: Number(s.settings.maxTaskUsd) > 0 ? Number(s.settings.maxTaskUsd) : 3, // tope por intento (Ajustes ▸ «Tope de gasto por tarea»)
       effort: ['low', 'medium', 'high'].includes(s.settings.agentEffort) ? s.settings.agentEffort : 'medium',
+      codeIndex,
       mcpUrl: ['qa', 'docs'].includes(role.kind) ? mcpUrl() : null, // QA y documentalista hablan con flow-test por MCP
       env: { ...engineEnv(engineId), AO_URL: `http://127.0.0.1:${process.env.AO_PORT || 7420}`, AO_TASK: t.id, AO_AGENT: agent.name },
       onActivity: (text) => { agent.activity = text; events.emit('AgentProgress', ev, { activity: text }); changed(); },
