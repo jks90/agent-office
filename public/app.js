@@ -2054,7 +2054,10 @@ function tokensModalBody(pid) {
   const cost = groups.reduce((n, g) => n + g.team.reduce((m, a) => m + (g.costOf(a) || a.usage?.costUsd || 0), 0), 0);
   const accumulated = groups.reduce((n, g) => n + g.ts.reduce((m, t) => m + (t.usage?.total || 0), 0), 0);
   const rows = groups.map((g) => `${groups.length > 1 ? `<tr class="sum-group"><td colspan="10">${esc(g.p.name)} <span class="muted">· ${g.team.length} agente${g.team.length === 1 ? "" : "s"} · ${fmtTok(sumOf(g.team, 'total'))}</span></td></tr>` : ''}${[...g.team].sort(byTotalDesc).map((a) => tokensRow(a, g)).join('')}`).join('');
-  return `<table class="repos sum-detail">
+  const split = engineSplit(groups.flatMap((g) => g.ts), agents);
+  const estAny = Object.values(split.by).some((x) => x.est);
+  const engTable = split.total ? `<table class="repos sum-detail eng-detail"><thead><tr><th>Motor</th><th class="num">Tokens acumulados</th><th class="num">%</th><th class="num">Coste${estAny ? ' (≈ estimado en Codex)' : ''}</th><th class="num">Agentes</th></tr></thead><tbody>${Object.entries(split.by).sort((a, b) => b[1].tokens - a[1].tokens).map(([e, x]) => `<tr><td><b style="color:${ENGINE_COLOR[e]?.[1] || '#9ca3af'}">${esc(ENGINE_COLOR[e]?.[0] || e)}</b></td><td class="num tok">${fmtN(x.tokens)}</td><td class="num">${Math.round((x.tokens / split.total) * 100)} %</td><td class="num">${x.cost ? `${x.est ? '≈ ' : ''}${x.cost.toFixed(2)} $` : '·'}</td><td class="num">${split.agents[e] || 0}</td></tr>`).join('')}</tbody><tfoot><tr><td><b>Total</b></td><td class="num tok">${fmtN(split.total)}</td><td class="num">100 %</td><td class="num">${estAny ? '≈ ' : ''}${Object.values(split.by).reduce((n, x) => n + x.cost, 0).toFixed(2)} $</td><td class="num">${agents.length}</td></tr></tfoot></table><p class="muted sum-note" style="margin:0 0 6px">Todas las tareas${pid === '*' ? '' : ' del proyecto'}, intentos incluidos (también las de agentes que ya no están en el equipo). El coste de Codex es una estimación con la tabla de precios: con suscripción se descuenta de la cuota.</p><h4 class="sum-sub">Por agente</h4>` : '';
+  return `${engTable}<table class="repos sum-detail">
     <thead><tr><th>Agente</th><th>Rol</th><th>Motor · modelo</th><th class="num">Total</th><th class="num">↓ Entrada</th><th class="num">↑ Salida</th><th class="num">⚡ Caché</th><th>Contexto</th><th class="num">Acumulado</th><th class="num">Coste</th></tr></thead>
     <tbody>${rows || '<tr><td colspan="10" class="muted">Sin equipo</td></tr>'}</tbody>
     <tfoot><tr data-sum-totals><td colspan="3"><b>Total</b> <span class="muted">· ${agents.length} agentes</span></td><td class="num tok">${fmtN(sumOf(agents, 'total'))}</td><td class="num">${fmtN(sumOf(agents, 'input'))}</td><td class="num">${fmtN(sumOf(agents, 'output'))}</td><td class="num">${fmtN(sumOf(agents, 'cache'))}</td><td></td><td class="num tok">${fmtN(accumulated)}</td><td class="num">${groups.some((g) => g.team.some(g.estOf)) && cost ? '≈ ' : ''}${cost ? cost.toFixed(2) + ' $' : '·'}</td></tr></tfoot>
@@ -2166,6 +2169,30 @@ function busyCell(busy) {
   const one = busy.length === 1 && busy[0].t ? ` <b>${esc(tcode(busy[0].t))}</b>` : '';
   return `<span class="dot ${busy[0].a.status}"></span>${busy.length} en curso${one}`;
 }
+// Reparto por motor de un conjunto de tareas: tokens acumulados (intentos incluidos) y coste por motor + agentes por motor.
+const ENGINE_COLOR = { claude: ['Claude', '#d97757'], codex: ['Codex', '#10a37f'], local: ['Local', '#60a5fa'], demo: ['Demo', '#9ca3af'] };
+// Tareas antiguas sin el motor guardado: por la fuente de su uso; si no, coste REAL (no estimado) solo lo informa Claude;
+// si no, el motor fijo de su agente.
+const engineOfTask = (t) => t.sessionEngine || t.lastEngine || t.modelHistory?.at(-1)?.engine || (/^codex/.test(t.usage?.source || '') ? 'codex' : /^claude/.test(t.usage?.source || '') ? 'claude' : null)
+  || (t.costUsd && !t.costEstimated ? 'claude' : null) || ((e) => (e && e !== 'auto' ? e : null))(S.agents.find((a) => a.id === t.agentId)?.engine);
+function engineSplit(ts, team = []) {
+  const by = {};
+  for (const t of ts) { const e = engineOfTask(t); if (!e || !(t.usage?.total || t.costUsd)) continue; const x = (by[e] ||= { tokens: 0, cost: 0, est: false }); x.tokens += t.usage?.total || 0; x.cost += t.costUsd || 0; x.est ||= !!t.costEstimated; }
+  const total = Object.values(by).reduce((n, x) => n + x.tokens, 0);
+  const agents = {};
+  for (const a of team) { const e = a.engine === 'auto' ? (a.activeEngine || 'auto') : a.engine; agents[e] = (agents[e] || 0) + 1; }
+  return { by, total, agents };
+}
+function enginesCell(ts, team) {
+  const { by, total, agents } = engineSplit(ts, team);
+  if (!total) return '<span class="muted">—</span>';
+  const parts = Object.entries(by).sort((a, b) => b[1].tokens - a[1].tokens).map(([e, x]) => ({ e, pct: Math.round((x.tokens / total) * 100), ...x }));
+  const name = (e) => ENGINE_COLOR[e]?.[0] || e, color = (e) => ENGINE_COLOR[e]?.[1] || '#9ca3af';
+  const tip = parts.map((x) => `${name(x.e)}: ${x.pct} % · ${fmtTok(x.tokens)}${x.cost ? ` · ${x.est ? '≈ ' : ''}${x.cost.toFixed(2)} $` : ''}`).join('\n')
+    + `\nAgentes: ${Object.entries(agents).map(([e, n]) => `${n} ${e === 'auto' ? 'auto' : name(e)}`).join(' · ') || '—'}\n(tokens acumulados de todas sus tareas, intentos incluidos)`;
+  return `<div class="eng-split" title="${esc(tip)}"><div class="eng-bar">${parts.map((x) => `<i style="width:${x.pct}%;background:${color(x.e)}"></i>`).join('')}</div><span>${parts.filter((x) => x.pct > 0).map((x) => `<b style="color:${color(x.e)}">${name(x.e)}</b> ${x.pct} %`).join(' · ')}</span></div>`;
+}
+
 const SUM_COLS = [['backlog', 'Backlog'], ['todo', 'Por hacer'], ['doing', 'En curso'], ['review', 'Revisión'], ['done', 'Hecho'], ['failed', 'Fallidas'], ['discarded', 'Descartadas']];
 // ── 💸 Costes (FT-76) ──────────────────────────────────────────────────────
 // Datos de GET /api/costs; se piden al abrir la pestaña y cuando cambia el coste acumulado (llega por el SSE), sin polling.
@@ -2252,7 +2279,7 @@ function renderSummary() {
     </div>
     ${quotaBlockHtml()}
     <table class="repos summary">
-      <thead><tr><th>Proyecto</th><th>Estado</th>${SUM_COLS.map(([, l]) => `<th class="num">${l}</th>`).join('')}<th>Equipo</th><th>Trabajando en</th><th>Libres</th><th>Tokens por sesión</th><th class="num">Coste</th><th>Actividad</th></tr></thead>
+      <thead><tr><th>Proyecto</th><th>Estado</th>${SUM_COLS.map(([, l]) => `<th class="num">${l}</th>`).join('')}<th>Equipo</th><th>Trabajando en</th><th>Libres</th><th>Tokens por sesión</th><th>Motores</th><th>Actividad</th></tr></thead>
       <tbody>${shown.map(({ p, ts, team, busy, free, last, cost, open, tokens }) => `
         <tr data-sum-project="${p.id}" class="${p.id === projectId ? 'sel' : ''}">
           <td><b>${esc(p.name)}</b>${p.folder && p.folder !== p.name ? ` <span class="muted">(${esc(p.folder)})</span>` : ''} <span class="muted">${esc(p.prefixDefault || '')}</span>${open ? ` <span title="preguntas pendientes">❓${open}</span>` : ''}</td>
@@ -2262,9 +2289,9 @@ function renderSummary() {
           <td>${busyCell(busy)}</td>
           <td>${free.length ? `<span title="${esc(free.map((a) => a.name).join(', '))}">${free.length} libre${free.length === 1 ? '' : 's'}</span>` : '<span class="muted">—</span>'}</td>
           <td>${tokensCell(p, team, tokens)}</td>
-          <td class="num">${cost ? cost.toFixed(2) + ' $' : '·'}</td>
+          <td>${enginesCell(ts, team)}</td>
           <td class="muted">${last ? 'hace ' + ago(last) : '—'}</td>
-        </tr>`).join('')}${idle.length ? `<tr class="idle-row"><td colspan="${SUM_COLS.length + 8}"><button class="small ghost" data-sum-empty>${sumShowEmpty ? '▾ Ocultar' : '▸ Mostrar'} ${idle.length} proyectos sin equipo ni tareas (${esc(idle.map((r) => r.p.name).join(', '))})</button></td></tr>` : ''}</tbody>${shown.length > 1 ? `<tfoot><tr class="sum-total"><td><b>Total</b></td><td></td><td colspan="${SUM_COLS.length + 3}"></td><td><span class="tok">${fmtTok(shown.reduce((n, r) => n + r.tokens, 0))}</span> ${sumBtn('data-sum-all', '*', 'Ver todos', 'Tokens de todos los agentes, agrupados por proyecto')}</td><td class="num">${shown.reduce((n, r) => n + r.cost, 0).toFixed(2)} $</td><td></td></tr></tfoot>` : ''}
+        </tr>`).join('')}${idle.length ? `<tr class="idle-row"><td colspan="${SUM_COLS.length + 8}"><button class="small ghost" data-sum-empty>${sumShowEmpty ? '▾ Ocultar' : '▸ Mostrar'} ${idle.length} proyectos sin equipo ni tareas (${esc(idle.map((r) => r.p.name).join(', '))})</button></td></tr>` : ''}</tbody>${shown.length > 1 ? `<tfoot><tr class="sum-total"><td><b>Total</b></td><td></td><td colspan="${SUM_COLS.length + 3}"></td><td><span class="tok">${fmtTok(shown.reduce((n, r) => n + r.tokens, 0))}</span> ${sumBtn('data-sum-all', '*', 'Ver todos', 'Tokens de todos los agentes, agrupados por proyecto')}</td><td>${enginesCell(shown.flatMap((r) => r.ts), shown.flatMap((r) => r.team))}</td><td></td></tr></tfoot>` : ''}
     </table>
     <p class="muted" style="margin:8px 2px">Clic en una fila: abre sus tareas. Los datos llegan por SSE: la tabla se actualiza sola.</p>`;
   refreshSumModal();

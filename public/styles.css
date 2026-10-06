@@ -611,3 +611,10 @@ tr[data-cost-task] { cursor: pointer; }
 select.tool-assign { width: auto; max-width: 150px; font-size: 11px; padding: 2px 4px; }
 
 .bell-chip { font-weight: 700; font-size: 15px; padding: 6px 12px; }
+
+/* Resumen: reparto Claude / Codex */
+.eng-split { display: flex; flex-direction: column; gap: 3px; min-width: 150px; font-size: 12px; white-space: nowrap; }
+.eng-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--line); }
+.eng-bar i { display: block; height: 100%; }
+.eng-detail { margin-bottom: 8px; }
+.sum-sub { margin: 10px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
