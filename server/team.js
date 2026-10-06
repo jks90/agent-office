@@ -1082,6 +1082,11 @@ function buildPrompt(p, agent, t) {
 
 // Reglas para gastar menos tokens (cada turno reenvía TODO lo leído: un fichero de 140 KB leído entero pesa ~35k tokens
 // en cada paso que queda). Medido el 6 OCT: las tareas de UI rondaban los 6 $ por leer ficheros enteros y repetir capturas/e2e.
+// Codex SÍ puede verse: bajo el servicio corre sin sandbox (bwrap no arranca en systemd), así que puede levantar servidores y
+// capturar (scripts/preview.mjs, Chrome headless); y su herramienta view_image está activa en los roles de desarrollo. Lo que no
+// sabe es que en Codex una imagen se mira con view_image (leer el fichero no la muestra): se le dice al final del prompt.
+const CODEX_VISION = '\n\nPara MIRAR una imagen o captura (PNG/JPG) usa tu herramienta view_image con la ruta del fichero: leerlo con cat/sed no te la enseña. En trabajo visual: genera la captura (p. ej. `node scripts/preview.mjs /tmp/captura.png`), mírala con view_image, corrige y repite (2-3 vueltas como mucho).';
+
 function economyBlock(codeIndexOn) {
   return [
     '',
@@ -1178,7 +1183,7 @@ async function runTask(p, agent, t) {
     const model = pickedModel.model;
     let res;
     for (let seg = 0; ; seg++) {
-    const prompt = buildPrompt(p, agent, t);
+    const prompt = buildPrompt(p, agent, t) + (engineId === 'codex' && t.kind !== 'plan' && role.kind !== 'docs' ? CODEX_VISION : '');
     t.pendingMessages = []; // ya van en el prompt
     const baseUsage = t.usage || null; // FT-26: consumo de intentos anteriores; t.usage es acumulado y se actualiza en vivo
     agent.usage = null; // sesión nueva

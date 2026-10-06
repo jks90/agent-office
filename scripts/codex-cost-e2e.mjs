@@ -86,6 +86,7 @@ try {
   const ag = (await st()).agents.find((x) => x.id === (d1?.agentId || a.id));
   check('la sesión del agente lleva el coste ≈', Math.abs((ag?.usage?.costUsd || 0) - est) < 1e-6 && ag?.usage?.costEstimated === true, JSON.stringify(ag?.usage));
   check('el prompt pide agrupar lecturas', /Agrupa: cada paso/.test(runs()[0]?.prompt || ''));
+  check('Codex sabe mirar capturas: view_image en el prompt y no apagado en un rol de desarrollo', /view_image/.test(runs()[0]?.prompt || '') && !c1.includes('tools.view_image=false'));
 
   console.log('Atascos con Codex');
   const t2 = await call('POST', '/api/tasks', { projectId: p.id, title: 'VUELTAS', role: 'back', repo: 'demo' });
