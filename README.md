@@ -515,7 +515,7 @@ La decisión de activarla de serie depende de ejecutar la medición A/B en un ro
 **Herramientas y documentación:**
 - **Script de medición:** `scripts/ponytail-measure-e2e.mjs` — muestra procedimiento, estado de costes e APIs.
 - **Flow de test:** `flowtest/medicion-ponytail-costos.flow.json` en el workspace de flow-test — verifica `/api/costs` (byVariant), filtro ?variant= y exportación CSV.
-- **Documentación:** `flows/flowtest/README-FT-87.md` en flow-test workspace — tabla de criterios de decisión, APIs, próximos pasos.
+- **Documentación:** `flowtest/ponytail-medicion-FT-87.md` en el workspace de flow-test — tabla de criterios de decisión, APIs, próximos pasos.
 
 **Procedimiento cuando haya cuota:**
 1. Elegir un rol con volumen (p. ej. `back`, `office-flowtest`).
