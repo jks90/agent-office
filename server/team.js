@@ -22,6 +22,7 @@ import { briefingFor } from './briefing.js';
 import { detectQuotaHit } from './quota-pause.js';
 import * as memory from './memory.js';
 import * as compact from './compact.js';
+import * as stuck from './stuck.js';
 
 const ENGINES = { demo, claude, codex };
 export const ENGINE_IDS = ['auto', 'claude', 'codex', 'demo'];
@@ -756,16 +757,14 @@ function splitIfBig(p, t) {
 const teamRoles = (p) => [...new Set(teamOf(p).filter((a) => roleOf(a.role)?.kind !== 'planner').map((a) => a.role))];
 
 // Cómo preguntar al cliente desde la tarea (bin/ao-ask.mjs espera la respuesta y la imprime) + lo ya respondido.
-function askBlock(t) {
-  const prev = (t.questions || []).filter((q) => q.answer != null);
-  return [
+const askRules = () => [
     '',
     'PREGUNTAR AL CLIENTE: si una decisión es suya (no se resuelve leyendo el código ni el documento: reglas de negocio, nombres que verá el usuario, qué opción prefiere), pregunta ANTES de implementar con:',
     `  node ${path.join(store.ROOT, 'bin', 'ao-ask.mjs')} "¿Pregunta cerrada?" --opt "Opción A" --opt "Opción B" [--context "qué cambia con cada opción"]`,
     'El comando se queda esperando (puede tardar minutos) e imprime la respuesta elegida o escrita; úsala y sigue. Una pregunta cada vez, máximo 3 por tarea, con opciones concretas. Si imprime «SIN RESPUESTA», decide tú con el criterio más conservador y déjalo bien visible en el resumen final.',
-    prev.length ? `Respuestas del cliente ya dadas en esta tarea (no vuelvas a preguntarlas):\n${prev.map((q) => `- ${q.question} → ${q.answer}`).join('\n')}` : '',
   ].join('\n');
-}
+const askAnswers = (t) => { const prev = (t.questions || []).filter((q) => q.answer != null); return prev.length ? `Respuestas del cliente ya dadas en esta tarea (no vuelvas a preguntarlas):\n${prev.map((q) => `- ${q.question} → ${q.answer}`).join('\n')}` : ''; };
+const askBlock = (t) => [askRules(), askAnswers(t)].join('\n');
 
 // FT-5: restricciones del cliente (siempre) y mensajes recibidos en la ejecución anterior (si se reencoló).
 const clientBlock = (t) => [
@@ -798,8 +797,24 @@ function buildPrompt(p, agent, t) {
     ].join('\n');
   }
   const done = get().tasks.filter((x) => t.dependsOn.includes(x.id));
+  // FT-59: orden pensado para la caché de prompts (prefijo idéntico entre tareas/turnos del mismo agente y repo):
+  // 1) PARTE ESTABLE — nada que cambie por tarea (ni ids, ni fechas, ni rama) — 2) PARTE VARIABLE al final.
   return [
+    // ── estable ──
+    p.folder ? `Carpeta del proyecto en el workspace de flow-test: «${p.folder}/» (ahí viven sus flows y su documentación; guarda ahí lo que generes con flow-test).` : '',
+    'Trabajas en una copia aislada del repo (git worktree), en tu propia rama. No cambies de rama ni hagas push.',
+    'Lo que dejes sin confirmar se confirmará solo al terminar.',
+    (() => { const r = repoOfTask(p, t); return r?.path ? '\n' + briefingFor(r.path) + '\n' : ''; })(),
+    get().settings.agentMemory !== false ? memory.promptBlock(p.id, agent.id) : '', // FT-75: lecciones de tareas anteriores
+    askRules(),
+    economyBlock(),
+    get().settings.agentMemory !== false ? memory.PROMPT_ASK : '',
+    'Al acabar, responde con un resumen breve: qué cambiaste y cómo lo probaste.',
+    '',
+    '════════ TAREA (lo anterior es común a todas las tareas) ════════',
+    // ── variable ──
     `Tarea ${t.code || '#' + t.id}: ${t.title}`,
+    `Rama de esta tarea: ${t.branch}`,
     '',
     t.description,
     t.context ? `\n${describeContext(t.context, true)}.` : '',
@@ -811,18 +826,9 @@ function buildPrompt(p, agent, t) {
     t.compactNotes !== undefined ? compact.notesBlock(t.compactNotes) : '', // FT-63
     t.feedbackImages?.length ? `\nImágenes adjuntas (míralas con atención antes de cambiar nada; también están en ${t.feedbackImages.join(', ')}).` : '',
     t.files?.length ? `\nFicheros adjuntos (léelos antes de empezar): ${t.files.join(', ')}` : '',
-    '',
-    p.folder ? `Carpeta del proyecto en el workspace de flow-test: «${p.folder}/» (ahí viven sus flows y su documentación; guarda ahí lo que generes con flow-test).` : '',
-    `Trabajas en una copia aislada del repo (git worktree) en la rama ${t.branch}. No cambies de rama ni hagas push.`,
-    (() => { const r = repoOfTask(p, t); return r?.path ? '\n' + briefingFor(r.path) + '\n' : ''; })(),
-    get().settings.agentMemory !== false ? memory.promptBlock(p.id, agent.id) : '', // FT-75: lecciones de tareas anteriores (parte estable del prompt)
-    t.reused ? 'En esta rama ya está tu intento anterior (mira `git log` y `git diff` contra la rama base): parte de él y corrige lo que pide la revisión, sin rehacer lo que ya estaba bien.' : '',
-    'Lo que dejes sin confirmar se confirmará solo al terminar.',
+    t.reused ? '\nEn esta rama ya está tu intento anterior (mira `git log` y `git diff` contra la rama base): parte de él y corrige lo que pide la revisión, sin rehacer lo que ya estaba bien.' : '',
     t.code ? `Cita el código ${t.code} en lo que documentes (changelog, README, flows, tablero) para que la tarea se pueda rastrear.` : '',
-    askBlock(t),
-    economyBlock(),
-    get().settings.agentMemory !== false ? memory.PROMPT_ASK : '',
-    'Al acabar, responde con un resumen breve: qué cambiaste y cómo lo probaste.',
+    askAnswers(t),
   ].join('\n');
 }
 
@@ -901,20 +907,48 @@ async function runTask(p, agent, t) {
     const baseUsage = t.usage || null; // FT-26: consumo de intentos anteriores; t.usage es acumulado y se actualiza en vivo
     agent.usage = null; // sesión nueva
     const cmp = { asked: false, cut: false };
+    delete t.stuck;
+    // FT-62: detector de atascos. 1.ª señal → aviso en caliente (Claude: stdin; Codex/demo: se reencola la tarea con el aviso);
+    // si tras el aviso vuelve a saltar → se corta y va a Revisión. t.stuckWarned sobrevive al reencolado.
+    const stuckLimits = { ...stuck.limits(s.settings), enabled: stuck.limits(s.settings).enabled && t.kind !== 'plan' };
+    const probe = t.branch ? async () => `${await git.git(cwd, 'status', '--porcelain')}\n${await git.git(cwd, 'diff', '--stat')}` : null;
+    const newDetector = () => stuck.createDetector({ limits: stuckLimits, isCode: role.kind === 'dev', probe });
+    let detector = newDetector();
+    const onStuck = (signal) => {
+      const entry = jobs.get(agent.id);
+      if (!signal || !entry?.stop || entry.stuck || entry.requeue) return;
+      if (t.stuckWarned) { // ya avisado y sigue: se corta (lo hecho queda en la rama)
+        entry.stuck = signal;
+        log(agent.id, `⚠️ ${t.code || t.id}: atascado (${signal}) tras el aviso → se corta y va a revisión`);
+        entry.stop();
+        return;
+      }
+      t.stuckWarned = true;
+      detector = newDetector(); // tras el aviso, la señal tiene que repetirse desde cero
+      const text = stuck.nudgeText(signal);
+      log(agent.id, `⚠️ ${t.code || t.id}: parece atascado (${signal}) → aviso al agente`);
+      events.emit('AgentProgress', ev, { activity: 'Aviso: parece que da vueltas', stuck: true });
+      if (entry.message?.(text, true)) return;
+      (t.pendingMessages ||= []).push({ text, at: Date.now(), origin: 'agentoffice' }); // el motor no admite avisos en caliente: reencolada con el aviso en el prompt
+      entry.requeue = true;
+      entry.stop();
+    };
     const job = engine.start({
       agent, task: t, project: p, cwd, mode: t.kind === 'plan' ? 'plan' : 'work', goal: t.goal, roles,
       prompt,
       images: (t.feedbackImages || []).filter((f) => fs.existsSync(f)),
       system: role.system,
       model,
-      // Reintento de la MISMA tarea en su worktree hace <50 min (la caché de contexto aún vale): se reanuda su sesión.
-      resumeSession: seg === 0 && engineId === 'claude' && t.reused && t.sessionId && (t.resumeAfterQuota && t.sessionEngine === 'claude' || Date.now() - (t.sessionAt || 0) < 50 * 60_000) ? t.sessionId : null,
+      kind: role.kind, roleTools: role.tools, hasSkills: !!role.skills?.length, // FT-59: herramientas acotadas por rol
+      // Reintento de la MISMA tarea en su worktree (<50 min o tras pausa por cuota) y solo con una sesión DEL MISMO motor (FT-57); en un relanzamiento por compactación (seg>0, FT-63) se empieza limpio.
+      resumeSession: seg === 0 && t.reused && t.sessionId && (t.sessionEngine || 'claude') === engineId && (t.resumeAfterQuota || Date.now() - (t.sessionAt || 0) < 50 * 60_000) ? t.sessionId : null,
+      maxTokens: Number(s.settings.maxTaskTokens) > 0 ? Number(s.settings.maxTaskTokens) : null, // FT-57: tope en tokens (Codex; por defecto el equivalente a budgetUsd)
       budgetUsd: Number(s.settings.maxTaskUsd) > 0 ? Number(s.settings.maxTaskUsd) : 3, // tope por intento (Ajustes ▸ «Tope de gasto por tarea»)
       effort: ['low', 'medium', 'high'].includes(s.settings.agentEffort) ? s.settings.agentEffort : 'medium',
       mcpUrl: ['qa', 'docs'].includes(role.kind) ? mcpUrl() : null, // QA y documentalista hablan con flow-test por MCP
       env: { ...engineEnv(engineId), AO_URL: `http://127.0.0.1:${process.env.AO_PORT || 7420}`, AO_TASK: t.id, AO_AGENT: agent.name },
       onActivity: (text) => { agent.activity = text; events.emit('AgentProgress', ev, { activity: text }); changed(); },
-      onTool: (c) => events.emit(c.phase === 'started' ? 'AgentToolStarted' : 'AgentToolFinished', ev, c.phase === 'started' ? { callId: c.callId, tool: c.tool, summary: c.summary } : { callId: c.callId, ok: c.ok }),
+      onTool: (c) => { events.emit(c.phase === 'started' ? 'AgentToolStarted' : 'AgentToolFinished', ev, c.phase === 'started' ? { callId: c.callId, tool: c.tool, summary: c.summary } : { callId: c.callId, ok: c.ok }); onStuck(detector.feed(c)); },
       onLog: (line) => log(agent.id, line),
       onUsage: (u) => { agent.usage = { ...u, engine: engineId, taskId: t.id }; t.usage = addUsage(baseUsage, u);
         // FT-63: contexto por encima del umbral → pedir las notas en caliente (Claude) o, si el motor no admite mensajes, cortar
@@ -926,7 +960,8 @@ async function runTask(p, agent, t) {
           events.emit('AgentProgress', ev, { activity: `Contexto al ${pct} %: compactando`, engine: engineId });
         }
         changed();
-      }, // FT-26
+        detector.usage(u.total).then(onStuck, () => {}); // FT-62
+      }, // FT-26 · FT-62
     });
     const entry = jobs.get(agent.id);
     Object.assign(entry, { stop: job.stop, engine: engineId, pid: job.pid, pause: job.pause, resume: job.resume, message: job.message });
@@ -948,14 +983,21 @@ async function runTask(p, agent, t) {
     if (res.costUsd != null) t.costUsd = (t.costUsd || 0) + res.costUsd;
     if (res.sessionId) Object.assign(t, { sessionId: res.sessionId, sessionAt: Date.now(), sessionEngine: engineId });
     delete t.resumeAfterQuota;
+    // FT-62: atascado y cortado tras el aviso: como el tope de gasto, NO es un fallo; lo hecho queda en la rama y va a Revisión.
+    if (entry.stuck) {
+      res.ok = true; res.stopped = false;
+      res.summary = `⚠️ atascado: ${entry.stuck}. ${agent.name} no avanzaba (se le avisó y siguió igual), así que se cortó antes de agotar el tope; lo hecho queda en la rama. Revisa: «Devolver» con otra indicación le da otro intento partiendo de aquí.${res.summary ? '\n\n' + res.summary : ''}`;
+      t.stuck = entry.stuck;
+      events.emit('AgentBlocked', ev, { reason: 'stuck', signal: entry.stuck, costUsd: t.costUsd });
+    }
     // Tope de gasto alcanzado: NO es un fallo. Lo hecho se confirma y la tarea va a Revisión con el aviso; «Devolver» le da
     // otro intento (con su tope) partiendo de su rama, «Aprobar» si ya vale. Así se para y se pregunta, sin seguir gastando.
     if (res.budgetHit && t.kind !== 'plan') {
-      const cap = Number(s.settings.maxTaskUsd) > 0 ? Number(s.settings.maxTaskUsd) : 3;
+      const cap = Number(s.settings.maxTaskUsd) > 0 ? Number(s.settings.maxTaskUsd) : 3, capText = res.capText || `${cap} $`;
       res.ok = true;
-      res.summary = `⚠️ TOPE DE GASTO ALCANZADO (${cap} $ por intento): ${agent.name} se cortó a medias y lo hecho queda en la rama. Revisa: «Devolver» le da otro intento partiendo de aquí; «Aprobar» solo si ya vale.${res.summary ? '\n\n' + res.summary : ''}`;
+      res.summary = `⚠️ TOPE DE GASTO ALCANZADO (${capText} por intento): ${agent.name} se cortó a medias y lo hecho queda en la rama. Revisa: «Devolver» le da otro intento partiendo de aquí; «Aprobar» solo si ya vale.${res.summary ? '\n\n' + res.summary : ''}`;
       t.budgetHit = true;
-      log(agent.id, `⚠️ ${t.code || t.id}: tope de gasto de ${cap} $ alcanzado → a revisión`);
+      log(agent.id, `⚠️ ${t.code || t.id}: tope de gasto de ${capText} alcanzado → a revisión`);
       events.emit('AgentBlocked', ev, { reason: 'budget', capUsd: cap, costUsd: t.costUsd });
     }
     // FT-66: sin cuota a mitad de tarea → NO es un fallo. Se confirma lo hecho en su rama, la tarea vuelve a «Por hacer»
@@ -1026,6 +1068,7 @@ async function runTask(p, agent, t) {
   } finally {
     questions.cancelForTask(t.id);
     delete t.compactNotes; // FT-63
+    if (!jobs.get(agent.id)?.requeue) delete t.stuckWarned; // FT-62: solo sobrevive al reencolado con el aviso
     jobs.delete(agent.id);
     t.updatedAt = Date.now();
     Object.assign(agent, { status: 'idle', taskId: null, activity: '', activeEngine: null });

@@ -6,22 +6,20 @@ import os from 'node:os';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-import { describeTool, toolSummary, firstLine } from './describe.js';
-import { RTK_RULES, BASH_TOOLS } from './allowlist.js';
+import { describeTool, toolSummary, toolKey, firstLine } from './describe.js';
+import { RTK_RULES } from './allowlist.js';
+import { claudeScope } from './toolscope.js';
 import { claudeTracker } from '../usage.js';
-
-// Lectura/edición + shell de andar por casa (sin rm, sudo, docker, ssh ni git push; lista blanca compartida con terminal.execute del Guide, FT-10).
-const WORK_TOOLS = ['Read', 'Edit', 'MultiEdit', 'Write', 'Glob', 'Grep', 'TodoWrite', ...BASH_TOOLS];
-// El planificador no escribe código, pero sí puede preguntar al cliente (bin/ao-ask.mjs) y leer el repo con el shell básico.
-const ASK_RULE = `Bash(node ${path.join(ROOT, 'bin', 'ao-ask.mjs')} *)`;
-const PLAN_TOOLS = ['Read', 'Glob', 'Grep', ASK_RULE, 'Bash(ls *)', 'Bash(cat *)', 'Bash(head *)', 'Bash(sed -n *)', 'Bash(grep *)', 'Bash(find *)', 'Bash(wc *)', 'Bash(git log*)', 'Bash(git status*)', 'Bash(git diff*)'];
 
 // RTK instalado → hook solo para los agentes (por --settings; no se toca ~/.claude/settings.json del usuario).
 const RTK_BIN = [process.env.AO_RTK_BIN, path.join(os.homedir(), '.local/bin/rtk'), '/usr/local/bin/rtk'].find((f) => f && fs.existsSync(f)) || null;
+export const rtkBin = () => RTK_BIN;
 export const rtkAvailable = () => !!RTK_BIN && process.env.AO_RTK !== 'off';
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, effort, resumeSession, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
-  const tools = [...(mode === 'plan' ? PLAN_TOOLS : WORK_TOOLS)];
+export function start({ cwd, prompt, system, model, mode, mcpUrl, kind, roleTools, hasSkills, budgetUsd, effort, resumeSession, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
+  // FT-59: --tools limita las herramientas DISPONIBLES (sus definiciones no se envían); --allowedTools, lo que se permite sin preguntar.
+  const scope = claudeScope({ kind, mode, roleTools, hasSkills });
+  const tools = [...scope.allowed];
   // FT-5: entrada stream-json con stdin abierto → se pueden inyectar mensajes del cliente en caliente.
   const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--append-system-prompt', system];
   if (resumeSession) args.push('--resume', resumeSession); // reintento de la MISMA tarea en su worktree: reaprovecha el contexto (y su caché) en vez de volver a explorar
@@ -34,12 +32,12 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, eff
   args.push('--model', model || 'sonnet'); // nunca heredar el modelo por defecto de la sesión del usuario (puede no estar disponible en -p)
   // --strict-mcp-config: el agente NO hereda los MCP globales del usuario; solo flow-test para el QA.
   const mcpServers = {};
-  if (mcpUrl && mode !== 'plan') {
+  if (mcpUrl && scope.mcp) {
     mcpServers['flow-test'] = { type: 'http', url: mcpUrl };
     tools.push('mcp__flow-test');
   }
   args.push('--strict-mcp-config', '--mcp-config', JSON.stringify({ mcpServers }));
-  args.push('--allowedTools', ...tools);
+  args.push('--tools', scope.builtin.join(','), '--allowedTools', ...tools);
 
   const env = { ...process.env, ...extraEnv, BROWSER: 'true' };
   if (rtkAvailable() && !String(env.PATH || '').split(':').includes(path.dirname(RTK_BIN))) env.PATH = `${path.dirname(RTK_BIN)}:${env.PATH || ''}`; // el comando reescrito («rtk git …») tiene que encontrarse
@@ -72,7 +70,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, eff
         if (c.type === 'tool_use') {
           const d = describeTool(c.name, c.input);
           onActivity(d);
-          onTool({ phase: 'started', callId: c.id, tool: c.name, summary: toolSummary(c.name, c.input) });
+          onTool({ phase: 'started', callId: c.id, tool: c.name, summary: toolSummary(c.name, c.input), key: toolKey(c.name, c.input) });
           onLog('🔧 ' + d);
         } else if (c.type === 'text' && c.text.trim()) {
           onActivity('Pensando: ' + firstLine(c.text, 50));
@@ -117,13 +115,14 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, eff
     pause() { signal('SIGSTOP'); },
     resume() { signal('SIGCONT'); },
     // Mensaje en caliente (FT-5): nuevo mensaje de usuario por stdin. false si el CLI ya no admite entrada.
-    message(text, { raw = false } = {}) { // raw (FT-63): instrucción del propio orquestador, sin el envoltorio «el cliente añade…»
+    message(text, opt = false) { const raw = opt === true || !!(opt && opt.raw); // raw: instrucción del propio orquestador (FT-62 pasa true, FT-63 {raw:true}), sin el envoltorio «el cliente añade…»
       if (child.stdin.destroyed || child.stdin.writableEnded) return false;
       cancelClose();
       if (raw) { child.stdin.write(userMsg(text)); return true; }
       // Redacción neutra a propósito: un encabezado en mayúsculas tipo «INSTRUCCIÓN… prioritaria… confírmala literalmente» hace que
       // el modelo lo trate como inyección y lo rechace (probado con el CLI real).
-      child.stdin.write(userMsg(`El cliente (quien revisa tu trabajo) añade esta indicación para lo que queda de la tarea: «${text}». Aplícala a partir de ahora y menciónala en tu resumen final.`));
+      if (raw) child.stdin.write(userMsg(text)); // FT-62: aviso del sistema (ya redactado), no del cliente
+      else child.stdin.write(userMsg(`El cliente (quien revisa tu trabajo) añade esta indicación para lo que queda de la tarea: «${text}». Aplícala a partir de ahora y menciónala en tu resumen final.`));
       return true;
     },
     stop() { stopped = true; cancelClose(); signal('SIGTERM'); signal('SIGCONT'); setTimeout(() => signal('SIGKILL'), 3000).unref(); }, // SIGCONT: un grupo parado no recibe SIGTERM

@@ -216,6 +216,9 @@ const routes = [
     if (b.maxTaskUsd !== undefined) st.maxTaskUsd = Math.max(0.5, Math.min(50, Number(b.maxTaskUsd) || 3)); // tope de gasto por intento de tarea
     if (b.compactAt !== undefined) st.compactAt = Number(b.compactAt) > 0 ? Math.min(90, Math.max(30, Number(b.compactAt))) / 100 : 0; // FT-63: % de contexto que dispara la compactación (0 = apagada)
     if (['plan', 'suggest', 'off'].includes(b.bigTasks)) st.bigTasks = b.bigTasks; // FT-63: qué hacer con las tareas grandes
+    if (typeof b.stuckGuard === 'boolean') st.stuckGuard = b.stuckGuard; // FT-62: umbrales del detector de atascos
+    for (const [k, lo, hi] of [['stuckRepeat', 2, 20], ['stuckErrors', 2, 30], ['stuckNoEdit', 5, 200], ['stuckTokens', 5000, 5_000_000]]) if (b[k] !== undefined && Number(b[k]) > 0) st[k] = Math.max(lo, Math.min(hi, Math.round(Number(b[k]))));
+    if (b.maxTaskTokens !== undefined) st.maxTaskTokens = Math.max(0, Math.min(50_000_000, Math.round(Number(b.maxTaskTokens) || 0))); // FT-57: tope en tokens por intento (0 = el equivalente al de US$)
     if (['low', 'medium', 'high'].includes(b.agentEffort)) st.agentEffort = b.agentEffort;
     if (b.maxParallel) st.maxParallel = Math.max(1, Math.min(8, Number(b.maxParallel) || 4));
     if (typeof b.guideModel === 'string') st.guideModel = b.guideModel.trim();
