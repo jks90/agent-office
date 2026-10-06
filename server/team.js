@@ -2,13 +2,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import * as store from './store.js';
+import { orderTodo, CACHE_WINDOW_MS } from './affinity.js';
 import * as codes from './codes.js';
 import * as questions from './questions.js';
 import * as events from './events.js';
 import * as git from './git.js';
 import { allRoles, roleOf } from './roles.js';
 import { parseTasks } from './engines/describe.js';
-import { addUsage } from './usage.js';
+import { addUsage, codexCostUsd } from './usage.js';
 import * as demo from './engines/demo.js';
 import * as claude from './engines/claude.js';
 import * as codex from './engines/codex.js';
@@ -22,6 +23,8 @@ import { briefingFor } from './briefing.js';
 import { detectQuotaHit } from './quota-pause.js';
 import * as memory from './memory.js';
 import * as codeindex from './codeindex.js';
+import * as compact from './compact.js';
+import * as stuck from './stuck.js';
 
 const ENGINES = { demo, claude, codex };
 export const ENGINE_IDS = ['auto', 'claude', 'codex', 'demo'];
@@ -363,7 +366,7 @@ export function messageAgent(id, { text, constraint = false, origin = 'user' } =
 }
 
 // ── Tareas ─────────────────────────────────────────────────────────────────
-export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null, context = null, skills = [], priority = 0 }) {
+export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null, context = null, skills = [], priority = 0, sizeChecked = false }) {
   // attachments (subidos): imágenes → images (las ve el agente), el resto → files (se citan en el prompt)
   for (const a of attachments) { if (/\.(png|jpe?g|webp)$/i.test(a.path)) images = [...images, a.path]; else files = [...files, a.path]; }
   const s = get();
@@ -378,6 +381,7 @@ export function createTask({ projectId, title, description = '', role, repo = nu
     agentId: null, branch: null, summary: '', diffStat: '', error: null, feedback: '', source, files: files.filter((f) => fs.existsSync(f)),
     constraints: [], priority: Math.max(0, Math.min(100, Number(priority) || 0)), context: cleanContext(context), skills: (Array.isArray(skills) ? skills : []).map(String).slice(0, 10), costUsd: null, attempts: 0, createdAt: Date.now(), updatedAt: Date.now(),
   };
+  if (sizeChecked) task.sizeChecked = true; // FT-63: ya troceada por el PO, no se vuelve a evaluar
   codes.assignCode(s.tasks, p, task);
   task.feedbackImages = copyImages(task, images);
   s.tasks.push(task);
@@ -698,6 +702,12 @@ export function withPlannedAgents(s) {
   });
 }
 
+// FT-64 · Afinidad de caché: la caché de prompt dura ~5 min, y dos tareas seguidas del mismo repo+rol+motor comparten el
+// prefijo estable (system del rol + reglas + briefing). Se recuerda qué se lanzó y cuándo terminó cada «repo|rol|motor».
+const recentRuns = new Map(); // `${proyecto}|${repo}|${rol}|${motor}` → instante en que terminó
+const warmKey = (p, t, engine) => `${p.id}|${repoOfTask(p, t)?.key || ''}|${t.role}|${engine}`;
+const affinityOn = () => get().settings.cacheAffinity !== false;
+
 export function tick() {
   const s = get();
   if (!suiteOk()) return; // sin flow-test vigente, el equipo no arranca nada
@@ -706,39 +716,82 @@ export function tick() {
     if (!p.running) continue;
     const team = teamOf(p);
     let slots = (s.settings.maxParallel || 4) - team.filter((a) => jobs.has(a.id)).length;
-    const todo = s.tasks.filter((t) => t.projectId === p.id && t.status === 'todo').sort((a, b) => (b.quotaPaused ? 1 : 0) - (a.quotaPaused ? 1 : 0) || (b.priority || 0) - (a.priority || 0) || a.createdAt - b.createdAt); // FT-66: las pausadas por cuota, las primeras // prioridad alta primero; a igualdad, la más antigua
+    const todoAll = s.tasks.filter((t) => t.projectId === p.id && t.status === 'todo');
+    // Entradas calientes: lo que corre ahora (motor del agente si no es `auto`) y lo terminado hace <5 min
+    const hot = new Set();
+    const activeRepos = new Set(); // repos con alguna tarea corriendo (o lanzada en este tick)
+    if (affinityOn()) {
+      for (const [k, at] of recentRuns) if (Date.now() - at < CACHE_WINDOW_MS) hot.add(k); else recentRuns.delete(k);
+      for (const a of team) {
+        const j = jobs.get(a.id), jt = j && s.tasks.find((x) => x.id === j.taskId);
+        if (!jt || jt.projectId !== p.id) continue;
+        activeRepos.add(repoOfTask(p, jt)?.key || '');
+        hot.add(warmKey(p, jt, j.engine || a.engine));
+      }
+    }
+    const plannedEngine = (t) => plannedAgentFor(p, t, team, { roles, isBusy: () => false })?.engine;
+    const isWarm = (t) => { const e = plannedEngine(t); return !!e && (e === 'auto' ? [...hot].some((k) => k.startsWith(warmKey(p, t, ''))) : hot.has(warmKey(p, t, e))); };
+    const todo = orderTodo(todoAll, affinityOn() ? isWarm : undefined); // FT-66: las pausadas por cuota, las primeras
     for (const t of todo) {
       if (slots <= 0) break;
       if (!depsDone(t)) continue;
+      // FT-64: con repos ya ocupados y otra tarea de ellos esperando, no se abre un repo distinto (su caché no se compartiría)
+      const repoKey = repoOfTask(p, t)?.key || '';
+      if (affinityOn() && activeRepos.size && !activeRepos.has(repoKey) && todo.some((o) => o !== t && o.status === 'todo' && depsDone(o) && activeRepos.has(repoOfTask(p, o)?.key || ''))) continue;
       // FT-66: una tarea pausada por cuota vuelve con su mismo agente si está libre; si no, la regla de FT-50 (la que ve el usuario en la tarjeta)
       const pref = t.preferAgentId && team.find((a) => a.id === t.preferAgentId && !jobs.has(a.id));
       const agent = pref || plannedAgentFor(p, t, team, { roles, isBusy: (a) => jobs.has(a.id) });
       if (!agent || jobs.has(agent.id)) continue;
       if (t.quotaPaused && !quotaReady(t, agent)) continue; // FT-66: sin cuota → espera a su hora (o sigue con el otro motor si es `auto`)
+      if (splitIfBig(p, t)) continue; // FT-63: tarea grande → al PO en vez de lanzarla entera
       const q = quotaCheck(agent);
       if (q.wait) continue;
       if (!q.ok) { quotaHold(p, agent, t, q); continue; }
       quotaRelease(t);
       slots--;
+      activeRepos.add(repoKey);
       runTask(p, agent, t);
     }
   }
 }
 setInterval(tick, 1500).unref();
 
+// FT-63: una tarea nueva que parece grande (muchas piezas, «y además…», estimación cercana al tope) no se lanza entera: se manda al PO
+// como «Planificar:» para que la trocee, y la original queda en Backlog enlazada (`splitInto`). Se evalúa una sola vez por tarea.
+// Ajustes ▸ bigTasks: 'plan' (por defecto) · 'suggest' (solo avisa y la lanza) · 'off'. Sin PO en el equipo, solo avisa.
+function splitIfBig(p, t) {
+  if (t.kind !== 'work' || t.sizeChecked || t.attempts || t.reused || t.quotaPaused) return false;
+  t.sizeChecked = true;
+  const mode = get().settings.bigTasks || 'plan';
+  if (mode === 'off') return false;
+  const capUsd = Number(get().settings.maxTaskUsd) > 0 ? Number(get().settings.maxTaskUsd) : 3;
+  const reason = compact.bigTaskReason(t, { estimate: costEstimates()[t.role], capUsd });
+  if (!reason) return false;
+  t.sizeHint = reason;
+  const planner = mode === 'plan' && teamOf(p).find((a) => roleOf(a.role)?.kind === 'planner');
+  if (!planner) { log(null, `⚠ ${t.code || t.id} parece grande (${reason}): conviene trocearla`); changed(); return false; }
+  t.status = 'backlog'; // antes de crear el plan: createTask() vuelve a llamar a tick()
+  try {
+    const plan = planGoal(p.id, `Esta tarea es grande (${reason}) y no debe lanzarse entera a un solo agente: trocéala en tareas pequeñas, verificables y con su rol.\n\nTarea ${t.code || '#' + t.id}: ${t.title}\n\n${t.description}`, { title: t.title });
+    t.splitInto = plan.id;
+    log(null, `✂ ${t.code || t.id} parece grande (${reason}): enviada al PO para trocearla (${plan.code || plan.id})`);
+    events.emit('TaskSplitRequested', events.ctxOf(t), { reason, planTaskId: plan.id });
+  } catch (e) { t.status = 'todo'; delete t.splitInto; log(null, `⚠ No pude enviar ${t.code || t.id} al PO: ${e.message}`); changed(); return false; }
+  changed();
+  return true;
+}
+
 const teamRoles = (p) => [...new Set(teamOf(p).filter((a) => roleOf(a.role)?.kind !== 'planner').map((a) => a.role))];
 
 // Cómo preguntar al cliente desde la tarea (bin/ao-ask.mjs espera la respuesta y la imprime) + lo ya respondido.
-function askBlock(t) {
-  const prev = (t.questions || []).filter((q) => q.answer != null);
-  return [
+const askRules = () => [
     '',
     'PREGUNTAR AL CLIENTE: si una decisión es suya (no se resuelve leyendo el código ni el documento: reglas de negocio, nombres que verá el usuario, qué opción prefiere), pregunta ANTES de implementar con:',
     `  node ${path.join(store.ROOT, 'bin', 'ao-ask.mjs')} "¿Pregunta cerrada?" --opt "Opción A" --opt "Opción B" [--context "qué cambia con cada opción"]`,
     'El comando se queda esperando (puede tardar minutos) e imprime la respuesta elegida o escrita; úsala y sigue. Una pregunta cada vez, máximo 3 por tarea, con opciones concretas. Si imprime «SIN RESPUESTA», decide tú con el criterio más conservador y déjalo bien visible en el resumen final.',
-    prev.length ? `Respuestas del cliente ya dadas en esta tarea (no vuelvas a preguntarlas):\n${prev.map((q) => `- ${q.question} → ${q.answer}`).join('\n')}` : '',
   ].join('\n');
-}
+const askAnswers = (t) => { const prev = (t.questions || []).filter((q) => q.answer != null); return prev.length ? `Respuestas del cliente ya dadas en esta tarea (no vuelvas a preguntarlas):\n${prev.map((q) => `- ${q.question} → ${q.answer}`).join('\n')}` : ''; };
+const askBlock = (t) => [askRules(), askAnswers(t)].join('\n');
 
 // FT-5: restricciones del cliente (siempre) y mensajes recibidos en la ejecución anterior (si se reencoló).
 const clientBlock = (t) => [
@@ -771,8 +824,24 @@ function buildPrompt(p, agent, t) {
     ].join('\n');
   }
   const done = get().tasks.filter((x) => t.dependsOn.includes(x.id));
+  // FT-59: orden pensado para la caché de prompts (prefijo idéntico entre tareas/turnos del mismo agente y repo):
+  // 1) PARTE ESTABLE — nada que cambie por tarea (ni ids, ni fechas, ni rama) — 2) PARTE VARIABLE al final.
   return [
+    // ── estable ──
+    p.folder ? `Carpeta del proyecto en el workspace de flow-test: «${p.folder}/» (ahí viven sus flows y su documentación; guarda ahí lo que generes con flow-test).` : '',
+    'Trabajas en una copia aislada del repo (git worktree), en tu propia rama. No cambies de rama ni hagas push.',
+    'Lo que dejes sin confirmar se confirmará solo al terminar.',
+    (() => { const r = repoOfTask(p, t); return r?.path ? '\n' + briefingFor(r.path) + (t.codeIndexOn ? '\n' + codeindex.BRIEFING_LINE : '') + '\n' : ''; })(), // FT-58: aviso del índice de código
+    get().settings.agentMemory !== false ? memory.promptBlock(p.id, agent.id) : '', // FT-75: lecciones de tareas anteriores
+    askRules(),
+    economyBlock(t.codeIndexOn),
+    get().settings.agentMemory !== false ? memory.PROMPT_ASK : '',
+    'Al acabar, responde con un resumen breve: qué cambiaste y cómo lo probaste.',
+    '',
+    '════════ TAREA (lo anterior es común a todas las tareas) ════════',
+    // ── variable ──
     `Tarea ${t.code || '#' + t.id}: ${t.title}`,
+    `Rama de esta tarea: ${t.branch}`,
     '',
     t.description,
     t.context ? `\n${describeContext(t.context, true)}.` : '',
@@ -781,20 +850,12 @@ function buildPrompt(p, agent, t) {
     done.length ? `\nTrabajo previo del equipo (ya fusionado):\n${done.map((d) => `- ${d.title}: ${d.summary}`).join('\n')}` : '',
     t.feedback ? `\nComentarios de la revisión anterior (corrígelos):\n${t.feedback}` : '',
     t.baseConflict ? `\nOJO: ${t.baseConflict}` : '',
+    t.compactNotes !== undefined ? compact.notesBlock(t.compactNotes) : '', // FT-63
     t.feedbackImages?.length ? `\nImágenes adjuntas (míralas con atención antes de cambiar nada; también están en ${t.feedbackImages.join(', ')}).` : '',
     t.files?.length ? `\nFicheros adjuntos (léelos antes de empezar): ${t.files.join(', ')}` : '',
-    '',
-    p.folder ? `Carpeta del proyecto en el workspace de flow-test: «${p.folder}/» (ahí viven sus flows y su documentación; guarda ahí lo que generes con flow-test).` : '',
-    `Trabajas en una copia aislada del repo (git worktree) en la rama ${t.branch}. No cambies de rama ni hagas push.`,
-    (() => { const r = repoOfTask(p, t); return r?.path ? '\n' + briefingFor(r.path) + (t.codeIndexOn ? '\n' + codeindex.BRIEFING_LINE : '') + '\n' : ''; })(),
-    get().settings.agentMemory !== false ? memory.promptBlock(p.id, agent.id) : '', // FT-75: lecciones de tareas anteriores (parte estable del prompt)
-    t.reused ? 'En esta rama ya está tu intento anterior (mira `git log` y `git diff` contra la rama base): parte de él y corrige lo que pide la revisión, sin rehacer lo que ya estaba bien.' : '',
-    'Lo que dejes sin confirmar se confirmará solo al terminar.',
+    t.reused ? '\nEn esta rama ya está tu intento anterior (mira `git log` y `git diff` contra la rama base): parte de él y corrige lo que pide la revisión, sin rehacer lo que ya estaba bien.' : '',
     t.code ? `Cita el código ${t.code} en lo que documentes (changelog, README, flows, tablero) para que la tarea se pueda rastrear.` : '',
-    askBlock(t),
-    economyBlock(t.codeIndexOn),
-    get().settings.agentMemory !== false ? memory.PROMPT_ASK : '',
-    'Al acabar, responde con un resumen breve: qué cambiaste y cómo lo probaste.',
+    askAnswers(t),
   ].join('\n');
 }
 
@@ -809,6 +870,7 @@ function economyBlock(codeIndexOn) {
     '- No vuelvas a leer lo que ya leíste; no hagas `cat` de ficheros largos ni de salidas largas: recorta con `| tail -30`, `| head`, `grep`.',
     '- Pruebas: ejecuta el e2e/verificación UNA vez cuando creas que está bien; repite solo si falló. Capturas de pantalla: como mucho 1 (otra solo si la primera muestra un fallo), y solo si la tarea es visual.',
     '- Ve al grano: el briefing del repo ya te da la estructura; no lo explores con ls -R/find/wc.',
+    '- Para explorar más de 3 ficheros (entender un módulo, buscar todos los usos de algo), delega en el subagente «explorador» (herramienta Task/Agent, si tu motor la tiene) y trabaja con su resumen; lee tú solo los tramos que vayas a editar.',
     '- Si te acercas al tope de gasto de la tarea, deja el trabajo en un estado coherente y resume qué falta.',
   ].join('\n');
 }
@@ -866,43 +928,113 @@ async function runTask(p, agent, t) {
     // FT-58: índice de código del repo (se reindexa si cambió HEAD); sin él o si falla, el agente trabaja como siempre
     const codeIndex = repo?.path && codeindex.enabled(s.settings) ? await codeindex.ensure(repo.key, repo.path, (m) => log(agent.id, m)) : null;
     t.codeIndexOn = !!codeIndex;
+    // FT-63: la ejecución se repite por «segmentos». Si el contexto pasa del umbral se pide el estado (NOTAS.md), se corta y se
+    // relanza con un contexto limpio y las notas en el prompt. Sin umbral alcanzado hay un solo segmento, como siempre.
+    const at = t.kind === 'plan' ? 0 : compact.threshold(s.settings.compactAt);
+    const model = modelFor(engineId, agent, role);
+    let res;
+    for (let seg = 0; ; seg++) {
     const prompt = buildPrompt(p, agent, t);
     t.pendingMessages = []; // ya van en el prompt
     const baseUsage = t.usage || null; // FT-26: consumo de intentos anteriores; t.usage es acumulado y se actualiza en vivo
     agent.usage = null; // sesión nueva
+    const cmp = { asked: false, cut: false };
+    delete t.stuck;
+    // FT-62: detector de atascos. 1.ª señal → aviso en caliente (Claude: stdin; Codex/demo: se reencola la tarea con el aviso);
+    // si tras el aviso vuelve a saltar → se corta y va a Revisión. t.stuckWarned sobrevive al reencolado.
+    const stuckLimits = { ...stuck.limits(s.settings), enabled: stuck.limits(s.settings).enabled && t.kind !== 'plan' };
+    const probe = t.branch ? async () => `${await git.git(cwd, 'status', '--porcelain')}\n${await git.git(cwd, 'diff', '--stat')}` : null;
+    const newDetector = () => stuck.createDetector({ limits: stuckLimits, isCode: role.kind === 'dev', probe });
+    let detector = newDetector();
+    const onStuck = (signal) => {
+      const entry = jobs.get(agent.id);
+      if (!signal || !entry?.stop || entry.stuck || entry.requeue) return;
+      if (t.stuckWarned) { // ya avisado y sigue: se corta (lo hecho queda en la rama)
+        entry.stuck = signal;
+        log(agent.id, `⚠️ ${t.code || t.id}: atascado (${signal}) tras el aviso → se corta y va a revisión`);
+        entry.stop();
+        return;
+      }
+      t.stuckWarned = true;
+      detector = newDetector(); // tras el aviso, la señal tiene que repetirse desde cero
+      const text = stuck.nudgeText(signal);
+      log(agent.id, `⚠️ ${t.code || t.id}: parece atascado (${signal}) → aviso al agente`);
+      events.emit('AgentProgress', ev, { activity: 'Aviso: parece que da vueltas', stuck: true });
+      if (entry.message?.(text, true)) return;
+      (t.pendingMessages ||= []).push({ text, at: Date.now(), origin: 'agentoffice' }); // el motor no admite avisos en caliente: reencolada con el aviso en el prompt
+      entry.requeue = true;
+      entry.stop();
+    };
     const job = engine.start({
       agent, task: t, project: p, cwd, mode: t.kind === 'plan' ? 'plan' : 'work', goal: t.goal, roles,
       prompt,
       images: (t.feedbackImages || []).filter((f) => fs.existsSync(f)),
       system: role.system,
-      model: modelFor(engineId, agent, role),
-      // Reintento de la MISMA tarea en su worktree hace <50 min (la caché de contexto aún vale): se reanuda su sesión.
-      resumeSession: engineId === 'claude' && t.reused && t.sessionId && (t.resumeAfterQuota && t.sessionEngine === 'claude' || Date.now() - (t.sessionAt || 0) < 50 * 60_000) ? t.sessionId : null,
+      model,
+      kind: role.kind, roleTools: role.tools, hasSkills: !!role.skills?.length, // FT-59: herramientas acotadas por rol
+      // Reintento de la MISMA tarea en su worktree (<50 min o tras pausa por cuota) y solo con una sesión DEL MISMO motor (FT-57); en un relanzamiento por compactación (seg>0, FT-63) se empieza limpio.
+      resumeSession: seg === 0 && t.reused && t.sessionId && (t.sessionEngine || 'claude') === engineId && (t.resumeAfterQuota || Date.now() - (t.sessionAt || 0) < 50 * 60_000) ? t.sessionId : null,
+      maxTokens: Number(s.settings.maxTaskTokens) > 0 ? Number(s.settings.maxTaskTokens) : null, // FT-57: tope en tokens (Codex; por defecto el equivalente a budgetUsd)
       budgetUsd: Number(s.settings.maxTaskUsd) > 0 ? Number(s.settings.maxTaskUsd) : 3, // tope por intento (Ajustes ▸ «Tope de gasto por tarea»)
       effort: ['low', 'medium', 'high'].includes(s.settings.agentEffort) ? s.settings.agentEffort : 'medium',
       codeIndex,
       mcpUrl: ['qa', 'docs'].includes(role.kind) ? mcpUrl() : null, // QA y documentalista hablan con flow-test por MCP
       env: { ...engineEnv(engineId), AO_URL: `http://127.0.0.1:${process.env.AO_PORT || 7420}`, AO_TASK: t.id, AO_AGENT: agent.name },
       onActivity: (text) => { agent.activity = text; events.emit('AgentProgress', ev, { activity: text }); changed(); },
-      onTool: (c) => events.emit(c.phase === 'started' ? 'AgentToolStarted' : 'AgentToolFinished', ev, c.phase === 'started' ? { callId: c.callId, tool: c.tool, summary: c.summary } : { callId: c.callId, ok: c.ok }),
+      onTool: (c) => { events.emit(c.phase === 'started' ? 'AgentToolStarted' : 'AgentToolFinished', ev, c.phase === 'started' ? { callId: c.callId, tool: c.tool, summary: c.summary } : { callId: c.callId, ok: c.ok }); onStuck(detector.feed(c)); },
       onLog: (line) => log(agent.id, line),
-      onUsage: (u) => { agent.usage = { ...u, engine: engineId, taskId: t.id }; t.usage = addUsage(baseUsage, u); changed(); }, // FT-26
+      onUsage: (u) => { agent.usage = { ...u, engine: engineId, taskId: t.id }; t.usage = addUsage(baseUsage, u);
+        // FT-63: contexto por encima del umbral → pedir las notas en caliente (Claude) o, si el motor no admite mensajes, cortar
+        // FT-57 manda sobre FT-63: si el intento ya está cerca de su tope de tokens, se deja que lo corte el tope (va a Revisión) en vez de compactar y relanzar
+        const budgetUsd = Number(s.settings.maxTaskUsd) > 0 ? Number(s.settings.maxTaskUsd) : 3, capTok = Number(s.settings.maxTaskTokens) > 0 ? Number(s.settings.maxTaskTokens) : 0;
+        const nearCap = engineId === 'codex' && (capTok ? (u.total || 0) >= capTok * 0.9 : codexCostUsd(u, model) >= budgetUsd * 0.9); // mismo cálculo que codex.js (Claude lo corta el CLI por US$)
+        if (at && !cmp.asked && seg < compact.MAX_COMPACTIONS && !nearCap && compact.reached(u, model, at)) {
+          cmp.asked = true;
+          const pct = Math.round(compact.contextShare(u, model) * 100);
+          if (job.message) { job.message(compact.COMPACT_INSTRUCTION, { raw: true }); log(agent.id, `🗜 Contexto al ${pct} %: pido las notas (${compact.NOTES_FILE}) para relanzar con contexto limpio`); }
+          else { cmp.cut = true; log(agent.id, `🗜 Contexto al ${pct} %: corto la sesión y la relanzo desde su rama`); job.stop(); }
+          events.emit('AgentProgress', ev, { activity: `Contexto al ${pct} %: compactando`, engine: engineId });
+        }
+        changed();
+        detector.usage(u.total).then(onStuck, () => {}); // FT-62
+      }, // FT-26 · FT-62
     });
     const entry = jobs.get(agent.id);
     Object.assign(entry, { stop: job.stop, engine: engineId, pid: job.pid, pause: job.pause, resume: job.resume, message: job.message });
-    const res = await job.done;
+    res = await job.done;
+    if (!cmp.asked || res.budgetHit || !(res.ok || cmp.cut && res.stopped)) break;
+    const notesPath = path.join(cwd, compact.NOTES_FILE);
+    const notes = fs.existsSync(notesPath) ? fs.readFileSync(notesPath, 'utf8').trim() : '';
+    if (!notes && !cmp.cut) break; // pidió las notas y no las escribió: había terminado → resumen final normal
+    try { fs.unlinkSync(notesPath); } catch { /* sin fichero */ }
+    if (res.costUsd != null) t.costUsd = (t.costUsd || 0) + res.costUsd;
+    if (t.branch) { try { await git.commitAll(cwd, `${t.code || t.id}: avance antes de compactar el contexto`, `${agent.name} (${role.label})`); } catch { /* sin cambios */ } }
+    t.compactNotes = notes;
+    t.compactions = (t.compactions || 0) + 1;
+    log(agent.id, `↻ Relanzo ${t.code || '#' + t.id} con ${notes ? 'sus notas' : 'su rama'} (compactación ${t.compactions})`);
+    events.emit('AgentResumed', ev, { reason: 'compact', attempt: t.attempts, compactions: t.compactions });
+    }
+    delete t.compactNotes;
+    const entry = jobs.get(agent.id) || {}; // FT-62 tras el bucle de segmentos de FT-63: marca de atasco del último segmento
 
     if (res.costUsd != null) t.costUsd = (t.costUsd || 0) + res.costUsd;
     if (res.sessionId) Object.assign(t, { sessionId: res.sessionId, sessionAt: Date.now(), sessionEngine: engineId });
     delete t.resumeAfterQuota;
+    // FT-62: atascado y cortado tras el aviso: como el tope de gasto, NO es un fallo; lo hecho queda en la rama y va a Revisión.
+    if (entry.stuck) {
+      res.ok = true; res.stopped = false;
+      res.summary = `⚠️ atascado: ${entry.stuck}. ${agent.name} no avanzaba (se le avisó y siguió igual), así que se cortó antes de agotar el tope; lo hecho queda en la rama. Revisa: «Devolver» con otra indicación le da otro intento partiendo de aquí.${res.summary ? '\n\n' + res.summary : ''}`;
+      t.stuck = entry.stuck;
+      events.emit('AgentBlocked', ev, { reason: 'stuck', signal: entry.stuck, costUsd: t.costUsd });
+    }
     // Tope de gasto alcanzado: NO es un fallo. Lo hecho se confirma y la tarea va a Revisión con el aviso; «Devolver» le da
     // otro intento (con su tope) partiendo de su rama, «Aprobar» si ya vale. Así se para y se pregunta, sin seguir gastando.
     if (res.budgetHit && t.kind !== 'plan') {
-      const cap = Number(s.settings.maxTaskUsd) > 0 ? Number(s.settings.maxTaskUsd) : 3;
+      const cap = Number(s.settings.maxTaskUsd) > 0 ? Number(s.settings.maxTaskUsd) : 3, capText = res.capText || `${cap} $`;
       res.ok = true;
-      res.summary = `⚠️ TOPE DE GASTO ALCANZADO (${cap} $ por intento): ${agent.name} se cortó a medias y lo hecho queda en la rama. Revisa: «Devolver» le da otro intento partiendo de aquí; «Aprobar» solo si ya vale.${res.summary ? '\n\n' + res.summary : ''}`;
+      res.summary = `⚠️ TOPE DE GASTO ALCANZADO (${capText} por intento): ${agent.name} se cortó a medias y lo hecho queda en la rama. Revisa: «Devolver» le da otro intento partiendo de aquí; «Aprobar» solo si ya vale.${res.summary ? '\n\n' + res.summary : ''}`;
       t.budgetHit = true;
-      log(agent.id, `⚠️ ${t.code || t.id}: tope de gasto de ${cap} $ alcanzado → a revisión`);
+      log(agent.id, `⚠️ ${t.code || t.id}: tope de gasto de ${capText} alcanzado → a revisión`);
       events.emit('AgentBlocked', ev, { reason: 'budget', capUsd: cap, costUsd: t.costUsd });
     }
     // FT-66: sin cuota a mitad de tarea → NO es un fallo. Se confirma lo hecho en su rama, la tarea vuelve a «Por hacer»
@@ -935,7 +1067,7 @@ async function runTask(p, agent, t) {
         const r = roles.includes(item.role) ? item.role : (roles[0] || 'back');
         const deps = (item.dependsOn || []).map((i) => ids[i]).filter(Boolean);
         const rk = (p.repos || []).some((x) => x.key === item.repo) ? item.repo : null;
-        ids.push(createTask({ projectId: p.id, title: item.title, description: item.description, role: r, repo: rk, dependsOn: deps }).id);
+        ids.push(createTask({ projectId: p.id, title: item.title, description: item.description, role: r, repo: rk, dependsOn: deps, sizeChecked: true }).id);
       }
       t.summary = `${ids.length} tareas creadas para el equipo.`;
       t.status = 'done';
@@ -972,8 +1104,11 @@ async function runTask(p, agent, t) {
     reflect(t, `❌ Falló en AgentOffice: ${String(e.message).slice(0, 500)}`);
   } finally {
     questions.cancelForTask(t.id);
+    delete t.compactNotes; // FT-63
+    if (!jobs.get(agent.id)?.requeue) delete t.stuckWarned; // FT-62: solo sobrevive al reencolado con el aviso
     jobs.delete(agent.id);
     t.updatedAt = Date.now();
+    if (engineId && t.kind !== 'plan') recentRuns.set(warmKey(p, t, engineId), Date.now()); // FT-64: su prefijo sigue en caché ~5 min
     Object.assign(agent, { status: 'idle', taskId: null, activity: '', activeEngine: null });
     changed();
     tick();

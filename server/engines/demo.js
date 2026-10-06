@@ -62,7 +62,7 @@ export function start({ agent, task, mode, goal, roles, onActivity, onLog, onToo
     onActivity(step);
     onLog('🔧 ' + step);
     callId = `demo${i}`;
-    onTool({ phase: 'started', callId, tool: /^(Leyendo|Revisando)/.test(step) ? 'Read' : /^Editando/.test(step) ? 'Edit' : /^Ejecutando/.test(step) ? 'Bash' : /^Buscando/.test(step) ? 'Grep' : /^flow-test/.test(step) ? 'mcp__flow-test' : 'Think', summary: step });
+    onTool({ phase: 'started', callId, tool: /^(Leyendo|Revisando)/.test(step) ? 'Read' : /^Editando/.test(step) ? 'Edit' : /^Ejecutando/.test(step) ? 'Bash' : /^Buscando/.test(step) ? 'Grep' : /^flow-test/.test(step) ? 'mcp__flow-test' : 'Think', summary: step, key: step });
     timer = setTimeout(next, 2200 + Math.random() * 2800);
   };
   timer = setTimeout(next, 600);

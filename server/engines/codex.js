@@ -1,9 +1,26 @@
 // Motor Codex: `codex exec --json` en el worktree de la tarea (sandbox workspace-write).
 import { spawn, execFileSync } from 'node:child_process';
 import readline from 'node:readline';
-import { firstLine, toolSummary } from './describe.js';
-import { codexTracker } from '../usage.js';
+import path from 'node:path';
+import { firstLine, toolSummary, toolKey } from './describe.js';
+import { fileURLToPath } from 'node:url';
+import { codexTracker, codexCostUsd, tokensForUsd } from '../usage.js';
+import { codexScope } from './toolscope.js';
+import { rtkBin, rtkAvailable } from './claude.js';
 import { SERVER_NAME } from '../codeindex.js';
+
+// FT-57: filtro del hook de RTK (solo reescrituras de la lista blanca).
+const RTK_FILTER = fileURLToPath(new URL('../../bin/ao-rtk-codex.mjs', import.meta.url));
+// Args de configuración (-c) de un intento: esfuerzo y hook de RTK. Función pura para poder probarla.
+export function configArgs({ effort, rtk, mode }) {
+  const a = [];
+  if (effort) a.push('-c', `model_reasoning_effort="${effort}"`, '-c', 'model_reasoning_summary="concise"');
+  if (rtk && mode !== 'plan') { // hook solo para los agentes, por -c: no se toca ~/.codex/config.toml del usuario
+    const cmd = `${process.execPath} ${RTK_FILTER} ${rtk}`;
+    a.push('-c', 'features.codex_hooks=true', '-c', `hooks.PreToolUse=[{matcher="Bash",hooks=[{type="command",command=${JSON.stringify(cmd)}}]}]`);
+  }
+  return a;
+}
 
 // Codex envuelve cada orden en `/usr/bin/zsh -lc "…"`: en el bocadillo solo interesa la orden.
 const unwrap = (cmd) => {
@@ -22,7 +39,7 @@ function bwrapWorks() {
   return sandboxOk;
 }
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, images = [], env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kind, images = [], budgetUsd, maxTokens, effort, resumeSession, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
   const noSandbox = !bwrapWorks();
   const sandbox = mode === 'plan' ? 'read-only' : 'workspace-write';
   const args = ['exec', '--json', '--skip-git-repo-check', '-C', cwd, ...(noSandbox ? ['--dangerously-bypass-approvals-and-sandbox'] : ['-s', sandbox])];
@@ -33,15 +50,28 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, ima
     const k = `mcp_servers.${SERVER_NAME.replace(/-/g, '_')}`;
     args.push('-c', `${k}.command=${JSON.stringify(codeIndex.command)}`, '-c', `${k}.args=[]`, '-c', `${k}.env={${Object.entries(codeIndex.env).map(([n, v]) => `${n}=${JSON.stringify(v)}`).join(',')}}`);
   }
+  for (const c of codexScope({ kind, mode, images })) args.push('-c', c); // FT-59: sin herramientas que el rol no usa
+  const useRtk = rtkAvailable() && mode !== 'plan';
+  args.push(...configArgs({ effort, rtk: useRtk ? rtkBin() : null, mode }));
   for (const img of images) args.push(`--image=${img}`); // con «=» para que -i (variádico) no se trague el «-»
+  if (resumeSession) args.push('resume', resumeSession); // FT-57: reintento de la misma tarea → reanuda su hilo (contexto y caché)
   args.push('-'); // el prompt va por stdin
 
-  const child = spawn(process.env.AO_CODEX_BIN || 'codex', args, { cwd, env: { ...process.env, ...extraEnv, BROWSER: 'true' }, stdio: ['pipe', 'pipe', 'pipe'], detached: true }); // detached: grupo propio para pausar/matar (FT-5)
+  const child = spawn(process.env.AO_CODEX_BIN || 'codex', args, { cwd, env: { ...process.env, ...extraEnv, BROWSER: 'true', ...(useRtk ? { PATH: `${path.dirname(rtkBin())}:${process.env.PATH || ''}` } : {}) }, stdio: ['pipe', 'pipe', 'pipe'], detached: true }); // detached: grupo propio para pausar/matar (FT-5)
   child.stdin.end(`${system}\n\n${prompt}`);
 
+  const signal = (sig) => { try { process.kill(-child.pid, sig); } catch { try { child.kill(sig); } catch { /* ya terminó */ } } };
   let lastMessage = '';
   let failure = null;
   let stopped = false;
+  let sessionId = null, budgetHit = false, capText = null;
+  // FT-57: Codex no tiene tope propio; se corta con el uso del stream (llega al cerrar cada turno). Tope en tokens si está
+  // fijado (maxTokens) o, si no, el coste estimado con la tabla de precios contra el tope en $.
+  const overCap = (u) => {
+    if (maxTokens > 0) return u.total >= maxTokens && `${maxTokens.toLocaleString('es')} tokens`;
+    if (budgetUsd > 0) return codexCostUsd(u, model) >= budgetUsd && `${budgetUsd} $ (≈ ${tokensForUsd(budgetUsd, model).toLocaleString('es')} tokens)`;
+    return false;
+  };
   const tracker = codexTracker();
   const stderr = [];
 
@@ -49,14 +79,19 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, ima
     let ev;
     try { ev = JSON.parse(line); } catch { if (line.trim()) onLog(line); return; }
     const u = tracker.feed(ev); // FT-26: solo cifras de uso
-    if (u) onUsage(u);
+    if (u) {
+      onUsage(u);
+      const over = !budgetHit && overCap(u);
+      if (over) { budgetHit = true; capText = over; onLog(`⚠ Tope por intento alcanzado (${over}): se corta`); signal('SIGTERM'); signal('SIGCONT'); setTimeout(() => signal('SIGKILL'), 3000).unref(); }
+    }
+    if (ev.type === 'thread.started' && ev.thread_id) sessionId = ev.thread_id;
     const it = ev.item;
     if ((ev.type === 'item.started' || ev.type === 'item.completed') && it) {
       const started = ev.type === 'item.started';
       // Activity Stream (FT-1): herramientas con id, nombre y resumen sin contenido sensible
       const tool = { command_execution: ['Bash', { command: unwrap(it.command) }], file_change: ['Edit', { file_path: it.changes?.[0]?.path }], mcp_tool_call: [`mcp__${it.server}__${it.tool}`, {}], web_search: ['WebSearch', { query: it.query }] }[it.type];
       if (tool) {
-        const call = { callId: it.id, tool: tool[0], summary: toolSummary(...tool) };
+        const call = { callId: it.id, tool: tool[0], summary: toolSummary(...tool), key: toolKey(...tool) };
         if (started) onTool({ phase: 'started', ...call });
         else {
           if (it.type === 'file_change') onTool({ phase: 'started', ...call }); // file_change solo llega completado
@@ -102,13 +137,13 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, ima
   const done = new Promise((resolve) => {
     child.on('error', (e) => resolve({ ok: false, error: `No se pudo lanzar codex: ${e.message}` }));
     child.on('close', (code) => {
+      if (budgetHit && !stopped) return resolve({ ok: false, budgetHit: true, capText, summary: lastMessage, sessionId, costUsd: null, error: 'Tope por intento alcanzado' });
       if (stopped) return resolve({ ok: false, stopped: true, error: 'Parado por el usuario' });
       const ok = code === 0 && !failure;
-      resolve({ ok, summary: lastMessage, costUsd: null, error: ok ? null : (failure || stderr.join('\n') || `codex terminó con código ${code}`) });
+      resolve({ ok, summary: lastMessage, sessionId, costUsd: null, error: ok ? null : (failure || stderr.join('\n') || `codex terminó con código ${code}`) });
     });
   });
 
-  const signal = (sig) => { try { process.kill(-child.pid, sig); } catch { try { child.kill(sig); } catch { /* ya terminó */ } } };
   return {
     done,
     pid: child.pid,
