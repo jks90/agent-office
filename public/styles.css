@@ -156,7 +156,8 @@ dialog select[multiple].tall { height: 160px; }
 .eng { font-size: 10px; padding: 2px 6px; border-radius: var(--r-sm); background: var(--panel2); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
 
 .goal { display: flex; align-items: flex-start; gap: var(--s-2); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 6px 8px; margin-bottom: var(--s-3); box-shadow: var(--shadow); }
-.goal textarea { flex: 1; min-width: 200px; resize: none; padding: 6px 10px; min-height: 34px; line-height: 1.4; overflow: hidden; }
+.goal .mic-wrap { flex: 1; min-width: 200px; }
+.goal textarea { width: 100%; resize: none; padding: 6px 10px; min-height: 34px; line-height: 1.4; overflow: hidden; }
 .goal .small { white-space: nowrap; align-self: flex-start; }
 .goal #task-filter { width: 180px; flex: none; margin-left: auto; }
 .goal .board-chip:empty { display: none; }

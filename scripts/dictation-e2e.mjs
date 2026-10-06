@@ -70,6 +70,7 @@ try {
   console.log('(A) Proveedor del navegador (Web Speech simulada)');
   let { page, errors } = await open(browser, 'stub');
   check('hay un botón 🎤 por campo (título y descripción)', (await page.$$('dialog [data-mic]')).length === 2);
+  check('la barra «Objetivo para el PO» también tiene 🎤', !!(await page.$('#goal-form [data-mic]')));
   await page.type('dialog [name=description]', 'Añadir al final');
   await page.$eval('dialog [name=description]', (el) => { el.focus(); el.setSelectionRange(6, 6); });
   const btns = await page.$$('dialog [data-mic]');
@@ -92,7 +93,7 @@ try {
 
   console.log('(B) Sin soporte de voz');
   ({ page, errors } = await open(browser, 'none'));
-  check('no se pinta ningún botón 🎤', (await page.$$('dialog [data-mic]')).length === 0);
+  check('no se pinta ningún botón 🎤', (await page.$$('dialog [data-mic]')).length === 0 && !(await page.$('#goal-form [data-mic]')));
   check('los campos siguen siendo editables', !!(await page.$('dialog [name=description]:not([disabled])')));
   check('sin errores de consola', errors.length === 0, errors.join(' | '));
   await page.close();
@@ -102,7 +103,7 @@ try {
   ({ page, errors } = await open(b2, 'server'));
   const sttReqs = [];
   page.on('request', (r) => { if (/\/api\/guide\/stt$/.test(r.url()) && r.method() === 'POST') sttReqs.push(Date.now()); });
-  check('hay botón 🎤 sin Web Speech API (STT del servidor disponible)', (await page.$$('dialog [data-mic]')).length === 2);
+  check('hay botón 🎤 sin Web Speech API (STT del servidor disponible)', (await page.$$('dialog [data-mic]')).length === 2 && !!(await page.$('#goal-form [data-mic]')));
   const mics = await page.$$('dialog [data-mic]');
   await mics[1].click();
   await sleep(300);
@@ -113,6 +114,14 @@ try {
   check('la frase transcrita por el servidor entra en la descripción', value.includes('hola dictado'), JSON.stringify(value));
   check('el audio fue a POST /api/guide/stt', sttReqs.length > 0);
   await mics[1].click();
+  await page.waitForFunction(() => !document.querySelector('dialog [name=description]').parentElement.querySelector('[data-mic]').classList.contains('rec'), { timeout: 15000 }).catch(() => {});
+  await page.keyboard.press('Escape'); // cierra «Nueva tarea»
+  await page.waitForFunction(() => !document.querySelector('#dialog').open, { timeout: 5000 }).catch(() => {});
+  await page.click('#goal-form [data-mic]');
+  const t1 = Date.now(); let goal = '';
+  while (Date.now() - t1 < 25000) { goal = await page.$eval('#goal', (el) => el.value); if (goal.includes('hola dictado')) break; await sleep(250); }
+  check('dictar en la barra «Objetivo para el PO» rellena el objetivo', goal.includes('hola dictado'), JSON.stringify(goal));
+  await page.click('#goal-form [data-mic]');
   await page.waitForFunction(() => !document.querySelector('dialog [name=description]').parentElement.querySelector('[data-mic]').classList.contains('rec'), { timeout: 15000 }).catch(() => {});
   check('segundo clic para el dictado', !(await recording(page)));
   const live = await page.evaluate(() => (window.__tracks || []).length); // no hay registro de pistas: basta con el estado

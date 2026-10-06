@@ -895,9 +895,16 @@ function dialog(html, onSubmit, cls = '') {
 // Dictado por voz en campos del diálogo (FT-43): sin soporte el botón no se pinta; con él, un clic dicta y otro para.
 // STT del servidor disponible (GET /api/guide/stt): el dictado prefiere ese camino (audio local) y deja la Web Speech API de respaldo.
 let sttLocalOk = false;
-const refreshSttLocal = () => api('GET', '/api/guide/stt').then((st) => { sttLocalOk = !!(st.providers || []).find((p) => p.name === st.provider)?.ok; }).catch(() => {});
+const refreshSttLocal = () => api('GET', '/api/guide/stt').then((st) => { sttLocalOk = !!(st.providers || []).find((p) => p.name === st.provider)?.ok; ensureGoalMic(); }).catch(() => ensureGoalMic());
 const dictationViaServer = () => sttLocalOk && safeGet('ao:dictation') !== 'browser';
-const micField = (field) => `<div class="mic-wrap">${field}${dictationSupported({ server: dictationViaServer() }) ? '<button type="button" class="mic-btn" data-mic title="Dictar por voz (clic para empezar, otro para parar)" aria-pressed="false">🎤</button>' : ''}</div>`;
+const MIC_BTN = '<button type="button" class="mic-btn" data-mic title="Dictar por voz (clic para empezar, otro para parar)" aria-pressed="false">🎤</button>';
+const micField = (field) => `<div class="mic-wrap">${field}${dictationSupported({ server: dictationViaServer() }) ? MIC_BTN : ''}</div>`;
+// La barra «🎯 Objetivo para el PO» también se dicta: el botón se añade cuando se sabe si hay STT (del servidor o del navegador).
+function ensureGoalMic() {
+  const w = document.querySelector('#goal-form .mic-wrap');
+  if (!w || w.querySelector('[data-mic]') || !dictationSupported({ server: dictationViaServer() })) return;
+  w.insertAdjacentHTML('beforeend', MIC_BTN);
+}
 let dictation = null; // { btn, dict }: un solo dictado a la vez
 function micStop() { dictation?.dict.stop(); }
 document.addEventListener('click', (e) => {
