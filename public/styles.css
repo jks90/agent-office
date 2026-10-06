@@ -243,11 +243,26 @@ dialog.task .task-title:focus { outline: none; }
 @keyframes pulse { 70% { box-shadow: 0 0 0 8px rgba(72,213,151,0); } 100% { box-shadow: 0 0 0 0 rgba(72,213,151,0); } }
 
 #drawer[hidden] { display: none; }
-#drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(460px, 100%); background: var(--panel); border-left: 1px solid var(--line); padding: var(--s-5); display: flex; flex-direction: column; gap: var(--s-3); z-index: 10; box-shadow: -18px 0 45px rgba(0,0,0,.42); }
-#drawer .head { display: flex; align-items: center; gap: var(--s-2); padding-bottom: var(--s-2); border-bottom: 1px solid var(--line-soft); }
+#drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(460px, 100%); background: var(--panel); border-left: 1px solid var(--line); padding: var(--s-5); display: flex; flex-direction: column; gap: var(--s-3); z-index: 10; box-shadow: -18px 0 45px rgba(0,0,0,.42); overflow: auto; }
+#drawer:focus { outline: none; }
+#drawer .head, .agent-panel-head { display: flex; align-items: center; gap: var(--s-2); padding-bottom: var(--s-2); border-bottom: 1px solid var(--line-soft); }
 #drawer h2 { margin: 0; font-size: 20px; }
 #drawer .grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 9px var(--s-3); align-items: center; background: rgba(255,255,255,.025); border: 1px solid var(--line-soft); border-radius: var(--r-lg); padding: var(--s-3); }
-#log { flex: 1; overflow: auto; background: var(--panel3); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--s-3); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+.avatar.big { width: 44px; height: 44px; font-size: 18px; }
+.agent-status { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.agent-status .muted { margin-left: auto; font-weight: 500; }
+.agent-current { color: var(--muted); font-size: 13px; margin-top: -6px; }
+.agent-panel-card { background: rgba(255,255,255,.025); border: 1px solid var(--line-soft); border-radius: var(--r-lg); padding: var(--s-3); }
+.agent-panel-card h3 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.tool-line { font-size: 13px; color: var(--text); overflow-wrap: anywhere; }
+.linklike { background: transparent; border: 0; color: #bfdbfe; padding: 0; text-align: left; cursor: pointer; font: inherit; }
+.linklike:hover { text-decoration: underline; }
+.agent-activity { list-style: none; display: flex; flex-direction: column; gap: 7px; margin: 0; padding: 0; font-size: 13px; }
+.agent-activity li { display: flex; gap: 10px; align-items: baseline; justify-content: space-between; border-left: 2px solid var(--line); padding-left: 8px; }
+.agent-activity li.bad { border-left-color: var(--err); color: #fecaca; }
+.agent-activity time { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.agent-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+#log { min-height: 140px; flex: 1; overflow: auto; background: var(--panel3); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--s-3); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
 #log .ts { color: #687189; margin-right: 6px; }
 .log-line { padding: 2px 0; border-left: 2px solid transparent; padding-left: 7px; }
 .log-line.tool { color: #a9d5ff; border-left-color: var(--info); }
@@ -417,3 +432,5 @@ body.embedded #quota-chip { display: none; }
 .quota-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 14px; min-width: 340px; display: flex; flex-direction: column; gap: 5px; } .quota-card.off { opacity: .75; }
 .quota-row { display: flex; align-items: center; gap: 8px; font-size: 12px; } .quota-row .ql { width: 120px; } .quota-row .tokbar { width: 120px; height: 8px; } .quota-row b { width: 46px; text-align: right; } .quota-row b.warn { color: #fbbf24; } .quota-row b.bad { color: #f87171; }
 .quota-hold { font-size: 11px; color: #fbbf24; margin-top: 4px; }
+
+.cost-est { font-size: 11px; color: var(--muted); border: 1px dashed var(--line); border-radius: 10px; padding: 0 6px; }
