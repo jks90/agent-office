@@ -174,6 +174,16 @@ Cada respuesta del Guía (vista Guía y cajón flotante, también dentro del ifr
 - **Variables**: `AO_TTS_CMD` (sustituye a piper: se ejecuta con `<salida.wav> <voz> <idioma>` y recibe el texto por stdin; sirve para probar sin piper), `AO_TTS_VOICES_DIR` (carpeta de modelos), `AO_TTS_VOICES`, `AO_TTS_HF_BASE`, `AO_TTS_OPENAI_MODEL`, `AO_OPENAI_BASE`.
 - **Prueba**: `node scripts/tts-e2e.mjs [captura.png]` (servidor temporal con `AO_TTS_CMD` falso que genera un WAV, Chrome headless con autoplay): API, ▶ con el texto plano, `play`/`ended` del `<audio>`, ⏸, una sola reproducción, cambio y prueba de voz en Ajustes, 503 con respaldo del navegador y botón deshabilitado sin ninguno.
 
+## Un worktree por cada repo del proyecto (FT-44)
+
+Si el proyecto tiene varios repos, cada tarea real (motores claude/codex) recibe un worktree y la rama `ao/<código>` en **todos**: el principal (`task.repo`) en `data/worktrees/<proyecto>/<código>/` como siempre y los demás como hermanos `data/worktrees/<proyecto>/<código>.<repoKey>/` (anidarlos en el principal los ensuciaría). El prompt lista cada repo con **su** ruta de worktree y prohíbe escribir en los checkouts principales; los motores reciben los demás worktrees como directorios adicionales (`--add-dir`).
+
+- **Schema aditivo**: `task.branch`/`task.diffStat` siguen siendo los del repo principal; `task.repos = { <key>: { branch, diffStat, sha } }` trae todos. Al terminar se confirma en cada worktree y los repos **sin cambios se sueltan** (worktree y rama fuera) para no fusionar nada vacío.
+- **Revisión**: la tarjeta/modal enseña un diffStat por repo, el diff (`GET /api/tasks/:id/diff`, «Ver cambios») recorre todos con cabecera `══ repo <key> ══`, y las tools `agent.getModifiedFiles` (ficheros de otros repos con prefijo `repo:`, más `repos`), `agent.getArtifacts` (commits y diffStat por repo) y `task.get` entienden varios repos. `git.diff` del Guide ya es por clave de repo (una llamada por repo).
+- **Aprobar / Devolver / Actualizar con main (FT-19)**: se ponen al día todas las ramas antes de fusionar ninguna; si una choca, la tarea vuelve al agente con el feedback del repo afectado («Tu rama choca con main (repo api, tu worktree …) en: …») y no se fusiona nada. Borrar la tarea quita todos los worktrees y ramas. `behind`/`conflicts` de la tarea son la suma de los repos (`repo:ruta` fuera del principal).
+- **Guardarraíl**: se guarda el `git status --porcelain` de cada checkout principal al empezar y al terminar; si hay líneas nuevas, la tarea lleva `outsideWrites: [{ repo, path, files }]`, la tarjeta un chip «⚠ escribió fuera de su worktree» y el modal el detalle (también en `agent.getArtifacts`). Es solo un aviso para el humano: no se fusiona ni se revierte nada. Con tareas simultáneas en el mismo repo puede haber falsos avisos.
+- e2e: `node scripts/multirepo-e2e.mjs` (2 repos git temporales, `claude` falso).
+
 ## Fusión sin conflictos a mano (FT-19)
 
 Las tareas nacen de la rama base en su worktree; si varias tocan los mismos ficheros, al aprobar la fusión chocaba y había que resolverla a mano. Ahora lo gestiona el plugin:

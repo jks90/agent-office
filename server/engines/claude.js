@@ -28,7 +28,7 @@ const RTK_BIN = [process.env.AO_RTK_BIN, path.join(os.homedir(), '.local/bin/rtk
 export const rtkBin = () => RTK_BIN;
 export const rtkAvailable = () => !!RTK_BIN && process.env.AO_RTK !== 'off';
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kind, roleTools, hasSkills, budgetUsd, effort, resumeSession, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {}, onEvent = () => {} }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kind, roleTools, hasSkills, budgetUsd, effort, resumeSession, addDirs = [], env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {}, onEvent = () => {} }) {
   // FT-59: --tools limita las herramientas DISPONIBLES (sus definiciones no se envían); --allowedTools, lo que se permite sin preguntar.
   const scope = claudeScope({ kind, mode, roleTools, hasSkills });
   const tools = [...scope.allowed];
@@ -48,6 +48,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kin
     mcpServers['flow-test'] = { type: 'http', url: mcpUrl };
     tools.push('mcp__flow-test');
   }
+  if (addDirs.length) args.push('--add-dir', ...addDirs); // FT-44: worktrees de los demás repos del proyecto
   if (codeIndex) { // FT-58: índice de código local (stdio); solo lectura de símbolos
     mcpServers[SERVER_NAME] = { type: 'stdio', command: codeIndex.command, args: [], env: codeIndex.env };
     tools.push(`mcp__${SERVER_NAME}`);

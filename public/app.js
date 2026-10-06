@@ -964,9 +964,16 @@ $('#board').addEventListener('drop', (e) => {
 // FT-19: estado de la rama en revisión respecto a la base (lo calcula el servidor): desfasada N commits / conflicto en ficheros.
 const baseOf = (t) => { const rs = S.projects.find((p) => p.id === t.projectId)?.repos || []; return (rs.find((r) => r.key === t.repo) || rs[0])?.baseBranch || 'main'; };
 const mergeChips = (t) => t.status !== 'review' || !t.branch ? '' : [
+  (t.outsideWrites || []).length ? `<span class="merge-chip conflict" title="FT-44: cambios sin confirmar en el checkout principal de ${esc(t.outsideWrites.map((o) => o.repo).join(', '))}: no pasan por esta revisión">⚠ escribió fuera de su worktree</span>` : '',
   t.behind ? `<span class="merge-chip behind" title="A la rama le faltan ${t.behind} commits de ${esc(baseOf(t))}: «Actualizar con ${esc(baseOf(t))}» los trae (al aprobar se hace solo)">desfasada ${t.behind} commit${t.behind === 1 ? '' : 's'}</span>` : '',
   (t.conflicts || []).length ? `<span class="merge-chip conflict" title="${esc(t.conflicts.join('\n'))}">⚠ conflicto en ${esc(t.conflicts.slice(0, 2).join(', '))}${t.conflicts.length > 2 ? ` +${t.conflicts.length - 2}` : ''}</span>` : '',
 ].join(' ');
+// FT-44: tarea con rama en varios repos → un diffStat por repo; escribir fuera del worktree → aviso para el humano.
+const repoStats = (t) => Object.entries(t.repos || {}).filter(([, r]) => r.diffStat);
+const diffStatsHtml = (t, cls = '') => repoStats(t).length > 1
+  ? repoStats(t).map(([k, r]) => `<pre${cls}><b>📁 ${esc(k)}</b> · ${esc(r.branch || t.branch || '')}\n${esc(r.diffStat)}</pre>`).join('')
+  : (t.diffStat ? `<pre${cls}>${esc(t.diffStat)}</pre>` : '');
+const outsideWarn = (t) => (t.outsideWrites || []).length ? `<div class="task-sec outside-warn"><h4>⚠ Escribió fuera de su worktree</h4><p>Hay cambios sin confirmar en el checkout principal que no pasan por esta revisión (no se fusionarán con «Aprobar» y pueden estar sirviéndose ya):</p><ul>${t.outsideWrites.map((o) => `<li><code>${esc(o.repo)}</code> · ${esc(o.path)}<br>${o.files.map((f) => `<code>${esc(f)}</code>`).join(' · ')}</li>`).join('')}</ul></div>` : '';
 const updateBtn = (t) => t.status === 'review' && t.branch && t.behind ? `<button class="small ghost" data-update="${t.id}" title="Fusiona ${esc(baseOf(t))} en la rama de la tarea; si choca, vuelve al agente con el conflicto">⬆ Actualizar con ${esc(baseOf(t))}</button>` : '';
 
 // FT-50: quién hará la tarea. Fijo (el agente que la tiene o el asignado con «Asignar a…»), previsto (`plannedAgentId`, que el
@@ -1900,7 +1907,8 @@ function openTask(id) {
     ${t.feedback ? `<div class="task-sec"><h4>Comentarios de revisión</h4><div class="md">${md(t.feedback)}</div></div>` : ''}
     ${t.summary ? `<div class="task-sec"><h4>Resumen del agente</h4><div class="md">${md(t.summary)}</div></div>` : ''}
     ${mergeChips(t) ? `<div class="task-sec"><h4>Estado frente a ${esc(baseOf(t))}</h4><div>${mergeChips(t)}</div>${(t.conflicts || []).length ? `<ul>${t.conflicts.map((f) => `<li><code>${esc(f)}</code></li>`).join('')}</ul>` : ''}</div>` : ''}
-    ${t.diffStat ? `<div class="task-sec"><h4>Cambios en la rama ${esc(t.branch || '')}</h4><pre class="md">${esc(t.diffStat)}</pre></div>` : ''}
+    ${outsideWarn(t)}
+    ${t.diffStat || repoStats(t).length ? `<div class="task-sec"><h4>Cambios en la rama ${esc(t.branch || '')}${repoStats(t).length > 1 ? ` (${repoStats(t).length} repos)` : ''}</h4>${diffStatsHtml(t, ' class="md"')}</div>` : ''}
     ${t.error ? `<div class="task-sec"><h4>Error</h4><div class="md bad">${esc(t.error)}</div></div>` : ''}
     ${t.costUsd > 0 ? '<div class="task-sec" id="task-costs"><h4>💸 Coste (FT-76)</h4><span class="muted">leyendo…</span></div>' : ''}
     <div class="task-acts">${acts.join('')}<div class="spacer"></div><button class="ghost" value="cancel">Cerrar</button></div>`, null, 'task');
@@ -2015,7 +2023,8 @@ document.addEventListener('click', async (e) => {
           : l.startsWith('@@') ? `<span class="diff-hunk">${l}</span>` : l).join('\n');
     return dialog(`<h3>${esc(tcode(t))} ${esc(t.title)}</h3>
       ${t.summary ? `<p>${esc(t.summary)}</p>` : ''}
-      ${t.diffStat ? `<pre>${esc(t.diffStat)}</pre>` : ''}
+      ${outsideWarn(t)}
+      ${diffStatsHtml(t)}
       <pre>${html}</pre>${buttons(null)}`, null, 'wide');
   }
   if (d.importFlow !== undefined) {
