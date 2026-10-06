@@ -8,6 +8,7 @@ import * as store from './store.js';
 import { prefixOf } from './codes.js';
 import * as questions from './questions.js';
 import * as team from './team.js';
+import * as costs from './costs.js'; // FT-76
 import { allRoles } from './roles.js';
 import { checkSuite, suiteInfo } from './suite.js';
 import * as auth from './engines/auth.js';
@@ -143,6 +144,12 @@ const routes = [
   ['POST', /^\/api\/projects$/, (_, b) => team.createProject(b)],
   ['DELETE', /^\/api\/projects\/(\w+)$/, ([id]) => team.deleteProject(id)],
   ['PATCH', /^\/api\/projects\/(\w+)$/, ([id], b) => team.updateProject(id, b)],
+  // Costes de los agentes (FT-76): KPI, desglose y línea base interactiva. Para seguirlo desde flows de flow-test.
+  ['GET', /^\/api\/costs$/, () => costs.overview(store.get())],
+  ['GET', /^\/api\/costs\/export$/, (_, __, q) => { const rows = costs.exportRows(store.get()); return q.format === 'csv' ? { csv: costs.toCsv(rows) } : rows; }],
+  ['GET', /^\/api\/costs\/baseline$/, () => costs.readBaseline()],
+  ['POST', /^\/api\/costs\/baseline$/, (_, b) => costs.addBaseline(b, fail)],
+  ['GET', /^\/api\/costs\/(\w+)\/([\w-]+)$/, ([pid, tid]) => { const t = store.get().tasks.find((x) => x.projectId === pid && (x.id === tid || x.code === tid)); if (!t) throw fail(404, 'Tarea no encontrada'); return costs.taskDetail(t); }],
   // Resumen compacto de las tareas de un proyecto (para seguimiento desde flows de flow-test)
   ['GET', /^\/api\/projects\/(\w+)\/tasks$/, ([id]) => { const s = store.get(); return s.tasks.filter((t) => t.projectId === id).map((t) => ({ id: t.id, code: t.code, status: t.status, kind: t.kind, role: t.role, repo: t.repo, agent: s.agents.find((a) => a.id === t.agentId)?.name || null, title: t.title, dependsOn: t.dependsOn, costUsd: t.costUsd, summary: (t.summary || '').slice(0, 300), updatedAt: t.updatedAt })); }],
   ['POST', /^\/api\/projects\/(\w+)\/import-flow$/, ([id], b) => team.importFlow(id, b.path)],
@@ -215,6 +222,7 @@ const routes = [
     if (typeof b.agentMemory === 'boolean') st.agentMemory = b.agentMemory; // FT-75
     if (b.maxTaskUsd !== undefined) st.maxTaskUsd = Math.max(0.5, Math.min(50, Number(b.maxTaskUsd) || 3)); // tope de gasto por intento de tarea
     if (['low', 'medium', 'high'].includes(b.agentEffort)) st.agentEffort = b.agentEffort;
+    if (b.costTargetPct !== undefined) st.costTargetPct = Math.max(10, Math.min(500, Number(b.costTargetPct) || 100)); // FT-76: objetivo «coste por tarea aprobada ≤ X % del interactivo»
     if (b.maxParallel) st.maxParallel = Math.max(1, Math.min(8, Number(b.maxParallel) || 4));
     if (typeof b.guideModel === 'string') st.guideModel = b.guideModel.trim();
     if (guide.providerNames().includes(b.guideProvider)) st.guideProvider = b.guideProvider;

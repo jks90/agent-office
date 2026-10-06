@@ -20,7 +20,7 @@ const PLAN_TOOLS = ['Read', 'Glob', 'Grep', ASK_RULE, 'Bash(ls *)', 'Bash(cat *)
 const RTK_BIN = [process.env.AO_RTK_BIN, path.join(os.homedir(), '.local/bin/rtk'), '/usr/local/bin/rtk'].find((f) => f && fs.existsSync(f)) || null;
 export const rtkAvailable = () => !!RTK_BIN && process.env.AO_RTK !== 'off';
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, effort, resumeSession, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, effort, resumeSession, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {}, onEvent = () => {} }) {
   const tools = [...(mode === 'plan' ? PLAN_TOOLS : WORK_TOOLS)];
   // FT-5: entrada stream-json con stdin abierto → se pueden inyectar mensajes del cliente en caliente.
   const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--append-system-prompt', system];
@@ -65,6 +65,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, eff
     let ev;
     try { ev = JSON.parse(line); } catch { if (line.trim()) onLog(line); return; }
     if (closeTimer && ev.type !== 'result') cancelClose(); // otro turno en marcha
+    onEvent(ev); // FT-76: telemetría por turno
     const u = tracker.feed(ev); // FT-26: solo cifras de uso
     if (u) onUsage(u);
     if (ev.type === 'assistant') {

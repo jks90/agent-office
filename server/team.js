@@ -9,6 +9,7 @@ import * as git from './git.js';
 import { allRoles, roleOf } from './roles.js';
 import { parseTasks } from './engines/describe.js';
 import { addUsage } from './usage.js';
+import { recorder as costRecorder } from './costs.js'; // FT-76
 import * as demo from './engines/demo.js';
 import * as claude from './engines/claude.js';
 import * as codex from './engines/codex.js';
@@ -490,6 +491,7 @@ export async function reject(id, feedback = '', images = [], attachments = []) {
   for (const a of attachments) { if (/\.(png|jpe?g|webp)$/i.test(a.path)) images = [...images, a.path]; else t.files = [...(t.files || []), a.path]; }
   if (!['review', 'failed'].includes(t.status)) throw fail(409, 'Solo se devuelven tareas en revisión o fallidas');
   // La rama y el worktree se conservan: el agente corrige sobre su intento anterior.
+  t.returns = (t.returns || 0) + 1; // FT-76: devoluciones (KPI «aprobadas a la primera»)
   if (feedback.trim()) t.feedback = [t.feedback, feedback.trim()].filter(Boolean).join('\n');
   // FT-75: cada corrección de una revisión se recuerda (la primera frase) para no repetir el error en otras tareas
   if (feedback.trim() && t.agentId && get().settings.agentMemory !== false) memory.addLesson(t.projectId, t.agentId, `Corrección de revisión: ${feedback.trim().split(/(?<=[.!?])\s|\n/)[0]}`, t.code || t.id);
@@ -865,7 +867,9 @@ async function runTask(p, agent, t) {
     t.pendingMessages = []; // ya van en el prompt
     const baseUsage = t.usage || null; // FT-26: consumo de intentos anteriores; t.usage es acumulado y se actualiza en vivo
     agent.usage = null; // sesión nueva
+    const rec = costRecorder({ projectId: t.projectId, taskId: t.id, attempt: t.attempts, engine: engineId, model: modelFor(engineId, agent, role) || '', role: t.role }); // FT-76
     const job = engine.start({
+      onEvent: (e) => rec.feed(e),
       agent, task: t, project: p, cwd, mode: t.kind === 'plan' ? 'plan' : 'work', goal: t.goal, roles,
       prompt,
       images: (t.feedbackImages || []).filter((f) => fs.existsSync(f)),
@@ -885,6 +889,7 @@ async function runTask(p, agent, t) {
     const entry = jobs.get(agent.id);
     Object.assign(entry, { stop: job.stop, engine: engineId, pid: job.pid, pause: job.pause, resume: job.resume, message: job.message });
     const res = await job.done;
+    rec.finish(); // FT-76
 
     if (res.costUsd != null) t.costUsd = (t.costUsd || 0) + res.costUsd;
     if (res.sessionId) Object.assign(t, { sessionId: res.sessionId, sessionAt: Date.now(), sessionEngine: engineId });
