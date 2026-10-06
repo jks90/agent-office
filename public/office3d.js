@@ -83,8 +83,8 @@ const MINT = 0x9fd8c3, WOOD = 0xd8b48a, SCREEN_ON = 0x8fe3c7, WALL_TINT = 0xe9f0
 const SLAB_H = 0.14;                         // losa entre plantas
 // FT-77 v2 (fiel a la referencia): UN edificio — plantas alineadas en un solo eje, paredes más altas que en la sala para que
 // el interior se vea por el frente abierto, y solo una losa fina entre plantas (18–30 px en 1920×1080).
-const BWALL_H = 2.4;                         // altura de pared de una planta del edificio
-const FLOOR_GAP = 0.16;                      // aire entre plantas (losa vista)
+const BWALL_H = 3.15;                        // altura de pared de una planta del edificio (FT-81: ≥170 px a 1920×1080; con 2,4 salían 141 px)
+const FLOOR_GAP = 0.2;                       // aire entre plantas (losa vista ≥ 18 px)
 const FLOOR_H = BWALL_H + SLAB_H + FLOOR_GAP; // altura de una planta (pared + losa + aire)
 const FLOOR_Z_STEP = 0;                      // un único eje vertical (antes las plantas avanzaban en diagonal)
 const BUILDING_CAM_DIR = [1, 0.62, 1];       // cámara algo más baja que la de la sala: se ve dentro de cada planta
@@ -1342,7 +1342,8 @@ export class Office3D {
     this.frameCamera(w / avail, this.viewBox());
     const fw = this.floorPxWidth(0, w);
     let h = avail;
-    if (fw && fw < 560) h = Math.min(avail * 4, Math.round(avail * (620 / fw)));
+    // FT-81: crece solo hasta el mínimo legible (575 px); con 620 un edificio de 3 plantas ya pedía scroll y pasaba del 80 % del alto
+    if (fw && fw < 560) h = Math.min(avail * 4, Math.round(avail * (575 / fw)));
     if (h > avail + 2) {
       this.cv.style.height = h + 'px';
       if (this.labelRoot) { this.labelRoot.style.height = h + 'px'; this.labelRoot.style.bottom = 'auto'; }
