@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { codexTracker, codexCostUsd, tokensForUsd } from '../usage.js';
 import { codexScope } from './toolscope.js';
 import { rtkBin, rtkAvailable } from './claude.js';
+import { SERVER_NAME } from '../codeindex.js';
 
 // FT-57: filtro del hook de RTK (solo reescrituras de la lista blanca).
 const RTK_FILTER = fileURLToPath(new URL('../../bin/ao-rtk-codex.mjs', import.meta.url));
@@ -38,13 +39,18 @@ function bwrapWorks() {
   return sandboxOk;
 }
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, kind, images = [], budgetUsd, maxTokens, effort, resumeSession, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kind, images = [], budgetUsd, maxTokens, effort, resumeSession, addDirs = [], env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {}, onEvent = () => {} }) {
   const noSandbox = !bwrapWorks();
   const sandbox = mode === 'plan' ? 'read-only' : 'workspace-write';
   const args = ['exec', '--json', '--skip-git-repo-check', '-C', cwd, ...(noSandbox ? ['--dangerously-bypass-approvals-and-sandbox'] : ['-s', sandbox])];
   if (noSandbox) onLog('⚠ Codex sin sandbox (bwrap no disponible bajo el servicio): aislamiento por worktree + revisión');
+  for (const d of addDirs) args.push('--add-dir', d); // FT-44: worktrees de los demás repos del proyecto
   if (model) args.push('-m', model);
   if (mcpUrl && mode !== 'plan') args.push('-c', `mcp_servers.flow_test.url="${mcpUrl}"`);
+  if (codeIndex) { // FT-58: servidor MCP stdio por -c (TOML; los guiones del nombre pasan a «_»)
+    const k = `mcp_servers.${SERVER_NAME.replace(/-/g, '_')}`;
+    args.push('-c', `${k}.command=${JSON.stringify(codeIndex.command)}`, '-c', `${k}.args=[]`, '-c', `${k}.env={${Object.entries(codeIndex.env).map(([n, v]) => `${n}=${JSON.stringify(v)}`).join(',')}}`);
+  }
   for (const c of codexScope({ kind, mode, images })) args.push('-c', c); // FT-59: sin herramientas que el rol no usa
   const useRtk = rtkAvailable() && mode !== 'plan';
   args.push(...configArgs({ effort, rtk: useRtk ? rtkBin() : null, mode }));
@@ -73,6 +79,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, kind, images =
   readline.createInterface({ input: child.stdout }).on('line', (line) => {
     let ev;
     try { ev = JSON.parse(line); } catch { if (line.trim()) onLog(line); return; }
+    onEvent(ev); // FT-76: telemetría por turno
     const u = tracker.feed(ev); // FT-26: solo cifras de uso
     if (u) {
       onUsage(u);

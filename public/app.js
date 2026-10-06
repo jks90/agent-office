@@ -221,10 +221,11 @@ const GUIDE_HINTS = ['Créame una tarea para solucionar esto', '¿Cómo va?', '�
 
 function guideMount(el, panel) {
   if (guideRoots.some((r) => r.el === el)) return;
-  el.innerHTML = `<div class="guide">
-    <div class="g-list"><button class="small" data-g="new">＋ Nuevo chat</button><div class="g-chats"></div></div>
+  el.innerHTML = `<div class="guide ${panel ? 'panel' : ''}">
+    <div class="g-list" tabindex="0" title="↑/↓ cambian de chat · Supr borra · Ctrl+N nuevo"><div class="g-lhead"><button class="small" data-g="new" title="Nuevo chat (Ctrl+N)">＋<span class="g-lbl"> Nuevo chat</span></button><button class="ghost small g-fold" data-g="fold"></button></div><div class="g-chats"></div><button class="ghost small g-delall" data-g="delall">Borrar todos…</button></div>
+    <div class="g-grip" title="Arrastra para ensanchar · doble clic = ancho por defecto"></div>
     <div class="g-main">
-      <div class="g-head"><b class="g-title">🧭 Guía</b><button class="ghost small g-ear" data-g="ear" hidden></button>${panel ? '<select class="g-pick" title="Chats"></select><button class="ghost small" data-g="new">＋</button><button class="ghost small" data-g="close" title="Cerrar (Ctrl+G)">✕</button>' : ''}</div>
+      <div class="g-head"><b class="g-title">🧭 Guía</b><button class="ghost small g-ear" data-g="ear" hidden></button><span class="g-pickbar"><select class="g-pick" title="Chats"></select><button class="ghost small" data-g="new">＋</button><button class="ghost small g-pdel" data-g="delcur" title="Borrar este chat">🗑</button></span>${panel ? '<button class="ghost small" data-g="close" title="Cerrar (Ctrl+G)">✕</button>' : ''}</div>
       <div class="g-msgs"></div>
       <div class="g-voice" hidden><span class="g-vtxt"></span><i class="g-vlevel"></i></div>
       <form class="g-form"><button type="button" class="ghost g-mic" data-g="mic" title="Mantén pulsado para hablar (o barra espaciadora con la caja vacía)">🎤</button><textarea rows="1" placeholder="Pídeme algo…" title="Intro envía · Mayús+Intro salto de línea · barra espaciadora con la caja vacía = hablar"></textarea><button class="g-send">Enviar</button><button type="button" class="ghost g-stop" data-g="stop" hidden>■ Parar</button></form>
@@ -244,17 +245,42 @@ function guideMount(el, panel) {
   mic.addEventListener('keyup', (e) => { if (e.key === ' ') voiceHold(false); });
   ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 140) + 'px'; });
   el.addEventListener('click', (e) => {
-    const b = e.target.closest('[data-g], [data-gchat], [data-ghint]');
+    const b = e.target.closest('[data-g], [data-gchat], [data-gdel], [data-ghint]');
     if (!b) return;
     if (b.dataset.g === 'new') guideNew();
+    else if (b.dataset.g === 'fold') guideFold();
+    else if (b.dataset.g === 'delall') guideDeleteAll();
+    else if (b.dataset.g === 'delcur') { if (G.chatId) guideDelete(G.chatId); }
+    else if (b.dataset.gdel) guideDelete(b.dataset.gdel);
     else if (b.dataset.g === 'stop') guideStop();
     else if (b.dataset.g === 'close') guideToggle(false);
     else if (b.dataset.g === 'ear') wakeSet(false);
     else if (b.dataset.g === 'play') ttsSpeak(G.messages[b.dataset.i]?.text, Number(b.dataset.i));
-    else if (b.dataset.gchat) guideOpen(b.dataset.gchat);
+    else if (b.dataset.gchat) guideOpen(b.dataset.gchat).then(() => el.querySelector('.g-chat.sel')?.focus()); // el pintado rehace la lista: se devuelve el foco para el teclado (FT-51)
     else if (b.dataset.ghint) { ta.value = b.dataset.ghint; ta.focus(); }
   });
   el.addEventListener('toggle', (e) => { const d = e.target.closest?.('.g-tool'); if (d && G.messages[d.dataset.i]) G.messages[d.dataset.i].open = d.open; }, true); // el pintado rehace el HTML: recordar qué tool call está desplegada
+  // Lista de chats (FT-51): tirador (ratón y dedo) y teclado
+  const grip = el.querySelector('.g-grip');
+  grip.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); grip.setPointerCapture(e.pointerId);
+    const x0 = e.clientX, w0 = GL.w;
+    const move = (ev) => guideListWidth(w0 + ev.clientX - x0);
+    const up = () => { grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', up); grip.removeEventListener('pointercancel', up); safeSet('ao:guideListW', String(GL.w)); };
+    grip.addEventListener('pointermove', move); grip.addEventListener('pointerup', up); grip.addEventListener('pointercancel', up);
+  });
+  grip.addEventListener('dblclick', () => { guideListWidth(220); safeSet('ao:guideListW', '220'); });
+  el.querySelector('.g-list').addEventListener('keydown', async (e) => {
+    if (e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'n') { e.preventDefault(); guideNew(); return; }
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    const i = G.chats.findIndex((c) => c.id === G.chatId);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const next = G.chats[e.key === 'ArrowDown' ? Math.min(G.chats.length - 1, i + 1) : Math.max(0, i - 1)];
+      if (next && next.id !== G.chatId) await guideOpen(next.id);
+      el.querySelector('.g-chat.sel')?.focus();
+    } else if (e.key === 'Delete' && i >= 0) { e.preventDefault(); await guideDelete(G.chatId); el.querySelector('.g-list').focus(); }
+  });
   el.querySelector('.g-pick')?.addEventListener('change', (e) => (e.target.value ? guideOpen(e.target.value) : guideNew()));
   guideRender();
 }
@@ -272,7 +298,14 @@ function guideRender() {
     if (atBottom || G.busy) msgs.scrollTop = msgs.scrollHeight;
     const cur = G.chats.find((c) => c.id === G.chatId);
     el.querySelector('.g-title').textContent = panel ? '🧭' : '🧭 ' + (cur?.title || 'Nuevo chat');
-    el.querySelector('.g-chats').innerHTML = G.chats.map((c) => `<button class="g-chat ${c.id === G.chatId ? 'sel' : ''}" data-gchat="${c.id}" title="${esc(c.title)}">${c.busy ? '⏳ ' : ''}${esc(c.title)}</button>`).join('') || '<p class="muted small">Sin chats todavía</p>';
+    const lock = (c) => c.busy || (G.busy && c.id === G.chatId); // un turno en curso no se borra
+    el.querySelector('.g-chats').innerHTML = G.chats.map((c) => `<div class="g-row ${c.id === G.chatId ? 'sel' : ''}"><button class="g-chat ${c.id === G.chatId ? 'sel' : ''}" data-gchat="${c.id}" title="${esc(c.title)}${c.updatedAt ? ' · ' + esc(new Date(c.updatedAt).toLocaleString()) : ''}">${c.busy ? '⏳ ' : ''}${esc(c.title)}</button><button class="ghost g-del" data-gdel="${c.id}" ${lock(c) ? 'disabled' : ''} title="${lock(c) ? 'Hay un turno en curso: espera o pulsa «Parar»' : 'Borrar este chat'}">🗑</button></div>`).join('') || '<p class="muted small">Sin chats todavía</p>';
+    el.querySelector('.g-list').classList.toggle('min', GL.min);
+    const fold = el.querySelector('.g-fold');
+    fold.textContent = GL.min ? '▶' : '◀'; fold.title = GL.min ? 'Expandir la lista' : 'Plegar la lista';
+    el.querySelector('.g-delall').disabled = !G.chats.length;
+    const pdel = el.querySelector('.g-pdel');
+    pdel.disabled = !cur || lock(cur); pdel.title = cur && lock(cur) ? 'Hay un turno en curso: espera o pulsa «Parar»' : 'Borrar este chat';
     const pick = el.querySelector('.g-pick');
     if (pick) pick.innerHTML = `<option value="">＋ Nuevo chat</option>${G.chats.map((c) => `<option value="${c.id}" ${c.id === G.chatId ? 'selected' : ''}>${esc(c.title.slice(0, 40))}</option>`).join('')}`;
     el.querySelector('.g-send').hidden = G.busy;
@@ -298,11 +331,38 @@ function guideMsg(m, i) {
     <pre>${esc(JSON.stringify(m.args || {}, null, 1))}</pre>${m.result != null ? `<pre class="${m.ok ? '' : 'bad'}">${esc(m.result.slice(0, 4000))}</pre>` : ''}</details>`;
 }
 
-async function guideRefresh() { try { G.chats = await api('GET', '/api/guide/chats'); } catch { /* sin servidor */ } G.loaded = true; guideRender(); }
+const guideGone = new Set(); // ids borrados: una carga de la lista en vuelo no los resucita (FT-51)
+async function guideRefresh() { try { G.chats = (await api('GET', '/api/guide/chats')).filter((c) => !guideGone.has(c.id)); } catch { /* sin servidor */ } G.loaded = true; guideRender(); }
 async function guideOpen(id) {
   if (G.busy) return toast('Espera a que el Guía termine o pulsa «Parar»');
   ttsStop(); G.chatId = id; safeSet('ao:guide-chat', id);
   try { G.messages = (await api('GET', `/api/guide/chats/${id}`)).messages; } catch { G.chatId = null; G.messages = []; }
+  guideRender();
+}
+// Lista de chats (FT-51): ancho y plegado se recuerdan en localStorage
+const GL = { w: 220, min: safeGet('ao:guideListMin') === '1' };
+function guideListWidth(w) { GL.w = Math.max(160, Math.min(480, Math.round(w) || 220)); document.documentElement.style.setProperty('--g-list-w', GL.w + 'px'); }
+guideListWidth(Number(safeGet('ao:guideListW')) || 220);
+function guideFold() { GL.min = !GL.min; safeSet('ao:guideListMin', GL.min ? '1' : '0'); guideRender(); }
+async function guideDelete(id) {
+  const c = G.chats.find((x) => x.id === id);
+  if (!c) return;
+  if (c.busy || (G.busy && id === G.chatId)) return toast('Hay un turno en curso: espera o pulsa «Parar»');
+  if (!confirm(`¿Borrar «${c.title}»?`)) return;
+  try { await api('DELETE', `/api/guide/chats/${id}`); } catch (e) { return toast(e.message || 'No se pudo borrar', 'err'); }
+  guideGone.add(id); G.chats = G.chats.filter((x) => x.id !== id);
+  if (id === G.chatId) { ttsStop(); G.chatId = null; G.messages = []; safeSet('ao:guide-chat', ''); }
+  guideRender();
+}
+async function guideDeleteAll() {
+  const del = G.chats.filter((c) => !c.busy && !(G.busy && c.id === G.chatId));
+  if (!del.length) return toast('No hay chats que se puedan borrar ahora');
+  if (!confirm(`¿Borrar ${del.length === G.chats.length ? 'todos los chats' : `${del.length} chats (los que tienen un turno en curso se conservan)`}? No se puede deshacer.`)) return;
+  for (const c of del) { try { await api('DELETE', `/api/guide/chats/${c.id}`); } catch { /* ya no existía */ } }
+  const ids = new Set(del.map((c) => c.id));
+  ids.forEach((i) => guideGone.add(i));
+  G.chats = G.chats.filter((c) => !ids.has(c.id));
+  if (ids.has(G.chatId)) { G.chatId = null; G.messages = []; safeSet('ao:guide-chat', ''); }
   guideRender();
 }
 function guideNew() { if (G.busy) return; ttsStop(); G.chatId = null; G.messages = []; safeSet('ao:guide-chat', ''); guideRender(); guideRoots.forEach((r) => r.el.querySelector('textarea').focus()); }
@@ -965,9 +1025,16 @@ $('#board').addEventListener('drop', (e) => {
 // FT-19: estado de la rama en revisión respecto a la base (lo calcula el servidor): desfasada N commits / conflicto en ficheros.
 const baseOf = (t) => { const rs = S.projects.find((p) => p.id === t.projectId)?.repos || []; return (rs.find((r) => r.key === t.repo) || rs[0])?.baseBranch || 'main'; };
 const mergeChips = (t) => t.status !== 'review' || !t.branch ? '' : [
+  (t.outsideWrites || []).length ? `<span class="merge-chip conflict" title="FT-44: cambios sin confirmar en el checkout principal de ${esc(t.outsideWrites.map((o) => o.repo).join(', '))}: no pasan por esta revisión">⚠ escribió fuera de su worktree</span>` : '',
   t.behind ? `<span class="merge-chip behind" title="A la rama le faltan ${t.behind} commits de ${esc(baseOf(t))}: «Actualizar con ${esc(baseOf(t))}» los trae (al aprobar se hace solo)">desfasada ${t.behind} commit${t.behind === 1 ? '' : 's'}</span>` : '',
   (t.conflicts || []).length ? `<span class="merge-chip conflict" title="${esc(t.conflicts.join('\n'))}">⚠ conflicto en ${esc(t.conflicts.slice(0, 2).join(', '))}${t.conflicts.length > 2 ? ` +${t.conflicts.length - 2}` : ''}</span>` : '',
 ].join(' ');
+// FT-44: tarea con rama en varios repos → un diffStat por repo; escribir fuera del worktree → aviso para el humano.
+const repoStats = (t) => Object.entries(t.repos || {}).filter(([, r]) => r.diffStat);
+const diffStatsHtml = (t, cls = '') => repoStats(t).length > 1
+  ? repoStats(t).map(([k, r]) => `<pre${cls}><b>📁 ${esc(k)}</b> · ${esc(r.branch || t.branch || '')}\n${esc(r.diffStat)}</pre>`).join('')
+  : (t.diffStat ? `<pre${cls}>${esc(t.diffStat)}</pre>` : '');
+const outsideWarn = (t) => (t.outsideWrites || []).length ? `<div class="task-sec outside-warn"><h4>⚠ Escribió fuera de su worktree</h4><p>Hay cambios sin confirmar en el checkout principal que no pasan por esta revisión (no se fusionarán con «Aprobar» y pueden estar sirviéndose ya):</p><ul>${t.outsideWrites.map((o) => `<li><code>${esc(o.repo)}</code> · ${esc(o.path)}<br>${o.files.map((f) => `<code>${esc(f)}</code>`).join(' · ')}</li>`).join('')}</ul></div>` : '';
 const updateBtn = (t) => t.status === 'review' && t.branch && t.behind ? `<button class="small ghost" data-update="${t.id}" title="Fusiona ${esc(baseOf(t))} en la rama de la tarea; si choca, vuelve al agente con el conflicto">⬆ Actualizar con ${esc(baseOf(t))}</button>` : '';
 
 // FT-50: quién hará la tarea. Fijo (el agente que la tiene o el asignado con «Asignar a…»), previsto (`plannedAgentId`, que el
@@ -1376,6 +1443,8 @@ Pasos, convenciones y ejemplos…</textarea>
     <div class="grid2"><div><label>Escalera de modelos · Claude (de barato a caro, separados por coma; FT-60)</label><input name="ladder_claude" value="${esc((S.modelLadders?.claude || []).join(', '))}" placeholder="haiku, sonnet" /></div>
     <div><label>Escalera de modelos · Codex (el mini sale de models_cache.json)</label><input name="ladder_codex" value="${esc((S.modelLadders?.codex || []).join(', '))}" placeholder="gpt-5.5" /></div></div>
     <p class="muted">Cada tarea empieza en el primer peldaño y sube uno al devolverla desde revisión o si el agente falla (máx. 2 veces). Un modelo fijado en el agente o el rol no entra en la cascada.</p>
+    <label>Objetivo de costes (FT-76): coste por tarea aprobada ≤ X % del interactivo</label><input name="costTargetPct" type="number" min="10" max="500" step="5" value="${S.settings.costTargetPct || 100}" />
+    <label><input type="checkbox" name="cacheAffinity" ${S.settings.cacheAffinity !== false ? 'checked' : ''} /> Agrupar tareas del mismo repo y rol seguidas para aprovechar la caché del prompt (FT-64)</label>
     <label><input type="checkbox" name="stuckGuard" ${S.settings.stuckGuard !== false ? 'checked' : ''} /> Detectar agentes atascados: aviso y, si sigue, parar y pasar a Revisión (FT-62)</label>
     <div class="grid2"><div><label>Mismo comando/lectura (veces)</label><input name="stuckRepeat" type="number" min="2" max="20" value="${S.settings.stuckRepeat || 3}" /></div>
     <div><label>Errores de herramienta seguidos</label><input name="stuckErrors" type="number" min="2" max="30" value="${S.settings.stuckErrors || 4}" /></div>
@@ -1383,6 +1452,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <div><label>Tokens por turno sin cambios en el worktree</label><input name="stuckTokens" type="number" min="5000" step="5000" value="${S.settings.stuckTokens || 80000}" /></div></div>
     <label title="FT-57 · Codex: se corta al llegar a estos tokens (0 = el equivalente al tope en US$)">Tope en tokens por intento (solo Codex; 0 = el equivalente al de US$)</label><input name="maxTaskTokens" type="number" min="0" step="100000" value="${S.settings.maxTaskTokens || 0}" />
     <label><input type="checkbox" name="agentMemory" ${S.settings.agentMemory !== false ? 'checked' : ''} /> Memoria de los agentes: lecciones de tareas anteriores en el prompt (FT-75; ≈1 500 tokens máx. por agente y por proyecto)</label>
+    <label title="Codebase-Memory MCP (tree-sitter, local): el agente localiza funciones/clases con una consulta en vez de leer ficheros"><input type="checkbox" name="codeIndex" ${S.settings.codeIndex === true ? 'checked' : ''} ${S.codeIndexInstalled ? '' : 'disabled'} /> Índice de código por símbolos para Claude y Codex (FT-58)${S.codeIndexInstalled ? '' : ' — no instalado: ejecuta scripts/setup-code-index.sh'}</label>
     <label><input type="checkbox" name="quotaGuard" ${S.settings.quotaGuard !== false ? 'checked' : ''} /> Guardarraíl de cuota: no arrancar tareas con un motor cuya sesión de 5 h esté al ${97} % o más (FT-45)</label>
     <div class="section-title">🧭 Guía (FT-6)</div>
     <label>Proveedor del Guía (el LLM con el que conversa; los cuatro flujos funcionan igual con cualquiera) (FT-8)</label>
@@ -1429,7 +1499,7 @@ Pasos, convenciones y ejemplos…</textarea>
     safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0'); (SETTINGS_EMBED ? safeSet('ao:voice-wake', f.voiceWake ? '1' : '0') : wakeSet(!!f.voiceWake)); // en el panel de flow-test no se abre el micro: el iframe principal lo recoge por el evento `storage`
     refreshSttLocal();
     ttsStop();
-    await api('POST', '/api/settings', { ...f, quotaGuard: !!f.quotaGuard, stuckGuard: !!f.stuckGuard, agentMemory: !!f.agentMemory, modelLadder: { claude: f.ladder_claude || '', codex: f.ladder_codex || '' }, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
+    await api('POST', '/api/settings', { ...f, quotaGuard: !!f.quotaGuard, stuckGuard: !!f.stuckGuard, cacheAffinity: !!f.cacheAffinity, agentMemory: !!f.agentMemory, modelLadder: { claude: f.ladder_claude || '', codex: f.ladder_codex || '' }, codeIndex: !!f.codeIndex, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
     ttsInfoLoad();
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
@@ -1481,9 +1551,59 @@ function renderQuotaChip() {
   el.title = 'Cuota restante de las suscripciones (peor ventana de cada motor). Clic: abre el Resumen';
 }
 const SUM_COLS = [['backlog', 'Backlog'], ['todo', 'Por hacer'], ['doing', 'En curso'], ['review', 'Revisión'], ['done', 'Hecho'], ['failed', 'Fallidas']];
+// ── 💸 Costes (FT-76) ──────────────────────────────────────────────────────
+// Datos de GET /api/costs; se piden al abrir la pestaña y cuando cambia el coste acumulado (llega por el SSE), sin polling.
+let sumView = 'general', costsData = null, costsSig = '';
+const usd = (n) => (n == null ? 'n/d' : n.toFixed(n < 1 ? 3 : 2) + ' $');
+const CAUSES = [['arranque', 'Arranque', '#64748b'], ['lecturas', 'Lecturas', '#38bdf8'], ['comandos', 'Comandos', '#fbbf24'], ['imagenes', 'Imágenes', '#c084fc'], ['salida', 'Salida', '#34d399'], ['reintentos', 'Reintentos', '#f87171']];
+const stackBar = (b) => !b || !b.total ? '' : `<div class="cost-stack" title="${esc(CAUSES.map(([k, l]) => `${l} ${usd(b[k])}`).join(' · '))}">${CAUSES.filter(([k]) => b[k] > 0).map(([k, l, c]) => `<i style="width:${(100 * b[k] / b.total).toFixed(1)}%;background:${c}" title="${l} ${usd(b[k])}"></i>`).join('')}</div>`;
+const causeLegend = () => `<div class="cost-legend">${CAUSES.map(([, l, c]) => `<span><i style="background:${c}"></i>${l}</span>`).join('')}</div>`;
+function spark(vals) {
+  if (!vals?.length) return '';
+  const max = Math.max(...vals) || 1, w = 160, h = 28;
+  return `<svg class="cost-curve" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline fill="none" stroke="#38bdf8" stroke-width="1.5" points="${vals.map((v, i) => `${vals.length > 1 ? (i * w) / (vals.length - 1) : w / 2},${(h - 2 - (v / max) * (h - 4)).toFixed(1)}`).join(' ')}"/></svg>`;
+}
+function costDetailHtml(d) {
+  if (!d.telemetry) return `<span class="muted">Sin telemetría por turno (tarea anterior a FT-76). Coste total: ${usd(d.costUsd)}</span>`;
+  const b = d.breakdown;
+  return `<div>Total <b>${usd(d.costUsd)}</b> · intento aceptado (${d.attempts}º) ${usd(d.acceptedUsd)} · tirado ${usd(d.discardedUsd)} · ${d.turns} turnos · caché ${d.cachePct} % (ahorró ${usd(d.cacheSavedUsd)})</div>${stackBar(b)}${causeLegend()}
+    <div class="muted">Contexto por turno (tokens) ${spark(d.curve)} ${d.curve.length ? fmtN(d.curve.at(-1)) : ''}</div>
+    ${b.files.length ? `<table class="repos"><thead><tr><th>Ficheros que más costaron</th><th class="num">≈ $</th></tr></thead><tbody>${b.files.slice(0, 5).map((f) => `<tr><td><code>${esc(f.file)}</code></td><td class="num">${usd(f.usd)}</td></tr>`).join('')}</tbody></table>` : ''}
+    <p class="muted" style="margin:4px 0 0">El reparto por causa es una atribución estimada (README «Observabilidad de costes»).</p>`;
+}
+const groupTable = (title, rows) => `<table class="repos"><thead><tr><th>${title}</th><th class="num">Aprobadas</th><th class="num">Coste</th><th class="num">$/aprobada</th><th class="num">1ª vez</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.key)}</td><td class="num">${r.tasks}</td><td class="num">${usd(r.costUsd)}</td><td class="num">${usd(r.perApprovedUsd)}</td><td class="num">${r.firstTryPct} %</td></tr>`).join('') || '<tr><td colspan="5" class="muted">sin tareas aprobadas</td></tr>'}</tbody></table>`;
+function costsHtml(d) {
+  if (!d) return '<p class="muted">Leyendo costes…</p>';
+  const k = d.kpi, kp = (v, l, cls = '') => `<div class="kpi ${cls}"><b>${v}</b><span>${l}</span></div>`;
+  const cmp = k.ratioLinePct ?? k.ratioPct;
+  const tr = d.trend7d.map((x) => x.perApprovedUsd);
+  return `<div class="summary-kpis">
+      ${kp(usd(k.perApprovedUsd), `coste por tarea aprobada (${k.approved})`)}
+      ${kp(k.interactiveUsd != null ? usd(k.interactiveUsd) : 'n/d', 'interactivo (línea base)')}
+      ${kp(cmp != null ? cmp + ' %' : 'n/d', `agente vs interactivo · objetivo ≤ ${k.targetPct} %${k.ratioLinePct != null ? ' (por línea)' : ''}`, k.meetsTarget == null ? '' : k.meetsTarget ? 'on' : 'bad')}
+      ${kp(k.firstTryPct != null ? k.firstTryPct + ' %' : 'n/d', 'aprobadas a la primera')}
+      ${kp(usd(k.discardedUsd), 'gastado en intentos tirados', k.discardedUsd > 0 ? 'warn' : '')}${kp(usd(k.cacheSavedUsd), 'ahorro por caché')}
+      <div class="kpi"><b>${spark(tr)}</b><span>tendencia 7 días ($/aprobada)</span></div>
+    </div>
+    ${d.recommendations.length ? `<div class="section-title">💡 Recomendaciones</div><ul class="cost-recs">${d.recommendations.map((r) => `<li>${esc(r.text)}</li>`).join('')}</ul>` : ''}
+    <div class="section-title">Objetivo semana a semana</div>
+    ${d.weekly.length ? `<div class="cost-weeks">${d.weekly.map((w) => `<span class="chip" style="--c:${w.meetsTarget == null ? '#94a3b8' : w.meetsTarget ? '#34d399' : '#f87171'}" title="${w.approved} aprobadas · ${usd(w.perApprovedUsd)}">${esc(w.week)} · ${w.ratioPct != null ? w.ratioPct + ' %' : 'sin base'}</span>`).join(' ')}</div>` : '<span class="muted">sin tareas aprobadas</span>'}
+    <div class="grid2" style="gap:14px"><div>${groupTable('Rol', d.byRole)}</div><div>${groupTable('Modelo', d.byModel)}</div><div>${groupTable('Motor', d.byEngine)}</div><div>${groupTable('Proyecto', d.byProject)}</div></div>
+    <div class="section-title">Por tarea (desglose por causa)</div>${causeLegend()}
+    <table class="repos"><thead><tr><th>Tarea</th><th>Estado</th><th class="num">Coste</th><th>Desglose</th><th class="num">Turnos</th><th class="num">Caché</th><th>Contexto</th></tr></thead><tbody>${d.tasks.slice(0, 40).map((t) => `<tr data-cost-task="${esc(t.taskId)}"><td><b>${esc(t.code || t.taskId)}</b> <span class="muted">${esc((t.title || '').slice(0, 40))}</span></td><td>${esc(t.status)}</td><td class="num">${usd(t.costUsd)}</td><td style="min-width:160px">${t.breakdown ? stackBar(t.breakdown) : '<span class="muted">sin telemetría</span>'}</td><td class="num">${t.turns || '·'}</td><td class="num">${t.telemetry ? t.cachePct + ' %' : '·'}</td><td>${t.curve ? spark(t.curve) : ''}</td></tr>`).join('')}</tbody></table>
+    <p class="muted" style="margin:8px 2px">Línea base interactiva: ${d.baseline.length ? esc(d.baseline.map((b) => `${b.code} ${usd(b.costUsd)}`).join(' · ')) : 'sin importar (POST /api/costs/baseline con el transcript de Claude Code)'}. Export: <a href="/api/costs/export?format=csv" target="_blank">CSV</a> · <a href="/api/costs/export" target="_blank">JSON</a></p>`;
+}
+const sumTabs = () => `<div class="sum-tabs"><button class="small ${sumView === 'general' ? 'on' : 'ghost'}" data-sum-view="general">📋 General</button><button class="small ${sumView === 'costs' ? 'on' : 'ghost'}" data-sum-view="costs">💸 Costes</button></div>`;
+function renderCosts(el) {
+  const sig = S.tasks.map((t) => `${t.id}:${t.costUsd}:${t.status}`).join('|');
+  if (sig !== costsSig) { costsSig = sig; api('GET', '/api/costs').then((d) => { costsData = d; if (sumView === 'costs') renderSummary(); }).catch(() => {}); }
+  el.innerHTML = sumTabs() + costsHtml(costsData);
+}
+
 function renderSummary() {
   const el = $('#summary');
   if (!el) return;
+  if (sumView === 'costs') return renderCosts(el);
   const all = S.tasks, agents = S.agents, qs = S.questions || [];
   const byId = (id) => agents.find((a) => a.id === id);
   const rows = [...S.projects].map((p) => {
@@ -1503,7 +1623,7 @@ function renderSummary() {
   const n = (st) => all.filter((t) => t.status === st).length;
   const working = agents.filter((a) => a.status === 'working').length, paused = agents.filter((a) => a.status === 'paused').length;
   const kpi = (v, l, cls = '') => `<div class="kpi ${cls}"><b>${v}</b><span>${l}</span></div>`;
-  el.innerHTML = `
+  el.innerHTML = sumTabs() + `
     <div class="summary-kpis">
       ${kpi(S.projects.filter((p) => p.running).length + '/' + S.projects.length, 'proyectos en marcha', 'on')}
       ${kpi(`${working}${paused ? ' +' + paused + '⏸' : ''}/${agents.length}`, 'agentes trabajando', working ? 'on' : '')}
@@ -1531,6 +1651,10 @@ function renderSummary() {
   const sc = $('#tab-summary-count'); if (sc) sc.textContent = (all.filter((t) => t.status === 'review' && S.projects.find((p) => p.id === t.projectId)?.running).length + qs.length) || ''; // solo lo que pide acción: revisiones de proyectos en marcha + preguntas
 }
 document.addEventListener('click', async (e) => {
+  const sv = e.target.closest('[data-sum-view]');
+  if (sv) { sumView = sv.dataset.sumView; costsSig = ''; renderSummary(); return; }
+  const ct = e.target.closest('[data-cost-task]');
+  if (ct) { openTask(ct.dataset.costTask); return; }
   if (e.target.closest('[data-sum-empty]')) { sumShowEmpty = !sumShowEmpty; renderSummary(); return; }
   const fb = e.target.closest('[data-sum-failed]');
   if (fb) { e.stopPropagation(); failedDialog(fb.dataset.sumFailed === 'all' ? null : fb.dataset.sumFailed); return; }
@@ -1848,10 +1972,13 @@ function openTask(id) {
     ${t.feedback ? `<div class="task-sec"><h4>Comentarios de revisión</h4><div class="md">${md(t.feedback)}</div></div>` : ''}
     ${t.summary ? `<div class="task-sec"><h4>Resumen del agente</h4><div class="md">${md(t.summary)}</div></div>` : ''}
     ${mergeChips(t) ? `<div class="task-sec"><h4>Estado frente a ${esc(baseOf(t))}</h4><div>${mergeChips(t)}</div>${(t.conflicts || []).length ? `<ul>${t.conflicts.map((f) => `<li><code>${esc(f)}</code></li>`).join('')}</ul>` : ''}</div>` : ''}
-    ${t.diffStat ? `<div class="task-sec"><h4>Cambios en la rama ${esc(t.branch || '')}</h4><pre class="md">${esc(t.diffStat)}</pre></div>` : ''}
+    ${outsideWarn(t)}
+    ${t.diffStat || repoStats(t).length ? `<div class="task-sec"><h4>Cambios en la rama ${esc(t.branch || '')}${repoStats(t).length > 1 ? ` (${repoStats(t).length} repos)` : ''}</h4>${diffStatsHtml(t, ' class="md"')}</div>` : ''}
     ${t.error ? `<div class="task-sec"><h4>Error</h4><div class="md bad">${esc(t.error)}</div></div>` : ''}
+    ${t.costUsd > 0 ? '<div class="task-sec" id="task-costs"><h4>💸 Coste (FT-76)</h4><span class="muted">leyendo…</span></div>' : ''}
     <div class="task-acts">${acts.join('')}<div class="spacer"></div><button class="ghost" value="cancel">Cerrar</button></div>`, null, 'task');
   openTaskId = id;
+  if (t.costUsd > 0) api('GET', `/api/costs/${t.projectId}/${t.id}`).then((d) => { const el = $('#task-costs'); if (el) el.innerHTML = '<h4>💸 Coste (FT-76)</h4>' + costDetailHtml(d); }).catch(() => {});
   publishContext();
 }
 
@@ -1961,7 +2088,8 @@ document.addEventListener('click', async (e) => {
           : l.startsWith('@@') ? `<span class="diff-hunk">${l}</span>` : l).join('\n');
     return dialog(`<h3>${esc(tcode(t))} ${esc(t.title)}</h3>
       ${t.summary ? `<p>${esc(t.summary)}</p>` : ''}
-      ${t.diffStat ? `<pre>${esc(t.diffStat)}</pre>` : ''}
+      ${outsideWarn(t)}
+      ${diffStatsHtml(t)}
       <pre>${html}</pre>${buttons(null)}`, null, 'wide');
   }
   if (d.importFlow !== undefined) {
