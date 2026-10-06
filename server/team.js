@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import * as store from './store.js';
+import { orderTodo, CACHE_WINDOW_MS } from './affinity.js';
 import * as codes from './codes.js';
 import * as questions from './questions.js';
 import * as events from './events.js';
@@ -700,6 +701,12 @@ export function withPlannedAgents(s) {
   });
 }
 
+// FT-64 · Afinidad de caché: la caché de prompt dura ~5 min, y dos tareas seguidas del mismo repo+rol+motor comparten el
+// prefijo estable (system del rol + reglas + briefing). Se recuerda qué se lanzó y cuándo terminó cada «repo|rol|motor».
+const recentRuns = new Map(); // `${proyecto}|${repo}|${rol}|${motor}` → instante en que terminó
+const warmKey = (p, t, engine) => `${p.id}|${repoOfTask(p, t)?.key || ''}|${t.role}|${engine}`;
+const affinityOn = () => get().settings.cacheAffinity !== false;
+
 export function tick() {
   const s = get();
   if (!suiteOk()) return; // sin flow-test vigente, el equipo no arranca nada
@@ -708,10 +715,28 @@ export function tick() {
     if (!p.running) continue;
     const team = teamOf(p);
     let slots = (s.settings.maxParallel || 4) - team.filter((a) => jobs.has(a.id)).length;
-    const todo = s.tasks.filter((t) => t.projectId === p.id && t.status === 'todo').sort((a, b) => (b.quotaPaused ? 1 : 0) - (a.quotaPaused ? 1 : 0) || (b.priority || 0) - (a.priority || 0) || a.createdAt - b.createdAt); // FT-66: las pausadas por cuota, las primeras // prioridad alta primero; a igualdad, la más antigua
+    const todoAll = s.tasks.filter((t) => t.projectId === p.id && t.status === 'todo');
+    // Entradas calientes: lo que corre ahora (motor del agente si no es `auto`) y lo terminado hace <5 min
+    const hot = new Set();
+    const activeRepos = new Set(); // repos con alguna tarea corriendo (o lanzada en este tick)
+    if (affinityOn()) {
+      for (const [k, at] of recentRuns) if (Date.now() - at < CACHE_WINDOW_MS) hot.add(k); else recentRuns.delete(k);
+      for (const a of team) {
+        const j = jobs.get(a.id), jt = j && s.tasks.find((x) => x.id === j.taskId);
+        if (!jt || jt.projectId !== p.id) continue;
+        activeRepos.add(repoOfTask(p, jt)?.key || '');
+        hot.add(warmKey(p, jt, j.engine || a.engine));
+      }
+    }
+    const plannedEngine = (t) => plannedAgentFor(p, t, team, { roles, isBusy: () => false })?.engine;
+    const isWarm = (t) => { const e = plannedEngine(t); return !!e && (e === 'auto' ? [...hot].some((k) => k.startsWith(warmKey(p, t, ''))) : hot.has(warmKey(p, t, e))); };
+    const todo = orderTodo(todoAll, affinityOn() ? isWarm : undefined); // FT-66: las pausadas por cuota, las primeras
     for (const t of todo) {
       if (slots <= 0) break;
       if (!depsDone(t)) continue;
+      // FT-64: con repos ya ocupados y otra tarea de ellos esperando, no se abre un repo distinto (su caché no se compartiría)
+      const repoKey = repoOfTask(p, t)?.key || '';
+      if (affinityOn() && activeRepos.size && !activeRepos.has(repoKey) && todo.some((o) => o !== t && o.status === 'todo' && depsDone(o) && activeRepos.has(repoOfTask(p, o)?.key || ''))) continue;
       // FT-66: una tarea pausada por cuota vuelve con su mismo agente si está libre; si no, la regla de FT-50 (la que ve el usuario en la tarjeta)
       const pref = t.preferAgentId && team.find((a) => a.id === t.preferAgentId && !jobs.has(a.id));
       const agent = pref || plannedAgentFor(p, t, team, { roles, isBusy: (a) => jobs.has(a.id) });
@@ -723,6 +748,7 @@ export function tick() {
       if (!q.ok) { quotaHold(p, agent, t, q); continue; }
       quotaRelease(t);
       slots--;
+      activeRepos.add(repoKey);
       runTask(p, agent, t);
     }
   }
@@ -1075,6 +1101,7 @@ async function runTask(p, agent, t) {
     if (!jobs.get(agent.id)?.requeue) delete t.stuckWarned; // FT-62: solo sobrevive al reencolado con el aviso
     jobs.delete(agent.id);
     t.updatedAt = Date.now();
+    if (engineId && t.kind !== 'plan') recentRuns.set(warmKey(p, t, engineId), Date.now()); // FT-64: su prefijo sigue en caché ~5 min
     Object.assign(agent, { status: 'idle', taskId: null, activity: '', activeEngine: null });
     changed();
     tick();

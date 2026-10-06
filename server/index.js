@@ -213,6 +213,7 @@ const routes = [
     if (typeof b.workspaceHostDir === 'string') st.workspaceHostDir = b.workspaceHostDir.trim();
     if (typeof b.quotaGuard === 'boolean') st.quotaGuard = b.quotaGuard; // FT-45
     if (typeof b.agentMemory === 'boolean') st.agentMemory = b.agentMemory; // FT-75
+    if (typeof b.cacheAffinity === 'boolean') st.cacheAffinity = b.cacheAffinity; // FT-64
     if (b.maxTaskUsd !== undefined) st.maxTaskUsd = Math.max(0.5, Math.min(50, Number(b.maxTaskUsd) || 3)); // tope de gasto por intento de tarea
     if (b.compactAt !== undefined) st.compactAt = Number(b.compactAt) > 0 ? Math.min(90, Math.max(30, Number(b.compactAt))) / 100 : 0; // FT-63: % de contexto que dispara la compactación (0 = apagada)
     if (['plan', 'suggest', 'off'].includes(b.bigTasks)) st.bigTasks = b.bigTasks; // FT-63: qué hacer con las tareas grandes
