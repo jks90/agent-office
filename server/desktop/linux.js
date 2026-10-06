@@ -7,6 +7,7 @@ import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { saveCapture } from './capture.js';
+import * as atspi from './atspi.js';
 
 const TIMEOUT = 3000;
 const fail503 = msg => Object.assign(new Error(msg), { status: 503 });
@@ -145,6 +146,14 @@ export function createLinuxProvider(env = process.env) {
   const nope = () => Object.assign(new Error(session === 'none'
     ? 'sin sesión gráfica (XDG_SESSION_TYPE/WAYLAND_DISPLAY/DISPLAY vacíos)'
     : 'Wayland sin GNOME: aún no soportado'), { status: 501 });
+  // FT-29 · pid del objetivo: explícito, el de windowId o el de la ventana activa
+  const pidFor = async ({ pid, windowId } = {}) => {
+    if (pid) return pid;
+    if (!be) throw nope();
+    const w = windowId ? (await be.list()).find(x => x.id === windowId) : await be.getActive();
+    if (!w?.pid) throw Object.assign(new Error(windowId ? `ventana no encontrada: ${windowId}` : 'la ventana activa no tiene pid'), { status: 404 });
+    return w.pid;
+  };
   return {
     id: 'linux',
     session,
@@ -158,6 +167,12 @@ export function createLinuxProvider(env = process.env) {
     },
     getActive: async () => { if (!be) throw nope(); return be.getActive(); },
     list: async () => { if (!be) throw nope(); return be.list(); },
+    // FT-29 · AT-SPI
+    a11yAvailable: () => (be ? atspi.a11yAvailable() : { ok: false, missing: [session === 'none' ? 'sesión gráfica' : 'soporte para este compositor Wayland'] }),
+    uiTree: async (o = {}) => atspi.tree({ ...o, pid: await pidFor(o) }),
+    uiFind: async (o = {}) => atspi.filterNodes(await atspi.tree({ pid: await pidFor(o), depth: atspi.MAX_DEPTH, maxNodes: atspi.MAX_NODES }), o),
+    uiNode: async (ref) => atspi.nodeInfo(ref),
+    uiAct: async (o) => atspi.act(o),
     // FT-21 · capture({target:'screen'|'window', windowId?}) → { path, width, height, bytes, tool, ts }
     capture: async ({ target = 'screen', windowId } = {}) => {
       if (!be) throw nope();

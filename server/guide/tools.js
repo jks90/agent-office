@@ -88,6 +88,20 @@ const INSIDE = { inside: true, hint: 'usa app.getContext' };
 const isInside = (w) => !!w && INSIDE_RE().test(`${w.title || ''} ${w.app || ''}`);
 // Se ejecuta antes de la política: si el usuario está dentro de la app no hay nada que confirmar.
 const outsideOnly = async () => (isInside(await getProvider().getActive()) ? INSIDE : null);
+// FT-29 · ui.*: actuar por semántica sobre otras apps (AT-SPI). Nunca sobre flow-test/AgentOffice (ya tienen API interna).
+// Palabras (por prefijo, sin acentos ni mayúsculas) cuyo control hace que ui.act se trate como `irreversible`.
+export const DESTRUCTIVE_WORDS = ['eliminar', 'elimina', 'borrar', 'borra', 'delete', 'remove', 'enviar', 'envia', 'send', 'pagar', 'paga', 'pay', 'comprar', 'compra', 'buy', 'purchase', 'confirmar', 'confirma', 'confirm', 'aceptar', 'acepta', 'accept', 'submit', 'publicar', 'publish', 'desinstalar', 'uninstall', 'formatear', 'vaciar', 'empty', 'descartar', 'discard', 'sobrescribir', 'overwrite'];
+const plain = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+export const isDestructive = (node) => plain(`${node?.name || ''} ${node?.role || ''}`).split(/[^a-z0-9]+/).some((w) => w && DESTRUCTIVE_WORDS.some((d) => w.startsWith(d)));
+// ¿Alguna ventana del pid (o la indicada) es flow-test/AgentOffice? Con pid/windowId vacíos ya vale outsideOnly (ventana activa).
+const insideTarget = async ({ pid, windowId }) => {
+  if (!pid && !windowId) return null;
+  const hit = (await getProvider().list()).filter((w) => (windowId ? w.id === windowId : w.pid === pid));
+  return hit.some(isInside) ? INSIDE : null;
+};
+const uiPrecheck = async (args) => (await outsideOnly()) || insideTarget(args);
+const uiTarget = { pid: { type: 'integer', description: 'pid de la app (por defecto, la de la ventana activa)' }, windowId: str('Id de ventana (alternativa a pid)') };
+const a11y = () => { const d = getProvider(), av = d.a11yAvailable(); if (!av.ok) throw Object.assign(fail(503, `AT-SPI no disponible: falta ${av.missing.join(', ')}`), { missing: av.missing }); return d; };
 const clip = (w) => ({ ...w, title: String(w.title || '').slice(0, 200) });
 
 // ── Registro ────────────────────────────────────────────────────────────────
@@ -209,6 +223,28 @@ export const tools = [
     },
     { confirmOnce: true, precheck: async () => { vision.assertSupported(); return outsideOnly(); } }),
 
+  // — AT-SPI (FT-29): leer y actuar por semántica en apps de fuera —
+  T('ui.getTree', 'Árbol de accesibilidad (AT-SPI) de una app de fuera: nodos {ref, role, name, states, actions, bounds}. Prefiérelo a screen.capture/screen.describe. Si el objetivo es flow-test/AgentOffice responde {inside:true}.',
+    obj({ ...uiTarget, depth: { type: 'integer', description: 'Profundidad (3 por defecto, máx. 6)' }, maxNodes: { type: 'integer', description: 'Máx. de nodos (200 por defecto, máx. 500)' } }), 'read',
+    async (a) => a11y().uiTree(a), { precheck: uiPrecheck }),
+  T('ui.find', 'Busca controles por rol exacto y/o nombre (subcadena) en una app de fuera. Devuelve los nodos con su ref para ui.act. Si el objetivo es flow-test/AgentOffice responde {inside:true}.',
+    obj({ ...uiTarget, role: str('Rol AT-SPI, p. ej. «push button»'), name: str('Texto del nombre (sin distinguir mayúsculas)') }), 'read',
+    async (a) => a11y().uiFind(a), { precheck: uiPrecheck }),
+  T('ui.act', 'Actúa sobre un control por su ref (de ui.find/ui.getTree): click, press, focus o setText (con «text»). Si el control parece destructivo (eliminar, enviar, pagar, confirmar…) se trata como irreversible y pide confirmación SIEMPRE. Nunca actúa sobre flow-test/AgentOffice ({inside:true}).',
+    obj({ ref: str('ref del nodo'), action: { type: 'string', enum: ['click', 'press', 'focus', 'setText'] }, text: str('Texto (solo setText)') }, ['ref', 'action']), 'execute',
+    async ({ ref, action, text }) => { const r = await a11y().uiAct({ ref, action, text }); return { ok: r.ok !== false, ref, action, node: r.node }; },
+    {
+      // el ref lleva el pid de la app: se comprueba que no sea nuestra propia UI
+      precheck: async (a) => (await outsideOnly()) || insideTarget({ pid: Number(String(a.ref).split(':')[0]) || undefined }),
+      // política efectiva según el control: destructivo → irreversible (confirmación siempre, con app/control/acción en el modal)
+      dynamic: async ({ ref, action, text }) => {
+        const n = await a11y().uiNode(ref);
+        if (isInside({ title: n.name, app: n.app })) throw fail(403, 'No se actúa sobre la UI de AgentOffice/flow-test');
+        const ctx = `App: ${n.app} (pid ${n.pid})\nControl: «${n.name}» (${n.role})\nAcción: ${action}${action === 'setText' ? ` «${String(text || '').slice(0, 80)}»` : ''}`;
+        return isDestructive(n) ? { policy: 'irreversible', context: `⚠ Control potencialmente destructivo\n${ctx}` } : { policy: 'execute', context: ctx };
+      },
+    }),
+
   // — Ejecución y borrado —
   T('project.run', 'Pone a trabajar (running=true) o pausa (false) al equipo del proyecto.', obj({ projectId: str('Id o nombre del proyecto'), running: { type: 'boolean' } }, ['projectId', 'running']), 'execute',
     ({ projectId, running }) => { const p = findProject(projectId); team.setRunning(p.id, running); return { projectId: p.id, running: !!p.running }; }),
@@ -249,7 +285,10 @@ export async function run(name, args = {}, ctx = {}) {
     validate(tool.input, args);
     if (tool.pending) return tool.handler(args, ctx);
     if (tool.precheck) { const early = await tool.precheck(args, ctx); if (early) { done('ok'); return early; } }
-    const g = await gate(tool, args, ctx);
+    // FT-29 · política dinámica por llamada (ui.act: destructivo → irreversible)
+    const dyn = tool.dynamic ? await tool.dynamic(args, ctx) : null;
+    if (dyn) entry.policy = dyn.policy;
+    const g = await gate(dyn ? { ...tool, policy: dyn.policy } : tool, args, dyn ? { ...ctx, modalContext: dyn.context } : ctx);
     Object.assign(entry, g);
     if (g.confirmed === false) throw fail(403, `El usuario rechazó «${name}»`);
     const out = await tool.handler(args, ctx);

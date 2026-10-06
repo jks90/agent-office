@@ -51,9 +51,11 @@ export async function gate(tool, args, ctx = {}) {
   if (tool.confirmOnce && mode === 'auto' && !(key && confirmedOnce.has(key))) mode = 'confirmOnce';
   if (mode === 'auto') return { mode, confirmed: null };
   const detail = JSON.stringify(summarize(args), null, 2);
+  // FT-29 · ctx.modalContext: contexto extra que aporta la tool (p. ej. app, control y acción de ui.act)
+  const extra = ctx.modalContext ? `${ctx.modalContext}\n\n` : '';
   const confirmed = await questions.confirm({
     question: `El Guide quiere ejecutar «${tool.name}» (${tool.policy}). ¿Lo permites?`,
-    context: `${tool.description}\n\n\`\`\`json\n${detail}\n\`\`\``,
+    context: `${extra}${tool.description}\n\n\`\`\`json\n${detail}\n\`\`\``,
   });
   if (confirmed && mode === 'confirmOnce' && key) confirmedOnce.add(key);
   return { mode, confirmed };
