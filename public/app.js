@@ -644,7 +644,7 @@ document.addEventListener('click', async (e) => {
 // ── Pintado ─────────────────────────────────────────────────────────────────
 // Pestañas de administración (Oficina / Tareas / Agentes), recordadas por navegador.
 let skillsData = null; // catálogo e inventario de skills (se carga al abrir Agentes)
-let MODELS = { claude: [], codex: [] }; // modelos disponibles por motor (GET /api/engines/models)
+let MODELS = { claude: [], codex: [], local: [] }; // modelos disponibles por motor (GET /api/engines/models)
 const loadModels = () => api('GET', '/api/engines/models').then((m) => { MODELS = m; }).catch(() => {});
 loadModels();
 // <select> de modelo: grupos por motor (en «auto» salen los dos), los no disponibles deshabilitados con su motivo, y «otro…» libre.
@@ -653,7 +653,7 @@ function modelSelect(name, engine, current) {
   const known = groups.flatMap((g) => MODELS[g] || []).some((m) => m.id === current);
   return `<select name="${name}" class="model-select" data-engine="${engine}">
     <option value="" ${!current ? 'selected' : ''}>por defecto del rol / motor</option>
-    ${groups.map((g) => `<optgroup label="${g === 'claude' ? 'Claude Code' : 'Codex'}">${(MODELS[g] || []).map((m) => `<option value="${esc(m.id)}" ${m.id === current ? 'selected' : ''} ${m.available ? '' : 'disabled'}>${esc(m.label)}${m.available ? (m.note ? ' (' + esc(m.note) + ')' : '') : ' — ' + esc(m.note || 'no disponible')}</option>`).join('')}</optgroup>`).join('')}
+    ${groups.map((g) => `<optgroup label="${g === 'claude' ? 'Claude Code' : g === 'local' ? 'IA local' : 'Codex'}">${(MODELS[g] || []).map((m) => `<option value="${esc(m.id)}" ${m.id === current ? 'selected' : ''} ${m.available ? '' : 'disabled'}>${esc(m.label)}${m.available ? (m.note ? ' (' + esc(m.note) + ')' : '') : ' — ' + esc(m.note || 'no disponible')}</option>`).join('')}</optgroup>`).join('')}
     <option value="__other" ${current && !known ? 'selected' : ''}>otro… (escribir id)</option>
   </select><input name="${name}_other" class="model-other" placeholder="id del modelo" value="${current && !known ? esc(current) : ''}" style="${current && !known ? '' : 'display:none'}" />`;
 }
@@ -1302,7 +1302,7 @@ document.addEventListener('close', (e) => { if (e.target.id === 'dialog') micSto
 const buttons = (ok = 'Guardar') => `<div class="row"><button class="ghost" value="cancel">Cancelar</button>${ok ? `<button>${ok}</button>` : ''}</div>`;
 const roleOptions = (sel, skipPo) => Object.entries(S.roles).filter(([, r]) => !(skipPo && r.kind === 'planner'))
   .map(([k, r]) => `<option value="${k}" ${k === sel ? 'selected' : ''} title="${esc(r.description || '')}">${esc(r.label)}${r.custom ? ` · ${esc(r.source)}` : ''}${r.kind === 'planner' ? ' (planifica)' : r.kind === 'qa' ? ' (QA)' : r.kind === 'docs' ? ' (documenta)' : ''}</option>`).join('');
-const ENGINE_LABEL = { auto: 'automático (el que esté libre: Claude o Codex)', claude: 'Claude Code', codex: 'Codex', demo: 'demo (simulado)' };
+const ENGINE_LABEL = { auto: 'automático (el que esté libre: Claude o Codex)', claude: 'Claude Code', codex: 'Codex', local: 'IA local (LM Studio / Ollama)', demo: 'demo (simulado)' };
 const engineOptions = (sel) => S.engines.map((e) => `<option value="${e}" ${e === sel ? 'selected' : ''}>${ENGINE_LABEL[e] || e}</option>`).join('');
 
 const actions = {
@@ -1364,6 +1364,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <h3>Ajustes</h3>
     <div class="section-title">🧠 Motores de IA — las inteligencias que llevan la empresa</div>
     <div id="engines" class="engines"><p class="muted">Comprobando cuentas…</p></div>
+    <div id="local-ai" class="engines"></div>
     <div class="section-title">🧪 Suite</div>
     <label>URL de flow-test (la suite; su MCP se usa para el QA)</label><input name="flowTestUrl" value="${esc(S.settings.flowTestUrl)}" placeholder="http://localhost:9998" />
     <label>Carpeta del workspace de flow-test en esta máquina (para deducir los repos de cada proyecto por sus enlaces)</label><input name="workspaceHostDir" value="${esc(S.settings.workspaceHostDir || '')}" placeholder="~/JksDocs/workspace" />
@@ -1374,7 +1375,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <label><input type="checkbox" name="quotaGuard" ${S.settings.quotaGuard !== false ? 'checked' : ''} /> Guardarraíl de cuota: no arrancar tareas con un motor cuya sesión de 5 h esté al ${97} % o más (FT-45)</label>
     <div class="section-title">🧭 Guía (FT-6)</div>
     <label>Proveedor del Guía (el LLM con el que conversa; los cuatro flujos funcionan igual con cualquiera) (FT-8)</label>
-    <select name="guideProvider">${(S.guideProviders || []).map((p) => `<option value="${esc(p.id)}" ${(S.settings.guideProvider || 'claude-cli') === p.id ? 'selected' : ''}>${esc(p.label)}${p.ready ? '' : ' — sin clave API'}</option>`).join('')}</select>
+    <select name="guideProvider">${(S.guideProviders || []).map((p) => `<option value="${esc(p.id)}" ${(S.settings.guideProvider || 'claude-cli') === p.id ? 'selected' : ''}>${esc(p.label)}${p.ready ? '' : p.id === 'local-api' ? ' — sin configurar' : ' — sin clave API'}</option>`).join('')}</select>
     <label>Modelo con Claude Code (CLI)</label>${modelSelect('guideModel', 'claude', S.settings.guideModel || '')}
     ${(S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => `<label>Modelo con ${esc(p.label)}</label><input name="gm_${esc(p.id)}" value="${esc(S.settings.guideModels?.[p.id] || '')}" placeholder="${esc(p.defaultModel)}" />`).join('')}
     <p class="muted">Las APIs usan la clave guardada en «Motores de IA» (Claude → Anthropic, Codex → OpenAI) o ANTHROPIC_API_KEY / OPENAI_API_KEY; URL base con ANTHROPIC_BASE_URL / OPENAI_BASE_URL. El coste por turno sale en el chat cuando el proveedor lo da.</p>
@@ -1649,7 +1650,7 @@ let enginesTimer = null;
 async function refreshEngines() {
   const el = $('#engines');
   if (!el || !el.isConnected) { clearInterval(enginesTimer); enginesTimer = null; return; }
-  try { renderEngines(await api('GET', '/api/engines')); } catch { /* el toast ya avisó */ }
+  try { const st = await api('GET', '/api/engines'); renderEngines(st); renderLocal(st.local); } catch { /* el toast ya avisó */ }
 }
 const ENGINE_META = {
   claude: { name: 'Claude Code', vendor: 'Anthropic', oauthLabel: 'Entrar con Claude (suscripción)', consoleLabel: 'Entrar con Console (pago por uso)', keyHint: 'sk-ant-…' },
@@ -1687,6 +1688,35 @@ function renderEngines(st) {
     return `<div class="engine"><div class="top"><b>${m.name}</b> <span class="muted">${m.vendor}</span><div class="spacer"></div>${actions}</div><div class="status">${status}</div>${flow}</div>`;
   }).join('');
 }
+
+// FT-54 · IA local: URL (preajustes LM Studio / Ollama), clave opcional, «Probar» (lista modelos) y modelo por defecto.
+function renderLocal(l) {
+  const el = $('#local-ai');
+  if (!el || !l || el.contains(document.activeElement)) return; // no pisar lo que se está escribiendo
+  const status = !l.baseUrl ? '<span class="muted">○ Sin configurar</span>' : l.loggedIn ? `<span class="ok">● Servidor responde</span> · ${esc(l.text)}` : `<span class="bad">● ${esc(l.text)}</span>${l.error ? ` <span class="muted">· ${esc(l.error)}</span>` : ''}`;
+  el.innerHTML = `<div class="engine"><div class="top"><b>IA local</b> <span class="muted">LM Studio · Ollama · API compatible con OpenAI</span></div><div class="status">${status}${l.installed ? '' : ' <span class="bad">· falta el CLI codex (es quien ejecuta)</span>'}</div>
+    <div class="row">${(l.presets || []).map((p) => `<button type="button" class="small ghost" data-local-preset="${esc(p.baseUrl)}">${esc(p.label)}</button>`).join('')}</div>
+    <div class="row"><input id="local-url" placeholder="http://localhost:1234/v1" value="${esc(l.baseUrl)}" /><input id="local-key" type="password" placeholder="clave (opcional)${l.apiKey ? ' ' + esc(l.apiKey) : ''}" /><button type="button" class="small" data-local-probe>Probar</button></div>
+    ${l.models?.length ? `<div class="row"><label>Modelo por defecto</label><select id="local-model">${l.models.map((m) => `<option value="${esc(m)}" ${m === l.model ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
+    <label class="check"><input type="checkbox" id="local-auto" ${l.allowAuto ? 'checked' : ''}/> Permitir que el motor «automático» use la IA local (más lenta y menos capaz)</label>` : ''}</div>`;
+}
+document.addEventListener('click', async (e) => {
+  const lp = e.target.closest('[data-local-preset]'), pr = e.target.closest('[data-local-probe]');
+  if (lp) { $('#local-url').value = lp.dataset.localPreset; return; }
+  if (!pr) return;
+  pr.disabled = true;
+  try {
+    const r = await api('POST', '/api/engines/local/probe', { baseUrl: $('#local-url').value, apiKey: $('#local-key').value });
+    toast(r.ok ? r.text : r.error, r.ok ? undefined : 'error');
+    document.activeElement?.blur();
+    await loadModels(); renderLocal(r.local);
+  } catch { /* toast */ }
+  pr.disabled = false;
+});
+document.addEventListener('change', async (e) => {
+  if (!e.target.closest('#local-model,#local-auto')) return;
+  try { const l = await api('POST', '/api/engines/local/settings', { model: $('#local-model').value, allowAuto: $('#local-auto').checked }); document.activeElement?.blur(); renderLocal(l); toast('IA local guardada'); } catch { /* toast */ }
+});
 
 document.addEventListener('click', async (e) => {
   const el = e.target.closest('[data-eng-login],[data-eng-key],[data-eng-code],[data-eng-cancel],[data-eng-logout]');

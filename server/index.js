@@ -11,6 +11,7 @@ import * as team from './team.js';
 import { allRoles } from './roles.js';
 import { checkSuite, suiteInfo } from './suite.js';
 import * as auth from './engines/auth.js';
+import * as localServer from './engines/local-server.js';
 import * as boards from './boards/index.js';
 import * as skills from './skills.js';
 import { draftTask } from './ai-draft.js';
@@ -139,6 +140,18 @@ const routes = [
   ['POST', /^\/api\/engines\/(claude|codex)\/code$/, ([e], b) => auth.submitCode(e, b.code)],
   ['POST', /^\/api\/engines\/(claude|codex)\/cancel$/, ([e]) => auth.cancelLogin(e)],
   ['POST', /^\/api\/engines\/(claude|codex)\/logout$/, ([e]) => auth.logout(e)],
+  // FT-54 · IA local: «Probar» (lista modelos y guarda URL/clave/modelo) y ajustes sueltos (modelo por defecto, allowAuto)
+  ['POST', /^\/api\/engines\/local\/probe$/, async (_, b) => {
+    if (typeof b.apiKey === 'string') auth.setLocalKey(b.apiKey.trim());
+    const p = await localServer.probe(b.baseUrl, auth.localKey());
+    if (p.ok) localServer.save({ baseUrl: p.baseUrl, models: p.models });
+    return { ...p, local: (await auth.enginesStatus()).local };
+  }],
+  ['POST', /^\/api\/engines\/local\/settings$/, async (_, b) => {
+    if (typeof b.apiKey === 'string') auth.setLocalKey(b.apiKey.trim());
+    localServer.save({ model: typeof b.model === 'string' ? b.model : undefined, allowAuto: typeof b.allowAuto === 'boolean' ? b.allowAuto : undefined });
+    return (await auth.enginesStatus()).local;
+  }],
   ['GET', /^\/api\/suite$/, () => checkSuite(true).then((suite) => { store.changed(); return suite; })],
   ['POST', /^\/api\/projects$/, (_, b) => team.createProject(b)],
   ['DELETE', /^\/api\/projects\/(\w+)$/, ([id]) => team.deleteProject(id)],

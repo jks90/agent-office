@@ -24,27 +24,29 @@ function toMessages(system, turns) {
   return msgs;
 }
 
-export function create() {
+// FT-54: el mismo cliente sirve a cualquier servidor compatible con OpenAI (IA local: LM Studio/Ollama); `cfg` = { who, name, baseUrl(), key(), required }
+export function create(cfg = {}) {
+  const { who = 'openai-api', name = 'API de OpenAI', baseUrl = base, key: getKey = () => auth.guideApiKey('openai'), required = true } = cfg;
   return createHttpProvider({
-    who: 'openai-api',
+    who,
     async stream({ system, tools, model, turns, signal, onText }) {
-      const key = auth.guideApiKey('openai');
-      if (!key) throw new Error('Falta la clave API de OpenAI: pégala en Ajustes ▸ Motores de IA ▸ Codex (clave API) o define OPENAI_API_KEY');
-      const res = await fetch(`${base()}/chat/completions`, {
+      const key = getKey();
+      if (required && !key) throw new Error('Falta la clave API de OpenAI: pégala en Ajustes ▸ Motores de IA ▸ Codex (clave API) o define OPENAI_API_KEY');
+      const res = await fetch(`${baseUrl()}/chat/completions`, {
         method: 'POST', signal,
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+        headers: { 'content-type': 'application/json', ...(key ? { authorization: `Bearer ${key}` } : {}) },
         body: JSON.stringify({
           model: model || defaultModel, stream: true, stream_options: { include_usage: true },
           tools: tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.schema } })),
           messages: toMessages(system, turns),
         }),
       });
-      if (!res.ok) throw await httpError(res, 'API de OpenAI');
+      if (!res.ok) throw await httpError(res, name);
       let text = '';
       const acc = new Map(); // índice de tool_call → { id, name, json }
       let usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, cost = null;
       await readSse(res, (e) => {
-        if (e.error) throw new Error(`API de OpenAI: ${e.error.message || 'error en el stream'}`);
+        if (e.error) throw new Error(`${name}: ${e.error.message || 'error en el stream'}`);
         if (e.usage) {
           const cached = e.usage.prompt_tokens_details?.cached_tokens || 0;
           usage = { input: (e.usage.prompt_tokens || 0) - cached, output: e.usage.completion_tokens || 0, cacheRead: cached, cacheWrite: 0 };

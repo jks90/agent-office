@@ -12,6 +12,7 @@ import { addUsage } from './usage.js';
 import * as demo from './engines/demo.js';
 import * as claude from './engines/claude.js';
 import * as codex from './engines/codex.js';
+import * as local from './engines/local.js';
 import { suiteOk, mcpUrl, flowTestUrl } from './suite.js';
 import { engineEnv, cachedEnginesStatus } from './engines/auth.js';
 import * as boards from './boards/index.js';
@@ -22,8 +23,8 @@ import { briefingFor } from './briefing.js';
 import { detectQuotaHit } from './quota-pause.js';
 import * as memory from './memory.js';
 
-const ENGINES = { demo, claude, codex };
-export const ENGINE_IDS = ['auto', 'claude', 'codex', 'demo'];
+const ENGINES = { demo, claude, codex, local }; // FT-54: local = IA local (LM Studio/Ollama) por el runner de Codex
+export const ENGINE_IDS = ['auto', 'claude', 'codex', 'local', 'demo'];
 
 // Motor automático: el que tenga sesión y menos trabajo en curso (empate → Claude). Sin ninguno con sesión → error claro.
 const MODEL_OF = { claude: /^(sonnet|opus|haiku|claude-)/i, codex: /^(gpt-|o[0-9]|codex)/i };
@@ -34,17 +35,18 @@ function pickEngine(agent, exclude = null) {
   const st = cachedEnginesStatus();
   const ok = (e) => st ? !!st[e]?.loggedIn : e === 'claude'; // sin estado aún (arranque): solo Claude
   const load = (e) => [...jobs.values()].filter((j) => j.engine === e).length;
-  const logged = ['claude', 'codex'].filter(ok).filter((e) => e !== exclude || !['claude', 'codex'].filter(ok).some((x) => x !== exclude)); // FT-66: el motor sin cuota solo si no hay otro
+  const autoSet = ['claude', 'codex', ...(get().settings.local?.allowAuto ? ['local'] : [])]; // FT-54: la IA local solo si el usuario la permite (más lenta y menos capaz)
+  const logged = autoSet.filter(ok).filter((e) => e !== exclude || !autoSet.filter(ok).some((x) => x !== exclude)); // FT-66: el motor sin cuota solo si no hay otro
   if (!logged.length) throw new Error('Motor automático: ni Claude ni Codex tienen sesión (Ajustes ▸ Motores de IA)');
   const free = guardOn() ? logged.filter((e) => !quota.gate(e).block) : logged;
   const m = (e) => quota.margin(e) ?? 50; // sin dato: margen neutro
-  return (free.length ? free : logged).sort((a, b) => m(b) - m(a) || load(a) - load(b) || (a === 'claude' ? -1 : 1))[0];
+  return (free.length ? free : logged).sort((a, b) => m(b) - m(a) || load(a) - load(b) || (a === 'claude' ? -1 : b === 'claude' ? 1 : a === 'codex' ? -1 : 1))[0];
 }
 
 // FT-45 · ¿Puede este agente arrancar ahora? {ok:true} | {wait:true} (aún sin primera lectura de cuota) | {ok:false, message, engine, percent}
 function quotaCheck(agent) {
   if (!guardOn()) return { ok: true };
-  const engines = agent.engine === 'auto' ? ['claude', 'codex'].filter((e) => { const st = cachedEnginesStatus(); return st ? !!st[e]?.loggedIn : e === 'claude'; }) : [agent.engine];
+  const engines = agent.engine === 'auto' ? ['claude', 'codex', ...(get().settings.local?.allowAuto ? ['local'] : [])].filter((e) => { const st = cachedEnginesStatus(); return st ? !!st[e]?.loggedIn : e === 'claude'; }) : [agent.engine];
   const gates = engines.map((e) => quota.gate(e));
   if (!gates.length || gates.some((g) => !g.block && !g.wait)) return { ok: true };
   if (gates.some((g) => g.wait)) return { wait: true };
@@ -76,7 +78,7 @@ function quotaReady(t, agent) {
   if (g.block) { qp.resetsAt = g.resetsAt || now + 15 * 60_000; t.activity = pausedLabel(t); changed(); return false; }
   return true;
 }
-const NAME_OF = { claude: 'Claude', codex: 'Codex' };
+const NAME_OF = { claude: 'Claude', codex: 'Codex', local: 'IA local' };
 const hhmm = (ms) => new Date(ms).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
 const pausedLabel = (t) => `⏸ sin cuota de ${NAME_OF[t.quotaPaused.engine] || t.quotaPaused.engine}: sigue sola a las ${hhmm(t.quotaPaused.resetsAt)}`;
 // «Reanudar ya» (botón de la tarjeta): ignora la hora de reinicio y el guardarraíl en el siguiente reparto.
@@ -89,6 +91,7 @@ export function resumeNow(id) {
 }
 
 const modelFor = (engineId, agent, role) => {
+  if (engineId === 'local') { const w = agent.engine === 'local' ? agent.model : ''; return w && !MODEL_OF.claude.test(w) ? w : get().settings.local?.model || ''; } // FT-54: cualquier nombre que liste el servidor
   const wanted = agent.model || role.model || '';
   if (wanted && MODEL_OF[engineId]?.test(wanted)) return wanted;
   return engineId === 'claude' ? 'sonnet' : engineId === 'codex' ? 'gpt-5.5' : '';
@@ -865,7 +868,7 @@ async function runTask(p, agent, t) {
     t.pendingMessages = []; // ya van en el prompt
     const baseUsage = t.usage || null; // FT-26: consumo de intentos anteriores; t.usage es acumulado y se actualiza en vivo
     agent.usage = null; // sesión nueva
-    const job = engine.start({
+    const job = await engine.start({
       agent, task: t, project: p, cwd, mode: t.kind === 'plan' ? 'plan' : 'work', goal: t.goal, roles,
       prompt,
       images: (t.feedbackImages || []).filter((f) => fs.existsSync(f)),
