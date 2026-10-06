@@ -8,10 +8,13 @@ let openTaskId = null; // tarea abierta en el modal «Ver la tarea» (FT-2)
 let hostCtx = null, ctxTimer = null, ctxSent = ""; // hostFeatures: lo que el flow-test que nos embebe sabe hacer (p. ej. 'settingsPanel', FT-42)
 let hostFeatures = []; // publicación del contexto (FT-2)
 const logs = new Map();
+const activityByAgent = new Map(); // FT-68: Activity Stream por agente para la ficha operativa.
+const statusSinceByAgent = new Map();
+const activityLoaded = new Set();
 
 import { Office } from './office3d.js';
 import { dictationSupported, createDictation, insertAtCursor } from './dictation.js'; // dictado por voz (FT-43)
-const office = new Office($('#office'), { onAgentClick: (id) => openDrawer(id), onFloorClick: (id) => enterFloor(id) }); // clic en una planta → su oficina (FT-47)
+const office = new Office($('#office'), { onAgentClick: (id) => enterAgent(id), onFloorClick: (id) => enterFloor(id) }); // clic planta/agente → navegación continua (FT-47/FT-71)
 window.aoOffice = office; // para QA: aoOffice.debugState() / setMode() (FT-46)
 
 function safeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
@@ -67,6 +70,11 @@ function connectEvents() {
     logs.set(entry.agentId, arr);
     if (drawerAgent === entry.agentId) renderLog();
   });
+  es.addEventListener('activity', (e) => {
+    const ev = JSON.parse(e.data);
+    rememberActivity(ev);
+    if (drawerAgent === ev.agentId) renderDrawer();
+  });
   // Órdenes del Guide Agent (FT-4): llegan por SSE `ui` (navegar, abrir tarea/agente, enseñar un flow en flow-test).
   es.addEventListener('ui', (e) => {
     const c = JSON.parse(e.data);
@@ -109,16 +117,42 @@ function projectOfFlow(flow) {
 // La Oficina abre como EDIFICIO (una planta por proyecto con equipo, FT-46); un clic en una planta, el Guide o flow-test
 // entran en la sala de ese proyecto (`floor`), y «🏢 Edificio» / Esc vuelven. El último modo se recuerda en el navegador.
 let officeMode = safeGet('ao:officeMode') === 'floor' ? 'floor' : 'building';
+let officeLevel = officeMode; // FT-71: building → floor → agent, publicado para el Guide.
 let officeInit = false; // el modo por defecto se decide con el primer estado (hace falta saber cuántos proyectos tienen equipo)
 const teamProjects = () => S.projects.filter((p) => (p.team || []).length);
 function setOfficeMode(mode, { remember = true } = {}) {
   officeMode = mode === 'floor' ? 'floor' : 'building';
+  officeLevel = officeMode;
+  if (officeMode === 'building' && drawerAgent) { drawerAgent = null; $('#drawer').hidden = true; }
   if (remember) safeSet('ao:officeMode', officeMode);
   office.setMode(officeMode);
   renderOfficeFoot();
   publishContext();
 }
 function enterFloor(id) { goProject(id); setOfficeMode('floor'); }
+function enterAgent(id) {
+  const a = S.agents.find((x) => x.id === id);
+  const p = S.projects.find((x) => (x.team || []).includes(id));
+  if (p) goProject(p.id);
+  if (!a) return;
+  officeMode = 'floor';
+  officeLevel = 'agent';
+  safeSet('ao:officeMode', 'floor');
+  office.focusAgent(id);
+  openDrawer(id, { skipFocus: true });
+  renderOfficeFoot();
+  publishContext();
+}
+function leaveAgentLevel() {
+  if (officeLevel !== 'agent') return false;
+  officeLevel = 'floor';
+  office.clearAgentFocus?.();
+  closeDrawer({ keepOfficeLevel: true });
+  $('#office').focus({ preventScroll: true });
+  renderOfficeFoot();
+  publishContext();
+  return true;
+}
 // Al abrir la pestaña Oficina: con UN solo proyecto con equipo se entra directo a su planta; si no, el último modo (edificio de serie).
 function applyOfficeDefault() {
   const tp = teamProjects();
@@ -128,11 +162,16 @@ function applyOfficeDefault() {
 // Pie de la vista Oficina: miga «🏢 Edificio › proyecto» (el botón vuelve al edificio) y la línea de actividad.
 function renderOfficeFoot() {
   const p = project();
-  $('#office-crumb').innerHTML = officeMode === 'floor'
+  const a = S.agents.find((x) => x.id === drawerAgent);
+  $('#office-crumb').innerHTML = officeLevel === 'agent'
+    ? `<button class="small ghost" data-action="building" title="Volver al edificio">🏢 Edificio</button><span class="sep">›</span><button class="small ghost" data-action="office-floor" title="Volver a la planta (Esc)">${esc(p?.name || 'Planta')}</button><span class="sep">›</span><b>${esc(a?.name || 'Agente')}</b>`
+    : officeMode === 'floor'
     ? `<button class="small ghost" data-action="building" title="Volver al edificio (Esc con la oficina enfocada)">🏢 Edificio</button><span class="sep">›</span><b>${esc(p?.name || '')}</b>`
     : '<span class="here">🏢 Edificio</span>';
   const live = $('#office-live');
-  if (officeMode === 'floor') {
+  if (officeLevel === 'agent' && a) {
+    live.textContent = `${a.name}: ${a.activity || statusMeta(a).label} · ficha operativa abierta`;
+  } else if (officeMode === 'floor') {
     const working = team().filter((a) => a.status === 'working');
     live.textContent = working.length ? working.map((a) => `${a.name}: ${a.activity}`).join('  ·  ') : 'Nadie está trabajando ahora mismo';
   } else {
@@ -143,7 +182,9 @@ function renderOfficeFoot() {
 }
 // Esc con la oficina enfocada vuelve al edificio (si hay cajón abierto, lo cierra el atajo de siempre).
 $('#office').addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape' || officeMode !== 'floor' || drawerAgent || $('#dialog').open) return;
+  if (e.key !== 'Escape' || $('#dialog').open) return;
+  if (leaveAgentLevel()) { e.stopPropagation(); return; }
+  if (officeMode !== 'floor' || drawerAgent) return;
   e.stopPropagation();
   setOfficeMode('building');
 });
@@ -180,10 +221,11 @@ const GUIDE_HINTS = ['Créame una tarea para solucionar esto', '¿Cómo va?', '�
 
 function guideMount(el, panel) {
   if (guideRoots.some((r) => r.el === el)) return;
-  el.innerHTML = `<div class="guide">
-    <div class="g-list"><button class="small" data-g="new">＋ Nuevo chat</button><div class="g-chats"></div></div>
+  el.innerHTML = `<div class="guide ${panel ? 'panel' : ''}">
+    <div class="g-list" tabindex="0" title="↑/↓ cambian de chat · Supr borra · Ctrl+N nuevo"><div class="g-lhead"><button class="small" data-g="new" title="Nuevo chat (Ctrl+N)">＋<span class="g-lbl"> Nuevo chat</span></button><button class="ghost small g-fold" data-g="fold"></button></div><div class="g-chats"></div><button class="ghost small g-delall" data-g="delall">Borrar todos…</button></div>
+    <div class="g-grip" title="Arrastra para ensanchar · doble clic = ancho por defecto"></div>
     <div class="g-main">
-      <div class="g-head"><b class="g-title">🧭 Guía</b><button class="ghost small g-ear" data-g="ear" hidden></button>${panel ? '<select class="g-pick" title="Chats"></select><button class="ghost small" data-g="new">＋</button><button class="ghost small" data-g="close" title="Cerrar (Ctrl+G)">✕</button>' : ''}</div>
+      <div class="g-head"><b class="g-title">🧭 Guía</b><button class="ghost small g-ear" data-g="ear" hidden></button><span class="g-pickbar"><select class="g-pick" title="Chats"></select><button class="ghost small" data-g="new">＋</button><button class="ghost small g-pdel" data-g="delcur" title="Borrar este chat">🗑</button></span>${panel ? '<button class="ghost small" data-g="close" title="Cerrar (Ctrl+G)">✕</button>' : ''}</div>
       <div class="g-msgs"></div>
       <div class="g-voice" hidden><span class="g-vtxt"></span><i class="g-vlevel"></i></div>
       <form class="g-form"><button type="button" class="ghost g-mic" data-g="mic" title="Mantén pulsado para hablar (o barra espaciadora con la caja vacía)">🎤</button><textarea rows="1" placeholder="Pídeme algo…" title="Intro envía · Mayús+Intro salto de línea · barra espaciadora con la caja vacía = hablar"></textarea><button class="g-send">Enviar</button><button type="button" class="ghost g-stop" data-g="stop" hidden>■ Parar</button></form>
@@ -203,16 +245,42 @@ function guideMount(el, panel) {
   mic.addEventListener('keyup', (e) => { if (e.key === ' ') voiceHold(false); });
   ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 140) + 'px'; });
   el.addEventListener('click', (e) => {
-    const b = e.target.closest('[data-g], [data-gchat], [data-ghint]');
+    const b = e.target.closest('[data-g], [data-gchat], [data-gdel], [data-ghint]');
     if (!b) return;
     if (b.dataset.g === 'new') guideNew();
+    else if (b.dataset.g === 'fold') guideFold();
+    else if (b.dataset.g === 'delall') guideDeleteAll();
+    else if (b.dataset.g === 'delcur') { if (G.chatId) guideDelete(G.chatId); }
+    else if (b.dataset.gdel) guideDelete(b.dataset.gdel);
     else if (b.dataset.g === 'stop') guideStop();
     else if (b.dataset.g === 'close') guideToggle(false);
     else if (b.dataset.g === 'ear') wakeSet(false);
-    else if (b.dataset.gchat) guideOpen(b.dataset.gchat);
+    else if (b.dataset.g === 'play') ttsSpeak(G.messages[b.dataset.i]?.text, Number(b.dataset.i));
+    else if (b.dataset.gchat) guideOpen(b.dataset.gchat).then(() => el.querySelector('.g-chat.sel')?.focus()); // el pintado rehace la lista: se devuelve el foco para el teclado (FT-51)
     else if (b.dataset.ghint) { ta.value = b.dataset.ghint; ta.focus(); }
   });
   el.addEventListener('toggle', (e) => { const d = e.target.closest?.('.g-tool'); if (d && G.messages[d.dataset.i]) G.messages[d.dataset.i].open = d.open; }, true); // el pintado rehace el HTML: recordar qué tool call está desplegada
+  // Lista de chats (FT-51): tirador (ratón y dedo) y teclado
+  const grip = el.querySelector('.g-grip');
+  grip.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); grip.setPointerCapture(e.pointerId);
+    const x0 = e.clientX, w0 = GL.w;
+    const move = (ev) => guideListWidth(w0 + ev.clientX - x0);
+    const up = () => { grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', up); grip.removeEventListener('pointercancel', up); safeSet('ao:guideListW', String(GL.w)); };
+    grip.addEventListener('pointermove', move); grip.addEventListener('pointerup', up); grip.addEventListener('pointercancel', up);
+  });
+  grip.addEventListener('dblclick', () => { guideListWidth(220); safeSet('ao:guideListW', '220'); });
+  el.querySelector('.g-list').addEventListener('keydown', async (e) => {
+    if (e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'n') { e.preventDefault(); guideNew(); return; }
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    const i = G.chats.findIndex((c) => c.id === G.chatId);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const next = G.chats[e.key === 'ArrowDown' ? Math.min(G.chats.length - 1, i + 1) : Math.max(0, i - 1)];
+      if (next && next.id !== G.chatId) await guideOpen(next.id);
+      el.querySelector('.g-chat.sel')?.focus();
+    } else if (e.key === 'Delete' && i >= 0) { e.preventDefault(); await guideDelete(G.chatId); el.querySelector('.g-list').focus(); }
+  });
   el.querySelector('.g-pick')?.addEventListener('change', (e) => (e.target.value ? guideOpen(e.target.value) : guideNew()));
   guideRender();
 }
@@ -230,7 +298,14 @@ function guideRender() {
     if (atBottom || G.busy) msgs.scrollTop = msgs.scrollHeight;
     const cur = G.chats.find((c) => c.id === G.chatId);
     el.querySelector('.g-title').textContent = panel ? '🧭' : '🧭 ' + (cur?.title || 'Nuevo chat');
-    el.querySelector('.g-chats').innerHTML = G.chats.map((c) => `<button class="g-chat ${c.id === G.chatId ? 'sel' : ''}" data-gchat="${c.id}" title="${esc(c.title)}">${c.busy ? '⏳ ' : ''}${esc(c.title)}</button>`).join('') || '<p class="muted small">Sin chats todavía</p>';
+    const lock = (c) => c.busy || (G.busy && c.id === G.chatId); // un turno en curso no se borra
+    el.querySelector('.g-chats').innerHTML = G.chats.map((c) => `<div class="g-row ${c.id === G.chatId ? 'sel' : ''}"><button class="g-chat ${c.id === G.chatId ? 'sel' : ''}" data-gchat="${c.id}" title="${esc(c.title)}${c.updatedAt ? ' · ' + esc(new Date(c.updatedAt).toLocaleString()) : ''}">${c.busy ? '⏳ ' : ''}${esc(c.title)}</button><button class="ghost g-del" data-gdel="${c.id}" ${lock(c) ? 'disabled' : ''} title="${lock(c) ? 'Hay un turno en curso: espera o pulsa «Parar»' : 'Borrar este chat'}">🗑</button></div>`).join('') || '<p class="muted small">Sin chats todavía</p>';
+    el.querySelector('.g-list').classList.toggle('min', GL.min);
+    const fold = el.querySelector('.g-fold');
+    fold.textContent = GL.min ? '▶' : '◀'; fold.title = GL.min ? 'Expandir la lista' : 'Plegar la lista';
+    el.querySelector('.g-delall').disabled = !G.chats.length;
+    const pdel = el.querySelector('.g-pdel');
+    pdel.disabled = !cur || lock(cur); pdel.title = cur && lock(cur) ? 'Hay un turno en curso: espera o pulsa «Parar»' : 'Borrar este chat';
     const pick = el.querySelector('.g-pick');
     if (pick) pick.innerHTML = `<option value="">＋ Nuevo chat</option>${G.chats.map((c) => `<option value="${c.id}" ${c.id === G.chatId ? 'selected' : ''}>${esc(c.title.slice(0, 40))}</option>`).join('')}`;
     el.querySelector('.g-send').hidden = G.busy;
@@ -247,7 +322,7 @@ function guideRender() {
 
 function guideMsg(m, i) {
   if (m.role === 'user') return `<div class="g-msg user">${esc(m.text)}</div>`;
-  if (m.role === 'assistant') return `<div class="g-msg assistant">${md(m.text)}</div>`;
+  if (m.role === 'assistant') return `<div class="g-msg assistant">${md(m.text)}${ttsButton(i, m.text)}</div>`;
   if (m.role === 'meta') return `<div class="g-meta" title="${esc(m.provider || '')}">${esc(m.model || m.provider || '')}${m.costUsd != null ? ` · ≈ ${m.costUsd.toFixed(4)} $` : ''}${m.usage ? ` · ${m.usage.input + m.usage.cacheRead + m.usage.cacheWrite} tok entrada${m.usage.cacheRead ? ` (${m.usage.cacheRead} en caché)` : ''} / ${m.usage.output} salida` : ''}</div>`;
   if (m.role === 'error') return `<div class="g-msg error ${m.stopped ? 'stopped' : ''}">${m.stopped ? '■ ' : '⚠ '}${esc(m.text)}</div>`;
   const state = m.ok == null ? '<span class="st">⏳</span>' : m.ok ? '<span class="st ok">✓</span>' : '<span class="st bad">✗</span>';
@@ -256,15 +331,43 @@ function guideMsg(m, i) {
     <pre>${esc(JSON.stringify(m.args || {}, null, 1))}</pre>${m.result != null ? `<pre class="${m.ok ? '' : 'bad'}">${esc(m.result.slice(0, 4000))}</pre>` : ''}</details>`;
 }
 
-async function guideRefresh() { try { G.chats = await api('GET', '/api/guide/chats'); } catch { /* sin servidor */ } G.loaded = true; guideRender(); }
+const guideGone = new Set(); // ids borrados: una carga de la lista en vuelo no los resucita (FT-51)
+async function guideRefresh() { try { G.chats = (await api('GET', '/api/guide/chats')).filter((c) => !guideGone.has(c.id)); } catch { /* sin servidor */ } G.loaded = true; guideRender(); }
 async function guideOpen(id) {
   if (G.busy) return toast('Espera a que el Guía termine o pulsa «Parar»');
-  G.chatId = id; safeSet('ao:guide-chat', id);
+  ttsStop(); G.chatId = id; safeSet('ao:guide-chat', id);
   try { G.messages = (await api('GET', `/api/guide/chats/${id}`)).messages; } catch { G.chatId = null; G.messages = []; }
   guideRender();
 }
-function guideNew() { if (G.busy) return; G.chatId = null; G.messages = []; safeSet('ao:guide-chat', ''); guideRender(); guideRoots.forEach((r) => r.el.querySelector('textarea').focus()); }
+// Lista de chats (FT-51): ancho y plegado se recuerdan en localStorage
+const GL = { w: 220, min: safeGet('ao:guideListMin') === '1' };
+function guideListWidth(w) { GL.w = Math.max(160, Math.min(480, Math.round(w) || 220)); document.documentElement.style.setProperty('--g-list-w', GL.w + 'px'); }
+guideListWidth(Number(safeGet('ao:guideListW')) || 220);
+function guideFold() { GL.min = !GL.min; safeSet('ao:guideListMin', GL.min ? '1' : '0'); guideRender(); }
+async function guideDelete(id) {
+  const c = G.chats.find((x) => x.id === id);
+  if (!c) return;
+  if (c.busy || (G.busy && id === G.chatId)) return toast('Hay un turno en curso: espera o pulsa «Parar»');
+  if (!confirm(`¿Borrar «${c.title}»?`)) return;
+  try { await api('DELETE', `/api/guide/chats/${id}`); } catch (e) { return toast(e.message || 'No se pudo borrar', 'err'); }
+  guideGone.add(id); G.chats = G.chats.filter((x) => x.id !== id);
+  if (id === G.chatId) { ttsStop(); G.chatId = null; G.messages = []; safeSet('ao:guide-chat', ''); }
+  guideRender();
+}
+async function guideDeleteAll() {
+  const del = G.chats.filter((c) => !c.busy && !(G.busy && c.id === G.chatId));
+  if (!del.length) return toast('No hay chats que se puedan borrar ahora');
+  if (!confirm(`¿Borrar ${del.length === G.chats.length ? 'todos los chats' : `${del.length} chats (los que tienen un turno en curso se conservan)`}? No se puede deshacer.`)) return;
+  for (const c of del) { try { await api('DELETE', `/api/guide/chats/${c.id}`); } catch { /* ya no existía */ } }
+  const ids = new Set(del.map((c) => c.id));
+  ids.forEach((i) => guideGone.add(i));
+  G.chats = G.chats.filter((c) => !ids.has(c.id));
+  if (ids.has(G.chatId)) { G.chatId = null; G.messages = []; safeSet('ao:guide-chat', ''); }
+  guideRender();
+}
+function guideNew() { if (G.busy) return; ttsStop(); G.chatId = null; G.messages = []; safeSet('ao:guide-chat', ''); guideRender(); guideRoots.forEach((r) => r.el.querySelector('textarea').focus()); }
 async function guideShow() {
+  if (!T.info) ttsInfoLoad();
   guideMount($('#view-guide'), false);
   if (!G.loaded) { await guideRefresh(); const last = safeGet('ao:guide-chat'); if (last && !G.chatId && G.chats.some((c) => c.id === last)) await guideOpen(last); }
   guideRender();
@@ -273,6 +376,7 @@ async function guideShow() {
 function guideToggle(open = !G.panelOpen) {
   if (activeTab === 'guide') { $('#view-guide textarea')?.focus(); return; }
   G.panelOpen = open;
+  if (!open) ttsStop();
   const p = $('#guide-panel');
   p.hidden = !open;
   if (open) { guideMount(p, true); guideShow().then(() => p.querySelector('textarea')?.focus()); }
@@ -397,7 +501,7 @@ function voiceDeliver(text, root) {
 // Se pausa (y se sueltan las pistas del micro) con G.busy, V.state≠idle, speechSynthesis hablando o la pestaña oculta.
 const W = { on: false, active: false, stream: null, rec: null, starting: false, timer: null, lastNotified: null };
 const WAKE_MS = 2500;
-const wakeWanted = () => W.on && !document.hidden && !G.busy && V.state === 'idle' && !(window.speechSynthesis && speechSynthesis.speaking);
+const wakeWanted = () => W.on && !document.hidden && !G.busy && V.state === 'idle' && !ttsPlaying();
 
 function wakeRender() {
   const txt = W.active ? '👂 Escuchando «oye guía»' : '👂 «oye guía» en pausa';
@@ -470,17 +574,112 @@ function guideRootEl() {
 }
 document.addEventListener('visibilitychange', wakeSync);
 
-// TTS opcional: solo respuestas cortas y sin código. voiceSpeak(null) calla.
-function voiceSpeak(text) {
-  if (!window.speechSynthesis) return;
-  speechSynthesis.cancel();
-  if (!text || !voicePref.tts() || text.length > 320 || /```/.test(text)) return;
-  const plain = text.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[*_`#>]/g, '').replace(/\s+/g, ' ').trim();
-  if (!plain) return;
-  const u = new SpeechSynthesisUtterance(plain);
-  u.lang = ({ es: 'es-ES', en: 'en-US', ca: 'ca-ES', fr: 'fr-FR', de: 'de-DE', pt: 'pt-PT', it: 'it-IT' })[S.settings.sttLang] || navigator.language || 'es-ES';
-  speechSynthesis.speak(u);
+// ── Salida de voz del Guía 🔊 (FT-52) ─────────────────────────────────────────
+// Botón ▶ en cada respuesta del Guía y casilla «Leer en voz alta»: POST /api/guide/tts → <audio> (voz local de piper por defecto).
+// Si el proveedor del servidor falla o es «browser», cae a speechSynthesis eligiendo una voz femenina en español. Una sola reproducción
+// a la vez; `ttsPlaying()` la expone a `wakeWanted()` para pausar la escucha continua mientras suena.
+const T = { state: 'idle', key: null, audio: null, url: null, seq: 0, info: null }; // state: idle | loading | playing
+const TTS_LANG = { es: 'es-ES', en: 'en-US', ca: 'ca-ES', fr: 'fr-FR', de: 'de-DE', pt: 'pt-PT', it: 'it-IT' };
+const ttsPlaying = () => T.state !== 'idle' || !!(window.speechSynthesis && speechSynthesis.speaking);
+// Texto plano de una respuesta: sin bloques de código, enlaces ni marcas de markdown.
+const ttsPlain = (text) => String(text || '').replace(/```[\s\S]*?```/g, ' ').replace(/!\[[^\]]*\]\([^)]*\)/g, ' ').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/`([^`]*)`/g, '$1').replace(/^\s{0,3}(?:#{1,6}|>|[-*+]|\d+[.)])\s+/gm, '').replace(/[*_~#>]/g, '').replace(/\s+/g, ' ').trim();
+const ttsInfoLoad = () => api('GET', '/api/guide/tts').then((i) => { T.info = i; guideRender(); }).catch(() => {});
+// ¿Se puede leer? → '' si sí; si no, el motivo (tooltip del botón deshabilitado).
+function ttsWhy() {
+  if (!T.info) return '';
+  const cur = T.info.providers.find((p) => p.name === T.info.provider);
+  if (cur?.ok || window.speechSynthesis) return '';
+  return `Voz no disponible: ${cur?.reason || 'sin proveedor TTS'}`;
 }
+function ttsButton(i, text) {
+  if (!ttsPlain(text)) return '';
+  const mine = T.key === i, why = ttsWhy();
+  const [ic, tip] = why ? ['▶', why] : mine && T.state === 'loading' ? ['⏳', 'Preparando la voz… (pulsa para cancelar)'] : mine && T.state === 'playing' ? ['⏸', 'Parar'] : ['▶', 'Escuchar esta respuesta'];
+  return `<button type="button" class="ghost small g-play ${mine && T.state !== 'idle' ? 'on' : ''}" data-g="play" data-i="${i}" title="${esc(tip)}" aria-label="${esc(tip)}" ${why ? 'disabled' : ''}>${ic}</button>`;
+}
+function ttsBrowserVoice(lang) {
+  const fam = lang.slice(0, 2).toLowerCase();
+  const vs = speechSynthesis.getVoices().filter((v) => v.lang.toLowerCase().startsWith(fam));
+  return vs.find((v) => /female|m[oó]nica|paulina|luc[ií]a|elvira|helena|laura|sabina|google espa/i.test(v.name)) || vs[0] || null;
+}
+function ttsStop() {
+  T.seq++; // invalida peticiones en vuelo
+  if (T.audio) { T.audio.pause(); T.audio.removeAttribute('src'); T.audio = null; }
+  if (T.url) { URL.revokeObjectURL(T.url); T.url = null; }
+  if (window.speechSynthesis) speechSynthesis.cancel();
+  const was = T.state !== 'idle';
+  T.state = 'idle'; T.key = null;
+  if (was) guideRender();
+}
+function ttsBrowserSpeak(text, seq) {
+  if (!window.speechSynthesis) return false;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = TTS_LANG[S.settings.sttLang] || 'es-ES';
+  const v = ttsBrowserVoice(u.lang);
+  if (v) u.voice = v;
+  u.rate = 1; u.pitch = 1;
+  const end = () => { if (T.seq === seq) { T.state = 'idle'; T.key = null; guideRender(); } };
+  u.onend = end; u.onerror = end;
+  T.state = 'playing';
+  speechSynthesis.speak(u);
+  return true;
+}
+// Lee `text` (markdown) con la clave `key` (índice del mensaje o 'auto'); pulsar de nuevo la misma clave la para.
+// opts.provider/opts.voice: la prueba de Ajustes usa lo del formulario sin guardar.
+async function ttsSpeak(text, key, opts = {}) {
+  const same = T.key === key && T.state !== 'idle';
+  ttsStop();
+  if (same) return;
+  const plain = ttsPlain(text).slice(0, 4000);
+  if (!plain) return;
+  const seq = ++T.seq;
+  T.key = key; T.state = 'loading'; guideRender();
+  try {
+    if ((opts.provider || T.info?.provider) === 'browser') { if (!ttsBrowserSpeak(plain, seq)) throw new Error('sin speechSynthesis'); guideRender(); return; }
+    const r = await fetch(BASE + 'api/guide/tts', { method: 'POST', headers: { 'content-type': 'application/json', 'x-ao-client': CLIENT_ID }, body: JSON.stringify({ text: plain, ...(opts.voice ? { voice: opts.voice } : {}), ...(opts.provider ? { provider: opts.provider } : {}) }) });
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw Object.assign(new Error(j.error || r.statusText), { status: r.status }); }
+    const blob = await r.blob();
+    if (T.seq !== seq) return; // el usuario paró o cambió de chat mientras se sintetizaba
+    T.url = URL.createObjectURL(blob);
+    const a = T.audio = new Audio(T.url);
+    const end = () => { if (T.audio === a) { T.state = 'idle'; T.key = null; T.audio = null; URL.revokeObjectURL(T.url); T.url = null; guideRender(); } };
+    a.addEventListener('ended', end); a.addEventListener('error', end);
+    await a.play();
+    if (T.seq === seq) { T.state = 'playing'; guideRender(); }
+  } catch (e) {
+    if (T.seq !== seq) return;
+    T.state = 'idle'; T.key = null;
+    // respaldo: voz del navegador (el servidor no tiene proveedor o falló); el texto no sale del PC
+    if (!opts.provider && window.speechSynthesis && ttsBrowserSpeak(plain, seq)) { T.key = key; guideRender(); return; }
+    toast('No se pudo leer en voz alta: ' + e.message);
+    guideRender();
+  }
+}
+function voiceSpeak(text) {
+  if (!text) return ttsStop();
+  if (!voicePref.tts() || text.length > 320 || /```/.test(text) || V.state !== 'idle') return;
+  ttsSpeak(text, 'auto');
+}
+
+// Ajustes ▸ «🔊 Voz del Guía»: voces del proveedor elegido en el formulario (sin guardar) y «Probar voz».
+async function ttsFillSettings() {
+  const sel = $('#tts-voice'), prov = document.querySelector('select[name=ttsProvider]');
+  if (!sel || !prov) return;
+  try {
+    const i = await api('GET', '/api/guide/tts?provider=' + encodeURIComponent(prov.value));
+    T.info = { ...i, provider: T.info?.provider || i.provider }; // lo guardado manda hasta que se pulse Guardar
+    sel.innerHTML = i.voices.map((v) => `<option value="${esc(v.id)}" ${v.id === i.voice ? 'selected' : ''}>${esc(v.label)}</option>`).join('');
+    const me = i.providers.find((p) => p.name === prov.value);
+    $('#tts-info').innerHTML = `· ${me?.ok ? '<span class="ok">disponible</span>' : `<span class="bad">no disponible: ${esc(me?.reason || '')}</span>`}`;
+  } catch { sel.innerHTML = '<option value="">—</option>'; }
+}
+document.addEventListener('change', (e) => { if (e.target.matches?.('select[name=ttsProvider]')) ttsFillSettings(); });
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-tts-test]');
+  if (!b) return;
+  const provider = document.querySelector('select[name=ttsProvider]')?.value, voice = $('#tts-voice')?.value;
+  ttsSpeak('Hola, soy tu guía. Así sueno cuando te leo una respuesta.', 'test', { provider, voice });
+});
 
 // Ajustes ▸ «Probar micrófono»: graba (corta sola tras el silencio), enseña el nivel y la transcripción con su latencia.
 let voiceTestRec = null;
@@ -506,23 +705,55 @@ document.addEventListener('click', async (e) => {
 // Pestañas de administración (Oficina / Tareas / Agentes), recordadas por navegador.
 let skillsData = null; // catálogo e inventario de skills (se carga al abrir Agentes)
 let MODELS = { claude: [], codex: [] }; // modelos disponibles por motor (GET /api/engines/models)
-const loadModels = () => api('GET', '/api/engines/models').then((m) => { MODELS = m; }).catch(() => {});
-loadModels();
-// <select> de modelo: grupos por motor (en «auto» salen los dos), los no disponibles deshabilitados con su motivo, y «otro…» libre.
+let modelsAt = 0;
+// Lista viva (FT-55): caché de 5 min en el cliente; `force` (botón ↻) o caducada → se vuelve a pedir. Si falla, se queda lo que hubiera.
+const loadModels = (force) => (!force && Date.now() - modelsAt < 300000 ? Promise.resolve() : api('GET', '/api/engines/models').then((m) => { MODELS = m; modelsAt = Date.now(); }).catch(() => {}));
+loadModels(true);
+const MODEL_OF = { claude: /^(sonnet|opus|haiku|claude-)/i, codex: /^(gpt-|o[0-9]|codex)/i }; // espejo de team.js
+const GROUP_LABEL = { claude: 'Claude', codex: 'Codex', local: 'Local' };
+const AUTO_HINT = 'con motor automático, el modelo decide si va a Claude o a Codex';
+// ÚNICO selector de modelo (FT-55): cajón, contratar, editar, roles y Ajustes. Grupos por motor (en «auto» salen los dos), no disponibles
+// deshabilitados con su nota, valor actual siempre presente y «Otro…» (campo libre solo al elegirlo).
 function modelSelect(name, engine, current) {
   const groups = engine === 'auto' ? ['claude', 'codex'] : engine === 'demo' ? [] : [engine];
   const known = groups.flatMap((g) => MODELS[g] || []).some((m) => m.id === current);
-  return `<select name="${name}" class="model-select" data-engine="${engine}">
+  const opt = (m) => `<option value="${esc(m.id)}" title="${esc(m.note || '')}" ${m.id === current ? 'selected' : ''} ${m.available === false ? 'disabled' : ''}>${esc(m.label)} · ${esc(m.id)}${m.available === false ? ' — ' + esc(m.note || 'no disponible') : m.note ? ' (' + esc(m.note) + ')' : ''}</option>`;
+  return `<span class="model-pick" data-name="${esc(name)}" data-engine="${esc(engine)}"><span class="model-row"><select name="${esc(name)}" class="model-select">
     <option value="" ${!current ? 'selected' : ''}>por defecto del rol / motor</option>
-    ${groups.map((g) => `<optgroup label="${g === 'claude' ? 'Claude Code' : 'Codex'}">${(MODELS[g] || []).map((m) => `<option value="${esc(m.id)}" ${m.id === current ? 'selected' : ''} ${m.available ? '' : 'disabled'}>${esc(m.label)}${m.available ? (m.note ? ' (' + esc(m.note) + ')' : '') : ' — ' + esc(m.note || 'no disponible')}</option>`).join('')}</optgroup>`).join('')}
-    <option value="__other" ${current && !known ? 'selected' : ''}>otro… (escribir id)</option>
-  </select><input name="${name}_other" class="model-other" placeholder="id del modelo" value="${current && !known ? esc(current) : ''}" style="${current && !known ? '' : 'display:none'}" />`;
+    ${current && !known ? `<option value="${esc(current)}" selected>actual: ${esc(current)}</option>` : ''}
+    ${groups.map((g) => `<optgroup label="${GROUP_LABEL[g] || esc(g)}">${(MODELS[g] || []).map(opt).join('')}</optgroup>`).join('')}
+    <option value="__other">Otro… (escribir id)</option>
+  </select><button type="button" class="ghost small model-refresh" title="Refrescar la lista de modelos" aria-label="Refrescar modelos">↻</button></span>
+  <input name="${esc(name)}_other" class="model-other" placeholder="id del modelo" style="display:none" /><div class="muted model-hint">${engine === 'auto' ? AUTO_HINT : ''}</div></span>`;
+}
+// Valor actual de un .model-pick (el id elegido o el escrito en «Otro…»).
+const modelPickValue = (w) => { const s = w.querySelector('.model-select').value; return s === '__other' ? w.querySelector('.model-other').value.trim() : s; };
+// Repinta un selector (otro motor o lista refrescada) conservando el valor.
+function repaintModel(w, engine, current) {
+  const t = document.createElement('div');
+  t.innerHTML = modelSelect(w.dataset.name, engine, current);
+  w.replaceWith(t.firstElementChild);
+}
+// Validación de «Otro…»: sin espacios; aviso (no bloquea) si el motor no lo reconoce.
+function checkModelOther(inp) {
+  const w = inp.closest('.model-pick'), v = inp.value.trim(), eng = w.dataset.engine;
+  inp.setCustomValidity(/\s/.test(v) ? 'El id del modelo no puede llevar espacios' : '');
+  const ok = !v || (eng === 'auto' ? Object.values(MODEL_OF).some((re) => re.test(v)) : !MODEL_OF[eng] || MODEL_OF[eng].test(v));
+  w.querySelector('.model-hint').textContent = !ok ? `⚠ «${v}» no parece un modelo de ${eng}: se usará el modelo por defecto del motor` : eng === 'auto' ? AUTO_HINT : '';
 }
 document.addEventListener('change', (e) => {
   const sel = e.target.closest('.model-select');
-  if (sel) { const other = sel.parentElement.querySelector('.model-other'); if (other) other.style.display = sel.value === '__other' ? '' : 'none'; return; }
+  if (sel) { const other = sel.closest('.model-pick').querySelector('.model-other'); other.style.display = sel.value === '__other' ? '' : 'none'; if (sel.value === '__other') other.focus(); return; }
   const eng = e.target.closest('select[name=engine]');
-  if (eng) { const ms = eng.closest('form')?.querySelector('.model-select'); if (ms) ms.outerHTML = modelSelect(ms.name, eng.value, '').replace(/<input[^>]*>$/, ''); }
+  if (eng) { const w = eng.closest('form')?.querySelector('.model-pick'); if (w) repaintModel(w, eng.value, ''); }
+});
+document.addEventListener('input', (e) => { if (e.target.closest('.model-other')) checkModelOther(e.target); });
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('.model-refresh');
+  if (!b) return;
+  b.disabled = true;
+  await loadModels(true);
+  document.querySelectorAll('.model-pick').forEach((w) => repaintModel(w, w.dataset.engine, modelPickValue(w)));
 });
 const pickModel = (f) => (f.model === '__other' ? (f.model_other || '').trim() : f.model || '');
 const VIEW_PARAM = new URLSearchParams(location.search).get('view'); // ?view=guide (botón «Guía» de flow-test, FT-3)
@@ -582,7 +813,7 @@ function render() {
   run.classList.toggle('on', !!p?.running);
   run.disabled = !p;
 
-  office.update({ agents: team(), tasks: tasks(), roles: S.roles, title: p?.name || '', selected: drawerAgent, projects: S.projects, allAgents: S.agents, allTasks: S.tasks, projectId }); // projects/allAgents/allTasks: modo edificio (FT-46); projectId: planta resaltada (FT-47)
+  office.update({ agents: team(), tasks: tasks(), questions: S.questions || [], roles: S.roles, title: p?.name || '', selected: drawerAgent, projects: S.projects, allAgents: S.agents, allTasks: S.tasks, projectId }); // projects/allAgents/allTasks: modo edificio (FT-46); projectId: planta resaltada (FT-47)
   renderSuite();
   renderTeam();
   renderRepos();
@@ -604,6 +835,7 @@ function render() {
     ? `🔗 ${esc(BOARD_LABELS[b.kind] || b.kind)} · <a href="${esc(b.url || '#')}" target="_blank" rel="noopener">${esc(b.config.repo || b.config.boardId || b.config.projectKey || '')}</a> · ${b.syncedAt ? 'hace ' + ago(b.syncedAt) : 'sin sincronizar'}${pending ? ` · <span title="tareas sin tarjeta fuera">${pending} sin tarjeta</span>` : ''}${b.lastError ? ` <span class="bad" title="${esc(b.lastError)}">⚠</span>` : ''} ${job?.running ? `<span class="muted">⇪ ${job.done}/${job.total}${job.waitingUntil ? ' · esperando a GitHub' : ''}</span> <button class="small ghost" data-board-cancel>✕</button>` : `<button class="small" data-board-syncall title="Igualar los dos lados: trae y lleva los estados y crea fuera las tarjetas que falten">⇅ Sincronizar</button>`}`
     : `<button class="small ghost" data-action="settings" title="Conecta GitHub, Trello o Jira en Ajustes ▸ Tablero online">🔗 Conectar tablero…</button>`;
   if (drawerAgent) renderDrawer();
+  refreshTaskWho(); // FT-50
   publishContext();
 }
 
@@ -735,6 +967,7 @@ function editRole(id, duplicate = false) {
       <div><label>Identificador (sin espacios)</label><input name="id" value="${esc(rid)}" placeholder="unity-dev" ${rid ? 'readonly' : 'required autofocus'} /></div>
       <div><label>Tipo</label><select name="kind"><option value="dev" ${r.kind === 'dev' ? 'selected' : ''}>desarrolla</option><option value="qa" ${r.kind === 'qa' ? 'selected' : ''}>QA (MCP de flow-test)</option><option value="docs" ${r.kind === 'docs' ? 'selected' : ''}>documenta (MCP de flow-test)</option><option value="planner" ${r.kind === 'planner' ? 'selected' : ''}>planifica (PO)</option></select></div>
       <div><label>Modelo por defecto</label>${modelSelect('model', 'auto', r.model || '')}</div>
+      <div><label>Modelo mínimo (cascada FT-60: no empezar más abajo)</label><input name="minModel" value="${esc(r.minModel || '')}" placeholder="vacío = empieza barato (p. ej. sonnet)" /></div>
       <div><label>Atiende tareas de rol (Ctrl+clic)</label><select name="handles" multiple>${['po', 'back', 'front', 'qa'].map((h) => `<option value="${h}" ${(r.handles || []).includes(h) ? 'selected' : ''}>${h}</option>`).join('')}</select></div>
     </div>
     <label>Descripción (una línea)</label><input name="description" value="${esc(r.description || '')}" />
@@ -824,10 +1057,44 @@ $('#board').addEventListener('drop', (e) => {
 // FT-19: estado de la rama en revisión respecto a la base (lo calcula el servidor): desfasada N commits / conflicto en ficheros.
 const baseOf = (t) => { const rs = S.projects.find((p) => p.id === t.projectId)?.repos || []; return (rs.find((r) => r.key === t.repo) || rs[0])?.baseBranch || 'main'; };
 const mergeChips = (t) => t.status !== 'review' || !t.branch ? '' : [
+  (t.outsideWrites || []).length ? `<span class="merge-chip conflict" title="FT-44: cambios sin confirmar en el checkout principal de ${esc(t.outsideWrites.map((o) => o.repo).join(', '))}: no pasan por esta revisión">⚠ escribió fuera de su worktree</span>` : '',
   t.behind ? `<span class="merge-chip behind" title="A la rama le faltan ${t.behind} commits de ${esc(baseOf(t))}: «Actualizar con ${esc(baseOf(t))}» los trae (al aprobar se hace solo)">desfasada ${t.behind} commit${t.behind === 1 ? '' : 's'}</span>` : '',
   (t.conflicts || []).length ? `<span class="merge-chip conflict" title="${esc(t.conflicts.join('\n'))}">⚠ conflicto en ${esc(t.conflicts.slice(0, 2).join(', '))}${t.conflicts.length > 2 ? ` +${t.conflicts.length - 2}` : ''}</span>` : '',
 ].join(' ');
+// FT-44: tarea con rama en varios repos → un diffStat por repo; escribir fuera del worktree → aviso para el humano.
+const repoStats = (t) => Object.entries(t.repos || {}).filter(([, r]) => r.diffStat);
+const diffStatsHtml = (t, cls = '') => repoStats(t).length > 1
+  ? repoStats(t).map(([k, r]) => `<pre${cls}><b>📁 ${esc(k)}</b> · ${esc(r.branch || t.branch || '')}\n${esc(r.diffStat)}</pre>`).join('')
+  : (t.diffStat ? `<pre${cls}>${esc(t.diffStat)}</pre>` : '');
+const outsideWarn = (t) => (t.outsideWrites || []).length ? `<div class="task-sec outside-warn"><h4>⚠ Escribió fuera de su worktree</h4><p>Hay cambios sin confirmar en el checkout principal que no pasan por esta revisión (no se fusionarán con «Aprobar» y pueden estar sirviéndose ya):</p><ul>${t.outsideWrites.map((o) => `<li><code>${esc(o.repo)}</code> · ${esc(o.path)}<br>${o.files.map((f) => `<code>${esc(f)}</code>`).join(' · ')}</li>`).join('')}</ul></div>` : '';
 const updateBtn = (t) => t.status === 'review' && t.branch && t.behind ? `<button class="small ghost" data-update="${t.id}" title="Fusiona ${esc(baseOf(t))} en la rama de la tarea; si choca, vuelve al agente con el conflicto">⬆ Actualizar con ${esc(baseOf(t))}</button>` : '';
+
+// FT-50: quién hará la tarea. Fijo (el agente que la tiene o el asignado con «Asignar a…»), previsto (`plannedAgentId`, que el
+// servidor calcula con la misma regla que el planificador) o aviso ámbar si nadie del equipo tiene el rol. El chip abre el
+// cajón del agente (motor, modelo, registro) o, sin agente, «Contratar agente» con el rol ya elegido; el desplegable reasigna.
+const UNSTARTED = ['backlog', 'todo', 'failed'];
+const engineTag = (a) => `${a.engine}${a.engine === 'auto' && a.activeEngine ? '→' + a.activeEngine : ''}${a.model ? '/' + a.model : ''}`;
+const assignable = (t) => team().filter((a) => a.role === t.role || (S.roles[a.role]?.handles || []).includes(t.role));
+function whoRow(t) {
+  const byId = (id) => id && S.agents.find((a) => a.id === id);
+  const fixed = byId(t.agentId) || byId(t.assignedAgentId);
+  const planned = !fixed && byId(t.plannedAgentId);
+  const a = fixed || planned;
+  const open = UNSTARTED.includes(t.status);
+  const chip = a
+    ? `<button type="button" class="who-chip${planned ? ' planned' : ''}" data-agent="${a.id}" title="${planned ? `Previsto: ${esc(a.name)} es el primer agente del equipo libre con ese rol (cambia con «Asignar a…»). ` : ''}Abrir a ${esc(a.name)} para configurarlo (motor, modelo) o ver su registro">👤 ${planned ? '<i>previsto:</i> ' : ''}${esc(a.name)} · <span class="eng-tag">${esc(engineTag(a))}</span></button>`
+    : open ? `<button type="button" class="who-chip warn" data-hire-role="${esc(t.role)}" title="${esc(t.plannedReason || 'nadie del equipo tiene ese rol')}. Clic: contratar un agente con ese rol">⚠️ sin agente para este rol</button>` : '';
+  if (!chip) return '';
+  const opts = open ? assignable(t) : [];
+  const pick = opts.length || t.assignedAgentId ? `<select class="who-pick" data-assign="${t.id}" title="Asignar a… fija quién hará la tarea (sin pasar por la regla del rol)"><option value="">Asignar a…</option>${opts.map((x) => `<option value="${x.id}">${esc(x.name)} · ${esc(engineTag(x))}</option>`).join('')}${t.assignedAgentId ? '<option value="__auto">(automático: por rol)</option>' : ''}</select>` : '';
+  return `<div class="who">${chip}${pick}</div>`;
+}
+// El modal «Ver la tarea» no se repinta por SSE: solo se refresca su fila de agente al llegar un estado nuevo.
+function refreshTaskWho() {
+  const el = $('#dialog .task-who');
+  const t = openTaskId && S.tasks.find((x) => x.id === openTaskId);
+  if (el && t && $('#dialog').open) el.innerHTML = whoRow(t);
+}
 
 function card(t) {
   const agent = S.agents.find((a) => a.id === t.agentId);
@@ -852,10 +1119,16 @@ function card(t) {
   return `<div class="card ${t.status}" data-task="${t.id}" draggable="${['backlog', 'todo', 'failed'].includes(t.status)}" style="--c:${S.roles[t.role]?.color}">
     <div class="card-head">${roleChip(t.role)} <span class="task-id" title="Código de la tarea (rama ao/${t.code || t.id}; cítalo en commits y docs)">${esc(tcode(t))}</span>${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? ` <span class="repo-chip">📁 ${esc(t.repo || '?')}</span>` : ''}${t.source?.flow ? ` <span title="Importada del tablero «${esc(t.source.flow)}» · columna ${esc(t.source.column)}">🗂</span>` : ''}${(t.feedbackImages?.length || t.files?.length) ? ` <span title="${esc([...(t.feedbackImages || []), ...(t.files || [])].map((f) => f.split('/').pop()).join(', '))}">📎${(t.feedbackImages?.length || 0) + (t.files?.length || 0)}</span>` : ''}${t.source?.url ? ` <a class="ext" href="${esc(t.source.url)}" target="_blank" rel="noopener" title="${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} · ${esc(t.source.id)}${t.source.remoteStatus ? ' · fuera: ' + esc(t.source.remoteStatus) : ''}">🔗 ${esc(t.source.id)}</a>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}</div>
     <div class="t">${esc(t.title)}</div>
+    ${whoRow(t)}
     ${t.context ? `<div class="meta">${bornFrom(t)}</div>` : ''}
-    <div class="meta">${agent ? `<span>👤 ${esc(agent.name)}</span>` : ''}${deps ? `<span>depende de ${deps}</span>` : ''}${t.costUsd ? ` <span>💲${t.costUsd.toFixed(3)}</span>` : ''}</div>
+    ${t.modelHistory?.length ? `<div class="meta"><span class="model-ladder" title="Cascada de modelos (FT-60): empieza barato y sube al devolverla o si falla${t.minModel ? '. Mínimo de la tarea: ' + esc(t.minModel) : ''}">🧠 ${esc(t.modelHistory.map((x) => x.model).filter((m, i, a) => m !== a[i - 1]).join(' → '))}</span></div>` : ''}
+    ${deps || t.costUsd ? `<div class="meta">${deps ? `<span>depende de ${deps}</span>` : ''}${t.costUsd ? ` <span>💲${t.costUsd.toFixed(3)}</span>` : ''}</div>` : ''}
     ${t.status === 'doing' && agent ? `<div class="live">● ${esc(agent.activity)}</div>` : ''}
     ${t.status === 'todo' && t.quotaBlocked && t.activity ? `<div class="quota-hold">${esc(t.activity)}</div>` : ''}
+    ${['todo', 'backlog'].includes(t.status) && S.costEstimates?.[t.role] != null ? `<div class="meta"><span class="cost-est" title="Estimación: mediana del coste de las últimas tareas hechas por el rol ${esc(t.role)}. Tope por intento: ${S.settings.maxTaskUsd || 3} $">≈ ${S.costEstimates[t.role].toFixed(2)} $</span></div>` : ''}
+    ${t.quotaPaused && t.status === 'todo' ? `<div class="quota-hold">${esc(t.activity || '⏸ sin cuota')}${t.quotaPaused.resetsAt > Date.now() ? ` (en ${fmtLeft(t.quotaPaused.resetsAt)})` : ''} <button class="small ghost" data-resume-now="${t.id}" title="Ignorar la espera y relanzarla en el siguiente reparto">▶ Reanudar ya</button></div>` : ''}
+    ${t.stuck && t.status === 'review' ? `<div class="quota-hold">⚠️ atascado: ${esc(t.stuck)}</div>` : ''}
+    ${t.budgetHit && t.status === 'review' ? '<div class="quota-hold">⚠️ cortada por el tope de gasto: revisa y decide</div>' : ''}
     ${t.summary && t.status !== 'doing' ? `<div class="sum">${esc(t.summary)}</div>` : ''}
     ${mergeChips(t) ? `<div class="merge-row">${mergeChips(t)}</div>` : ''}
     ${t.error ? `<div class="err">${esc(t.error)}</div>` : ''}
@@ -864,14 +1137,110 @@ function card(t) {
   </div>`;
 }
 
-// ── Panel del agente ───────────────────────────────────────────────────────
-function openDrawer(id) {
+// ── Panel del agente (AgentDetailPanel, FT-68) ─────────────────────────────
+const STATUS_META = {
+  working: { label: 'Trabajando', color: '#34d399' },
+  waiting: { label: 'Esperando', color: '#60a5fa' },
+  reviewing: { label: 'Revisando', color: '#fbbf24' },
+  blocked: { label: 'Bloqueado', color: '#f59e0b' },
+  failed: { label: 'Fallido', color: '#f87171' },
+  idle: { label: 'Descansando', color: '#94a3b8' },
+  paused: { label: 'En pausa', color: '#fbbf24' },
+};
+const STATUS_EVENTS = {
+  AgentStarted: 'working', AgentResumed: 'working', AgentProgress: 'working',
+  AgentPaused: 'paused', AgentBlocked: 'blocked', AgentFailed: 'failed', AgentCompleted: 'idle',
+};
+function effectiveStatus(a) {
+  const task = S.tasks.find((t) => t.id === a?.taskId);
+  if (a?.status === 'working' && task?.status === 'review') return 'reviewing';
+  if (a?.status === 'idle' && S.tasks.some((t) => t.agentId === a.id && t.status === 'failed')) return 'failed';
+  return a?.status || 'idle';
+}
+function statusMeta(a) { return STATUS_META[effectiveStatus(a)] || STATUS_META.idle; }
+function rememberActivity(ev) {
+  if (!ev?.agentId) return;
+  const arr = activityByAgent.get(ev.agentId) || [];
+  if (!arr.some((x) => x.id === ev.id)) arr.push(ev);
+  arr.sort((a, b) => a.ts - b.ts);
+  if (arr.length > 80) arr.splice(0, arr.length - 80);
+  activityByAgent.set(ev.agentId, arr);
+  if (STATUS_EVENTS[ev.type]) statusSinceByAgent.set(ev.agentId, { status: STATUS_EVENTS[ev.type], ts: ev.ts });
+}
+async function loadAgentActivity(id) {
+  if (activityLoaded.has(id)) return;
+  activityLoaded.add(id);
+  try {
+    const events = await api('GET', `/api/events?agentId=${encodeURIComponent(id)}&limit=80`);
+    events.forEach(rememberActivity);
+    if (drawerAgent === id) renderDrawer();
+  } catch { activityLoaded.delete(id); }
+}
+function statusSince(a) {
+  const now = Date.now(), current = effectiveStatus(a);
+  const events = activityByAgent.get(a.id) || [];
+  for (let i = events.length - 1; i >= 0; i--) {
+    const st = STATUS_EVENTS[events[i].type];
+    if (st && (st === current || (current === 'reviewing' && st === 'working'))) return events[i].ts;
+  }
+  const cached = statusSinceByAgent.get(a.id);
+  return cached?.ts || a.updatedAt || a.createdAt || now;
+}
+function durationSince(ts) {
+  const s = Math.max(0, Math.floor((Date.now() - Number(ts || Date.now())) / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  if (h) return `${h}h ${String(m).padStart(2, '0')}m`;
+  if (m) return `${m}m ${String(sec).padStart(2, '0')}s`;
+  return `${sec}s`;
+}
+function eventText(ev) {
+  const d = ev.data || {};
+  if (ev.type === 'AgentToolStarted') return `usando ${d.tool || 'herramienta'}${d.summary ? ': ' + d.summary : ''}`;
+  if (ev.type === 'AgentToolFinished') return d.ok === false ? 'herramienta con error' : 'herramienta completada';
+  if (ev.type === 'AgentProgress') return d.activity || 'actualizando progreso';
+  if (ev.type === 'AgentFileModified') return `modificando ${d.path || 'fichero'}`;
+  if (ev.type === 'AgentArtifactCreated') return d.kind === 'commit' ? `commit${d.sha ? ' ' + String(d.sha).slice(0, 7) : ''}${d.branch ? ' en ' + d.branch : ''}` : `creando ${d.kind || 'artefacto'}`;
+  if (ev.type === 'AgentStarted') return `empezando ${ev.taskCode || 'tarea'}${d.engine ? ' con ' + d.engine : ''}`;
+  if (ev.type === 'TaskAssigned') return `asignado a ${ev.taskCode || 'tarea'}`;
+  if (ev.type === 'AgentPaused') return 'pausado';
+  if (ev.type === 'AgentResumed') return 'reanudado';
+  if (ev.type === 'AgentBlocked') return `bloqueado${d.reason ? ': ' + d.reason : ''}`;
+  if (ev.type === 'AgentFailed') return `error: ${d.error || 'fallo del agente'}`;
+  if (ev.type === 'AgentCompleted') return d.status === 'review' ? 'entregado a revisión' : 'tarea completada';
+  if (ev.type === 'UserInstructionAdded') return d.kind === 'message' ? 'mensaje recibido del usuario' : 'instrucción añadida';
+  return ev.type.replace(/^Agent/, '').replace(/([A-Z])/g, ' $1').trim().toLowerCase();
+}
+function activeTool(a) {
+  const events = activityByAgent.get(a.id) || [];
+  const tool = [...events].reverse().find((e) => e.type === 'AgentToolStarted');
+  const engine = a.activeEngine || a.engine || 'auto';
+  return `${engine}${a.model ? ' · ' + a.model : ''}${tool ? ` · ${tool.data?.tool || 'herramienta'}${tool.data?.summary ? ' · ' + tool.data.summary : ''}` : ''}`;
+}
+function openDrawer(id, { skipFocus = false } = {}) {
   drawerAgent = id;
   $('#drawer').hidden = false;
+  $('#drawer').setAttribute('role', 'dialog');
+  $('#drawer').setAttribute('aria-modal', 'true');
+  $('#drawer').tabIndex = -1;
+  loadAgentActivity(id);
+  if (!skipFocus && activeTab === 'office') {
+    officeLevel = 'agent';
+    officeMode = 'floor';
+    office.focusAgent?.(id);
+  }
   render();
   renderLog();
+  requestAnimationFrame(() => $('#drawer')?.focus({ preventScroll: true }));
 }
-function closeDrawer() { drawerAgent = null; $('#drawer').hidden = true; render(); }
+function closeDrawer({ keepOfficeLevel = false } = {}) {
+  drawerAgent = null;
+  $('#drawer').hidden = true;
+  if (!keepOfficeLevel && officeLevel === 'agent') {
+    officeLevel = 'floor';
+    office.clearAgentFocus?.();
+  }
+  render();
+}
 
 // Control de workers (FT-5): pausar / reanudar / mensaje en caliente.
 const busy = (a) => a.status === 'working' || a.status === 'paused';
@@ -893,34 +1262,94 @@ function renderDrawer() {
   if (!a) return closeDrawer();
   const task = S.tasks.find((t) => t.id === a.taskId);
   const d = $('#drawer');
+  const role = S.roles[a.role];
+  const meta = statusMeta(a);
+  const recent = (activityByAgent.get(a.id) || []).slice(-8).reverse();
+  const controlsHtml = busy(a) ? controls(a) : `<button class="small ghost" data-msg="${a.id}" title="Mandarle una instrucción">✉ Mensaje</button>`;
+  const taskHtml = task ? `<button class="linklike" data-open="${task.id}"><b>${esc(tcode(task))}</b> ${esc(task.title)}</button>` : '<span class="muted">Sin tarea activa</span>';
+  const activityHtml = recent.length ? recent.map((ev) => `<li class="${ev.type === 'AgentFailed' ? 'bad' : ''}"><span>${esc(eventText(ev))}</span><time>${ago(ev.ts)}</time></li>`).join('') : '<li><span class="muted">Sin actividad reciente en el stream.</span></li>';
   // Si ya está pintado, solo refrescamos lo que cambia (no perder el foco de los inputs).
   if (d.dataset.agent === a.id) {
-    d.querySelector('[data-f=status]').innerHTML = a.status === 'paused' ? '⏸ en pausa' : a.status === 'working' ? `🟢 ${esc(a.activity)}` : '☕ descansando';
-    d.querySelector('[data-f=controls]').innerHTML = busy(a) ? controls(a) : '';
-    d.querySelector('[data-f=task]').innerHTML = task ? `${esc(tcode(task))} ${esc(task.title)}` : '—';
+    d.querySelector('[data-f=status]').innerHTML = `<span class="dot" style="background:${meta.color};box-shadow:0 0 8px ${meta.color}"></span>${esc(meta.label)}<span class="muted">${durationSince(statusSince(a))}</span>`;
+    d.querySelector('[data-f=activity]').innerHTML = activityHtml;
+    d.querySelector('[data-f=tool]').textContent = activeTool(a);
+    d.querySelector('[data-f=controls]').innerHTML = controlsHtml;
+    d.querySelector('[data-f=task]').innerHTML = taskHtml;
+    d.querySelector('[data-f=current]').textContent = a.activity || (effectiveStatus(a) === 'idle' ? 'Disponible' : meta.label);
     d.querySelector('[data-stop]').hidden = !busy(a);
     return;
   }
   d.dataset.agent = a.id;
   d.innerHTML = `
-    <div class="head"><span class="avatar" style="--c:${S.roles[a.role]?.color}">${esc(a.name).charAt(0).toUpperCase()}</span><h2>${esc(a.name)}</h2>${roleChip(a.role)}<div class="spacer"></div><button class="ghost small" data-close>✕</button></div>
-    <div class="grid">
-      <span class="muted">Estado</span><span data-f="status"></span>
-      <span class="muted">Tarea</span><span data-f="task"></span>
-      <span class="muted">Motor</span>
-      <select data-f="engine">${S.engines.map((e) => `<option ${e === a.engine ? 'selected' : ''}>${e}</option>`).join('')}</select>
-      <span class="muted">Modelo</span><input data-f="model" value="${esc(a.model)}" placeholder="por defecto del CLI (p. ej. sonnet, opus)" />
-    </div>
-    <div class="row" style="display:flex;gap:8px">
-      <span data-f="controls" style="display:inline-flex;gap:8px"></span>
+    <div class="agent-panel-head"><span class="avatar big" style="--c:${role?.color || '#999'}">${esc(a.name).charAt(0).toUpperCase()}</span><div><h2>${esc(a.name)}</h2><div>${roleChip(a.role)}</div></div><div class="spacer"></div><button class="ghost small" data-close aria-label="Cerrar ficha">✕</button></div>
+    <div class="agent-status" data-f="status"></div>
+    <div class="agent-current" data-f="current"></div>
+    <section class="agent-panel-card">
+      <h3>Tarea actual</h3>
+      <div data-f="task"></div>
+    </section>
+    <section class="agent-panel-card">
+      <h3>Herramienta activa</h3>
+      <div class="tool-line" data-f="tool"></div>
+    </section>
+    <section class="agent-panel-card">
+      <h3>Motor y modelo</h3>
+      <div class="grid">
+        <span class="muted">Motor</span>
+        <select data-f="engine">${S.engines.map((e) => `<option ${e === a.engine ? 'selected' : ''}>${e}</option>`).join('')}</select>
+        <span class="muted">Modelo</span><div data-f="modelbox">${modelSelect('model', a.engine, a.model || '')}</div>
+      </div>
+    </section>
+    <section class="agent-panel-card">
+      <h3>Actividad reciente</h3>
+      <ul class="agent-activity" data-f="activity"></ul>
+    </section>
+    <details class="agent-panel-card agent-memory" data-memory>
+      <summary><h3 style="display:inline">🧠 Memoria</h3> <span class="muted" data-mem-size></span></summary>
+      <p class="muted">Lecciones que se le pasan en sus próximas tareas (las añade él al terminar y las correcciones de «Devolver»). Una por línea; bórrale lo que no valga. Tope ≈1 500 tokens por bloque.</p>
+      <label>Suya</label><textarea rows="5" data-mem="agent" placeholder="(vacía)"></textarea>
+      <label>De todo el proyecto</label><textarea rows="4" data-mem="project" placeholder="(vacía)"></textarea>
+      <div class="row"><button class="small" data-mem-save>Guardar memoria</button></div>
+    </details>
+    <div class="agent-actions" data-f="controls"></div>
+    <div class="agent-actions">
+      ${task ? `<button class="small" data-open="${task.id}">Abrir tarea</button>` : ''}
+      <button class="small ghost" data-log-focus>Ver log</button>
+      <button class="small ghost" data-agent-edit="${a.id}">Reasignar / editar</button>
       <button class="danger small" data-stop="${a.id}">⏹ Parar</button>
-      <div class="spacer"></div>
-      <button class="danger small" data-fire="${a.id}">Despedir</button>
     </div>
     <div class="muted">Registro en vivo</div>
     <div id="log"></div>`;
-  d.querySelector('[data-f=engine]').onchange = (e) => api('PATCH', `/api/agents/${a.id}`, { engine: e.target.value }).then(() => toast(`${a.name} usa ahora ${e.target.value}`));
-  d.querySelector('[data-f=model]').onchange = (e) => api('PATCH', `/api/agents/${a.id}`, { model: e.target.value });
+  // FT-75: memoria del agente y del proyecto (se carga al desplegar la sección)
+  const memBox = d.querySelector('[data-memory]');
+  const pid = S.projects.find((x) => (x.team || []).includes(a.id))?.id || projectId;
+  const memLoad = async () => {
+    const [ag, pr] = await Promise.all([api('GET', `/api/memory/${pid}?agent=${a.id}`), api('GET', `/api/memory/${pid}`)]);
+    memBox.querySelector('[data-mem=agent]').value = ag.text; memBox.querySelector('[data-mem=project]').value = pr.text;
+    memBox.querySelector('[data-mem-size]').textContent = `${Math.round((ag.text.length + pr.text.length) / 4)} tokens`;
+  };
+  memBox.addEventListener('toggle', () => { if (memBox.open) memLoad().catch(() => {}); });
+  memBox.querySelector('[data-mem-save]').onclick = async () => {
+    await api('PUT', `/api/memory/${pid}?agent=${a.id}`, { text: memBox.querySelector('[data-mem=agent]').value });
+    await api('PUT', `/api/memory/${pid}`, { text: memBox.querySelector('[data-mem=project]').value });
+    toast('Memoria guardada'); memLoad().catch(() => {});
+  };
+  d.querySelector('[data-f=engine]').onchange = (e) => {
+    const box = d.querySelector('[data-f=modelbox] .model-pick');
+    repaintModel(box, e.target.value, modelPickValue(box)); // FT-55: la lista de modelos sigue al motor elegido
+    api('PATCH', `/api/agents/${a.id}`, { engine: e.target.value }).then(() => toast(`${a.name} usa ahora ${e.target.value}`));
+  };
+  // FT-55: guardar al elegir (en «Otro…», al confirmar el id escrito)
+  const saveModel = (e) => {
+    const w = e.target.closest('.model-pick');
+    if (!w || e.target.closest('.model-refresh')) return;
+    if (e.target.matches('.model-select') && e.target.value === '__other') return;
+    const inp = w.querySelector('.model-other');
+    if (e.target.matches('.model-other') && !inp.reportValidity()) return;
+    const model = modelPickValue(w);
+    api('PATCH', `/api/agents/${a.id}`, { model }).then(() => toast(model ? `${a.name} usa el modelo ${model}` : `${a.name}: modelo por defecto`));
+  };
+  d.querySelector('[data-f=modelbox]').addEventListener('change', saveModel);
   renderDrawer();
   renderLog();
 }
@@ -955,6 +1384,7 @@ function dialog(html, onSubmit, cls = '') {
     try { await onSubmit?.(Object.fromEntries(new FormData(form))); dlg.close(); } catch { /* el toast ya avisó */ }
   };
   dlg.showModal();
+  if (Date.now() - modelsAt >= 300000) loadModels().then(() => dlg.querySelectorAll('.model-pick').forEach((w) => repaintModel(w, w.dataset.engine, modelPickValue(w)))); // lista viva (FT-55)
 }
 // Dictado por voz en campos del diálogo (FT-43): sin soporte el botón no se pinta; con él, un clic dicta y otro para.
 // STT del servidor disponible (GET /api/guide/stt): el dictado prefiere ese camino (audio local) y deja la Web Speech API de respaldo.
@@ -1019,11 +1449,12 @@ Pasos, convenciones y ejemplos…</textarea>
   }),
   quota: () => showTab('summary'), // FT-45: el chip de cuota abre el Resumen
   building: () => setOfficeMode('building'), // FT-47: «🏢 Edificio» en el pie de la Oficina
+  'office-floor': () => leaveAgentLevel(), // FT-71: agente → planta sin saltar al edificio
   'toggle-run': () => api('POST', `/api/projects/${projectId}/run`, { running: !project()?.running }),
-  hire: () => dialog(`
+  hire: (role) => dialog(`
     <h3>Contratar agente</h3>
     <label>Nombre</label><input name="name" required autofocus />
-    <label>Rol</label><select name="role">${roleOptions('back')}</select>
+    <label>Rol</label><select name="role">${roleOptions(S.roles[role] ? role : 'back')}</select>
     <label>Motor</label><select name="engine">${engineOptions('auto')}</select>
     <label>Modelo (opcional)</label>${modelSelect('model', 'auto', '')}
     ${buttons('Contratar')}`, (f) => api('POST', '/api/agents', { ...f, model: pickModel(f), projectId })),
@@ -1054,6 +1485,21 @@ Pasos, convenciones y ejemplos…</textarea>
     <label>URL de flow-test (la suite; su MCP se usa para el QA)</label><input name="flowTestUrl" value="${esc(S.settings.flowTestUrl)}" placeholder="http://localhost:9998" />
     <label>Carpeta del workspace de flow-test en esta máquina (para deducir los repos de cada proyecto por sus enlaces)</label><input name="workspaceHostDir" value="${esc(S.settings.workspaceHostDir || '')}" placeholder="~/JksDocs/workspace" />
     <label>Agentes trabajando a la vez (máx.)</label><input name="maxParallel" type="number" min="1" max="8" value="${S.settings.maxParallel}" />
+    <div class="grid2"><div><label>Tope de gasto por tarea (US$, por intento; al pasarlo se corta)</label><input name="maxTaskUsd" type="number" min="0.5" max="50" step="0.5" value="${S.settings.maxTaskUsd || 3}" /></div>
+    <div><label>Esfuerzo de los agentes (más = más tokens)</label><select name="agentEffort">${['low', 'medium', 'high'].map((v) => `<option value="${v}" ${(S.settings.agentEffort || 'medium') === v ? 'selected' : ''}>${({ low: 'bajo', medium: 'medio (recomendado)', high: 'alto' })[v]}</option>`).join('')}</select></div></div>
+    <div class="grid2"><div><label>Escalera de modelos · Claude (de barato a caro, separados por coma; FT-60)</label><input name="ladder_claude" value="${esc((S.modelLadders?.claude || []).join(', '))}" placeholder="haiku, sonnet" /></div>
+    <div><label>Escalera de modelos · Codex (el mini sale de models_cache.json)</label><input name="ladder_codex" value="${esc((S.modelLadders?.codex || []).join(', '))}" placeholder="gpt-5.5" /></div></div>
+    <p class="muted">Cada tarea empieza en el primer peldaño y sube uno al devolverla desde revisión o si el agente falla (máx. 2 veces). Un modelo fijado en el agente o el rol no entra en la cascada.</p>
+    <label>Objetivo de costes (FT-76): coste por tarea aprobada ≤ X % del interactivo</label><input name="costTargetPct" type="number" min="10" max="500" step="5" value="${S.settings.costTargetPct || 100}" />
+    <label><input type="checkbox" name="cacheAffinity" ${S.settings.cacheAffinity !== false ? 'checked' : ''} /> Agrupar tareas del mismo repo y rol seguidas para aprovechar la caché del prompt (FT-64)</label>
+    <label><input type="checkbox" name="stuckGuard" ${S.settings.stuckGuard !== false ? 'checked' : ''} /> Detectar agentes atascados: aviso y, si sigue, parar y pasar a Revisión (FT-62)</label>
+    <div class="grid2"><div><label>Mismo comando/lectura (veces)</label><input name="stuckRepeat" type="number" min="2" max="20" value="${S.settings.stuckRepeat || 3}" /></div>
+    <div><label>Errores de herramienta seguidos</label><input name="stuckErrors" type="number" min="2" max="30" value="${S.settings.stuckErrors || 4}" /></div>
+    <div><label>Pasos sin editar (tareas de código)</label><input name="stuckNoEdit" type="number" min="5" max="200" value="${S.settings.stuckNoEdit || 25}" /></div>
+    <div><label>Tokens por turno sin cambios en el worktree</label><input name="stuckTokens" type="number" min="5000" step="5000" value="${S.settings.stuckTokens || 80000}" /></div></div>
+    <label title="FT-57 · Codex: se corta al llegar a estos tokens (0 = el equivalente al tope en US$)">Tope en tokens por intento (solo Codex; 0 = el equivalente al de US$)</label><input name="maxTaskTokens" type="number" min="0" step="100000" value="${S.settings.maxTaskTokens || 0}" />
+    <label><input type="checkbox" name="agentMemory" ${S.settings.agentMemory !== false ? 'checked' : ''} /> Memoria de los agentes: lecciones de tareas anteriores en el prompt (FT-75; ≈1 500 tokens máx. por agente y por proyecto)</label>
+    <label title="Codebase-Memory MCP (tree-sitter, local): el agente localiza funciones/clases con una consulta en vez de leer ficheros"><input type="checkbox" name="codeIndex" ${S.settings.codeIndex === true ? 'checked' : ''} ${S.codeIndexInstalled ? '' : 'disabled'} /> Índice de código por símbolos para Claude y Codex (FT-58)${S.codeIndexInstalled ? '' : ' — no instalado: ejecuta scripts/setup-code-index.sh'}</label>
     <label><input type="checkbox" name="quotaGuard" ${S.settings.quotaGuard !== false ? 'checked' : ''} /> Guardarraíl de cuota: no arrancar tareas con un motor cuya sesión de 5 h esté al ${97} % o más (FT-45)</label>
     <div class="section-title">🧭 Guía (FT-6)</div>
     <label>Proveedor del Guía (el LLM con el que conversa; los cuatro flujos funcionan igual con cualquiera) (FT-8)</label>
@@ -1068,6 +1514,12 @@ Pasos, convenciones y ejemplos…</textarea>
     <select name="sttLang">${[['es', 'Español'], ['en', 'English'], ['ca', 'Català'], ['fr', 'Français'], ['de', 'Deutsch'], ['pt', 'Português'], ['it', 'Italiano'], ['auto', 'Detectar']].map(([k, n]) => `<option value="${k}" ${(S.settings.sttLang || 'es') === k ? 'selected' : ''}>${n}</option>`).join('')}</select>
     <label><input type="checkbox" name="voiceReview" ${voicePref.review() ? 'checked' : ''} /> Revisar antes de enviar (el texto dictado queda en la caja)</label>
     <label><input type="checkbox" name="voiceTts" ${voicePref.tts() ? 'checked' : ''} /> Leer en voz alta las respuestas cortas del Guía (solo en este navegador)</label>
+    <div class="section-title">🔊 Voz del Guía (FT-52)</div>
+    <label>Proveedor de voz <span id="tts-info" class="muted"></span></label>
+    <select name="ttsProvider">${[['piper', 'Local · piper (sin nube, recomendado)'], ['openai', 'OpenAI · /v1/audio/speech (nube)'], ['browser', 'Navegador · speechSynthesis (respaldo)']].map(([k, n]) => `<option value="${k}" ${(S.settings.ttsProvider || 'piper') === k ? 'selected' : ''}>${n}</option>`).join('')}</select>
+    <label>Voz</label>
+    <div style="display:flex;gap:8px;align-items:center"><select name="ttsVoice" id="tts-voice" style="flex:1"><option>Cargando…</option></select><button type="button" class="small" data-tts-test>🔊 Probar voz</button></div>
+    <p class="muted">Con piper la voz se genera en este PC; la primera vez se descarga el modelo (~75 MB) de Hugging Face. Con OpenAI el texto de la respuesta sale a la nube. El botón ▶ de cada respuesta del Guía y la casilla «Leer en voz alta» usan esta voz.</p>
     <label><input type="checkbox" name="voiceWake" ${voicePref.wake() ? 'checked' : ''} /> Escucha continua (di «oye guía») <span id="wake-info" class="muted"></span></label>
     <p class="muted">Apagada de serie. Con ella activa el micrófono queda abierto y se analiza en este navegador; solo los segmentos con voz van al STT local (nunca a OpenAI) para detectar «oye guía», con un indicador 👂 siempre visible (FT-36).</p>
     <div style="display:flex;gap:8px;align-items:center"><button type="button" class="small" data-voice-test>🎤 Probar micrófono</button><span id="voice-test" class="muted"></span></div>
@@ -1093,7 +1545,9 @@ Pasos, convenciones y ejemplos…</textarea>
     ${buttons()}`, async (f) => {
     safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0'); (SETTINGS_EMBED ? safeSet('ao:voice-wake', f.voiceWake ? '1' : '0') : wakeSet(!!f.voiceWake)); // en el panel de flow-test no se abre el micro: el iframe principal lo recoge por el evento `storage`
     refreshSttLocal();
-    await api('POST', '/api/settings', { ...f, quotaGuard: !!f.quotaGuard, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
+    ttsStop();
+    await api('POST', '/api/settings', { ...f, quotaGuard: !!f.quotaGuard, stuckGuard: !!f.stuckGuard, cacheAffinity: !!f.cacheAffinity, agentMemory: !!f.agentMemory, modelLadder: { claude: f.ladder_claude || '', codex: f.ladder_codex || '' }, codeIndex: !!f.codeIndex, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
+    ttsInfoLoad();
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
     if (repos.map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|') !== cur) await api('PATCH', `/api/projects/${projectId}`, { repos });
@@ -1259,9 +1713,59 @@ function busyCell(busy) {
   return `<span class="dot ${busy[0].a.status}"></span>${busy.length} en curso${one}`;
 }
 const SUM_COLS = [['backlog', 'Backlog'], ['todo', 'Por hacer'], ['doing', 'En curso'], ['review', 'Revisión'], ['done', 'Hecho'], ['failed', 'Fallidas']];
+// ── 💸 Costes (FT-76) ──────────────────────────────────────────────────────
+// Datos de GET /api/costs; se piden al abrir la pestaña y cuando cambia el coste acumulado (llega por el SSE), sin polling.
+let sumView = 'general', costsData = null, costsSig = '';
+const usd = (n) => (n == null ? 'n/d' : n.toFixed(n < 1 ? 3 : 2) + ' $');
+const CAUSES = [['arranque', 'Arranque', '#64748b'], ['lecturas', 'Lecturas', '#38bdf8'], ['comandos', 'Comandos', '#fbbf24'], ['imagenes', 'Imágenes', '#c084fc'], ['salida', 'Salida', '#34d399'], ['reintentos', 'Reintentos', '#f87171']];
+const stackBar = (b) => !b || !b.total ? '' : `<div class="cost-stack" title="${esc(CAUSES.map(([k, l]) => `${l} ${usd(b[k])}`).join(' · '))}">${CAUSES.filter(([k]) => b[k] > 0).map(([k, l, c]) => `<i style="width:${(100 * b[k] / b.total).toFixed(1)}%;background:${c}" title="${l} ${usd(b[k])}"></i>`).join('')}</div>`;
+const causeLegend = () => `<div class="cost-legend">${CAUSES.map(([, l, c]) => `<span><i style="background:${c}"></i>${l}</span>`).join('')}</div>`;
+function spark(vals) {
+  if (!vals?.length) return '';
+  const max = Math.max(...vals) || 1, w = 160, h = 28;
+  return `<svg class="cost-curve" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline fill="none" stroke="#38bdf8" stroke-width="1.5" points="${vals.map((v, i) => `${vals.length > 1 ? (i * w) / (vals.length - 1) : w / 2},${(h - 2 - (v / max) * (h - 4)).toFixed(1)}`).join(' ')}"/></svg>`;
+}
+function costDetailHtml(d) {
+  if (!d.telemetry) return `<span class="muted">Sin telemetría por turno (tarea anterior a FT-76). Coste total: ${usd(d.costUsd)}</span>`;
+  const b = d.breakdown;
+  return `<div>Total <b>${usd(d.costUsd)}</b> · intento aceptado (${d.attempts}º) ${usd(d.acceptedUsd)} · tirado ${usd(d.discardedUsd)} · ${d.turns} turnos · caché ${d.cachePct} % (ahorró ${usd(d.cacheSavedUsd)})</div>${stackBar(b)}${causeLegend()}
+    <div class="muted">Contexto por turno (tokens) ${spark(d.curve)} ${d.curve.length ? fmtN(d.curve.at(-1)) : ''}</div>
+    ${b.files.length ? `<table class="repos"><thead><tr><th>Ficheros que más costaron</th><th class="num">≈ $</th></tr></thead><tbody>${b.files.slice(0, 5).map((f) => `<tr><td><code>${esc(f.file)}</code></td><td class="num">${usd(f.usd)}</td></tr>`).join('')}</tbody></table>` : ''}
+    <p class="muted" style="margin:4px 0 0">El reparto por causa es una atribución estimada (README «Observabilidad de costes»).</p>`;
+}
+const groupTable = (title, rows) => `<table class="repos"><thead><tr><th>${title}</th><th class="num">Aprobadas</th><th class="num">Coste</th><th class="num">$/aprobada</th><th class="num">1ª vez</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.key)}</td><td class="num">${r.tasks}</td><td class="num">${usd(r.costUsd)}</td><td class="num">${usd(r.perApprovedUsd)}</td><td class="num">${r.firstTryPct} %</td></tr>`).join('') || '<tr><td colspan="5" class="muted">sin tareas aprobadas</td></tr>'}</tbody></table>`;
+function costsHtml(d) {
+  if (!d) return '<p class="muted">Leyendo costes…</p>';
+  const k = d.kpi, kp = (v, l, cls = '') => `<div class="kpi ${cls}"><b>${v}</b><span>${l}</span></div>`;
+  const cmp = k.ratioLinePct ?? k.ratioPct;
+  const tr = d.trend7d.map((x) => x.perApprovedUsd);
+  return `<div class="summary-kpis">
+      ${kp(usd(k.perApprovedUsd), `coste por tarea aprobada (${k.approved})`)}
+      ${kp(k.interactiveUsd != null ? usd(k.interactiveUsd) : 'n/d', 'interactivo (línea base)')}
+      ${kp(cmp != null ? cmp + ' %' : 'n/d', `agente vs interactivo · objetivo ≤ ${k.targetPct} %${k.ratioLinePct != null ? ' (por línea)' : ''}`, k.meetsTarget == null ? '' : k.meetsTarget ? 'on' : 'bad')}
+      ${kp(k.firstTryPct != null ? k.firstTryPct + ' %' : 'n/d', 'aprobadas a la primera')}
+      ${kp(usd(k.discardedUsd), 'gastado en intentos tirados', k.discardedUsd > 0 ? 'warn' : '')}${kp(usd(k.cacheSavedUsd), 'ahorro por caché')}
+      <div class="kpi"><b>${spark(tr)}</b><span>tendencia 7 días ($/aprobada)</span></div>
+    </div>
+    ${d.recommendations.length ? `<div class="section-title">💡 Recomendaciones</div><ul class="cost-recs">${d.recommendations.map((r) => `<li>${esc(r.text)}</li>`).join('')}</ul>` : ''}
+    <div class="section-title">Objetivo semana a semana</div>
+    ${d.weekly.length ? `<div class="cost-weeks">${d.weekly.map((w) => `<span class="chip" style="--c:${w.meetsTarget == null ? '#94a3b8' : w.meetsTarget ? '#34d399' : '#f87171'}" title="${w.approved} aprobadas · ${usd(w.perApprovedUsd)}">${esc(w.week)} · ${w.ratioPct != null ? w.ratioPct + ' %' : 'sin base'}</span>`).join(' ')}</div>` : '<span class="muted">sin tareas aprobadas</span>'}
+    <div class="grid2" style="gap:14px"><div>${groupTable('Rol', d.byRole)}</div><div>${groupTable('Modelo', d.byModel)}</div><div>${groupTable('Motor', d.byEngine)}</div><div>${groupTable('Proyecto', d.byProject)}</div></div>
+    <div class="section-title">Por tarea (desglose por causa)</div>${causeLegend()}
+    <table class="repos"><thead><tr><th>Tarea</th><th>Estado</th><th class="num">Coste</th><th>Desglose</th><th class="num">Turnos</th><th class="num">Caché</th><th>Contexto</th></tr></thead><tbody>${d.tasks.slice(0, 40).map((t) => `<tr data-cost-task="${esc(t.taskId)}"><td><b>${esc(t.code || t.taskId)}</b> <span class="muted">${esc((t.title || '').slice(0, 40))}</span></td><td>${esc(t.status)}</td><td class="num">${usd(t.costUsd)}</td><td style="min-width:160px">${t.breakdown ? stackBar(t.breakdown) : '<span class="muted">sin telemetría</span>'}</td><td class="num">${t.turns || '·'}</td><td class="num">${t.telemetry ? t.cachePct + ' %' : '·'}</td><td>${t.curve ? spark(t.curve) : ''}</td></tr>`).join('')}</tbody></table>
+    <p class="muted" style="margin:8px 2px">Línea base interactiva: ${d.baseline.length ? esc(d.baseline.map((b) => `${b.code} ${usd(b.costUsd)}`).join(' · ')) : 'sin importar (POST /api/costs/baseline con el transcript de Claude Code)'}. Export: <a href="/api/costs/export?format=csv" target="_blank">CSV</a> · <a href="/api/costs/export" target="_blank">JSON</a></p>`;
+}
+const sumTabs = () => `<div class="sum-tabs"><button class="small ${sumView === 'general' ? 'on' : 'ghost'}" data-sum-view="general">📋 General</button><button class="small ${sumView === 'costs' ? 'on' : 'ghost'}" data-sum-view="costs">💸 Costes</button></div>`;
+function renderCosts(el) {
+  const sig = S.tasks.map((t) => `${t.id}:${t.costUsd}:${t.status}`).join('|');
+  if (sig !== costsSig) { costsSig = sig; api('GET', '/api/costs').then((d) => { costsData = d; if (sumView === 'costs') renderSummary(); }).catch(() => {}); }
+  el.innerHTML = sumTabs() + costsHtml(costsData);
+}
+
 function renderSummary() {
   const el = $('#summary');
   if (!el) return;
+  if (sumView === 'costs') return renderCosts(el);
   const all = S.tasks, agents = S.agents, qs = S.questions || [];
   const byId = (id) => agents.find((a) => a.id === id);
   const rows = [...S.projects].map((p) => {
@@ -1281,12 +1785,12 @@ function renderSummary() {
   const n = (st) => all.filter((t) => t.status === st).length;
   const working = agents.filter((a) => a.status === 'working').length, paused = agents.filter((a) => a.status === 'paused').length;
   const kpi = (v, l, cls = '') => `<div class="kpi ${cls}"><b>${v}</b><span>${l}</span></div>`;
-  el.innerHTML = `
+  el.innerHTML = sumTabs() + `
     <div class="summary-kpis">
       ${kpi(S.projects.filter((p) => p.running).length + '/' + S.projects.length, 'proyectos en marcha', 'on')}
       ${kpi(`${working}${paused ? ' +' + paused + '⏸' : ''}/${agents.length}`, 'agentes trabajando', working ? 'on' : '')}
       ${kpi(n('doing'), 'tareas en curso')}${kpi(n('review'), 'por revisar', n('review') ? 'warn' : '')}${kpi(n('todo'), 'por hacer')}${kpi(n('backlog'), 'en backlog')}
-      ${kpi(n('failed'), 'fallidas', n('failed') ? 'bad' : '')}${kpi(qs.length, 'preguntas pendientes', qs.length ? 'warn' : '')}
+      ${n('failed') ? `<button class="kpi bad kpi-btn" data-sum-failed="all" title="Ver por qué fallaron"><b>${n('failed')}</b><span>fallidas · ver por qué</span></button>` : kpi(0, 'fallidas')}${kpi(qs.length, 'preguntas pendientes', qs.length ? 'warn' : '')}
       ${kpi((all.reduce((s, t) => s + (t.costUsd || 0), 0)).toFixed(2) + ' $', 'coste acumulado')}
     </div>
     ${quotaBlockHtml()}
@@ -1296,7 +1800,7 @@ function renderSummary() {
         <tr data-sum-project="${p.id}" class="${p.id === projectId ? 'sel' : ''}">
           <td><b>${esc(p.name)}</b>${p.folder && p.folder !== p.name ? ` <span class="muted">(${esc(p.folder)})</span>` : ''} <span class="muted">${esc(p.prefixDefault || '')}</span>${open ? ` <span title="preguntas pendientes">❓${open}</span>` : ''}</td>
           <td><button class="small ${p.running ? 'on' : 'ghost'}" data-sum-run="${p.id}" title="${p.running ? 'Parar el equipo' : 'Poner a trabajar'}">${p.running ? '🟢 En marcha' : '⏸ Parado'}</button></td>
-          ${SUM_COLS.map(([st]) => { const c = ts.filter((t) => t.status === st).length; return `<td class="num ${c ? 'st-' + st : 'zero'}">${c || '·'}</td>`; }).join('')}
+          ${SUM_COLS.map(([st]) => { const c = ts.filter((t) => t.status === st).length; return st === 'failed' && c ? `<td class="num st-failed"><button class="linklike" data-sum-failed="${p.id}" title="Ver por qué fallaron">${c}</button></td>` : `<td class="num ${c ? 'st-' + st : 'zero'}">${c || '·'}</td>`; }).join('')}
           <td>${teamCell(p, team)}</td>
           <td>${busyCell(busy)}</td>
           <td>${free.length ? `<span title="${esc(free.map((a) => a.name).join(', '))}">${free.length} libre${free.length === 1 ? '' : 's'}</span>` : '<span class="muted">—</span>'}</td>
@@ -1310,9 +1814,15 @@ function renderSummary() {
   const sc = $('#tab-summary-count'); if (sc) sc.textContent = (all.filter((t) => t.status === 'review' && S.projects.find((p) => p.id === t.projectId)?.running).length + qs.length) || ''; // solo lo que pide acción: revisiones de proyectos en marcha + preguntas
 }
 document.addEventListener('click', async (e) => {
+  const sv = e.target.closest('[data-sum-view]');
+  if (sv) { sumView = sv.dataset.sumView; costsSig = ''; renderSummary(); return; }
+  const ct = e.target.closest('[data-cost-task]');
+  if (ct) { openTask(ct.dataset.costTask); return; }
   if (e.target.closest('[data-sum-empty]')) { sumShowEmpty = !sumShowEmpty; renderSummary(); return; }
   const vt = e.target.closest('[data-sum-tokens],[data-sum-team],[data-sum-all]');
   if (vt) { e.stopPropagation(); openSumModal(vt.dataset.sumTeam ? 'team' : 'tokens', vt.dataset.sumTokens || vt.dataset.sumTeam || vt.dataset.sumAll); return; }
+  const fb = e.target.closest('[data-sum-failed]');
+  if (fb) { e.stopPropagation(); failedDialog(fb.dataset.sumFailed === 'all' ? null : fb.dataset.sumFailed); return; }
   const run = e.target.closest('[data-sum-run]');
   if (run) { e.stopPropagation(); const p = S.projects.find((x) => x.id === run.dataset.sumRun); try { await api('POST', `/api/projects/${p.id}/run`, { running: !p.running }); toast(p.running ? `${p.name}: equipo parado` : `${p.name}: equipo en marcha`); } catch { /* el toast ya avisó */ } return; }
   const row = e.target.closest('tr[data-sum-project]');
@@ -1498,6 +2008,7 @@ document.addEventListener('click', async (e) => {
 
 document.addEventListener('click', (e) => {
   if (e.target.closest('[data-action="settings"]')) {
+    setTimeout(ttsFillSettings, 50); // el diálogo se abre en otro manejador del mismo clic
     api('GET', '/api/guide/stt').then((st) => { const el = $('#stt-info'); if (el) el.innerHTML = st.providers.map((p) => `· ${esc(p.name)}: ${p.ok ? '<span class="ok">disponible</span>' : `<span class="bad" title="${esc(p.reason)}">no disponible</span>`}`).join(' ');
       const box = document.querySelector('input[name=voiceWake]');
       if (box && st.wake && !st.wake.ok) { box.disabled = true; box.checked = false; $('#wake-info').innerHTML = `<span class="bad">— no disponible: ${esc(st.wake.reason || 'sin STT local')}</span>`; } }).catch(() => {});
@@ -1614,8 +2125,9 @@ function openTask(id) {
   if (t.status === 'review') acts.push(`<button class="small ghost" data-diff="${t.id}">Ver cambios</button>${updateBtn(t)}<button class="small ok" data-approve="${t.id}">✓ Aprobar${t.branch ? ' y fusionar' : ''}</button><button class="small ghost" data-reject="${t.id}">↩ Devolver</button>`);
   if (t.status === 'failed') acts.push(`<button class="small" data-reject="${t.id}">↻ Reintentar</button>`);
   dialog(`
-    <div class="task-head">${roleChip(t.role)} <b>${esc(tcode(t))}</b>${repoKey ? ` <span>📁 ${esc(repoKey)}</span>` : ''} <span class="st">${STATUS[t.status] || t.status}</span>${agent ? ` <span>👤 ${esc(agent.name)}</span>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}${t.costUsd ? ` <span>≈ ${t.costUsd.toFixed(2)} $</span>` : ''}${t.source?.url ? ` <a href="${esc(t.source.url)}" target="_blank" rel="noopener" style="color:#93c5fd">🔗 ${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} ${esc(t.source.id)}</a>` : ''}<div class="spacer"></div><span>${new Date(t.createdAt).toLocaleString()}</span></div>
+    <div class="task-head">${roleChip(t.role)} <b>${esc(tcode(t))}</b>${repoKey ? ` <span>📁 ${esc(repoKey)}</span>` : ''} <span class="st">${STATUS[t.status] || t.status}</span>${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}${t.costUsd ? ` <span>≈ ${t.costUsd.toFixed(2)} $</span>` : ''}${t.source?.url ? ` <a href="${esc(t.source.url)}" target="_blank" rel="noopener" style="color:#93c5fd">🔗 ${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} ${esc(t.source.id)}</a>` : ''}<div class="spacer"></div><span>${new Date(t.createdAt).toLocaleString()}</span></div>
     <div class="task-title" tabindex="-1" autofocus>${esc(t.title)}</div>
+    <div class="task-who">${whoRow(t)}</div>
     ${t.context ? `<div class="task-born">${bornFrom(t)}</div>` : ''}
     <div class="task-sec"><h4>${t.kind === 'plan' ? 'Encargo al PO' : 'Qué va a hacer'}</h4><div class="md">${md(t.description)}</div></div>
     ${att.length ? `<div class="task-sec"><h4>Adjuntos</h4><div class="task-attach">${att.map(attachHtml).join('')}</div></div>` : ''}
@@ -1625,10 +2137,13 @@ function openTask(id) {
     ${t.feedback ? `<div class="task-sec"><h4>Comentarios de revisión</h4><div class="md">${md(t.feedback)}</div></div>` : ''}
     ${t.summary ? `<div class="task-sec"><h4>Resumen del agente</h4><div class="md">${md(t.summary)}</div></div>` : ''}
     ${mergeChips(t) ? `<div class="task-sec"><h4>Estado frente a ${esc(baseOf(t))}</h4><div>${mergeChips(t)}</div>${(t.conflicts || []).length ? `<ul>${t.conflicts.map((f) => `<li><code>${esc(f)}</code></li>`).join('')}</ul>` : ''}</div>` : ''}
-    ${t.diffStat ? `<div class="task-sec"><h4>Cambios en la rama ${esc(t.branch || '')}</h4><pre class="md">${esc(t.diffStat)}</pre></div>` : ''}
+    ${outsideWarn(t)}
+    ${t.diffStat || repoStats(t).length ? `<div class="task-sec"><h4>Cambios en la rama ${esc(t.branch || '')}${repoStats(t).length > 1 ? ` (${repoStats(t).length} repos)` : ''}</h4>${diffStatsHtml(t, ' class="md"')}</div>` : ''}
     ${t.error ? `<div class="task-sec"><h4>Error</h4><div class="md bad">${esc(t.error)}</div></div>` : ''}
+    ${t.costUsd > 0 ? '<div class="task-sec" id="task-costs"><h4>💸 Coste (FT-76)</h4><span class="muted">leyendo…</span></div>' : ''}
     <div class="task-acts">${acts.join('')}<div class="spacer"></div><button class="ghost" value="cancel">Cerrar</button></div>`, null, 'task');
   openTaskId = id;
+  if (t.costUsd > 0) api('GET', `/api/costs/${t.projectId}/${t.id}`).then((d) => { const el = $('#task-costs'); if (el) el.innerHTML = '<h4>💸 Coste (FT-76)</h4>' + costDetailHtml(d); }).catch(() => {});
   publishContext();
 }
 
@@ -1674,9 +2189,11 @@ document.addEventListener('click', async (e) => {
   if (!el) return;
   const d = el.dataset;
   if (d.action === 'suite') { S.suite = await api('GET', '/api/suite'); renderSuite(); return toast(S.suite.ok ? `flow-test OK · ${S.suite.plan || S.suite.mode}` : S.suite.reason, S.suite.ok ? '' : 'error'); }
+  if (d.hireRole !== undefined) { if ($('#dialog').open) $('#dialog').close(); return actions.hire(d.hireRole); } // FT-50: chip ámbar de la tarjeta
   if (d.action) return actions[d.action]?.();
-  if (d.agent) return openDrawer(d.agent);
+  if (d.agent) { if (el.closest('#dialog')) $('#dialog').close(); return openDrawer(d.agent); } // desde el modal de la tarea, el cajón queda detrás: se cierra antes (FT-50)
   if (d.close !== undefined) return closeDrawer();
+  if (d.logFocus !== undefined) { $('#log')?.focus(); return; }
   if (d.stop) return api('POST', `/api/agents/${d.stop}/stop`);
   if (d.pause) return api('POST', `/api/agents/${d.pause}/pause`);
   if (d.resume) return api('POST', `/api/agents/${d.resume}/resume`);
@@ -1736,7 +2253,8 @@ document.addEventListener('click', async (e) => {
           : l.startsWith('@@') ? `<span class="diff-hunk">${l}</span>` : l).join('\n');
     return dialog(`<h3>${esc(tcode(t))} ${esc(t.title)}</h3>
       ${t.summary ? `<p>${esc(t.summary)}</p>` : ''}
-      ${t.diffStat ? `<pre>${esc(t.diffStat)}</pre>` : ''}
+      ${outsideWarn(t)}
+      ${diffStatsHtml(t)}
       <pre>${html}</pre>${buttons(null)}`, null, 'wide');
   }
   if (d.importFlow !== undefined) {
@@ -1753,6 +2271,14 @@ document.addEventListener('click', async (e) => {
   }
 });
 
+// FT-50: «Asignar a…» en la tarjeta o en el modal de la tarea → fija el agente (o vuelve a la regla del rol); el chip se repinta por SSE.
+document.addEventListener('change', async (e) => {
+  const sel = e.target.closest?.('select[data-assign]');
+  if (!sel || !sel.value) return;
+  const v = sel.value, t = S.tasks.find((x) => x.id === sel.dataset.assign), a = S.agents.find((x) => x.id === v);
+  sel.value = '';
+  try { await api('POST', `/api/tasks/${sel.dataset.assign}/assign`, { agentId: v === '__auto' ? null : v }); toast(a ? `${tcode(t)} → la hará ${a.name}` : `${tcode(t)}: el agente vuelve a elegirse por rol`); } catch { /* api() ya avisó */ }
+});
 $('#project').onchange = (e) => { projectId = e.target.value; safeSet('ao:project', projectId); closeDrawer(); };
 // Campo del objetivo compacto: una línea que crece con el texto; Enter encarga, Shift+Enter salta de línea.
 $('#goal').addEventListener('input', (e) => { e.target.style.height = 'auto'; e.target.style.height = Math.min(160, e.target.scrollHeight) + 'px'; });
@@ -1765,14 +2291,14 @@ $('#goal-form').onsubmit = async (e) => {
   $('#goal').value = ''; $('#goal').style.height = '';
   toast(project()?.running ? 'El PO se pone con ello' : 'Encargado. Pulsa «▶ Poner a trabajar» para empezar');
 };
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && drawerAgent && !$('#dialog').open) closeDrawer(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && drawerAgent && !$('#dialog').open) { if (activeTab === 'office') leaveAgentLevel(); else closeDrawer(); } });
 
 // ── Contexto de la UI para el Guide Agent (FT-2) ────────────────────────────
 // Publica lo que el usuario está viendo (POST /api/context, debounce 300 ms, solo si cambia). Estructurado, sin capturas.
 // Id de pestaña en sessionStorage para distinguir clientes; `host` = contexto que flow-test manda por postMessage (FT-3).
 const CLIENT_ID = (() => { try { return sessionStorage.getItem('ao:client') || (sessionStorage.setItem('ao:client', 'c_' + Math.random().toString(36).slice(2, 10)), sessionStorage.getItem('ao:client')); } catch { return 'c_' + Math.random().toString(36).slice(2, 10); } })();
 
-const ctxKey = () => JSON.stringify({ view: activeTab, projectId, openTaskId, selectedAgentId: drawerAgent, taskFilter, questionOpen: qOpen, officeMode, host: hostCtx }); // officeMode: edificio o planta (FT-47)
+const ctxKey = () => JSON.stringify({ view: activeTab, projectId, openTaskId, selectedAgentId: drawerAgent, taskFilter, questionOpen: qOpen, officeMode, officeLevel, host: hostCtx }); // officeLevel: edificio, planta o agente (FT-71)
 function publishContext() {
   clearTimeout(ctxTimer);
   ctxTimer = setTimeout(() => {
@@ -1838,4 +2364,27 @@ if (EMBEDDED && !SETTINGS_EMBED) {
     postParent({ type: 'agentoffice:openSettings' });
   }, true);
   window.addEventListener('storage', (e) => { if (e.key === 'ao:voice-wake') wakeSet(e.newValue === '1'); });
+}
+// FT-66: «Reanudar ya» en una tarea pausada por falta de cuota
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest?.('[data-resume-now]');
+  if (!b) return;
+  e.stopPropagation();
+  try { await api('POST', `/api/tasks/${b.dataset.resumeNow}/resume-now`); toast('Se relanza en el siguiente reparto'); } catch { /* api() ya avisa */ }
+});
+
+// Fallidas: lista con el motivo de cada una (clic en «N fallidas» del Resumen, global o por proyecto).
+function failedDialog(pid) {
+  const list = S.tasks.filter((t) => t.status === 'failed' && (!pid || t.projectId === pid)).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  const proj = (id) => S.projects.find((x) => x.id === id)?.name || id;
+  const who = (t) => S.agents.find((a) => a.id === t.agentId)?.name || '';
+  const why = (t) => { const e = String(t.error || '').trim(); if (!e) return 'Sin mensaje de error registrado.'; return /parado por el usuario/i.test(e) ? 'La paró una persona a mano (no es un error del agente). «Reintentar» la vuelve a poner en cola.' : e; };
+  dialog(`<h3>❌ ${list.length} tarea${list.length === 1 ? '' : 's'} fallida${list.length === 1 ? '' : 's'}${pid ? ` · ${esc(proj(pid))}` : ''}</h3>
+    ${list.length ? list.map((t) => `<div class="failed-item">
+      <div><b>${esc(tcode(t))}</b> ${esc(t.title)}</div>
+      <div class="muted">${pid ? '' : `${esc(proj(t.projectId))} · `}${who(t) ? `👤 ${esc(who(t))} · ` : ''}${t.updatedAt ? ago(t.updatedAt) : ''}${t.attempts ? ` · intento ${t.attempts}` : ''}${t.costUsd ? ` · ${t.costUsd.toFixed(2)} $` : ''}</div>
+      <pre class="failed-why">${esc(why(t).slice(0, 1500))}</pre>
+      <div class="row" style="justify-content:flex-start;gap:6px"><button type="button" class="small" data-reject="${t.id}">↻ Reintentar</button><button type="button" class="small ghost" data-open="${t.id}">🔍 Ver la tarea</button></div>
+    </div>`).join('') : '<p class="muted">No hay tareas fallidas.</p>'}
+    ${buttons('')}`, () => {}, 'wide');
 }

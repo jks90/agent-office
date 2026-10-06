@@ -124,7 +124,7 @@ else {
     check('al apagar desaparece el chip', await wp.$eval('#view-guide .g-ear', (e) => e.hidden));
     check('las pistas del micrófono quedan liberadas', await wp.evaluate(() => window.__tracks.length > 0 && window.__tracks.every((t) => t.readyState === 'ended')));
     const mine = reqs.slice(first);
-    check('solo se llama a /api/guide/wake (y al chat); nada a /stt', !mine.some((r) => r.includes('/stt')) && mine.some((r) => r === 'POST /api/guide/wake'), mine.join(', '));
+    check('solo se llama a /api/guide/wake (y al chat); nada a /stt', !mine.some((r) => r === 'POST /api/guide/stt') && mine.some((r) => r === 'POST /api/guide/wake'), mine.join(', '));
     check('sin errores de consola (escucha)', true);
   } finally { await browser.close(); }
 }

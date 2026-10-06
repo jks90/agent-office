@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// e2e del EDIFICIO de la oficina 3D (FT-46), de la navegación edificio ↔ planta (FT-47) y su QA completo (FT-48), sin Claude:
+// e2e del EDIFICIO de la oficina 3D (FT-46/FT-70), de la navegación edificio ↔ planta (FT-47) y su QA completo (FT-48), sin Claude:
 // servidor temporal + Chrome headless (WebGL por SwiftShader).
 //
 //   node scripts/building-e2e.mjs [captura.png]     (además guarda resumen/building-*.png para revisarlas a ojo)
@@ -62,6 +62,7 @@ try {
     pills: document.querySelectorAll('.o3d-pill').length, floorLabelsShown: [...document.querySelectorAll('.o3d-floor')].filter((e) => getComputedStyle(e).display !== 'none').length,
     crumb: document.querySelector('#office-crumb').textContent.trim(), live: document.querySelector('#office-live').textContent,
     select: document.querySelector('#project').value, stored: localStorage.getItem('ao:officeMode'), focused: document.activeElement === document.querySelector('#office'),
+    drawerHidden: document.querySelector('#drawer').hidden, drawerText: document.querySelector('#drawer').textContent,
   }));
   // Punto del canvas que cae sobre la planta `name` (raycaster del propio office3d) → clic REAL del ratón ahí.
   const floorPoint = (name) => page.evaluate((nm) => {
@@ -85,6 +86,12 @@ try {
     await page.waitForFunction(() => !!document.querySelector('#office-crumb button'), { timeout: 8000 });
     await page.evaluate(() => document.querySelector('#office-crumb button').click());
   };
+  const agentPoint = (id) => page.evaluate((agentId) => {
+    const o = window.aoOffice, a = o.actors.get(agentId);
+    if (!a?.group.visible) return null;
+    const p = o.project(a.x, 0.8, a.z), r = o.cv.getBoundingClientRect();
+    return { x: r.left + p.x, y: r.top + p.y };
+  }, id);
 
   await page.goto(base + '/', { waitUntil: 'networkidle2' });
   await sleep(4000);
@@ -92,16 +99,27 @@ try {
   console.log('— FT-46: el edificio');
   check('con 2 proyectos con equipo la Oficina abre en modo edificio (sin ?view=building)', st.ds === 'building' && st.dbg.mode === 'building', st.ds);
   const names = st.dbg.floors.map((f) => f.name);
-  check('plantas = Alfa (baja) y Beta (arriba), sin «Vacío»', names.join(',') === 'Alfa,Beta', names.join(','));
+  check('plantas = Alfa (baja), Beta y Dirección/Guía (arriba), sin «Vacío»', names.join(',') === 'Alfa,Beta,Dirección / Guía', names.join(','));
   check('C («Vacío», sin equipo) no tiene planta', !st.dbg.floors.some((f) => f.projectId === c.id));
   const [fa, fb] = st.dbg.floors;
   check('contadores de Alfa: 0 trabajando, 1 en cola, 1 en revisión, parada', fa.working === 0 && fa.queued === 1 && fa.review === 1 && fa.running === false, JSON.stringify(fa));
-  check('contadores de Beta: 0 trabajando, 2 en cola, 1 en revisión, parada', fb.working === 0 && fb.queued === 2 && fb.review === 1 && fb.running === false, JSON.stringify(fb));
+  check('contadores de Beta: 0 trabajando, 2 en cola, 1 en revisión, 0 fallidas, parada', fb.working === 0 && fb.queued === 2 && fb.review === 1 && fb.failed === 0 && fb.running === false, JSON.stringify(fb));
   const snap = await api('GET', '/api/state');
-  const exp = (p) => { const team = snap.agents.filter((x) => p.team.includes(x.id)); const ts = snap.tasks.filter((t) => t.projectId === p.id); return { working: team.filter((x) => x.status === 'working').length, queued: ts.filter((t) => t.status === 'todo').length, review: ts.filter((t) => t.status === 'review').length, running: !!p.running }; };
-  check('los contadores de las plantas coinciden con /api/state', st.dbg.floors.every((f) => { const e = exp(snap.projects.find((p) => p.id === f.projectId)); return ['working', 'queued', 'review', 'running'].every((k) => f[k] === e[k]); }), JSON.stringify(st.dbg.floors));
-  check('etiquetas HTML por planta', st.labels.length === 2 && /Beta · 0 trabajando · 2 en cola · ✋ 1 en revisión/.test(st.labels[1]), st.labels.join(' | '));
-  check('⏸ en proyectos parados', st.labels.every((l) => l.startsWith('⏸')), st.labels.join(' | '));
+  const exp = (p) => { const team = snap.agents.filter((x) => p.team.includes(x.id)); const ts = snap.tasks.filter((t) => t.projectId === p.id); return { working: team.filter((x) => x.status === 'working').length, queued: ts.filter((t) => t.status === 'todo').length, review: ts.filter((t) => t.status === 'review').length, failed: ts.filter((t) => t.status === 'failed').length, running: !!p.running }; };
+  check('los contadores de las plantas coinciden con /api/state e incluyen fallidos', st.dbg.floors.filter((f) => f.projectId).every((f) => { const e = exp(snap.projects.find((p) => p.id === f.projectId)); return ['working', 'queued', 'review', 'failed', 'running'].every((k) => f[k] === e[k]); }), JSON.stringify(st.dbg.floors));
+  check('etiquetas HTML por planta con fallidos', st.labels.length === 3 && /Beta · 0 trabajando · 2 en cola · 1 en revisión · 0 fallidos/.test(st.labels[1]), st.labels.join(' | '));
+  check('⏸ en proyectos parados, pero no en Dirección/Guía', st.labels.slice(0, 2).every((l) => l.startsWith('⏸')) && !st.labels[2].startsWith('⏸'), st.labels.join(' | '));
+  check('planta superior reservada a Dirección/Guía con estado del Guía', st.dbg.floors[2]?.guide?.status === 'escuchando' && /Dirección \/ Guía · escuchando/.test(st.labels[2]), JSON.stringify(st.dbg.floors[2]));
+  check('debugState expone agentes visibles por planta', st.dbg.floors[0].visibleAgents.length === 1 && st.dbg.floors[1].visibleAgents.length === 2, JSON.stringify(st.dbg.floors.map((f) => f.visibleAgents)));
+  const withFailed = await page.evaluate((pid) => {
+    const d = window.aoOffice.debugState();
+    const projects = d.floors.filter((f) => f.projectId).map((f) => ({ id: f.projectId, name: f.name, team: f.visibleAgents.map((a) => a.id), running: f.running, createdAt: f.name === 'Alfa' ? 1 : 2 }));
+    const agents = d.floors.flatMap((f) => f.visibleAgents.map((a) => ({ ...a, projectId: f.projectId })));
+    window.aoOffice.update({ projects, allAgents: agents, allTasks: [{ id: 'fail-1', projectId: pid, agentId: agents.find((a) => a.projectId === pid)?.id, status: 'failed', title: 'Fallo visible' }] });
+    const after = window.aoOffice.debugState();
+    return { beta: after.floors.find((f) => f.projectId === pid), labels: [...document.querySelectorAll('.o3d-floor')].map((e) => e.textContent) };
+  }, b.id);
+  check('FT-70: los fallidos se cuentan y rotulan en la tarjeta de planta', withFailed.beta.failed === 1 && /1 fallidos/.test(withFailed.labels.find((l) => l.includes('Beta')) || ''), JSON.stringify(withFailed));
   check('sin personajes ni pills en modo edificio', st.pills === 0, String(st.pills));
   check('miga «🏢 Edificio» y resumen de la empresa en el pie', st.crumb === '🏢 Edificio' && /2 proyectos con equipo/.test(st.live), `${st.crumb} / ${st.live}`);
   check('la planta del proyecto del desplegable va resaltada', st.activeLabels.length === 1 && st.activeLabels[0].includes(st.select === a.id ? 'Alfa' : 'Beta'), JSON.stringify(st.activeLabels));
@@ -121,12 +139,31 @@ try {
   console.log('— FT-47: entrar y salir de una planta');
   const sr = (await state()).dbg.floors[1].screen;
   check('debugState expone floors[].screen {x,y,w,h} con tamaño real', !!sr && sr.w > 20 && sr.h > 10, JSON.stringify(sr));
-  await page.screenshot({ path: path.join(shotDir, 'building-1-edificio.png') });
-  const hitIdx = await page.evaluate((x, y) => window.aoOffice.pickFloor({ clientX: x, clientY: y }), sr.x + sr.w / 2, sr.y + sr.h / 2);
-  check('el centro del rect de pantalla de Beta cae sobre la planta Beta', hitIdx === 1, String(hitIdx));
-  await page.mouse.move(sr.x + sr.w / 2, sr.y + sr.h / 2);
-  await sleep(100);
-  for (let n = 0; n < 4 && (await state()).ds !== 'floor'; n++) { await page.mouse.click(sr.x + sr.w / 2, sr.y + sr.h / 2); for (let w = 0; w < 20 && (await state()).ds !== 'floor'; w++) await sleep(150); }
+  const rects = (await state()).dbg.floors.map((f) => f.screen);
+  const overlap = (a, b) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  check('plantas distinguibles: sus rectángulos de pantalla no se solapan', rects.every((r, i) => rects.every((s, j) => i >= j || overlap(r, s) < Math.min(r.w * r.h, s.w * s.h) * 0.08)), JSON.stringify(rects));
+  const sight3 = (await state()).dbg.floors.filter((f) => f.projectId).flatMap((f) => f.visibleAgents.map((a) => ({ floor: f.name, id: a.id, clearSight: a.clearSight, inRect: a.inRect, blockedBy: a.blockedBy })));
+  check('FT-70: cada mini agente proyecta dentro de su planta y no lo tapa otra losa (3 plantas)', sight3.length === 3 && sight3.every((a) => a.clearSight && a.inRect), JSON.stringify(sight3));
+  await page.screenshot({ path: path.join(shotDir, 'building-1-edificio-3-plantas.png') });
+
+  const five = await page.evaluate(() => {
+    const projects = Array.from({ length: 4 }, (_, i) => ({ id: 'ft70-p' + i, name: 'FT70 P' + (i + 1), team: ['ft70-a' + i, 'ft70-b' + i], running: true, createdAt: 10 + i }));
+    const agents = projects.flatMap((p, i) => p.team.map((id, j) => ({ id, name: `Ag ${i}-${j}`, role: j ? 'qa' : 'back', status: 'working', projectId: p.id })));
+    const tasks = agents.map((a, i) => ({ id: 'ft70-t' + i, projectId: a.projectId, agentId: a.id, status: i % 3 === 0 ? 'review' : 'doing', title: 'FT-70 visible' }));
+    window.aoOffice.update({ projects, allAgents: agents, allTasks: tasks, agents: [], tasks: [], questions: [] });
+    const d = window.aoOffice.debugState();
+    return {
+      floors: d.floors.length,
+      rects: d.floors.map((f) => f.screen),
+      agents: d.floors.filter((f) => f.projectId).flatMap((f) => f.visibleAgents.map((a) => ({ floor: f.name, id: a.id, clearSight: a.clearSight, inRect: a.inRect, blockedBy: a.blockedBy }))),
+    };
+  });
+  check('FT-70: con 5 plantas encuadradas los rectángulos siguen separados', five.floors === 5 && five.rects.every((r, i) => five.rects.every((s, j) => i >= j || overlap(r, s) < Math.min(r.w * r.h, s.w * s.h) * 0.08)), JSON.stringify(five.rects));
+  check('FT-70: con 5 plantas todos los agentes de proyecto siguen visibles desde cámara', five.agents.length === 8 && five.agents.every((a) => a.clearSight && a.inRect), JSON.stringify(five.agents));
+  await page.screenshot({ path: path.join(shotDir, 'building-1-edificio-5-plantas.png') });
+  await page.reload({ waitUntil: 'networkidle2' });
+  await sleep(1200);
+  await clickFloor('Beta');
   const anim = await page.evaluate(() => window.aoOffice.debugState().animating);
   await sleep(700);
   st = await state();
@@ -135,7 +172,97 @@ try {
   check('miga «Edificio › Beta» con el botón y etiquetas de planta ocultas', /Edificio\s*›\s*Beta/.test(st.crumb) && st.floorLabelsShown === 0, `${st.crumb} / ${st.floorLabelsShown}`);
   check('el canvas muestra personajes de Beta (actors ≥ 1)', st.dbg.actors >= 1 && st.pills >= 1, `actors=${st.dbg.actors} pills=${st.pills}`);
   check('debugState.projectId activo = Beta', st.dbg.activeProjectId === b.id, String(st.dbg.activeProjectId));
+
+  console.log('— FT-71: nivel agente y vuelta paso a paso');
+  const betaAgent = (await api('GET', '/api/state')).agents.find((ag) => ag.name === 'Bea') || (await api('GET', '/api/state')).agents.find((ag) => ag.projectId === b.id);
+  const ap = await agentPoint(betaAgent.id);
+  check('un agente de la planta Beta se puede apuntar con la cámara', !!ap, JSON.stringify(ap));
+  const beforeAgentCam = st.dbg.camera;
+  await page.mouse.move(ap.x, ap.y);
+  await sleep(150);
+  await page.mouse.click(ap.x, ap.y);
+  await sleep(700);
+  st = await state();
+  check('clic en agente → officeLevel=agent y ficha lateral abierta con sus datos', st.ds === 'floor' && st.dbg.officeLevel === 'agent' && st.dbg.selectedAgentId === betaAgent.id && !st.drawerHidden && st.drawerText.includes(betaAgent.name), JSON.stringify({ level: st.dbg.officeLevel, selected: st.dbg.selectedAgentId, drawerHidden: st.drawerHidden }));
+  check('debugState expone cámara acercada al agente', st.dbg.camera.span < beforeAgentCam.span && st.dbg.camera.center.x !== beforeAgentCam.center.x, JSON.stringify({ before: beforeAgentCam, after: st.dbg.camera }));
+  const ctxAgent = await api('GET', '/api/context');
+  check('/api/context publica officeLevel=agent y selectedAgentId', ctxAgent.officeLevel === 'agent' && ctxAgent.selectedAgentId === betaAgent.id, JSON.stringify(ctxAgent));
+  await page.keyboard.press('Escape');
+  await sleep(650);
+  st = await state();
+  check('Esc desde agente vuelve solo a planta y cierra la ficha', st.ds === 'floor' && st.dbg.officeLevel === 'floor' && st.drawerHidden, JSON.stringify({ level: st.dbg.officeLevel, drawerHidden: st.drawerHidden }));
+  await page.keyboard.press('Escape');
+  await sleep(650);
+  st = await state();
+  check('segundo Esc vuelve de planta a edificio', st.ds === 'building' && st.dbg.officeLevel === 'building', JSON.stringify({ ds: st.ds, level: st.dbg.officeLevel }));
+  await clickFloor('Beta');
+  await sleep(700);
+
+  console.log('— FT-69: planta compacta por zonas');
+  const floor69 = await page.evaluate(async () => {
+    const mkAgent = (id, role, status = 'working', taskId = 't-' + id) => ({ id, name: id.toUpperCase(), role, status, taskId, projectId: 'ft69', activity: 'FT-69' });
+    const agents6 = [
+      mkAgent('dev1', 'back'), mkAgent('dev2', 'front'), mkAgent('qa1', 'qa'),
+      mkAgent('doc1', 'docs'), mkAgent('rev1', 'reviewer'), mkAgent('idle1', 'manager', 'idle', null),
+    ];
+    const tasks6 = [
+      { id: 't-dev1', projectId: 'ft69', agentId: 'dev1', status: 'doing', title: 'Implementar' },
+      { id: 't-dev2', projectId: 'ft69', agentId: 'dev2', status: 'doing', title: 'UI' },
+      { id: 't-qa1', projectId: 'ft69', agentId: 'qa1', status: 'doing', title: 'Tests' },
+      { id: 't-doc1', projectId: 'ft69', agentId: 'doc1', status: 'doing', title: 'Docs' },
+      { id: 't-rev1', projectId: 'ft69', agentId: 'rev1', status: 'review', title: 'Revisar' },
+      { id: 'todo1', projectId: 'ft69', status: 'todo', title: 'Pendiente' },
+    ];
+    window.aoOffice.setMode('floor');
+    window.aoOffice.update({ agents: agents6, tasks: tasks6, questions: [], roles: {}, title: 'FT-69', selected: null, projectId: 'ft69' });
+    await new Promise((r) => setTimeout(r, 2600));
+    const d1 = window.aoOffice.debugState();
+    window.aoOffice.update({ agents: agents6, tasks: tasks6, questions: [], roles: {}, title: 'FT-69', selected: null, projectId: 'ft69' });
+    await new Promise((r) => setTimeout(r, 200));
+    const d2 = window.aoOffice.debugState();
+    const before = d2.slots.dev1;
+    const tasksReview = tasks6.map((t) => t.id === 't-dev1' ? { ...t, status: 'review' } : t);
+    window.aoOffice.update({ agents: agents6, tasks: tasksReview, questions: [], roles: {}, title: 'FT-69', selected: null, projectId: 'ft69' });
+    await new Promise((r) => setTimeout(r, 120));
+    const moving = window.aoOffice.debugState().slots.dev1;
+    await new Promise((r) => setTimeout(r, 3000));
+    const after = window.aoOffice.debugState().slots.dev1;
+    const ids = Object.keys(d1.slots);
+    const zoneArea = Object.values(d1.zones).reduce((sum, z) => sum + z.w * z.d, 0);
+    const floorArea = d1.floorSize.rx * d1.floorSize.rz;
+    const slotSig = (s) => JSON.stringify({ zone: s.zone, module: s.module, slot: s.slot, x: s.x, z: s.z, status: s.status });
+    const stable = ids.every((id) => slotSig(d1.slots[id]) === slotSig(d2.slots[id]));
+    const agents10 = Array.from({ length: 10 }, (_, i) => mkAgent('m' + i, i % 3 === 0 ? 'qa' : i % 4 === 0 ? 'docs' : 'back'));
+    const tasks10 = agents10.map((ag, i) => ({ id: 't-' + ag.id, projectId: 'ft69', agentId: ag.id, status: i % 5 === 0 ? 'review' : 'doing', title: 'T' + i }));
+    window.aoOffice.update({ agents: agents10, tasks: tasks10, questions: [], roles: {}, title: 'FT-69 10', selected: null, projectId: 'ft69' });
+    await new Promise((r) => setTimeout(r, 400));
+    const d10 = window.aoOffice.debugState();
+    return { zones: Object.keys(d1.zones), slots: ids.length, stable, before, moving, after, areaRatio: zoneArea / floorArea, floorSize6: d1.floorSize, size10: d10.floorSize?.kind, slots10: Object.keys(d10.slots).length };
+  });
+  check('debugState expone zones y slots de 6 agentes', floor69.zones.includes('development') && floor69.zones.includes('review') && floor69.slots === 6, JSON.stringify(floor69));
+  check('slots estables entre refrescos idénticos', floor69.stable, JSON.stringify(floor69));
+  check('working → review cambia de zona y se anima sin salto', floor69.before.zone === 'development' && floor69.moving.zone === 'review' && floor69.moving.moving === true && floor69.after.zone === 'review', JSON.stringify({ before: floor69.before, moving: floor69.moving, after: floor69.after }));
+  check('4–6 agentes usan planta compacta 8.2×5.7 sin gran vacío', floor69.floorSize6?.kind === 'compact' && floor69.floorSize6?.rx === 8.2 && floor69.floorSize6?.rz === 5.7 && floor69.areaRatio >= 0.6, JSON.stringify(floor69));
+  check('10 agentes usan oficina media con todos los slots asignados', floor69.size10 === 'medium' && floor69.slots10 === 10, JSON.stringify(floor69));
+  await page.evaluate(() => {
+    const mkAgent = (id, role, status = 'working', taskId = 't-' + id) => ({ id, name: id.toUpperCase(), role, status, taskId, projectId: 'ft69', activity: 'FT-69' });
+    const agents4 = [mkAgent('dev1', 'back'), mkAgent('qa1', 'qa'), mkAgent('doc1', 'docs'), mkAgent('rev1', 'reviewer')];
+    const tasks4 = agents4.map((ag, i) => ({ id: 't-' + ag.id, projectId: 'ft69', agentId: ag.id, status: i === 3 ? 'review' : 'doing', title: 'T' + i }));
+    window.aoOffice.setMode('floor');
+    window.aoOffice.update({ agents: agents4, tasks: tasks4, questions: [], roles: {}, title: 'FT-69 4', selected: null, projectId: 'ft69' });
+  });
+  await sleep(2600);
+  await page.screenshot({ path: path.join(shotDir, 'ft-69-planta-4-agentes.png') });
+  await page.evaluate(() => {
+    const mkAgent = (id, role, status = 'working', taskId = 't-' + id) => ({ id, name: id.toUpperCase(), role, status, taskId, projectId: 'ft69', activity: 'FT-69' });
+    const agents10 = Array.from({ length: 10 }, (_, i) => mkAgent('m' + i, i % 3 === 0 ? 'qa' : i % 4 === 0 ? 'docs' : 'back'));
+    const tasks10 = agents10.map((ag, i) => ({ id: 't-' + ag.id, projectId: 'ft69', agentId: ag.id, status: i % 5 === 0 ? 'review' : 'doing', title: 'T' + i }));
+    window.aoOffice.update({ agents: agents10, tasks: tasks10, questions: [], roles: {}, title: 'FT-69 10', selected: null, projectId: 'ft69' });
+  });
+  await sleep(2600);
+  await page.screenshot({ path: path.join(shotDir, 'ft-69-planta-10-agentes.png') });
   await page.screenshot({ path: path.join(shotDir, 'building-2-planta-beta.png') });
+  st = await state();
   check('modo recordado en localStorage ao:officeMode=floor', st.stored === 'floor', String(st.stored));
   check('el canvas queda enfocado tras el clic', st.focused);
   if (shot) await page.screenshot({ path: shot });
@@ -206,14 +333,14 @@ try {
   await api('POST', '/api/tasks', { projectId: c.id, role: 'back', title: 'C en cola' });
   await sleep(1500);
   st = await state();
-  check('al añadir equipo a C aparece una tercera planta sin recargar', st.dbg.floors.map((f) => f.name).join(',') === 'Alfa,Beta,Vacío' && st.labels.length === 3 && await page.evaluate(() => window.__noReload === true), st.dbg.floors.map((f) => f.name).join(','));
+  check('al añadir equipo a C aparece una tercera planta de proyecto sin recargar', st.dbg.floors.map((f) => f.name).join(',') === 'Alfa,Beta,Vacío,Dirección / Guía' && st.labels.length === 4 && await page.evaluate(() => window.__noReload === true), st.dbg.floors.map((f) => f.name).join(','));
   check('la planta de C lleva sus contadores (1 en cola)', st.dbg.floors[2]?.queued === 1, JSON.stringify(st.dbg.floors[2]));
   check('el resumen del pie pasa a «3 proyectos con equipo»', /3 proyectos con equipo/.test(st.live), st.live);
   await page.screenshot({ path: path.join(shotDir, 'building-4-tres-plantas.png') });
   await api('PATCH', `/api/projects/${c.id}/team`, { remove: [cag.id] });
   await sleep(1500);
   st = await state();
-  check('al quitar el equipo de C desaparece su planta', st.dbg.floors.map((f) => f.name).join(',') === 'Alfa,Beta' && st.labels.length === 2, st.dbg.floors.map((f) => f.name).join(','));
+  check('al quitar el equipo de C desaparece su planta', st.dbg.floors.map((f) => f.name).join(',') === 'Alfa,Beta,Dirección / Guía' && st.labels.length === 3, st.dbg.floors.map((f) => f.name).join(','));
   check('…y el resumen vuelve a «2 proyectos con equipo»', /2 proyectos con equipo/.test(st.live), st.live);
 
   // Contador `working` y `running` con trabajo real (motor demo): Beta en marcha → algún agente trabajando.
@@ -233,12 +360,12 @@ try {
     projects.push({ id: 'none', name: 'Sin equipo', team: [], running: true, createdAt: 1 });
     window.aoOffice.update({ agents: [], tasks: [], roles: {}, projects, allAgents: agents, allTasks: [{ id: 't1', projectId: 'p14', status: 'review' }] });
     const d = window.aoOffice.debugState();
-    return { n: d.floors.length, last: d.floors[d.floors.length - 1], first: d.floors[0].name, labels: document.querySelectorAll('.o3d-floor').length, grouped: document.querySelectorAll('.o3d-floor.grouped').length };
+    return { n: d.floors.length, groupedFloor: d.floors[d.floors.length - 2], guide: d.floors[d.floors.length - 1], first: d.floors[0].name, labels: document.querySelectorAll('.o3d-floor').length, grouped: document.querySelectorAll('.o3d-floor.grouped').length };
   });
   check('tope de 12 plantas', many.n === 12, String(many.n));
   check('planta baja = más antiguo (P0)', many.first === 'P0', many.first);
-  check('última planta «+4 proyectos» agrupa trabajando/revisión', many.last.projectId === null && many.last.name === '+4 proyectos' && many.last.working === 2 && many.last.review === 1, JSON.stringify(many.last));
-  check('12 etiquetas, 1 agrupada', many.labels === 12 && many.grouped === 1, `${many.labels}/${many.grouped}`);
+  check('penúltima planta «+5 proyectos» agrupa trabajando/revisión/fallidos', many.groupedFloor.projectId === null && many.groupedFloor.name === '+5 proyectos' && many.groupedFloor.working === 2 && many.groupedFloor.review === 1 && many.guide.name === 'Dirección / Guía', JSON.stringify(many));
+  check('12 etiquetas, 2 no-proyecto (agrupada + guía)', many.labels === 12 && many.grouped === 2, `${many.labels}/${many.grouped}`);
 
   // Solo UN proyecto con equipo (Beta se queda sin Bea): al abrir la Oficina se entra directo a la planta de Alfa.
   await api('PATCH', `/api/projects/${b.id}/team`, { remove: (await api('GET', '/api/state')).projects.find((p) => p.id === b.id).team });
@@ -249,11 +376,11 @@ try {
   check('…y el botón Edificio sigue disponible', /Edificio/.test(st.crumb) && (await page.$('#office-crumb button')) !== null, st.crumb);
   await clickCrumb();
   await sleep(500);
-  check('…y lleva al edificio de una planta', (await state()).ds === 'building' && (await state()).dbg.floors.length === 1);
+  check('…y lleva al edificio de una planta de proyecto más Dirección/Guía', (await state()).ds === 'building' && (await state()).dbg.floors.length === 2);
   await page.screenshot({ path: path.join(shotDir, 'building-5-una-planta.png') });
   await sleep(1000);
   check('sin errores de consola', errors.length === 0, errors.join(' | '));
 } catch (e) { failed++; console.log('✗ ' + e.message); }
-finally { if (browser) await browser.close().catch(() => {}); server.kill('SIGTERM'); fs.rmSync(dataDir, { recursive: true, force: true }); }
+finally { if (browser) await browser.close().catch(() => {}); server.kill('SIGTERM'); fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); }
 console.log(failed ? `✗ ${failed} fallos` : '✓ todo OK');
 process.exit(failed ? 1 : 0);

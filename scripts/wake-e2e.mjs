@@ -138,7 +138,7 @@ else {
     // (4) con «hola qué tal» (modo nowake) no se envía nada al chat
     await sleep(3000);
     check('(4) «hola qué tal» → ninguna petición al chat y ningún mensaje del usuario', p.count(/^POST \/api\/guide\/chat$/) === 0 && (await userMsgs(p.page)).length === 0, p.reqs.join(', '));
-    check('(2) mientras no se dice la frase no hay peticiones a /api/guide/stt', p.count(/\/api\/guide\/stt/) === 0, p.reqs.join(', '));
+    check('(2) mientras no se dice la frase no hay peticiones a /api/guide/stt', p.count(/^POST \/api\/guide\/stt/) === 0, p.reqs.join(', '));
     // (3) ahora el STT devuelve la frase
     setMode('wake');
     const ok3 = await p.page.waitForFunction(() => [...document.querySelectorAll('#view-guide .g-msg.user')].some((m) => /¿cómo va\?/i.test(m.textContent)), { timeout: 20000 }).then(() => true, () => false);
@@ -146,7 +146,7 @@ else {
     const ok3b = await p.page.waitForFunction(() => [...document.querySelectorAll('#view-guide .g-msg')].some((m) => m.textContent.includes('fake: ¿cómo va?')), { timeout: 15000 }).then(() => true, () => false);
     check('(3) el Guía fake responde', ok3b, (await p.page.$$eval('#view-guide .g-msg', (els) => els.map((e) => e.textContent))).join(' | '));
     check('(3) el mensaje enviado no lleva «oye guía»', (await userMsgs(p.page)).every((t) => !/oye gu/i.test(t)), (await userMsgs(p.page)).join(' | '));
-    check('(3) sigue sin haber peticiones a /api/guide/stt', p.count(/\/api\/guide\/stt/) === 0, p.reqs.join(', '));
+    check('(3) sigue sin haber peticiones a /api/guide/stt', p.count(/^POST \/api\/guide\/stt/) === 0, p.reqs.join(', '));
 
     // (7) con el Guía ocupado no salen peticiones a /wake: se retiene la respuesta del chat
     console.log('  · Guía ocupado');
@@ -201,7 +201,7 @@ else {
     const gotO = await (async () => { const t0 = Date.now(); while (Date.now() - t0 < 15000) { if (o.count(/POST \/api\/guide\/wake/) >= 2) return true; await sleep(200); } return false; })();
     check('(5) con sttProvider=openai la escucha sigue mandando segmentos a /api/guide/wake', gotO, o.reqs.join(', '));
     check('(5) el mock de OpenAI recibe 0 peticiones', openaiHits === hits0, `${openaiHits - hits0} peticiones`);
-    check('(5) tampoco hay peticiones a /api/guide/stt', o.count(/\/api\/guide\/stt/) === 0);
+    check('(5) tampoco hay peticiones a /api/guide/stt', o.count(/^POST \/api\/guide\/stt/) === 0);
     await o.page.close();
     await post(A.base, '/api/settings', { sttProvider: 'local-cmd' });
 

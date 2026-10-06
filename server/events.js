@@ -10,6 +10,7 @@ export const TYPES = [
   'AgentFileModified', 'AgentArtifactCreated', 'AgentBlocked', 'UserInstructionAdded',
   'AgentPaused', 'AgentResumed', 'AgentFailed', 'AgentCompleted', 'TaskReviewed',
   'TaskUpdatedFromBase', 'TaskConflict', // FT-19
+  'TaskSplitRequested', // FT-63: tarea grande enviada al PO para trocearla
 ];
 
 const MAX_BUFFER = 2000;

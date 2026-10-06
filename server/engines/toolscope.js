@@ -1,0 +1,44 @@
+// FT-59: herramientas acotadas por rol. Cada definición de herramienta viaja en CADA turno (el arranque pesaba ~31k tokens),
+// así que el rol solo recibe las que usa. Valores por defecto por `kind`; el frontmatter `tools:` de un rol los sustituye
+// (nombres de herramientas integradas de Claude: `tools: Read, Grep, Glob, Bash`; una entrada `Bash(patrón)` añade una regla de shell).
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { BASH_RULES } from './allowlist.js';
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+
+const READ_SHELL = ['ls *', 'cat *', 'head *', 'tail *', 'wc *', 'grep *', 'rg *', 'find *', 'sed *', 'awk *', 'sort *', 'uniq *', 'cut *', 'tr *', 'diff *', 'du *', 'file *', 'stat *', 'pwd', 'git status*', 'git diff*', 'git log*', 'git show*'];
+const PLAN_SHELL = ['ls *', 'cat *', 'head *', 'grep *', 'find *', 'wc *', 'sed *', 'git status*', 'git diff*', 'git log*'];
+const TEST_SHELL = ['npm *', 'npx *', 'node *', 'python3 *', 'curl *', 'timeout *', 'mkdir *', 'cp *', 'touch *', 'sleep *', 'echo *', 'printf *', 'mvn *', './mvnw *', 'gradle *', './gradlew *', 'make *'];
+const ASK_RULE = `node ${path.join(ROOT, 'bin', 'ao-ask.mjs')} *`; // preguntar al cliente (bin/ao-ask.mjs)
+
+// builtin: herramientas integradas que se ENVÍAN al modelo (--tools); bash: reglas de `Bash(...)` permitidas; mcp: flow-test por MCP.
+const BY_KIND = {
+  dev: { builtin: ['Read', 'Edit', 'MultiEdit', 'Write', 'Glob', 'Grep', 'TodoWrite', 'Bash'], bash: BASH_RULES, mcp: false }, // lo de siempre
+  docs: { builtin: ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash'], bash: [...READ_SHELL, 'git add*', 'git commit*', ASK_RULE], mcp: true },
+  qa: { builtin: ['Read', 'Grep', 'Glob', 'Write', 'Bash'], bash: [...READ_SHELL, ...TEST_SHELL, ASK_RULE], mcp: true }, // sin Edit; Write solo para scripts de prueba
+  planner: { builtin: ['Read', 'Glob', 'Grep', 'Bash'], bash: [...PLAN_SHELL, ASK_RULE], mcp: false },
+};
+
+// → { builtin (para --tools), allowed (para --allowedTools, sin MCP ni RTK), mcp }
+// WebFetch/WebSearch/NotebookEdit/Task no están en ningún valor por defecto: ni se envían ni se permiten.
+export function claudeScope({ kind = 'dev', mode = 'work', roleTools = null, hasSkills = false } = {}) {
+  const k = mode === 'plan' ? 'planner' : (BY_KIND[kind] ? kind : 'dev');
+  const base = BY_KIND[k];
+  let builtin = [...base.builtin], bash = [...base.bash];
+  if (roleTools?.length && mode !== 'plan') {
+    const names = roleTools.filter((t) => !t.startsWith('Bash('));
+    if (names.length) builtin = names;
+    bash = [...bash, ...roleTools.filter((t) => t.startsWith('Bash(')).map((t) => t.slice(5, -1))];
+  }
+  if (hasSkills && mode !== 'plan' && !builtin.includes('Skill')) builtin.push('Skill'); // las skills del rol se enlazan en el worktree (linkSkillsInto)
+  const allowed = [...builtin.filter((t) => t !== 'Bash'), ...(builtin.includes('Bash') ? bash.map((r) => `Bash(${r})`) : [])];
+  return { builtin, allowed: [...new Set(allowed)], mcp: base.mcp && mode !== 'plan' };
+}
+
+// Codex no tiene lista de herramientas por nombre: se apagan por -c las opcionales (web_search no la usa ningún rol;
+// view_image solo hace falta con imágenes adjuntas o en roles que miran capturas).
+export function codexScope({ kind = 'dev', mode = 'work', images = [] } = {}) {
+  const c = ['tools.web_search=false'];
+  if (!images.length && (mode === 'plan' || kind === 'docs' || kind === 'planner')) c.push('tools.view_image=false');
+  return c;
+}
