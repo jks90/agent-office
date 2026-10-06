@@ -609,3 +609,5 @@ tr[data-cost-task] { cursor: pointer; }
 .tool-chip.role { padding-right: 8px; opacity: .8; }
 .tool-chip .linklike { font-size: 10px; padding: 0 3px; }
 select.tool-assign { width: auto; max-width: 150px; font-size: 11px; padding: 2px 4px; }
+
+.bell-chip { font-weight: 700; font-size: 15px; padding: 6px 12px; }

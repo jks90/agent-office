@@ -875,7 +875,7 @@ function showTab(tab) {
     if (prev !== 'office' && officeInit) applyOfficeDefault(); // al entrar en la pestaña: edificio, planta recordada o la única (FT-47)
   }
   if (tab === 'agents') { renderSkills(); renderClaudeMemory(); renderTools(); }
-  if (tab === 'inbox') renderInbox();
+  if (tab === 'inbox') setTimeout(renderInbox); // al arrancar con «Para ti» guardada, su código aún no está definido: después de cargar
   if (tab === 'guide') guideShow(); else guideRender();
   publishContext();
 }
@@ -938,10 +938,11 @@ function render() {
   const nRev = ts.filter((t) => t.status === 'review').length, allRev = S.tasks.filter((t) => t.status === 'review'); // FT-56
   $('#tab-tasks-review').textContent = nRev ? `✋${nRev}` : '';
   // El chip cuenta las revisiones del proyecto ACTIVO; si este no tiene y otros sí, lo dice explícitamente («en otros proyectos»).
-  const rc = $('#review-chip'), revOthers = allRev.length - nRev, revList = nRev ? ts.filter((t) => t.status === 'review') : allRev;
-  rc.hidden = !allRev.length; rc.classList.toggle('others', !nRev);
-  rc.textContent = nRev ? `✋ ${nRev} por revisar` : `✋ ${revOthers} por revisar en otros proyectos`;
-  rc.title = revList.map((t) => `${t.code || t.id}: desde hace ${waitTxt(t.reviewSince)}`).join('\n') + (nRev && revOthers ? `\n(+${revOthers} en otros proyectos)` : '');
+  // 🔔 de la barra: los avisos de «Para ti» (lo que te espera a ti, de todos los proyectos visibles); clic → esa vista
+  const rc = $('#review-chip'), inbox = inboxItems().filter((i) => i.kind !== 'quota' && !i.imported);
+  rc.hidden = !inbox.length;
+  rc.textContent = `🔔 ${inbox.length}`;
+  rc.title = `Para ti: ${Object.entries(inbox.reduce((m, i) => ((m[i.kind] = (m[i.kind] || 0) + 1), m), {})).map(([k, n]) => `${n} ${INBOX_KIND[k][1].toLowerCase()}`).join(' · ')}`;
   $('#tab-agents-count').textContent = team().length || '';
   $('#tab-summary').innerHTML = `${ts.filter((t) => t.status === 'doing').length} en curso<br>${ts.filter((t) => t.status === 'review').length} por revisar<br>${working.length}/${team().length} agentes trabajando${paused ? ` · ${paused} en pausa` : ''}`;
   renderOfficeFoot();
@@ -2821,7 +2822,7 @@ function publishContext() {
     fetch(BASE + 'api/context', { method: 'POST', keepalive: true, headers: { 'content-type': 'application/json', 'x-ao-client': CLIENT_ID }, body: JSON.stringify({ ...JSON.parse(key), at: Date.now() }) }).catch(() => { ctxSent = ''; });
   }, 300);
 }
-$('#review-chip').addEventListener('click', () => { const mine = tasks().filter((x) => x.status === 'review'); const t = (mine.length ? mine : S.tasks.filter((x) => x.status === 'review')).sort((a, b) => a.reviewSince - b.reviewSince)[0]; if (t) { goProject(t.projectId); showTab('tasks'); } }); // FT-56
+$('#review-chip').addEventListener('click', () => showTab('inbox')); // 🔔 → «Para ti»
 $('#dialog').addEventListener('close', () => { openTaskId = null; publishContext(); });
 $('#project').addEventListener('change', publishContext);
 window.addEventListener('message', (e) => {
