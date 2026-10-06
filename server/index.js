@@ -24,6 +24,7 @@ import * as guide from './guide/index.js';
 import { getProvider as desktopProvider } from './desktop/index.js';
 import * as stt from './guide/stt/index.js';
 import * as wake from './guide/stt/wake.js';
+import * as quota from './quota.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
 const PORT = Number(process.env.AO_PORT || 7420);
@@ -50,6 +51,8 @@ setInterval(() => checkSuite().then(() => store.changed()).catch(() => {}), 5 * 
 // Proyectos = carpetas del workspace de flow-test (al arrancar, cada 5 min y con POST /api/sync).
 const sync = () => team.syncWorkspace().then((r) => { if (r.created) console.log(`📁 ${r.created} proyecto(s) nuevo(s) desde flow-test: ${r.folders.join(', ')}`); }).catch((e) => console.log(`📁 sin sincronizar: ${e.message}`));
 checkSuite().then(sync);
+quota.setOnChange(() => store.changed()); // FT-45: cuota de las suscripciones → snapshot SSE
+quota.startPolling();
 auth.cachedEnginesStatus(); // precargar las sesiones de los motores para el motor automático
 setInterval(sync, 5 * 60 * 1000).unref();
 // Tableros online con autoSync: cada 5 min.
@@ -79,7 +82,7 @@ const inputStatus = () => {
   if (Date.now() - inputCache.t > 30_000) { let v; try { const a = desktopProvider().inputAvailable(); v = { ok: !!a.ok, missing: a.missing || [] }; } catch (e) { v = { ok: false, missing: [] }; } inputCache = { t: Date.now(), v }; }
   return inputCache.v;
 };
-const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo() }; };
+const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot() }; };
 
 async function readBody(req) {
   const limit = req.url.startsWith('/api/upload') ? 40e6 : req.url.startsWith('/api/guide/stt') ? 12e6 : 1e6; // adjuntos y audio del Guide (FT-9) en base64
@@ -97,6 +100,8 @@ const gated = (fn) => async (m, b) => {
 
 const routes = [
   ['GET', /^\/api\/state$/, () => snapshot()],
+  // Cuota restante de las suscripciones de Claude y Codex (FT-45); ?force=1 se salta la caché de 60 s
+  ['GET', /^\/api\/quota$/, (_, __, q) => quota.readAll({ force: q.force === '1' })],
   // Activity Stream tipado (FT-1)
   ['GET', /^\/api\/events$/, (_, __, q) => activity.list(q)],
   // Contexto de la UI (FT-2): lo que el usuario está viendo, por cliente (cabecera `x-ao-client`)
@@ -195,6 +200,7 @@ const routes = [
     const st = store.get().settings;
     if (typeof b.flowTestUrl === 'string' && b.flowTestUrl.trim()) st.flowTestUrl = b.flowTestUrl.trim().replace(/\/+$/, '').replace(/\/mcp$/, '');
     if (typeof b.workspaceHostDir === 'string') st.workspaceHostDir = b.workspaceHostDir.trim();
+    if (typeof b.quotaGuard === 'boolean') st.quotaGuard = b.quotaGuard; // FT-45
     if (b.maxParallel) st.maxParallel = Math.max(1, Math.min(8, Number(b.maxParallel) || 4));
     if (typeof b.guideModel === 'string') st.guideModel = b.guideModel.trim();
     if (guide.providerNames().includes(b.guideProvider)) st.guideProvider = b.guideProvider;

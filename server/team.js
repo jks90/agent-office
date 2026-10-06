@@ -17,21 +17,46 @@ import { engineEnv, cachedEnginesStatus } from './engines/auth.js';
 import * as boards from './boards/index.js';
 import { linkSkillsInto } from './skills.js';
 import { cleanContext, describeContext } from './task-context.js';
+import * as quota from './quota.js';
 
 const ENGINES = { demo, claude, codex };
 export const ENGINE_IDS = ['auto', 'claude', 'codex', 'demo'];
 
 // Motor automático: el que tenga sesión y menos trabajo en curso (empate → Claude). Sin ninguno con sesión → error claro.
 const MODEL_OF = { claude: /^(sonnet|opus|haiku|claude-)/i, codex: /^(gpt-|o[0-9]|codex)/i };
+// FT-45: con el guardarraíl de cuota activo, un motor con la sesión agotada no es candidato; entre los que quedan manda el margen.
+const guardOn = () => get().settings.quotaGuard !== false;
 function pickEngine(agent) {
   if (agent.engine !== 'auto') return agent.engine;
   const st = cachedEnginesStatus();
   const ok = (e) => st ? !!st[e]?.loggedIn : e === 'claude'; // sin estado aún (arranque): solo Claude
   const load = (e) => [...jobs.values()].filter((j) => j.engine === e).length;
-  const candidates = ['claude', 'codex'].filter(ok).sort((a, b) => load(a) - load(b) || (a === 'claude' ? -1 : 1));
-  if (!candidates.length) throw new Error('Motor automático: ni Claude ni Codex tienen sesión (Ajustes ▸ Motores de IA)');
-  return candidates[0];
+  const logged = ['claude', 'codex'].filter(ok);
+  if (!logged.length) throw new Error('Motor automático: ni Claude ni Codex tienen sesión (Ajustes ▸ Motores de IA)');
+  const free = guardOn() ? logged.filter((e) => !quota.gate(e).block) : logged;
+  const m = (e) => quota.margin(e) ?? 50; // sin dato: margen neutro
+  return (free.length ? free : logged).sort((a, b) => m(b) - m(a) || load(a) - load(b) || (a === 'claude' ? -1 : 1))[0];
 }
+
+// FT-45 · ¿Puede este agente arrancar ahora? {ok:true} | {wait:true} (aún sin primera lectura de cuota) | {ok:false, message, engine, percent}
+function quotaCheck(agent) {
+  if (!guardOn()) return { ok: true };
+  const engines = agent.engine === 'auto' ? ['claude', 'codex'].filter((e) => { const st = cachedEnginesStatus(); return st ? !!st[e]?.loggedIn : e === 'claude'; }) : [agent.engine];
+  const gates = engines.map((e) => quota.gate(e));
+  if (!gates.length || gates.some((g) => !g.block && !g.wait)) return { ok: true };
+  if (gates.some((g) => g.wait)) return { wait: true };
+  return { ok: false, ...gates.sort((a, b) => (a.resetsAt || Infinity) - (b.resetsAt || Infinity))[0] }; // el que antes se reinicia
+}
+// Deja la tarea en `todo` avisando una sola vez (log + evento) mientras dure el bloqueo; al despejarse, `tick` la retoma.
+function quotaHold(p, agent, t, g) {
+  if (t.activity === g.message) return;
+  const first = !t.quotaBlocked;
+  t.activity = g.message; t.quotaBlocked = true;
+  if (first) { log(agent.id, `${g.message} (${t.code || '#' + t.id})`); events.emit('AgentBlocked', events.ctxOf(t, agent), { reason: 'quota', engine: g.engine, percent: g.percent, resetsAt: g.resetsAt }); }
+  changed();
+}
+const quotaRelease = (t) => { if (t.quotaBlocked) { delete t.quotaBlocked; t.activity = ''; } };
+
 const modelFor = (engineId, agent, role) => {
   const wanted = agent.model || role.model || '';
   if (wanted && MODEL_OF[engineId]?.test(wanted)) return wanted;
@@ -629,6 +654,10 @@ export function tick() {
       if (!depsDone(t)) continue;
       const agent = team.find((a) => !jobs.has(a.id) && (t.assignedAgentId ? a.id === t.assignedAgentId : (a.role === t.role || (roleOf(a.role)?.handles || []).includes(t.role))));
       if (!agent) continue;
+      const q = quotaCheck(agent);
+      if (q.wait) continue;
+      if (!q.ok) { quotaHold(p, agent, t, q); continue; }
+      quotaRelease(t);
       slots--;
       runTask(p, agent, t);
     }

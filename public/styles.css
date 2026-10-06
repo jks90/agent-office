@@ -397,3 +397,11 @@ body.settings-embed dialog::backdrop { background: transparent; }
 body.settings-embed dialog .row .ghost { display: none; }
 body.settings-embed .set-sec[hidden] { display: none; }
 body.settings-embed .set-sec > .section-title:first-child { display: none; } /* el título ya sale en el menú lateral */
+
+/* FT-45 · cuota de las suscripciones */
+.quota-chip { font-size: 12px; padding: 7px 10px; white-space: nowrap; } .quota-chip.warn { color: #fbbf24; border-color: #fbbf2466; } .quota-chip.bad { color: #f87171; border-color: #f8717166; }
+body.embedded #quota-chip { display: none; }
+.quota-cards { display: flex; flex-wrap: wrap; gap: 12px; margin: 6px 0 14px; }
+.quota-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 14px; min-width: 340px; display: flex; flex-direction: column; gap: 5px; } .quota-card.off { opacity: .75; }
+.quota-row { display: flex; align-items: center; gap: 8px; font-size: 12px; } .quota-row .ql { width: 120px; } .quota-row .tokbar { width: 120px; height: 8px; } .quota-row b { width: 46px; text-align: right; } .quota-row b.warn { color: #fbbf24; } .quota-row b.bad { color: #f87171; }
+.quota-hold { font-size: 11px; color: #fbbf24; margin-top: 4px; }

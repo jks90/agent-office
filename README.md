@@ -184,6 +184,17 @@ Variables: `AO_PORT` (7420), `AO_HOST` (127.0.0.1), `AO_DATA_DIR`, `AO_CLAUDE_BI
 
 El Resumen muestra, por agente y sesión, los tokens gastados (↓ entrada · ↑ salida · ⚡ caché · total) y un total por proyecto, en vivo por el mismo SSE `state` (`agent.usage`, y `task.usage` acumulado entre intentos). Solo se guardan cifras, nunca prompts ni transcripts. Lógica en `server/usage.js`; prueba: `node scripts/usage-e2e.mjs`.
 
+### Cuota de las suscripciones (FT-45)
+
+Encima de los tokens, el Resumen muestra **cuánta cuota queda** de cada suscripción (como `/usage` de Claude Code): ventana de sesión de 5 h, semanal 7 d y, si el proveedor las da, las de modelo, con barra por severidad (ámbar ≥ 80 %, rojo ≥ 95 %) y «se reinicia en 1 h 12 min». En la barra superior, un chip con el peor % de cada motor («Claude 88 % · Codex 84 %») abre el Resumen. Usa el login que ya hay en el PC (sin claves nuevas; los tokens nunca se guardan ni se loguean) y llega por el snapshot SSE (`quota`); el servidor la refresca cada 60 s. `GET /api/quota[?force=1]` devuelve `{claude, codex}` con la forma `{engine, ok, plan, windows:[{id:'session'|'weekly'|'model:<n>', label, percent, resetsAt, severity}], limitReached, reason?, fetchedAt}`; sin dato, `ok:false` y el motivo («sin login», «token caducado: usa claude una vez»: no se refresca desde aquí, cada tarea con el CLI lo renueva).
+
+| Motor | Endpoint | Credenciales |
+|---|---|---|
+| Claude | `GET https://api.anthropic.com/api/oauth/usage` (`anthropic-beta: oauth-2025-04-20`) · `AO_CLAUDE_USAGE_URL` | `~/.claude/.credentials.json` → `claudeAiOauth` (`CLAUDE_CONFIG_DIR`) |
+| Codex | `GET https://chatgpt.com/backend-api/codex/usage` · `AO_CODEX_USAGE_URL` | `~/.codex/auth.json` → `tokens.{access_token, account_id}` (`CODEX_HOME`) |
+
+**Guardarraíl** (`settings.quotaGuard`, activo de serie; casilla en Ajustes): el planificador no arranca tareas nuevas con un motor cuya ventana de sesión esté ≥ 97 % o con `limitReached`. La tarea sigue en *Por hacer* con «⏸ Claude al 98 %: espera al reinicio de las 14:00», una línea de log y un evento `AgentBlocked {reason:'quota'}`, y `tick()` la retoma sola cuando baja el %. Los agentes `engine: auto` eligen el motor con más margen y solo se frenan si ninguno lo tiene. Sin dato de cuota no se frena nada. Prueba: `node scripts/quota-e2e.mjs [captura.png]` (mocks de ambos endpoints, logins falsos, `AO_QUOTA_ENGINE_MAP=demo=claude`, `AO_QUOTA_TTL`).
+
 | | Claude Code | Codex |
 |---|---|---|
 | Entrada / salida / caché | `message.usage` de cada evento `assistant` del stream-json (dedupe por `message.id`) y `usage` del `result` final (caché = lectura + creación) | `usage` de `turn.completed` de `codex exec --json` (entrada = `input_tokens` − `cached_input_tokens`; salida incluye razonamiento) |

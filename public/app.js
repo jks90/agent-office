@@ -527,6 +527,7 @@ function render() {
   renderRoles();
   renderBoard();
   renderSummary();
+  renderQuotaChip();
   const ts = tasks();
   const working = team().filter((a) => a.status === 'working');
   const paused = team().filter((a) => a.status === 'paused').length;
@@ -792,6 +793,7 @@ function card(t) {
     ${t.context ? `<div class="meta">${bornFrom(t)}</div>` : ''}
     <div class="meta">${agent ? `<span>👤 ${esc(agent.name)}</span>` : ''}${deps ? `<span>depende de ${deps}</span>` : ''}${t.costUsd ? ` <span>💲${t.costUsd.toFixed(3)}</span>` : ''}</div>
     ${t.status === 'doing' && agent ? `<div class="live">● ${esc(agent.activity)}</div>` : ''}
+    ${t.status === 'todo' && t.quotaBlocked && t.activity ? `<div class="quota-hold">${esc(t.activity)}</div>` : ''}
     ${t.summary && t.status !== 'doing' ? `<div class="sum">${esc(t.summary)}</div>` : ''}
     ${mergeChips(t) ? `<div class="merge-row">${mergeChips(t)}</div>` : ''}
     ${t.error ? `<div class="err">${esc(t.error)}</div>` : ''}
@@ -953,6 +955,7 @@ Pasos, convenciones y ejemplos…</textarea>
     projectId = p.id;
     safeSet('ao:project', p.id);
   }),
+  quota: () => showTab('summary'), // FT-45: el chip de cuota abre el Resumen
   'toggle-run': () => api('POST', `/api/projects/${projectId}/run`, { running: !project()?.running }),
   hire: () => dialog(`
     <h3>Contratar agente</h3>
@@ -988,6 +991,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <label>URL de flow-test (la suite; su MCP se usa para el QA)</label><input name="flowTestUrl" value="${esc(S.settings.flowTestUrl)}" placeholder="http://localhost:9998" />
     <label>Carpeta del workspace de flow-test en esta máquina (para deducir los repos de cada proyecto por sus enlaces)</label><input name="workspaceHostDir" value="${esc(S.settings.workspaceHostDir || '')}" placeholder="~/JksDocs/workspace" />
     <label>Agentes trabajando a la vez (máx.)</label><input name="maxParallel" type="number" min="1" max="8" value="${S.settings.maxParallel}" />
+    <label><input type="checkbox" name="quotaGuard" ${S.settings.quotaGuard !== false ? 'checked' : ''} /> Guardarraíl de cuota: no arrancar tareas con un motor cuya sesión de 5 h esté al ${97} % o más (FT-45)</label>
     <div class="section-title">🧭 Guía (FT-6)</div>
     <label>Proveedor del Guía (el LLM con el que conversa; los cuatro flujos funcionan igual con cualquiera) (FT-8)</label>
     <select name="guideProvider">${(S.guideProviders || []).map((p) => `<option value="${esc(p.id)}" ${(S.settings.guideProvider || 'claude-cli') === p.id ? 'selected' : ''}>${esc(p.label)}${p.ready ? '' : ' — sin clave API'}</option>`).join('')}</select>
@@ -1026,7 +1030,7 @@ Pasos, convenciones y ejemplos…</textarea>
     ${buttons()}`, async (f) => {
     safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0'); (SETTINGS_EMBED ? safeSet('ao:voice-wake', f.voiceWake ? '1' : '0') : wakeSet(!!f.voiceWake)); // en el panel de flow-test no se abre el micro: el iframe principal lo recoge por el evento `storage`
     refreshSttLocal();
-    await api('POST', '/api/settings', { ...f, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
+    await api('POST', '/api/settings', { ...f, quotaGuard: !!f.quotaGuard, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
     if (repos.map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|') !== cur) await api('PATCH', `/api/projects/${projectId}`, { repos });
@@ -1050,6 +1054,31 @@ function usageHtml(a) {
   const tip = `${a.name} (${u.engine || a.activeEngine || '?'}) · entrada ${u.input} · salida ${u.output} · caché ${u.cache} · total ${u.total}${u.limit ? ` · contexto ${u.used}/${u.limit}` : ' · límite: n/d (el CLI no lo informa)'}${u.costUsd != null ? ` · ${u.costUsd.toFixed(3)} $` : ''}`;
   const bar = pct == null ? '<span class="muted">límite n/d</span>' : `<span class="tokbar ${pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : ''}"><i style="width:${pct}%"></i></span><span class="muted">${pct}% · quedan ${fmtN(Math.max(0, u.limit - u.used))}</span>`;
   return `<div class="tokrow ${a.status === 'idle' ? 'old' : ''}" title="${esc(tip)}"><b>${esc(a.name)}</b> <span class="tok">${fmtTok(u.total)}</span> <span class="muted">↓${fmtN(u.input)} ↑${fmtN(u.output)} ⚡${fmtN(u.cache)}</span>${bar}</div>`;
+}
+// ── Cuota de las suscripciones (FT-45) ──────────────────────────────────────
+// Llega en S.quota por el SSE (el servidor la refresca cada 60 s). Barras como las del /usage de Claude Code.
+const QUOTA_NAME = { claude: 'Claude', codex: 'Codex' };
+const fmtLeft = (t) => { const m = Math.max(0, Math.round((t - Date.now()) / 60000)); return m < 60 ? `${m} min` : m < 2880 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min` : `${Math.round(m / 1440)} d`; };
+const quotaSev = (w) => (w.percent >= 95 || w.severity === 'critical' ? 'bad' : w.percent >= 80 || w.severity === 'warning' ? 'warn' : '');
+const quotaWorst = (q) => (q?.ok && q.windows?.length ? q.windows.reduce((a, b) => (b.percent > a.percent ? b : a)) : null);
+function quotaCard(e) {
+  const q = S.quota?.[e];
+  if (!q) return `<div class="quota-card"><b>${QUOTA_NAME[e]}</b> <span class="muted">leyendo…</span></div>`;
+  if (!q.ok) return `<div class="quota-card off"><b>${QUOTA_NAME[e]}</b> <span class="muted">sin dato · ${esc(q.reason || '')}</span></div>`;
+  return `<div class="quota-card"><div class="quota-head"><b>${QUOTA_NAME[e]}</b>${q.plan ? ` <span class="chip" style="--c:#93c5fd">${esc(q.plan)}</span>` : ''}${q.limitReached ? ' <span class="chip" style="--c:#f87171">límite alcanzado</span>' : ''}</div>
+    ${q.windows.map((w) => `<div class="quota-row" data-quota-win="${esc(e)}:${esc(w.id)}"><span class="ql">${esc(w.label)}</span><span class="tokbar ${quotaSev(w)}"><i style="width:${Math.min(100, w.percent)}%"></i></span><b class="${quotaSev(w)}">${w.percent} %</b><span class="muted">${w.resetsAt ? 'se reinicia en ' + fmtLeft(w.resetsAt) : ''}</span></div>`).join('') || '<span class="muted">sin ventanas</span>'}</div>`;
+}
+const quotaBlockHtml = () => `<div class="section-title" style="margin-top:14px">Cuota de la suscripción</div><div class="quota-cards" id="quota-cards">${['claude', 'codex'].map(quotaCard).join('')}</div>`;
+function renderQuotaChip() {
+  const el = $('#quota-chip');
+  if (!el) return;
+  const parts = ['claude', 'codex'].map((e) => ({ e, w: quotaWorst(S.quota?.[e]) })).filter((x) => x.w);
+  el.hidden = !parts.length;
+  if (!parts.length) return;
+  const top = Math.max(...parts.map((x) => x.w.percent));
+  el.className = `ghost quota-chip ${top >= 95 ? 'bad' : top >= 80 ? 'warn' : ''}`;
+  el.textContent = parts.map((x) => `${QUOTA_NAME[x.e]} ${x.w.percent} %`).join(' · ');
+  el.title = 'Cuota restante de las suscripciones (peor ventana de cada motor). Clic: abre el Resumen';
 }
 const SUM_COLS = [['backlog', 'Backlog'], ['todo', 'Por hacer'], ['doing', 'En curso'], ['review', 'Revisión'], ['done', 'Hecho'], ['failed', 'Fallidas']];
 function renderSummary() {
@@ -1082,6 +1111,7 @@ function renderSummary() {
       ${kpi(n('failed'), 'fallidas', n('failed') ? 'bad' : '')}${kpi(qs.length, 'preguntas pendientes', qs.length ? 'warn' : '')}
       ${kpi((all.reduce((s, t) => s + (t.costUsd || 0), 0)).toFixed(2) + ' $', 'coste acumulado')}
     </div>
+    ${quotaBlockHtml()}
     <table class="repos summary">
       <thead><tr><th>Proyecto</th><th>Estado</th>${SUM_COLS.map(([, l]) => `<th class="num">${l}</th>`).join('')}<th>Equipo</th><th>Trabajando en</th><th>Libres</th><th>Tokens por sesión</th><th class="num">Coste</th><th>Actividad</th></tr></thead>
       <tbody>${shown.map(({ p, ts, team, busy, free, last, cost, open, tokens }) => `
