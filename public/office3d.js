@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
+import { layoutFloor, toVisualState } from './office-layout.js';
 
 // ── Geometría de la sala (en unidades Kenney; los modelos son pequeños ≈ 0,7 m/u) ──
 const RX = 13, RZ = 9, WALL_H = 1.29;
@@ -27,7 +28,21 @@ for (const z of DESK_ROWS) for (const x of DESK_COLS) DESKS.push({ x, z });
 const seatOf = (d) => ({ x: d.x, z: d.z + 0.5, corr: d.z + 0.5 });
 
 const BOARD_SPOTS = [{ x: 3.0, z: 1.1, corr: null }, { x: 4.2, z: 1.1, corr: null }];
-const BOARD = { x: 3.6, y: 0.78, z: 0.09, w: 2.6, h: 0.92 };
+const BOARD = { x: 4.75, y: 0.78, z: 0.09, w: 2.9, h: 0.98 };
+
+const ZONE_STYLE = {
+  development: { label: 'Desarrollo', color: 0xd6c3ff, x: 1.95, z: 2.7, w: 3.75, d: 3.35 },
+  qa: { label: 'QA', color: 0xb8f0c4, x: 5.85, z: 2.7, w: 3.3, d: 3.35 },
+  docs: { label: 'Documentación', color: 0xb9ddff, x: 2.75, z: 5.85, w: 4.7, d: 1.55 },
+  review: { label: 'Revisión', color: 0xffd36b, x: 8.95, z: 4.75, w: 3.7, d: 2.0 },
+  meeting: { label: 'Reuniones', color: 0xffbbc1, x: 8.25, z: 7.0, w: 3.15, d: 1.85 },
+  board: { label: 'Kanban', color: 0xc9d6df, x: 5.35, z: 1.0, w: 2.8, d: 1.3 },
+};
+
+const STATE_COLOR = {
+  working: 0x2f80ed, waiting: 0xf6c744, reviewing: 0xef8f35,
+  blocked: 0xd9a21b, failed: 0xe33b3b, idle: 0x94a3b8,
+};
 
 // Zona de descanso y sitios donde deambulan los que no trabajan.
 const LOUNGE = [
@@ -100,6 +115,7 @@ export class Office3D {
     this.onFloorClick = onFloorClick;   // clic en una planta del edificio → (projectId); app.js entra en esa planta (FT-47)
     this.agents = [];
     this.tasks = [];
+    this.questions = [];
     this.roles = {};
     this.title = '';
     this.selected = null;
@@ -109,6 +125,9 @@ export class Office3D {
     this.workstations = [];        // { x,z,screenMats[] }
     this.ready = false;
     this.boardSig = '';
+    this.floorLayout = null;
+    this.visualAgents = [];
+    this.hoverActor = null;
     // Modo edificio (FT-46)
     this.mode = 'floor';
     this.projects = []; this.allAgents = []; this.allTasks = [];
@@ -142,6 +161,7 @@ export class Office3D {
     this.building.visible = false;
     this.scene.add(this.room, this.building);
     this.buildFloor();
+    this.buildZones();
     this.buildBoard();
 
     this.raycaster = new THREE.Raycaster();
@@ -189,6 +209,25 @@ export class Office3D {
     this.room.add(floor);
   }
 
+  buildZones() {
+    this.zoneLabels = [];
+    const rugMat = (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.94, metalness: 0 });
+    for (const [zone, z] of Object.entries(ZONE_STYLE)) {
+      const rug = new THREE.Mesh(new THREE.PlaneGeometry(z.w, z.d), rugMat(z.color));
+      rug.rotation.x = -Math.PI / 2;
+      rug.position.set(z.x, 0.012, z.z);
+      rug.receiveShadow = true;
+      this.room.add(rug);
+      if (zone === 'development' || zone === 'qa' || zone === 'review') {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(z.w, 0.18, 0.06),
+          new THREE.MeshStandardMaterial({ color: 0xc9d2cc, roughness: 0.9 }));
+        rail.position.set(z.x, 0.1, z.z - z.d / 2);
+        rail.castShadow = true;
+        this.room.add(rail);
+      }
+    }
+  }
+
   buildBoard() {
     // Pizarra Kanban: un panel con marco cuya cara es un CanvasTexture pintado a mano.
     this.boardCanvas = document.createElement('canvas');
@@ -222,9 +261,14 @@ export class Office3D {
       ctx.fillStyle = color; ctx.fillRect(cx + 8, 10, cw - 16, 8);
       ctx.fillStyle = '#334155'; ctx.font = '700 18px system-ui, sans-serif';
       ctx.fillText(label, cx + 10, 24);
+      const count = this.tasks.filter((t) => status === 'todo' ? t.status === 'todo' : t.status === status).length;
+      ctx.fillStyle = color; ctx.font = '800 48px system-ui, sans-serif';
+      ctx.fillText(String(count), cx + 14, 64);
+      ctx.fillStyle = '#64748b'; ctx.font = '700 12px system-ui, sans-serif';
+      ctx.fillText(status.toUpperCase(), cx + 16, 112);
       const list = this.tasks.filter((t) => t.status === status || (status === 'todo' && t.status === 'failed'));
       list.slice(0, 8).forEach((t, k) => {
-        const sx = cx + 10 + (k % 2) * (cw / 2 - 4), sy = 52 + Math.floor(k / 2) * 34;
+        const sx = cx + 10 + (k % 2) * (cw / 2 - 4), sy = 138 + Math.floor(k / 2) * 30;
         const pw = cw / 2 - 14, ph = 28;
         ctx.fillStyle = 'rgba(0,0,0,.12)'; ctx.fillRect(sx + 2, sy + 2, pw, ph);
         ctx.fillStyle = t.status === 'failed' ? '#f07167' : color;
@@ -356,9 +400,10 @@ export class Office3D {
   // `agents`/`tasks` son los del proyecto activo (modo `floor`); `projects`/`allAgents`/`allTasks`, todo el
   // estado, para el edificio (modo `building`, FT-46). Si no llegan, se conservan los últimos.
   // `projectId` (FT-47) es el proyecto activo del desplegable: en el edificio su planta va resaltada.
-  update({ agents, tasks, roles, title, selected, projects, allAgents, allTasks, projectId }) {
+  update({ agents, tasks, questions, roles, title, selected, projects, allAgents, allTasks, projectId }) {
     this.agents = agents || [];
     this.tasks = tasks || [];
+    this.questions = questions || [];
     this.roles = roles || {};
     this.title = title || '';
     this.selected = selected;
@@ -368,7 +413,9 @@ export class Office3D {
     const activeChanged = projectId !== undefined && projectId !== this.activeProjectId;
     if (projectId !== undefined) this.activeProjectId = projectId || null;
     for (const [id, a] of this.actors) if (!this.agents.some((g) => g.id === id)) { this.scene.remove(a.group); this.actors.delete(id); this.removeLabel(id); }
-    const sig = JSON.stringify(this.tasks.map((t) => [t.id, t.status]));
+    this.visualAgents = this.agents.map((a) => toVisualState(a, this.tasks, this.questions));
+    this.floorLayout = layoutFloor(this.visualAgents, { tasks: this.tasks, questions: this.questions }, this.floorLayout);
+    const sig = JSON.stringify(this.tasks.map((t) => [t.id, t.status, t.updatedAt]));
     if (sig !== this.boardSig) { this.boardSig = sig; this.drawBoard(); }
     this.rebuildFloors();
     if (activeChanged) this.refreshFloorTint();
@@ -588,9 +635,18 @@ export class Office3D {
 
   // Para QA: `canvas.dataset.officeMode` y este resumen de lo que se pinta.
   debugState() {
+    const slots = {};
+    for (const v of this.visualAgents) {
+      const s = this.floorLayout?.slots?.[v.id];
+      const a = this.actors.get(v.id);
+      if (s) slots[v.id] = { zone: s.zone, module: s.module, slot: s.index, x: s.x, z: s.z, status: v.status, key: a?.key || null, moving: !!a?.moving };
+    }
     return {
       mode: this.mode, activeProjectId: this.activeProjectId, hoverFloor: this.hoverFloor, animating: !!this.camAnim,
       actors: this.actors.size,
+      zones: Object.fromEntries(Object.entries(ZONE_STYLE).map(([id, z]) => [id, { label: z.label, x: z.x, z: z.z, w: z.w, d: z.d }])),
+      slots,
+      floorSize: this.floorLayout?.size || null,
       floors: this.floors.map(({ projectId, name, working, queued, review, running }, i) => ({ projectId, name, working, queued, review, running, screen: this.mode === 'building' ? this.floorScreenRect(i) : null })),
     };
   }
@@ -602,7 +658,7 @@ export class Office3D {
     const group = new THREE.Group();
     const a = {
       group, x: DOOR.x, z: DOOR.z, corr: null, path: [], key: null, moving: false,
-      loungeSpot: index, enterAt: now + this.queuedCount(now) * 0.9, nextWander: now + 8 + Math.random() * 12,
+      loungeSpot: index, enterAt: now + this.queuedCount(now) * 0.9, nextWander: Infinity,
       angle: Math.PI, targetAngle: Math.PI, mixer: null, actions: {}, clip: null, current: null,
       emote: null, lastEmote: null, sitSpot: false,
     };
@@ -623,7 +679,8 @@ export class Office3D {
       }
     }
     // Disco del color del rol bajo los pies.
-    const col = new THREE.Color(this.roles[agent.role]?.color || '#888');
+    const visual = this.visualAgents.find((v) => v.id === agent.id) || toVisualState(agent, this.tasks, this.questions);
+    const col = new THREE.Color(STATE_COLOR[visual.status] || this.roles[agent.role]?.color || '#888');
     const disc = new THREE.Mesh(
       new THREE.CircleGeometry(0.3, 24),
       new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.55, depthWrite: false }));
@@ -641,13 +698,17 @@ export class Office3D {
   queuedCount(now) { return [...this.actors.values()].filter((o) => o.enterAt >= now).length; }
 
   targetFor(agent, index, a) {
-    const task = this.tasks.find((t) => t.id === agent.taskId);
-    if (agent.status === 'paused' && task?.kind === 'plan') return { key: 'board', ...BOARD_SPOTS[index % 2] };
-    if (agent.status === 'working' && task?.kind === 'plan') return { key: 'board', ...BOARD_SPOTS[index % 2] };
-    if (agent.status === 'working' || agent.status === 'paused') return { key: 'desk', ...seatOf(DESKS[index % DESKS.length]) };
+    const visual = this.visualAgents.find((v) => v.id === agent.id) || toVisualState(agent, this.tasks, this.questions);
+    const s = this.floorLayout?.slots?.[agent.id];
+    if (s) return {
+      key: `${s.zone}:${s.module}:${s.index}:${visual.status}`,
+      zone: s.zone, x: s.x, z: s.z, corr: s.z,
+      sit: ['development', 'qa', 'docs', 'review', 'meeting'].includes(s.zone) && visual.status !== 'waiting',
+      status: visual.status,
+    };
     const spot = a?.loungeSpot ?? index;
-    const s = LOUNGE[spot % LOUNGE.length];
-    return { key: 'lounge' + (spot % LOUNGE.length), x: s.x, z: s.z, corr: null, sit: !!s.sit };
+    const l = LOUNGE[spot % LOUNGE.length];
+    return { key: 'lounge' + (spot % LOUNGE.length), zone: 'idle', x: l.x, z: l.z, corr: null, sit: !!l.sit, status: visual.status };
   }
 
   route(c, t) {
@@ -666,13 +727,6 @@ export class Office3D {
       if (!a) a = this.spawnActor(agent, i, now);
       if (now < a.enterAt) { a.group.visible = false; return; }
       a.group.visible = true;
-
-      if (agent.status !== 'working' && now > a.nextWander && !a.moving) {
-        const taken = new Set([...this.actors.values()].map((o) => o.loungeSpot));
-        const free = LOUNGE.map((_, k) => k).filter((k) => !taken.has(k));
-        if (free.length) a.loungeSpot = free[Math.floor(Math.random() * free.length)];
-        a.nextWander = now + 10 + Math.random() * 15;
-      }
 
       const t = this.targetFor(agent, i, a);
       if (t.key !== a.key) { a.path = this.route(a, t); a.key = t.key; a.corr = null; a.dest = t; a.sitSpot = !!t.sit; }
@@ -703,9 +757,10 @@ export class Office3D {
         if (!ev) a.lastEmote = null;
       }
 
+      const visual = this.visualAgents.find((v) => v.id === agent.id) || toVisualState(agent, this.tasks, this.questions);
       // Posición y giro.
       let y = 0;
-      if (a.key === 'desk' && (agent.status === 'working' || agent.status === 'paused') && !a.moving) y = 0.2;
+      if (a.sitSpot && !a.moving && ['working', 'reviewing', 'blocked'].includes(visual.status)) y = 0.2;
       else if (a.sitSpot && !a.moving) y = 0.24;
       a.group.position.set(a.x, y, a.z);
       let da = a.targetAngle - a.angle;
@@ -714,18 +769,26 @@ export class Office3D {
       a.group.rotation.y = a.angle;
 
       // Color del disco (más intenso si seleccionado).
-      if (a.disc) a.disc.material.opacity = this.selected === agent.id ? 0.95 : 0.5;
+      if (a.disc) {
+        a.disc.material.color.setHex(STATE_COLOR[visual.status] || 0x888888);
+        a.disc.material.opacity = this.selected === agent.id || visual.status === 'failed' ? 0.95 : 0.58;
+      }
 
       // Animación.
       this.playClip(a, this.chooseClip(a, agent, now));
       if (a.mixer) a.mixer.update(dt);
 
       // Encender la pantalla de su mesa cuando trabaja sentado.
-      const ws = (a.key === 'desk') ? this.workstations[i % this.workstations.length] : null;
       // (el encendido se resuelve abajo en refreshScreens)
-      a._ws = (a.key === 'desk' && (agent.status === 'working' || agent.status === 'paused') && !a.moving) ? i % this.workstations.length : -1;
+      a._ws = (visual.status === 'working' && !a.moving) ? this.nearestWorkstation(a.x, a.z) : -1;
     });
     this.refreshScreens();
+  }
+
+  nearestWorkstation(x, z) {
+    let bi = -1, bd = Infinity;
+    this.workstations.forEach((ws, i) => { const d = Math.hypot(ws.x - x, ws.z - z); if (d < bd) { bd = d; bi = i; } });
+    return bi;
   }
 
   refreshScreens() {
@@ -740,7 +803,8 @@ export class Office3D {
   chooseClip(a, agent, now) {
     if (a.emote && now < a.emote.until && a.actions[a.emote.name]) return a.emote.name;
     if (a.moving) return a.actions.walk ? 'walk' : 'idle';
-    if (a.key === 'desk' && (agent.status === 'working' || agent.status === 'paused')) return a.actions.sit ? 'sit' : 'idle';
+    const visual = this.visualAgents.find((v) => v.id === agent.id) || toVisualState(agent, this.tasks, this.questions);
+    if (a.sitSpot && ['working', 'reviewing', 'blocked'].includes(visual.status)) return a.actions.sit ? 'sit' : 'idle';
     if (a.sitSpot) return a.actions.sit ? 'sit' : 'idle';
     return a.actions.idle ? 'idle' : (Object.keys(a.actions)[0] || null);
   }
@@ -766,6 +830,8 @@ export class Office3D {
       .o3d-el{position:absolute;transform:translate(-50%,-100%);white-space:nowrap;transition:opacity .2s}
       .o3d-pill{font-size:11px;font-weight:600;color:#1f2937;background:rgba(255,255,255,.88);border:1px solid rgba(0,0,0,.1);
         border-radius:999px;padding:1px 8px;box-shadow:0 1px 3px rgba(0,0,0,.18);transform:translate(-50%,0)}
+      .o3d-pill.compact{width:12px;height:12px;padding:0;border-radius:999px;color:transparent;overflow:hidden}
+      .o3d-pill.waiting{background:#fff4bf}.o3d-pill.reviewing{background:#fed7aa}.o3d-pill.blocked{background:#fde68a}.o3d-pill.failed{background:#fee2e2}.o3d-pill.idle{background:#e2e8f0}
       .o3d-pill.sel{outline:2px solid #f6c744;outline-offset:1px}
       .o3d-bubble{font-size:11px;font-weight:600;color:#1f2937;background:rgba(255,255,255,.95);border:1px solid rgba(0,0,0,.08);
         border-radius:9px;padding:3px 8px;box-shadow:0 2px 6px rgba(0,0,0,.2);max-width:190px;overflow:hidden;text-overflow:ellipsis}
@@ -774,12 +840,14 @@ export class Office3D {
       .o3d-bubble.error{background:#fef2f2;color:#991b1b;border-color:#fca5a5}
       .o3d-board{font-size:12px;font-weight:700;color:#334155;background:rgba(255,255,255,.92);border:1px solid rgba(0,0,0,.1);
         border-radius:8px;padding:3px 10px;box-shadow:0 2px 6px rgba(0,0,0,.18)}
+      .o3d-zone{font-size:11px;font-weight:800;color:#1f2937;background:rgba(255,255,255,.86);border:1px solid rgba(0,0,0,.08);
+        border-radius:999px;padding:3px 9px;box-shadow:0 1px 4px rgba(0,0,0,.14)}
       .o3d-floor{font-size:12px;font-weight:600;color:#1f2937;background:rgba(255,255,255,.92);border:1px solid rgba(0,0,0,.1);
         border-radius:8px;padding:3px 10px;box-shadow:0 2px 6px rgba(0,0,0,.18);transform:translate(10px,-50%)}
       .o3d-floor.hover{outline:2px solid #3ad0a0;outline-offset:1px}
       .o3d-floor.active{border-color:#3ad0a0;box-shadow:0 0 0 2px rgba(58,208,160,.35),0 2px 6px rgba(0,0,0,.18);font-weight:700}
       .o3d-floor.grouped{color:#64748b;font-style:italic}
-      .o3d-labels:not(.building) .o3d-floor,.o3d-labels.building .o3d-pill,.o3d-labels.building .o3d-bubble,.o3d-labels.building .o3d-board{display:none}`;
+      .o3d-labels:not(.building) .o3d-floor,.o3d-labels.building .o3d-pill,.o3d-labels.building .o3d-bubble,.o3d-labels.building .o3d-board,.o3d-labels.building .o3d-zone{display:none}`;
     document.head.appendChild(style);
     this.labelRoot = document.createElement('div');
     this.labelRoot.className = 'o3d-labels';   // con la clase `building` solo se ven las etiquetas de las plantas (FT-47)
@@ -788,6 +856,14 @@ export class Office3D {
     this.boardLabel = document.createElement('div');
     this.boardLabel.className = 'o3d-el o3d-board';
     this.labelRoot.appendChild(this.boardLabel);
+    this.zoneLabelEls = Object.entries(ZONE_STYLE).map(([id, z]) => {
+      const el = document.createElement('div');
+      el.className = 'o3d-el o3d-zone';
+      el.textContent = z.label;
+      el.dataset.zone = id;
+      this.labelRoot.appendChild(el);
+      return { id, el };
+    });
   }
 
   removeLabel(id) { const e = this.labelEls.get(id); if (e) { e.pill.remove(); e.bubble.remove(); this.labelEls.delete(id); } }
@@ -810,6 +886,12 @@ export class Office3D {
   }
 
   updateLabels(now) {
+    for (const { id, el } of this.zoneLabelEls || []) {
+      const z = ZONE_STYLE[id], p = this.project(z.x, 0.08, z.z - z.d / 2 + 0.1);
+      el.style.left = p.x + 'px';
+      el.style.top = p.y + 'px';
+      el.style.opacity = p.visible ? '1' : '0';
+    }
     // Pizarra: título + pendientes.
     const pend = this.tasks.filter((t) => t.status === 'todo' || t.status === 'failed').length;
     const bp = this.project(BOARD.x, BOARD.y + BOARD.h / 2 + 0.25, BOARD.z);
@@ -826,7 +908,10 @@ export class Office3D {
       const e = this.labelFor(agent.id);
       const head = this.project(a.x, 1.15, a.z);
       const foot = this.project(a.x, 0.02, a.z);
-      e.pill.textContent = agent.name;
+      const visual = this.visualAgents.find((v) => v.id === agent.id) || toVisualState(agent, this.tasks, this.questions);
+      const expanded = this.selected === agent.id || this.hoverActor === agent.id || visual.status === 'failed';
+      e.pill.textContent = expanded ? agent.name : ' ';
+      e.pill.className = `o3d-el o3d-pill ${visual.status}${expanded ? '' : ' compact'}`;
       e.pill.classList.toggle('sel', this.selected === agent.id);
       e.pill.style.left = foot.x + 'px';
       e.pill.style.top = (foot.y + 4) + 'px';
@@ -845,17 +930,15 @@ export class Office3D {
   }
 
   bubbleText(agent, a, now) {
-    const review = this.tasks.find((t) => t.agentId === agent.id && t.status === 'review');
-    const failed = this.tasks.find((t) => t.agentId === agent.id && t.status === 'failed');
-    if (agent.status === 'paused' && !a.moving) return { text: '⏸ En pausa', kind: 'review' };
-    if (agent.status === 'working' || agent.status === 'paused') {
-      if (a.moving) return { text: a.key === 'board' ? '🗂 Voy a la pizarra' : '→ A mi mesa', kind: '' };
-      if (a.key === 'board') return { text: '🗂 Planificando…', kind: 'plan' };
-      return { text: agent.activity ? '✏️ ' + agent.activity : 'Trabajando…', kind: '' };
+    const visual = this.visualAgents.find((v) => v.id === agent.id) || toVisualState(agent, this.tasks, this.questions);
+    if (a.moving) return { text: '→ ' + (ZONE_STYLE[a.dest?.zone]?.label || 'zona'), kind: '' };
+    if (visual.status === 'failed') return { text: `⚠ #${visual.taskId || agent.taskId || '?'} falló`, kind: 'error' };
+    if (this.selected === agent.id || this.hoverActor === agent.id) {
+      if (visual.status === 'blocked') return { text: 'Bloqueado', kind: 'review' };
+      if (visual.status === 'waiting') return { text: 'En cola', kind: 'plan' };
+      if (visual.status === 'reviewing') return { text: `✋ #${visual.taskId || 'tarea'} en revisión`, kind: 'review' };
+      if (visual.status === 'working') return { text: visual.activity ? '✏️ ' + visual.activity : 'Trabajando…', kind: '' };
     }
-    if (failed && !a.moving) return { text: `⚠ #${failed.id} falló`, kind: 'error' };
-    if (review && !a.moving) return { text: `✋ #${review.id} en revisión`, kind: 'review' };
-    if (!a.moving && Math.floor(now / 2.4 + hash(agent.id)) % 5 === 0) return { text: '☕', kind: '' };
     return { text: null };
   }
 
@@ -885,6 +968,7 @@ export class Office3D {
       return;
     }
     const id = this.pickActor(e);
+    if (!click) this.hoverActor = id;
     if (click) { if (id) this.onAgentClick?.(id); }
     else this.cv.style.cursor = id ? 'pointer' : 'default';
   }
