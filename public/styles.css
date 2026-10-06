@@ -382,6 +382,13 @@ table.summary button.small.on { background: color-mix(in srgb, var(--ok) 20%, tr
 .merge-chip.behind { background: #fbbf2422; color: #fbbf24; border: 1px solid #fbbf2455; }
 .merge-chip.conflict { background: #ef444422; color: #f87171; border: 1px solid #ef444455; }
 
+/* Dictado por voz en campos (FT-43) */
+.mic-wrap { position: relative; }
+.mic-wrap > textarea, .mic-wrap > input { padding-right: 38px; }
+.mic-btn { position: absolute; top: 4px; right: 4px; width: 28px; height: 28px; padding: 0; line-height: 26px; font-size: 14px; border-radius: 50%; background: var(--panel3); border: 1px solid var(--line); cursor: pointer; }
+.mic-btn.rec { background: var(--err); color: #fff; border-color: var(--err); animation: g-pulse 1s infinite; }
+.mic-btn:disabled { opacity: .4; cursor: not-allowed; }
+
 /* Ajustes embebidos en el panel tipo Cmd de flow-test (FT-42): solo el diálogo, a marco completo */
 body.settings-embed > *:not(dialog):not(#toasts) { display: none !important; }
 body.settings-embed dialog { position: fixed; inset: 0; margin: 0; width: 100%; max-width: none; height: 100%; max-height: none; border: 0; border-radius: 0; overflow: auto; box-shadow: none; }

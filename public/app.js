@@ -10,6 +10,7 @@ let hostFeatures = []; // publicación del contexto (FT-2)
 const logs = new Map();
 
 import { Office } from './office3d.js';
+import { dictationSupported, createDictation, insertAtCursor } from './dictation.js'; // dictado por voz (FT-43)
 const office = new Office($('#office'), { onAgentClick: (id) => openDrawer(id) });
 
 function safeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
@@ -891,6 +892,24 @@ function dialog(html, onSubmit, cls = '') {
   };
   dlg.showModal();
 }
+// Dictado por voz en campos del diálogo (FT-43): sin soporte el botón no se pinta; con él, un clic dicta y otro para.
+const micField = (field) => `<div class="mic-wrap">${field}${dictationSupported() ? '<button type="button" class="mic-btn" data-mic title="Dictar por voz (clic para empezar, otro para parar)" aria-pressed="false">🎤</button>' : ''}</div>`;
+let dictation = null; // { btn, dict }: un solo dictado a la vez
+function micStop() { dictation?.dict.stop(); }
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest?.('[data-mic]');
+  if (!btn) return;
+  const field = btn.closest('.mic-wrap').querySelector('input, textarea');
+  if (dictation?.btn === btn) return micStop(); // segundo clic: parar
+  micStop();
+  const mark = (on) => { btn.classList.toggle('rec', on); btn.setAttribute('aria-pressed', on); btn.title = on ? 'Grabando… clic para parar' : 'Dictar por voz (clic para empezar, otro para parar)'; if (!on && dictation?.btn === btn) dictation = null; };
+  const lang = ({ es: 'es-ES', en: 'en-US', ca: 'ca-ES', fr: 'fr-FR', de: 'de-DE', pt: 'pt-PT', it: 'it-IT' })[S.settings.sttLang] || navigator.language || 'es-ES';
+  const dict = createDictation({ lang, onText: (t) => insertAtCursor(field, t), onState: mark, onError: (m) => { btn.disabled = /permiso|permite/.test(m); toast(m, 'error'); } });
+  dictation = { btn, dict };
+  field.focus();
+  dict.start();
+});
+document.addEventListener('close', (e) => { if (e.target.id === 'dialog') micStop(); }, true); // al cerrar el diálogo se corta el micro
 const buttons = (ok = 'Guardar') => `<div class="row"><button class="ghost" value="cancel">Cancelar</button>${ok ? `<button>${ok}</button>` : ''}</div>`;
 const roleOptions = (sel, skipPo) => Object.entries(S.roles).filter(([, r]) => !(skipPo && r.kind === 'planner'))
   .map(([k, r]) => `<option value="${k}" ${k === sel ? 'selected' : ''} title="${esc(r.description || '')}">${esc(r.label)}${r.custom ? ` · ${esc(r.source)}` : ''}${r.kind === 'planner' ? ' (planifica)' : r.kind === 'qa' ? ' (QA)' : r.kind === 'docs' ? ' (documenta)' : ''}</option>`).join('');
@@ -932,8 +951,8 @@ Pasos, convenciones y ejemplos…</textarea>
     ${buttons('Contratar')}`, (f) => api('POST', '/api/agents', { ...f, model: pickModel(f), projectId })),
   'new-task': () => { pendingAttachments = []; dialog(`
     <h3>Nueva tarea</h3>
-    <label>Título <span class="muted">(con «Redactar con IA» puedes dejarlo vacío)</span></label><input name="title" autofocus />
-    <label>Descripción <span class="muted">(a mano, o en bruto para que la IA la redacte)</span></label><textarea name="description" rows="5" placeholder="Qué hay que hacer y cómo saber que está bien. Con ✨ basta con contarlo a tu manera: la IA lo convierte en una tarea completa."></textarea>
+    <label>Título <span class="muted">(con «Redactar con IA» puedes dejarlo vacío)</span></label>${micField('<input name="title" autofocus />')}
+    <label>Descripción <span class="muted">(a mano, dictada con 🎤, o en bruto para que la IA la redacte)</span></label>${micField('<textarea name="description" rows="5" placeholder="Qué hay que hacer y cómo saber que está bien. Con ✨ basta con contarlo a tu manera: la IA lo convierte en una tarea completa."></textarea>')}
     ${attachArea()}
     <label>Para quién</label><select name="role">${whoOptions()}</select>
     ${(project()?.repos || []).length > 1 ? `<label>Repositorio</label><select name="repo"><option value="">(el que diga el rol)</option>${project().repos.map((r) => `<option value="${r.key}">${esc(r.key)} — ${esc(r.path)}</option>`).join('')}</select>` : ''}
