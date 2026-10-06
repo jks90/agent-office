@@ -253,6 +253,7 @@ const routes = [
     if (typeof b.agentMemory === 'boolean') st.agentMemory = b.agentMemory; // FT-75
     if (b.ponytailRoles && typeof b.ponytailRoles === 'object') st.ponytailRoles = ponytail.cleanRoles(b.ponytailRoles); // FT-86
     if (typeof b.claudeMemory === 'boolean') st.claudeMemory = b.claudeMemory;
+    if (Array.isArray(b.hiddenProjects)) st.hiddenProjects = b.hiddenProjects.map(String).filter((id) => /^\w+$/.test(id)).slice(0, 500); // proyectos ocultos en la UI (siguen funcionando)
     if (typeof b.codeIndex === 'boolean') st.codeIndex = b.codeIndex; // FT-58
     if (typeof b.cacheAffinity === 'boolean') st.cacheAffinity = b.cacheAffinity; // FT-64
     if (b.maxTaskUsd !== undefined) st.maxTaskUsd = Math.max(0.5, Math.min(50, Number(b.maxTaskUsd) || 3)); // tope de gasto por intento de tarea
