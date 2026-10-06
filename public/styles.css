@@ -497,3 +497,13 @@ body.embedded #quota-chip { display: none; }
 tr[data-cost-task] { cursor: pointer; }
 .failed-item { border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 12px; margin: 8px 0; display: flex; flex-direction: column; gap: 4px; }
 .failed-why { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow: auto; background: var(--panel3); border-radius: var(--r-sm); padding: 8px; margin: 2px 0; font-size: 12px; }
+
+/* FT-56 · revisión visible */
+.review-wait { margin-top: 6px; padding: 6px 8px; border-radius: 6px; background: rgba(251,191,36,.12); border: 1px solid rgba(251,191,36,.45); color: #fbbf24; font-size: 12px; }
+.review-wait .rw-blocks, .review-wait .rw-note { margin-top: 3px; color: #fde68a; }
+.review-ok { margin-top: 6px; font-size: 12px; color: var(--ok); }
+.rw-dep { margin-top: 6px; font-size: 12px; color: #fbbf24; }
+.tab-count.review-badge { background: #fbbf24; color: #1a1a1a; }
+.tab-count.review-badge:empty { display: none; }
+.review-chip { color: #fbbf24; border-color: rgba(251,191,36,.5); }
+.toast.review { border-left: 3px solid #fbbf24; }
