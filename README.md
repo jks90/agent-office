@@ -306,3 +306,33 @@ Tras cambiar la geometría: `node scripts/building-e2e.mjs` y mirar `scripts/pre
 ## Créditos
 
 - 3D: [Kenney](https://kenney.nl) *Furniture Kit* y *Mini Characters* (CC0, `public/assets/3d/`), [three.js](https://threejs.org) (MIT, `public/vendor/three/`).
+
+## 💸 Consumo de tokens de los agentes
+
+Medido el 6 OCT 2026: lo caro no es el arranque (≈31k tokens con `--strict-mcp-config`) sino lo que se lee, porque cada turno reenvía todo lo leído, y el modelo (el alias `opus` del CLI resuelve al modelo más caro). Medidas:
+- **Modelo por rol:** código con `sonnet`; documentación, QA y planificación con `haiku` (roles en `~/JksDocs/workspace/_agentes/roles/`).
+- **Briefing por repo** (`server/briefing.js`): mapa generado con git (carpetas, ficheros grandes a leer por tramos, scripts, e2e, secciones de README/CLAUDE.md, últimos commits), cacheado por commit en `data/briefings/` e inyectado en cada prompt, para que el agente no explore.
+- **Reglas de lectura en el prompt** (`economyBlock` en `team.js`): Grep + Read por tramos en ficheros grandes, sin releer, salidas recortadas, un e2e salvo fallo, una captura.
+- **Tope de gasto por intento** (Ajustes, `maxTaskUsd`, 3 $; `claude --max-budget-usd`): al alcanzarlo la tarea NO falla, va a Revisión con «⚠️ tope de gasto alcanzado»; Devolver le da otro intento desde su rama.
+- **Esfuerzo** (Ajustes, `agentEffort`, medio; `claude --effort`).
+- **Reanudar sesión** en reintentos de la misma tarea en su worktree si el anterior acabó hace <50 min (`claude --resume`, la caché de contexto aún vale).
+- **Estimación** en las tarjetas de Por hacer / Backlog: mediana del coste de las últimas 10 tareas hechas del mismo rol (`costEstimates()`).
+- **RTK** (rtk-ai/rtk, Apache-2.0): si está instalado (`~/.local/bin/rtk` o `AO_RTK_BIN`; `AO_RTK=off` lo apaga), los agentes Claude arrancan con su hook PreToolUse por `--settings` (NO se toca `~/.claude/settings.json`) y se permiten solo los `rtk …` equivalentes a la lista blanca (`RTK_RULES`, nunca `rtk run`). Comprime salidas de git/grep/ls/lint; no las de Read/Grep nativos. `rtk gain` enseña el ahorro.
+
+## ⏸ Sin cuota a mitad de tarea: pausa y reanudación automática (FT-66)
+
+Si un agente se queda sin cuota de la suscripción mientras trabaja (Claude: «usage limit reached», «5-hour limit», 429…; Codex: «You've hit your usage limit… try again at …»), la tarea **no** va a Fallidas:
+- `server/quota-pause.js` reconoce el error y la hora de reinicio que trae el mensaje (epoch tras `|`, «resets 7pm», «try again at 8:53 PM», «in 2 hours»); sin hora, la de la ventana de sesión de `quota.js`, o +15 min.
+- `team.js` confirma lo hecho en su rama, devuelve la tarea a «Por hacer» con `quotaPaused {engine, since, resetsAt}` y `preferAgentId`, libera al agente y emite `AgentPaused {reason:'quota'}`. La tarjeta dice «⏸ sin cuota de Claude: sigue sola a las 18:59 (en 42 min)» con **▶ Reanudar ya** (`POST /api/tasks/:id/resume-now`).
+- `tick()` reparte primero las pausadas y las relanza solas cuando pasa la hora y `quota.gate()` da margen (si no, mueve la hora), con el mismo agente, en su rama y con `--resume` de su sesión en Claude; el prompt le dice que continúe donde lo dejó. Con motor `auto` y `settings.quotaFailover` (activo por defecto) sigue antes con el otro motor si tiene cuota. `AgentResumed {reason:'quota-reset'}`.
+- El proyecto sigue «en marcha» y el estado sobrevive a reinicios del servicio.
+- Prueba: `node scripts/quota-pause-e2e.mjs` (claude falso que se corta y luego termina, mock de cuota, reinicio del servidor durante la espera, «Reanudar ya»).
+
+## 🧠 Memoria de los agentes (FT-75)
+
+Cada tarea empezaba de cero. Ahora cada agente tiene una memoria corta por proyecto, y el proyecto otra común (`server/memory.js`, ficheros `data/memory/<proyecto>/agent-<id>.md` y `project.md`, una lección por línea con su código de tarea):
+- **De dónde salen, sin llamadas extra al modelo:** al terminar, el agente puede cerrar su resumen con «LECCIONES:» y 1–2 viñetas (≤160 caracteres; «[proyecto]» para la común) — se guardan y se quitan del resumen —, y la primera frase de cada «Devolver» se guarda como «Corrección de revisión».
+- **Dónde van:** en la parte estable del prompt, tras el briefing del repo (se lee de caché), con la regla «si algo contradice el código actual, manda el código».
+- **Para que salga rentable:** tope de ≈1 500 tokens por fichero (`MAX_CHARS` = 6 000; al pasarse se descartan las más antiguas) y deduplicado (≥80 % de palabras en común).
+- **Control:** sección «🧠 Memoria» en la ficha del agente para verla y editarla (`GET/PUT /api/memory/:projectId[?agent=id]`), interruptor en Ajustes (`agentMemory`).
+- Prueba: `node scripts/memory-e2e.mjs` (11 checks). Su efecto en el coste entra en el benchmark de FT-61 (variante con y sin memoria).

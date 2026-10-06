@@ -2,10 +2,12 @@
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 import path from 'node:path';
+import os from 'node:os';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 import { describeTool, toolSummary, firstLine } from './describe.js';
-import { BASH_TOOLS } from './allowlist.js';
+import { RTK_RULES, BASH_TOOLS } from './allowlist.js';
 import { claudeTracker } from '../usage.js';
 
 // Lectura/edición + shell de andar por casa (sin rm, sudo, docker, ssh ni git push; lista blanca compartida con terminal.execute del Guide, FT-10).
@@ -14,10 +16,21 @@ const WORK_TOOLS = ['Read', 'Edit', 'MultiEdit', 'Write', 'Glob', 'Grep', 'TodoW
 const ASK_RULE = `Bash(node ${path.join(ROOT, 'bin', 'ao-ask.mjs')} *)`;
 const PLAN_TOOLS = ['Read', 'Glob', 'Grep', ASK_RULE, 'Bash(ls *)', 'Bash(cat *)', 'Bash(head *)', 'Bash(sed -n *)', 'Bash(grep *)', 'Bash(find *)', 'Bash(wc *)', 'Bash(git log*)', 'Bash(git status*)', 'Bash(git diff*)'];
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
+// RTK instalado → hook solo para los agentes (por --settings; no se toca ~/.claude/settings.json del usuario).
+const RTK_BIN = [process.env.AO_RTK_BIN, path.join(os.homedir(), '.local/bin/rtk'), '/usr/local/bin/rtk'].find((f) => f && fs.existsSync(f)) || null;
+export const rtkAvailable = () => !!RTK_BIN && process.env.AO_RTK !== 'off';
+
+export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, effort, resumeSession, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
   const tools = [...(mode === 'plan' ? PLAN_TOOLS : WORK_TOOLS)];
   // FT-5: entrada stream-json con stdin abierto → se pueden inyectar mensajes del cliente en caliente.
   const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--append-system-prompt', system];
+  if (resumeSession) args.push('--resume', resumeSession); // reintento de la MISMA tarea en su worktree: reaprovecha el contexto (y su caché) en vez de volver a explorar
+  if (rtkAvailable() && mode !== 'plan') {
+    args.push('--settings', JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: `${RTK_BIN} hook claude` }] }] } }));
+    tools.push(...RTK_RULES.map((r) => `Bash(${r})`));
+  }
+  if (budgetUsd) args.push('--max-budget-usd', String(budgetUsd)); // tope de gasto por intento: al pasarlo, el CLI corta y la tarea falla con el motivo
+  if (effort) args.push('--effort', effort); // menos «pensamiento» = menos tokens de salida (medium por defecto)
   args.push('--model', model || 'sonnet'); // nunca heredar el modelo por defecto de la sesión del usuario (puede no estar disponible en -p)
   // --strict-mcp-config: el agente NO hereda los MCP globales del usuario; solo flow-test para el QA.
   const mcpServers = {};
@@ -29,6 +42,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv 
   args.push('--allowedTools', ...tools);
 
   const env = { ...process.env, ...extraEnv, BROWSER: 'true' };
+  if (rtkAvailable() && !String(env.PATH || '').split(':').includes(path.dirname(RTK_BIN))) env.PATH = `${path.dirname(RTK_BIN)}:${env.PATH || ''}`; // el comando reescrito («rtk git …») tiene que encontrarse
   delete env.CLAUDECODE; // si el servidor se lanzó desde una sesión de Claude Code
   // detached: el hijo lidera su propio grupo de procesos, para pausar (SIGSTOP/SIGCONT) y matar también a sus subprocesos (FT-5).
   const child = spawn(process.env.AO_CLAUDE_BIN || 'claude', args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
@@ -42,7 +56,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv 
   const armClose = () => { clearTimeout(closeTimer); closeTimer = setTimeout(() => { if (!child.stdin.destroyed) child.stdin.end(); }, 2500); };
   const cancelClose = () => { clearTimeout(closeTimer); closeTimer = null; };
 
-  let result = null;
+  let result = null, sessionId = null;
   const tracker = claudeTracker();
   let stopped = false;
   const stderr = [];
@@ -71,6 +85,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv 
         if (c.type === 'tool_result' && c.is_error) onLog('⚠ ' + firstLine(typeof c.content === 'string' ? c.content : JSON.stringify(c.content), 200));
       }
     } else if (ev.type === 'system' && ev.subtype === 'init') {
+      sessionId = ev.session_id || sessionId;
       onLog(`⚙ Claude Code · modelo ${ev.model || '?'} · ${ev.tools?.length ?? 0} herramientas`);
     } else if (ev.type === 'result') {
       result = ev; // con varios turnos manda el último
@@ -88,7 +103,9 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, env: extraEnv 
         ok,
         summary: result?.result || '',
         costUsd: result?.total_cost_usd ?? null,
-        error: ok ? null : (result?.result || stderr.join('\n') || `claude terminó con código ${code}`),
+        sessionId,
+        budgetHit: result?.subtype === 'error_max_budget_usd',
+        error: ok ? null : (result?.result || (result?.errors || []).join(' ') || stderr.join('\n') || `claude terminó con código ${code}`),
       });
     });
   });

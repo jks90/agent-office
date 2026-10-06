@@ -8,6 +8,9 @@ let openTaskId = null; // tarea abierta en el modal «Ver la tarea» (FT-2)
 let hostCtx = null, ctxTimer = null, ctxSent = ""; // hostFeatures: lo que el flow-test que nos embebe sabe hacer (p. ej. 'settingsPanel', FT-42)
 let hostFeatures = []; // publicación del contexto (FT-2)
 const logs = new Map();
+const activityByAgent = new Map(); // FT-68: Activity Stream por agente para la ficha operativa.
+const statusSinceByAgent = new Map();
+const activityLoaded = new Set();
 
 import { Office } from './office3d.js';
 import { dictationSupported, createDictation, insertAtCursor } from './dictation.js'; // dictado por voz (FT-43)
@@ -66,6 +69,11 @@ function connectEvents() {
     if (arr.length > 400) arr.shift();
     logs.set(entry.agentId, arr);
     if (drawerAgent === entry.agentId) renderLog();
+  });
+  es.addEventListener('activity', (e) => {
+    const ev = JSON.parse(e.data);
+    rememberActivity(ev);
+    if (drawerAgent === ev.agentId) renderDrawer();
   });
   // Órdenes del Guide Agent (FT-4): llegan por SSE `ui` (navegar, abrir tarea/agente, enseñar un flow en flow-test).
   es.addEventListener('ui', (e) => {
@@ -582,7 +590,7 @@ function render() {
   run.classList.toggle('on', !!p?.running);
   run.disabled = !p;
 
-  office.update({ agents: team(), tasks: tasks(), roles: S.roles, title: p?.name || '', selected: drawerAgent, projects: S.projects, allAgents: S.agents, allTasks: S.tasks, projectId }); // projects/allAgents/allTasks: modo edificio (FT-46); projectId: planta resaltada (FT-47)
+  office.update({ agents: team(), tasks: tasks(), questions: S.questions || [], roles: S.roles, title: p?.name || '', selected: drawerAgent, projects: S.projects, allAgents: S.agents, allTasks: S.tasks, projectId }); // projects/allAgents/allTasks: modo edificio (FT-46); projectId: planta resaltada (FT-47)
   renderSuite();
   renderTeam();
   renderRepos();
@@ -885,6 +893,9 @@ function card(t) {
     ${deps || t.costUsd ? `<div class="meta">${deps ? `<span>depende de ${deps}</span>` : ''}${t.costUsd ? ` <span>💲${t.costUsd.toFixed(3)}</span>` : ''}</div>` : ''}
     ${t.status === 'doing' && agent ? `<div class="live">● ${esc(agent.activity)}</div>` : ''}
     ${t.status === 'todo' && t.quotaBlocked && t.activity ? `<div class="quota-hold">${esc(t.activity)}</div>` : ''}
+    ${['todo', 'backlog'].includes(t.status) && S.costEstimates?.[t.role] != null ? `<div class="meta"><span class="cost-est" title="Estimación: mediana del coste de las últimas tareas hechas por el rol ${esc(t.role)}. Tope por intento: ${S.settings.maxTaskUsd || 3} $">≈ ${S.costEstimates[t.role].toFixed(2)} $</span></div>` : ''}
+    ${t.quotaPaused && t.status === 'todo' ? `<div class="quota-hold">${esc(t.activity || '⏸ sin cuota')}${t.quotaPaused.resetsAt > Date.now() ? ` (en ${fmtLeft(t.quotaPaused.resetsAt)})` : ''} <button class="small ghost" data-resume-now="${t.id}" title="Ignorar la espera y relanzarla en el siguiente reparto">▶ Reanudar ya</button></div>` : ''}
+    ${t.budgetHit && t.status === 'review' ? '<div class="quota-hold">⚠️ cortada por el tope de gasto: revisa y decide</div>' : ''}
     ${t.summary && t.status !== 'doing' ? `<div class="sum">${esc(t.summary)}</div>` : ''}
     ${mergeChips(t) ? `<div class="merge-row">${mergeChips(t)}</div>` : ''}
     ${t.error ? `<div class="err">${esc(t.error)}</div>` : ''}
@@ -893,12 +904,95 @@ function card(t) {
   </div>`;
 }
 
-// ── Panel del agente ───────────────────────────────────────────────────────
+// ── Panel del agente (AgentDetailPanel, FT-68) ─────────────────────────────
+const STATUS_META = {
+  working: { label: 'Trabajando', color: '#34d399' },
+  waiting: { label: 'Esperando', color: '#60a5fa' },
+  reviewing: { label: 'Revisando', color: '#fbbf24' },
+  blocked: { label: 'Bloqueado', color: '#f59e0b' },
+  failed: { label: 'Fallido', color: '#f87171' },
+  idle: { label: 'Descansando', color: '#94a3b8' },
+  paused: { label: 'En pausa', color: '#fbbf24' },
+};
+const STATUS_EVENTS = {
+  AgentStarted: 'working', AgentResumed: 'working', AgentProgress: 'working',
+  AgentPaused: 'paused', AgentBlocked: 'blocked', AgentFailed: 'failed', AgentCompleted: 'idle',
+};
+function effectiveStatus(a) {
+  const task = S.tasks.find((t) => t.id === a?.taskId);
+  if (a?.status === 'working' && task?.status === 'review') return 'reviewing';
+  if (a?.status === 'idle' && S.tasks.some((t) => t.agentId === a.id && t.status === 'failed')) return 'failed';
+  return a?.status || 'idle';
+}
+function statusMeta(a) { return STATUS_META[effectiveStatus(a)] || STATUS_META.idle; }
+function rememberActivity(ev) {
+  if (!ev?.agentId) return;
+  const arr = activityByAgent.get(ev.agentId) || [];
+  if (!arr.some((x) => x.id === ev.id)) arr.push(ev);
+  arr.sort((a, b) => a.ts - b.ts);
+  if (arr.length > 80) arr.splice(0, arr.length - 80);
+  activityByAgent.set(ev.agentId, arr);
+  if (STATUS_EVENTS[ev.type]) statusSinceByAgent.set(ev.agentId, { status: STATUS_EVENTS[ev.type], ts: ev.ts });
+}
+async function loadAgentActivity(id) {
+  if (activityLoaded.has(id)) return;
+  activityLoaded.add(id);
+  try {
+    const events = await api('GET', `/api/events?agentId=${encodeURIComponent(id)}&limit=80`);
+    events.forEach(rememberActivity);
+    if (drawerAgent === id) renderDrawer();
+  } catch { activityLoaded.delete(id); }
+}
+function statusSince(a) {
+  const now = Date.now(), current = effectiveStatus(a);
+  const events = activityByAgent.get(a.id) || [];
+  for (let i = events.length - 1; i >= 0; i--) {
+    const st = STATUS_EVENTS[events[i].type];
+    if (st && (st === current || (current === 'reviewing' && st === 'working'))) return events[i].ts;
+  }
+  const cached = statusSinceByAgent.get(a.id);
+  return cached?.ts || a.updatedAt || a.createdAt || now;
+}
+function durationSince(ts) {
+  const s = Math.max(0, Math.floor((Date.now() - Number(ts || Date.now())) / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  if (h) return `${h}h ${String(m).padStart(2, '0')}m`;
+  if (m) return `${m}m ${String(sec).padStart(2, '0')}s`;
+  return `${sec}s`;
+}
+function eventText(ev) {
+  const d = ev.data || {};
+  if (ev.type === 'AgentToolStarted') return `usando ${d.tool || 'herramienta'}${d.summary ? ': ' + d.summary : ''}`;
+  if (ev.type === 'AgentToolFinished') return d.ok === false ? 'herramienta con error' : 'herramienta completada';
+  if (ev.type === 'AgentProgress') return d.activity || 'actualizando progreso';
+  if (ev.type === 'AgentFileModified') return `modificando ${d.path || 'fichero'}`;
+  if (ev.type === 'AgentArtifactCreated') return d.kind === 'commit' ? `commit${d.sha ? ' ' + String(d.sha).slice(0, 7) : ''}${d.branch ? ' en ' + d.branch : ''}` : `creando ${d.kind || 'artefacto'}`;
+  if (ev.type === 'AgentStarted') return `empezando ${ev.taskCode || 'tarea'}${d.engine ? ' con ' + d.engine : ''}`;
+  if (ev.type === 'TaskAssigned') return `asignado a ${ev.taskCode || 'tarea'}`;
+  if (ev.type === 'AgentPaused') return 'pausado';
+  if (ev.type === 'AgentResumed') return 'reanudado';
+  if (ev.type === 'AgentBlocked') return `bloqueado${d.reason ? ': ' + d.reason : ''}`;
+  if (ev.type === 'AgentFailed') return `error: ${d.error || 'fallo del agente'}`;
+  if (ev.type === 'AgentCompleted') return d.status === 'review' ? 'entregado a revisión' : 'tarea completada';
+  if (ev.type === 'UserInstructionAdded') return d.kind === 'message' ? 'mensaje recibido del usuario' : 'instrucción añadida';
+  return ev.type.replace(/^Agent/, '').replace(/([A-Z])/g, ' $1').trim().toLowerCase();
+}
+function activeTool(a) {
+  const events = activityByAgent.get(a.id) || [];
+  const tool = [...events].reverse().find((e) => e.type === 'AgentToolStarted');
+  const engine = a.activeEngine || a.engine || 'auto';
+  return `${engine}${a.model ? ' · ' + a.model : ''}${tool ? ` · ${tool.data?.tool || 'herramienta'}${tool.data?.summary ? ' · ' + tool.data.summary : ''}` : ''}`;
+}
 function openDrawer(id) {
   drawerAgent = id;
   $('#drawer').hidden = false;
+  $('#drawer').setAttribute('role', 'dialog');
+  $('#drawer').setAttribute('aria-modal', 'true');
+  $('#drawer').tabIndex = -1;
+  loadAgentActivity(id);
   render();
   renderLog();
+  requestAnimationFrame(() => $('#drawer')?.focus({ preventScroll: true }));
 }
 function closeDrawer() { drawerAgent = null; $('#drawer').hidden = true; render(); }
 
@@ -922,32 +1016,78 @@ function renderDrawer() {
   if (!a) return closeDrawer();
   const task = S.tasks.find((t) => t.id === a.taskId);
   const d = $('#drawer');
+  const role = S.roles[a.role];
+  const meta = statusMeta(a);
+  const recent = (activityByAgent.get(a.id) || []).slice(-8).reverse();
+  const controlsHtml = busy(a) ? controls(a) : `<button class="small ghost" data-msg="${a.id}" title="Mandarle una instrucción">✉ Mensaje</button>`;
+  const taskHtml = task ? `<button class="linklike" data-open="${task.id}"><b>${esc(tcode(task))}</b> ${esc(task.title)}</button>` : '<span class="muted">Sin tarea activa</span>';
+  const activityHtml = recent.length ? recent.map((ev) => `<li class="${ev.type === 'AgentFailed' ? 'bad' : ''}"><span>${esc(eventText(ev))}</span><time>${ago(ev.ts)}</time></li>`).join('') : '<li><span class="muted">Sin actividad reciente en el stream.</span></li>';
   // Si ya está pintado, solo refrescamos lo que cambia (no perder el foco de los inputs).
   if (d.dataset.agent === a.id) {
-    d.querySelector('[data-f=status]').innerHTML = a.status === 'paused' ? '⏸ en pausa' : a.status === 'working' ? `🟢 ${esc(a.activity)}` : '☕ descansando';
-    d.querySelector('[data-f=controls]').innerHTML = busy(a) ? controls(a) : '';
-    d.querySelector('[data-f=task]').innerHTML = task ? `${esc(tcode(task))} ${esc(task.title)}` : '—';
+    d.querySelector('[data-f=status]').innerHTML = `<span class="dot" style="background:${meta.color};box-shadow:0 0 8px ${meta.color}"></span>${esc(meta.label)}<span class="muted">${durationSince(statusSince(a))}</span>`;
+    d.querySelector('[data-f=activity]').innerHTML = activityHtml;
+    d.querySelector('[data-f=tool]').textContent = activeTool(a);
+    d.querySelector('[data-f=controls]').innerHTML = controlsHtml;
+    d.querySelector('[data-f=task]').innerHTML = taskHtml;
+    d.querySelector('[data-f=current]').textContent = a.activity || (effectiveStatus(a) === 'idle' ? 'Disponible' : meta.label);
     d.querySelector('[data-stop]').hidden = !busy(a);
     return;
   }
   d.dataset.agent = a.id;
   d.innerHTML = `
-    <div class="head"><span class="avatar" style="--c:${S.roles[a.role]?.color}">${esc(a.name).charAt(0).toUpperCase()}</span><h2>${esc(a.name)}</h2>${roleChip(a.role)}<div class="spacer"></div><button class="ghost small" data-close>✕</button></div>
-    <div class="grid">
-      <span class="muted">Estado</span><span data-f="status"></span>
-      <span class="muted">Tarea</span><span data-f="task"></span>
-      <span class="muted">Motor</span>
-      <select data-f="engine">${S.engines.map((e) => `<option ${e === a.engine ? 'selected' : ''}>${e}</option>`).join('')}</select>
-      <span class="muted">Modelo</span><input data-f="model" value="${esc(a.model)}" placeholder="por defecto del CLI (p. ej. sonnet, opus)" />
-    </div>
-    <div class="row" style="display:flex;gap:8px">
-      <span data-f="controls" style="display:inline-flex;gap:8px"></span>
+    <div class="agent-panel-head"><span class="avatar big" style="--c:${role?.color || '#999'}">${esc(a.name).charAt(0).toUpperCase()}</span><div><h2>${esc(a.name)}</h2><div>${roleChip(a.role)}</div></div><div class="spacer"></div><button class="ghost small" data-close aria-label="Cerrar ficha">✕</button></div>
+    <div class="agent-status" data-f="status"></div>
+    <div class="agent-current" data-f="current"></div>
+    <section class="agent-panel-card">
+      <h3>Tarea actual</h3>
+      <div data-f="task"></div>
+    </section>
+    <section class="agent-panel-card">
+      <h3>Herramienta activa</h3>
+      <div class="tool-line" data-f="tool"></div>
+    </section>
+    <section class="agent-panel-card">
+      <h3>Motor y modelo</h3>
+      <div class="grid">
+        <span class="muted">Motor</span>
+        <select data-f="engine">${S.engines.map((e) => `<option ${e === a.engine ? 'selected' : ''}>${e}</option>`).join('')}</select>
+        <span class="muted">Modelo</span><input data-f="model" value="${esc(a.model)}" placeholder="por defecto del CLI (p. ej. sonnet, opus)" />
+      </div>
+    </section>
+    <section class="agent-panel-card">
+      <h3>Actividad reciente</h3>
+      <ul class="agent-activity" data-f="activity"></ul>
+    </section>
+    <details class="agent-panel-card agent-memory" data-memory>
+      <summary><h3 style="display:inline">🧠 Memoria</h3> <span class="muted" data-mem-size></span></summary>
+      <p class="muted">Lecciones que se le pasan en sus próximas tareas (las añade él al terminar y las correcciones de «Devolver»). Una por línea; bórrale lo que no valga. Tope ≈1 500 tokens por bloque.</p>
+      <label>Suya</label><textarea rows="5" data-mem="agent" placeholder="(vacía)"></textarea>
+      <label>De todo el proyecto</label><textarea rows="4" data-mem="project" placeholder="(vacía)"></textarea>
+      <div class="row"><button class="small" data-mem-save>Guardar memoria</button></div>
+    </details>
+    <div class="agent-actions" data-f="controls"></div>
+    <div class="agent-actions">
+      ${task ? `<button class="small" data-open="${task.id}">Abrir tarea</button>` : ''}
+      <button class="small ghost" data-log-focus>Ver log</button>
+      <button class="small ghost" data-agent-edit="${a.id}">Reasignar / editar</button>
       <button class="danger small" data-stop="${a.id}">⏹ Parar</button>
-      <div class="spacer"></div>
-      <button class="danger small" data-fire="${a.id}">Despedir</button>
     </div>
     <div class="muted">Registro en vivo</div>
     <div id="log"></div>`;
+  // FT-75: memoria del agente y del proyecto (se carga al desplegar la sección)
+  const memBox = d.querySelector('[data-memory]');
+  const pid = S.projects.find((x) => (x.team || []).includes(a.id))?.id || projectId;
+  const memLoad = async () => {
+    const [ag, pr] = await Promise.all([api('GET', `/api/memory/${pid}?agent=${a.id}`), api('GET', `/api/memory/${pid}`)]);
+    memBox.querySelector('[data-mem=agent]').value = ag.text; memBox.querySelector('[data-mem=project]').value = pr.text;
+    memBox.querySelector('[data-mem-size]').textContent = `${Math.round((ag.text.length + pr.text.length) / 4)} tokens`;
+  };
+  memBox.addEventListener('toggle', () => { if (memBox.open) memLoad().catch(() => {}); });
+  memBox.querySelector('[data-mem-save]').onclick = async () => {
+    await api('PUT', `/api/memory/${pid}?agent=${a.id}`, { text: memBox.querySelector('[data-mem=agent]').value });
+    await api('PUT', `/api/memory/${pid}`, { text: memBox.querySelector('[data-mem=project]').value });
+    toast('Memoria guardada'); memLoad().catch(() => {});
+  };
   d.querySelector('[data-f=engine]').onchange = (e) => api('PATCH', `/api/agents/${a.id}`, { engine: e.target.value }).then(() => toast(`${a.name} usa ahora ${e.target.value}`));
   d.querySelector('[data-f=model]').onchange = (e) => api('PATCH', `/api/agents/${a.id}`, { model: e.target.value });
   renderDrawer();
@@ -1083,6 +1223,9 @@ Pasos, convenciones y ejemplos…</textarea>
     <label>URL de flow-test (la suite; su MCP se usa para el QA)</label><input name="flowTestUrl" value="${esc(S.settings.flowTestUrl)}" placeholder="http://localhost:9998" />
     <label>Carpeta del workspace de flow-test en esta máquina (para deducir los repos de cada proyecto por sus enlaces)</label><input name="workspaceHostDir" value="${esc(S.settings.workspaceHostDir || '')}" placeholder="~/JksDocs/workspace" />
     <label>Agentes trabajando a la vez (máx.)</label><input name="maxParallel" type="number" min="1" max="8" value="${S.settings.maxParallel}" />
+    <div class="grid2"><div><label>Tope de gasto por tarea (US$, por intento; al pasarlo se corta)</label><input name="maxTaskUsd" type="number" min="0.5" max="50" step="0.5" value="${S.settings.maxTaskUsd || 3}" /></div>
+    <div><label>Esfuerzo de los agentes (más = más tokens)</label><select name="agentEffort">${['low', 'medium', 'high'].map((v) => `<option value="${v}" ${(S.settings.agentEffort || 'medium') === v ? 'selected' : ''}>${({ low: 'bajo', medium: 'medio (recomendado)', high: 'alto' })[v]}</option>`).join('')}</select></div></div>
+    <label><input type="checkbox" name="agentMemory" ${S.settings.agentMemory !== false ? 'checked' : ''} /> Memoria de los agentes: lecciones de tareas anteriores en el prompt (FT-75; ≈1 500 tokens máx. por agente y por proyecto)</label>
     <label><input type="checkbox" name="quotaGuard" ${S.settings.quotaGuard !== false ? 'checked' : ''} /> Guardarraíl de cuota: no arrancar tareas con un motor cuya sesión de 5 h esté al ${97} % o más (FT-45)</label>
     <div class="section-title">🧭 Guía (FT-6)</div>
     <label>Proveedor del Guía (el LLM con el que conversa; los cuatro flujos funcionan igual con cualquiera) (FT-8)</label>
@@ -1122,7 +1265,7 @@ Pasos, convenciones y ejemplos…</textarea>
     ${buttons()}`, async (f) => {
     safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0'); (SETTINGS_EMBED ? safeSet('ao:voice-wake', f.voiceWake ? '1' : '0') : wakeSet(!!f.voiceWake)); // en el panel de flow-test no se abre el micro: el iframe principal lo recoge por el evento `storage`
     refreshSttLocal();
-    await api('POST', '/api/settings', { ...f, quotaGuard: !!f.quotaGuard, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
+    await api('POST', '/api/settings', { ...f, quotaGuard: !!f.quotaGuard, agentMemory: !!f.agentMemory, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
     if (repos.map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|') !== cur) await api('PATCH', `/api/projects/${projectId}`, { repos });
@@ -1590,6 +1733,7 @@ document.addEventListener('click', async (e) => {
   if (d.action) return actions[d.action]?.();
   if (d.agent) { if (el.closest('#dialog')) $('#dialog').close(); return openDrawer(d.agent); } // desde el modal de la tarea, el cajón queda detrás: se cierra antes (FT-50)
   if (d.close !== undefined) return closeDrawer();
+  if (d.logFocus !== undefined) { $('#log')?.focus(); return; }
   if (d.stop) return api('POST', `/api/agents/${d.stop}/stop`);
   if (d.pause) return api('POST', `/api/agents/${d.pause}/pause`);
   if (d.resume) return api('POST', `/api/agents/${d.resume}/resume`);
@@ -1760,3 +1904,10 @@ if (EMBEDDED && !SETTINGS_EMBED) {
   }, true);
   window.addEventListener('storage', (e) => { if (e.key === 'ao:voice-wake') wakeSet(e.newValue === '1'); });
 }
+// FT-66: «Reanudar ya» en una tarea pausada por falta de cuota
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest?.('[data-resume-now]');
+  if (!b) return;
+  e.stopPropagation();
+  try { await api('POST', `/api/tasks/${b.dataset.resumeNow}/resume-now`); toast('Se relanza en el siguiente reparto'); } catch { /* api() ya avisa */ }
+});
