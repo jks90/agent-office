@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const label = 'Local · piper (sin nube)';
+const PY = () => process.env.AO_TTS_PYTHON || 'python3'; // Python con piper-tts (p. ej. un venv: el Python del sistema puede estar «externally managed»)
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const HF = (process.env.AO_TTS_HF_BASE || 'https://huggingface.co/rhasspy/piper-voices/resolve/main/').replace(/\/?$/, '/');
 const TIMEOUT_MS = 120_000;
@@ -42,7 +43,7 @@ function run(cmd, args, { input, timeout = TIMEOUT_MS } = {}) {
 
 export async function available() {
   if (process.env.AO_TTS_CMD) return { ok: true, detail: process.env.AO_TTS_CMD };
-  try { await run('python3', ['-c', 'import piper'], { timeout: 15_000 }); return { ok: true, detail: 'piper-tts' }; }
+  try { await run(PY(), ['-c', 'import piper'], { timeout: 15_000 }); return { ok: true, detail: 'piper-tts' }; }
   catch { return { ok: false, reason: 'falta piper (`pip install piper-tts`) o define AO_TTS_CMD' }; }
 }
 
@@ -91,7 +92,7 @@ export async function synthesize(text, { voice, lang } = {}) {
     } else {
       const [model, speaker] = id.split(':');
       const onnx = await ensureModel(model);
-      await run('python3', ['-m', 'piper', '-m', onnx, '-f', out, ...(speaker ? ['-s', String(speakerId(onnx, speaker))] : [])], { input: text });
+      await run(PY(), ['-m', 'piper', '-m', onnx, '-f', out, ...(speaker ? ['-s', String(speakerId(onnx, speaker))] : [])], { input: text });
     }
     return { audio: fs.readFileSync(out), mime: 'audio/wav' };
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
