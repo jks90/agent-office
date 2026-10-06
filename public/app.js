@@ -217,6 +217,7 @@ function guideMount(el, panel) {
     else if (b.dataset.g === 'stop') guideStop();
     else if (b.dataset.g === 'close') guideToggle(false);
     else if (b.dataset.g === 'ear') wakeSet(false);
+    else if (b.dataset.g === 'play') ttsSpeak(G.messages[b.dataset.i]?.text, Number(b.dataset.i));
     else if (b.dataset.gchat) guideOpen(b.dataset.gchat);
     else if (b.dataset.ghint) { ta.value = b.dataset.ghint; ta.focus(); }
   });
@@ -255,7 +256,7 @@ function guideRender() {
 
 function guideMsg(m, i) {
   if (m.role === 'user') return `<div class="g-msg user">${esc(m.text)}</div>`;
-  if (m.role === 'assistant') return `<div class="g-msg assistant">${md(m.text)}</div>`;
+  if (m.role === 'assistant') return `<div class="g-msg assistant">${md(m.text)}${ttsButton(i, m.text)}</div>`;
   if (m.role === 'meta') return `<div class="g-meta" title="${esc(m.provider || '')}">${esc(m.model || m.provider || '')}${m.costUsd != null ? ` · ≈ ${m.costUsd.toFixed(4)} $` : ''}${m.usage ? ` · ${m.usage.input + m.usage.cacheRead + m.usage.cacheWrite} tok entrada${m.usage.cacheRead ? ` (${m.usage.cacheRead} en caché)` : ''} / ${m.usage.output} salida` : ''}</div>`;
   if (m.role === 'error') return `<div class="g-msg error ${m.stopped ? 'stopped' : ''}">${m.stopped ? '■ ' : '⚠ '}${esc(m.text)}</div>`;
   const state = m.ok == null ? '<span class="st">⏳</span>' : m.ok ? '<span class="st ok">✓</span>' : '<span class="st bad">✗</span>';
@@ -267,12 +268,13 @@ function guideMsg(m, i) {
 async function guideRefresh() { try { G.chats = await api('GET', '/api/guide/chats'); } catch { /* sin servidor */ } G.loaded = true; guideRender(); }
 async function guideOpen(id) {
   if (G.busy) return toast('Espera a que el Guía termine o pulsa «Parar»');
-  G.chatId = id; safeSet('ao:guide-chat', id);
+  ttsStop(); G.chatId = id; safeSet('ao:guide-chat', id);
   try { G.messages = (await api('GET', `/api/guide/chats/${id}`)).messages; } catch { G.chatId = null; G.messages = []; }
   guideRender();
 }
-function guideNew() { if (G.busy) return; G.chatId = null; G.messages = []; safeSet('ao:guide-chat', ''); guideRender(); guideRoots.forEach((r) => r.el.querySelector('textarea').focus()); }
+function guideNew() { if (G.busy) return; ttsStop(); G.chatId = null; G.messages = []; safeSet('ao:guide-chat', ''); guideRender(); guideRoots.forEach((r) => r.el.querySelector('textarea').focus()); }
 async function guideShow() {
+  if (!T.info) ttsInfoLoad();
   guideMount($('#view-guide'), false);
   if (!G.loaded) { await guideRefresh(); const last = safeGet('ao:guide-chat'); if (last && !G.chatId && G.chats.some((c) => c.id === last)) await guideOpen(last); }
   guideRender();
@@ -281,6 +283,7 @@ async function guideShow() {
 function guideToggle(open = !G.panelOpen) {
   if (activeTab === 'guide') { $('#view-guide textarea')?.focus(); return; }
   G.panelOpen = open;
+  if (!open) ttsStop();
   const p = $('#guide-panel');
   p.hidden = !open;
   if (open) { guideMount(p, true); guideShow().then(() => p.querySelector('textarea')?.focus()); }
@@ -405,7 +408,7 @@ function voiceDeliver(text, root) {
 // Se pausa (y se sueltan las pistas del micro) con G.busy, V.state≠idle, speechSynthesis hablando o la pestaña oculta.
 const W = { on: false, active: false, stream: null, rec: null, starting: false, timer: null, lastNotified: null };
 const WAKE_MS = 2500;
-const wakeWanted = () => W.on && !document.hidden && !G.busy && V.state === 'idle' && !(window.speechSynthesis && speechSynthesis.speaking);
+const wakeWanted = () => W.on && !document.hidden && !G.busy && V.state === 'idle' && !ttsPlaying();
 
 function wakeRender() {
   const txt = W.active ? '👂 Escuchando «oye guía»' : '👂 «oye guía» en pausa';
@@ -478,17 +481,112 @@ function guideRootEl() {
 }
 document.addEventListener('visibilitychange', wakeSync);
 
-// TTS opcional: solo respuestas cortas y sin código. voiceSpeak(null) calla.
-function voiceSpeak(text) {
-  if (!window.speechSynthesis) return;
-  speechSynthesis.cancel();
-  if (!text || !voicePref.tts() || text.length > 320 || /```/.test(text)) return;
-  const plain = text.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[*_`#>]/g, '').replace(/\s+/g, ' ').trim();
-  if (!plain) return;
-  const u = new SpeechSynthesisUtterance(plain);
-  u.lang = ({ es: 'es-ES', en: 'en-US', ca: 'ca-ES', fr: 'fr-FR', de: 'de-DE', pt: 'pt-PT', it: 'it-IT' })[S.settings.sttLang] || navigator.language || 'es-ES';
-  speechSynthesis.speak(u);
+// ── Salida de voz del Guía 🔊 (FT-52) ─────────────────────────────────────────
+// Botón ▶ en cada respuesta del Guía y casilla «Leer en voz alta»: POST /api/guide/tts → <audio> (voz local de piper por defecto).
+// Si el proveedor del servidor falla o es «browser», cae a speechSynthesis eligiendo una voz femenina en español. Una sola reproducción
+// a la vez; `ttsPlaying()` la expone a `wakeWanted()` para pausar la escucha continua mientras suena.
+const T = { state: 'idle', key: null, audio: null, url: null, seq: 0, info: null }; // state: idle | loading | playing
+const TTS_LANG = { es: 'es-ES', en: 'en-US', ca: 'ca-ES', fr: 'fr-FR', de: 'de-DE', pt: 'pt-PT', it: 'it-IT' };
+const ttsPlaying = () => T.state !== 'idle' || !!(window.speechSynthesis && speechSynthesis.speaking);
+// Texto plano de una respuesta: sin bloques de código, enlaces ni marcas de markdown.
+const ttsPlain = (text) => String(text || '').replace(/```[\s\S]*?```/g, ' ').replace(/!\[[^\]]*\]\([^)]*\)/g, ' ').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/`([^`]*)`/g, '$1').replace(/^\s{0,3}(?:#{1,6}|>|[-*+]|\d+[.)])\s+/gm, '').replace(/[*_~#>]/g, '').replace(/\s+/g, ' ').trim();
+const ttsInfoLoad = () => api('GET', '/api/guide/tts').then((i) => { T.info = i; guideRender(); }).catch(() => {});
+// ¿Se puede leer? → '' si sí; si no, el motivo (tooltip del botón deshabilitado).
+function ttsWhy() {
+  if (!T.info) return '';
+  const cur = T.info.providers.find((p) => p.name === T.info.provider);
+  if (cur?.ok || window.speechSynthesis) return '';
+  return `Voz no disponible: ${cur?.reason || 'sin proveedor TTS'}`;
 }
+function ttsButton(i, text) {
+  if (!ttsPlain(text)) return '';
+  const mine = T.key === i, why = ttsWhy();
+  const [ic, tip] = why ? ['▶', why] : mine && T.state === 'loading' ? ['⏳', 'Preparando la voz… (pulsa para cancelar)'] : mine && T.state === 'playing' ? ['⏸', 'Parar'] : ['▶', 'Escuchar esta respuesta'];
+  return `<button type="button" class="ghost small g-play ${mine && T.state !== 'idle' ? 'on' : ''}" data-g="play" data-i="${i}" title="${esc(tip)}" aria-label="${esc(tip)}" ${why ? 'disabled' : ''}>${ic}</button>`;
+}
+function ttsBrowserVoice(lang) {
+  const fam = lang.slice(0, 2).toLowerCase();
+  const vs = speechSynthesis.getVoices().filter((v) => v.lang.toLowerCase().startsWith(fam));
+  return vs.find((v) => /female|m[oó]nica|paulina|luc[ií]a|elvira|helena|laura|sabina|google espa/i.test(v.name)) || vs[0] || null;
+}
+function ttsStop() {
+  T.seq++; // invalida peticiones en vuelo
+  if (T.audio) { T.audio.pause(); T.audio.removeAttribute('src'); T.audio = null; }
+  if (T.url) { URL.revokeObjectURL(T.url); T.url = null; }
+  if (window.speechSynthesis) speechSynthesis.cancel();
+  const was = T.state !== 'idle';
+  T.state = 'idle'; T.key = null;
+  if (was) guideRender();
+}
+function ttsBrowserSpeak(text, seq) {
+  if (!window.speechSynthesis) return false;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = TTS_LANG[S.settings.sttLang] || 'es-ES';
+  const v = ttsBrowserVoice(u.lang);
+  if (v) u.voice = v;
+  u.rate = 1; u.pitch = 1;
+  const end = () => { if (T.seq === seq) { T.state = 'idle'; T.key = null; guideRender(); } };
+  u.onend = end; u.onerror = end;
+  T.state = 'playing';
+  speechSynthesis.speak(u);
+  return true;
+}
+// Lee `text` (markdown) con la clave `key` (índice del mensaje o 'auto'); pulsar de nuevo la misma clave la para.
+// opts.provider/opts.voice: la prueba de Ajustes usa lo del formulario sin guardar.
+async function ttsSpeak(text, key, opts = {}) {
+  const same = T.key === key && T.state !== 'idle';
+  ttsStop();
+  if (same) return;
+  const plain = ttsPlain(text).slice(0, 4000);
+  if (!plain) return;
+  const seq = ++T.seq;
+  T.key = key; T.state = 'loading'; guideRender();
+  try {
+    if ((opts.provider || T.info?.provider) === 'browser') { if (!ttsBrowserSpeak(plain, seq)) throw new Error('sin speechSynthesis'); guideRender(); return; }
+    const r = await fetch(BASE + 'api/guide/tts', { method: 'POST', headers: { 'content-type': 'application/json', 'x-ao-client': CLIENT_ID }, body: JSON.stringify({ text: plain, ...(opts.voice ? { voice: opts.voice } : {}), ...(opts.provider ? { provider: opts.provider } : {}) }) });
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw Object.assign(new Error(j.error || r.statusText), { status: r.status }); }
+    const blob = await r.blob();
+    if (T.seq !== seq) return; // el usuario paró o cambió de chat mientras se sintetizaba
+    T.url = URL.createObjectURL(blob);
+    const a = T.audio = new Audio(T.url);
+    const end = () => { if (T.audio === a) { T.state = 'idle'; T.key = null; T.audio = null; URL.revokeObjectURL(T.url); T.url = null; guideRender(); } };
+    a.addEventListener('ended', end); a.addEventListener('error', end);
+    await a.play();
+    if (T.seq === seq) { T.state = 'playing'; guideRender(); }
+  } catch (e) {
+    if (T.seq !== seq) return;
+    T.state = 'idle'; T.key = null;
+    // respaldo: voz del navegador (el servidor no tiene proveedor o falló); el texto no sale del PC
+    if (!opts.provider && window.speechSynthesis && ttsBrowserSpeak(plain, seq)) { T.key = key; guideRender(); return; }
+    toast('No se pudo leer en voz alta: ' + e.message);
+    guideRender();
+  }
+}
+function voiceSpeak(text) {
+  if (!text) return ttsStop();
+  if (!voicePref.tts() || text.length > 320 || /```/.test(text) || V.state !== 'idle') return;
+  ttsSpeak(text, 'auto');
+}
+
+// Ajustes ▸ «🔊 Voz del Guía»: voces del proveedor elegido en el formulario (sin guardar) y «Probar voz».
+async function ttsFillSettings() {
+  const sel = $('#tts-voice'), prov = document.querySelector('select[name=ttsProvider]');
+  if (!sel || !prov) return;
+  try {
+    const i = await api('GET', '/api/guide/tts?provider=' + encodeURIComponent(prov.value));
+    T.info = { ...i, provider: T.info?.provider || i.provider }; // lo guardado manda hasta que se pulse Guardar
+    sel.innerHTML = i.voices.map((v) => `<option value="${esc(v.id)}" ${v.id === i.voice ? 'selected' : ''}>${esc(v.label)}</option>`).join('');
+    const me = i.providers.find((p) => p.name === prov.value);
+    $('#tts-info').innerHTML = `· ${me?.ok ? '<span class="ok">disponible</span>' : `<span class="bad">no disponible: ${esc(me?.reason || '')}</span>`}`;
+  } catch { sel.innerHTML = '<option value="">—</option>'; }
+}
+document.addEventListener('change', (e) => { if (e.target.matches?.('select[name=ttsProvider]')) ttsFillSettings(); });
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-tts-test]');
+  if (!b) return;
+  const provider = document.querySelector('select[name=ttsProvider]')?.value, voice = $('#tts-voice')?.value;
+  ttsSpeak('Hola, soy tu guía. Así sueno cuando te leo una respuesta.', 'test', { provider, voice });
+});
 
 // Ajustes ▸ «Probar micrófono»: graba (corta sola tras el silencio), enseña el nivel y la transcripción con su latencia.
 let voiceTestRec = null;
@@ -1240,6 +1338,12 @@ Pasos, convenciones y ejemplos…</textarea>
     <select name="sttLang">${[['es', 'Español'], ['en', 'English'], ['ca', 'Català'], ['fr', 'Français'], ['de', 'Deutsch'], ['pt', 'Português'], ['it', 'Italiano'], ['auto', 'Detectar']].map(([k, n]) => `<option value="${k}" ${(S.settings.sttLang || 'es') === k ? 'selected' : ''}>${n}</option>`).join('')}</select>
     <label><input type="checkbox" name="voiceReview" ${voicePref.review() ? 'checked' : ''} /> Revisar antes de enviar (el texto dictado queda en la caja)</label>
     <label><input type="checkbox" name="voiceTts" ${voicePref.tts() ? 'checked' : ''} /> Leer en voz alta las respuestas cortas del Guía (solo en este navegador)</label>
+    <div class="section-title">🔊 Voz del Guía (FT-52)</div>
+    <label>Proveedor de voz <span id="tts-info" class="muted"></span></label>
+    <select name="ttsProvider">${[['piper', 'Local · piper (sin nube, recomendado)'], ['openai', 'OpenAI · /v1/audio/speech (nube)'], ['browser', 'Navegador · speechSynthesis (respaldo)']].map(([k, n]) => `<option value="${k}" ${(S.settings.ttsProvider || 'piper') === k ? 'selected' : ''}>${n}</option>`).join('')}</select>
+    <label>Voz</label>
+    <div style="display:flex;gap:8px;align-items:center"><select name="ttsVoice" id="tts-voice" style="flex:1"><option>Cargando…</option></select><button type="button" class="small" data-tts-test>🔊 Probar voz</button></div>
+    <p class="muted">Con piper la voz se genera en este PC; la primera vez se descarga el modelo (~75 MB) de Hugging Face. Con OpenAI el texto de la respuesta sale a la nube. El botón ▶ de cada respuesta del Guía y la casilla «Leer en voz alta» usan esta voz.</p>
     <label><input type="checkbox" name="voiceWake" ${voicePref.wake() ? 'checked' : ''} /> Escucha continua (di «oye guía») <span id="wake-info" class="muted"></span></label>
     <p class="muted">Apagada de serie. Con ella activa el micrófono queda abierto y se analiza en este navegador; solo los segmentos con voz van al STT local (nunca a OpenAI) para detectar «oye guía», con un indicador 👂 siempre visible (FT-36).</p>
     <div style="display:flex;gap:8px;align-items:center"><button type="button" class="small" data-voice-test>🎤 Probar micrófono</button><span id="voice-test" class="muted"></span></div>
@@ -1265,7 +1369,9 @@ Pasos, convenciones y ejemplos…</textarea>
     ${buttons()}`, async (f) => {
     safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0'); (SETTINGS_EMBED ? safeSet('ao:voice-wake', f.voiceWake ? '1' : '0') : wakeSet(!!f.voiceWake)); // en el panel de flow-test no se abre el micro: el iframe principal lo recoge por el evento `storage`
     refreshSttLocal();
+    ttsStop();
     await api('POST', '/api/settings', { ...f, quotaGuard: !!f.quotaGuard, agentMemory: !!f.agentMemory, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
+    ttsInfoLoad();
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
     if (repos.map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|') !== cur) await api('PATCH', `/api/projects/${projectId}`, { repos });
@@ -1552,6 +1658,7 @@ document.addEventListener('click', async (e) => {
 
 document.addEventListener('click', (e) => {
   if (e.target.closest('[data-action="settings"]')) {
+    setTimeout(ttsFillSettings, 50); // el diálogo se abre en otro manejador del mismo clic
     api('GET', '/api/guide/stt').then((st) => { const el = $('#stt-info'); if (el) el.innerHTML = st.providers.map((p) => `· ${esc(p.name)}: ${p.ok ? '<span class="ok">disponible</span>' : `<span class="bad" title="${esc(p.reason)}">no disponible</span>`}`).join(' ');
       const box = document.querySelector('input[name=voiceWake]');
       if (box && st.wake && !st.wake.ok) { box.disabled = true; box.checked = false; $('#wake-info').innerHTML = `<span class="bad">— no disponible: ${esc(st.wake.reason || 'sin STT local')}</span>`; } }).catch(() => {});
