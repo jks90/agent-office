@@ -71,7 +71,7 @@ try {
     text: document.querySelector('#drawer').innerText,
     activity: [...document.querySelectorAll('.agent-activity li')].map((x) => x.textContent.trim()),
     actions: [...document.querySelectorAll('#drawer button')].map((x) => x.textContent.trim()),
-    hasModel: !!document.querySelector('#drawer [data-f=model]'),
+    hasModel: !!document.querySelector('#drawer [data-f=model], #drawer [data-f=modelbox] .model-select'), // FT-55: el campo de texto pasó a ser el selector único
     role: document.querySelector('#drawer')?.getAttribute('role'),
     active: document.activeElement === document.querySelector('#drawer'),
   }));
