@@ -3,7 +3,8 @@ export const POLICIES = ['manual', 'auto-qa', 'auto'];
 export const MAX_AUTO_CYCLES = 2; // tope de devoluciones automáticas; luego queda para el humano
 export const SENSITIVE_DEFAULT = ['.github/workflows', 'Dockerfile', 'package.json', 'server/access'];
 
-export const policyOf = (settings) => (POLICIES.includes(settings?.reviewPolicy) ? settings.reviewPolicy : 'manual');
+// La del proyecto manda (p.reviewPolicy); sin ella, la de la empresa (settings.reviewPolicy); sin ninguna, manual.
+export const policyOf = (settings, project = null) => (POLICIES.includes(project?.reviewPolicy) ? project.reviewPolicy : POLICIES.includes(settings?.reviewPolicy) ? settings.reviewPolicy : 'manual');
 export const nudgeMin = (settings) => { const n = settings?.reviewNudgeMin; return n === undefined || n === null || n === '' || !(Number(n) >= 0) ? 10 : Number(n); };
 export const sensitiveList = (settings) => (Array.isArray(settings?.reviewSensitive) ? settings.reviewSensitive.map(String).filter(Boolean) : SENSITIVE_DEFAULT);
 

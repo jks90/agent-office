@@ -1,6 +1,7 @@
 // Estado persistente (data/state.json) + bus de eventos para el SSE.
 import fs from 'node:fs';
 import path from 'node:path';
+import { codexCostUsd } from './usage.js';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { migrate as migrateCodes } from './codes.js';
@@ -32,6 +33,11 @@ function load() {
     // Los procesos no sobreviven a un reinicio: lo que estaba en curso vuelve a la cola.
     for (const t of s.tasks) if (t.status === 'doing') { t.status = 'todo'; t.agentId = null; }
     for (const a of s.agents) { a.status = 'idle'; a.taskId = null; a.activity = ''; }
+    // Tareas de Codex de antes de estimar su coste: tokens sin $ → coste ≈ con la tabla de precios (una vez; queda marcado).
+    for (const t of s.tasks) {
+      const eng = t.sessionEngine || t.modelHistory?.at(-1)?.engine || (/^codex/.test(t.usage?.source || '') ? 'codex' : '');
+      if (t.costUsd == null && eng === 'codex' && t.usage?.total > 0) { t.costUsd = codexCostUsd(t.usage, t.modelHistory?.at(-1)?.model); t.costEstimated = true; }
+    }
     // Esquema 2: los agentes son de la empresa (globales); cada proyecto ficha a los suyos en project.team y el resto
     // espera en el banquillo. Los equipos por defecto que se crearon por carpeta (duplicados sin tareas) se eliminan.
     if (!s.schema || s.schema < 2) {

@@ -92,6 +92,7 @@ try {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  await page.evaluateOnNewDocument(() => localStorage.setItem('ao:boardDensity', 'detailed')); // la fila «quién» es de la tarjeta detallada (desde FT-74 el tablero arranca en compacto)
   await page.goto(base + '/', { waitUntil: 'networkidle2' });
   await page.click('[data-tab="tasks"]');
   const chipSel = (id) => `.card[data-task="${id}"] .who-chip`;
@@ -107,7 +108,7 @@ try {
 
   await page.click(chipSel(t1.id));
   await page.waitForSelector('#drawer:not([hidden]) h2', { timeout: 5000 });
-  check('clic en el chip → se abre el cajón de Bruno (motor y modelo editables)', (await page.$eval('#drawer h2', (el) => el.textContent)) === 'Bruno' && !!(await page.$('#drawer [data-f=engine]')) && !!(await page.$('#drawer [data-f=model]')));
+  check('clic en el chip → se abre el cajón de Bruno (motor y modelo editables)', (await page.$eval('#drawer h2', (el) => el.textContent)) === 'Bruno' && !!(await page.$('#drawer [data-f=engine]')) && !!(await page.$('#drawer [data-f=modelbox]')));
   if (shot) { fs.mkdirSync(path.dirname(path.resolve(shot)), { recursive: true }); await page.screenshot({ path: path.resolve(shot) }); }
   await page.click('#drawer [data-close]');
   await page.waitForSelector('#drawer[hidden]', { timeout: 5000 });

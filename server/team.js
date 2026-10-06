@@ -161,6 +161,10 @@ async function resolveRepos({ repos, repoPath }) {
 // ── Sincronización con el workspace de flow-test: cada carpeta de primer nivel de flows/ es un proyecto;
 // los flows de la raíz van al proyecto «default». Los proyectos no se borran solos: si la carpeta desaparece
 // quedan marcados (orphan) para que el usuario decida.
+// Copias de flows dentro de los worktrees de los agentes (data/worktrees/… de AgentOffice): aparecen en el workspace de
+// flow-test cuando la carpeta de un proyecto enlaza el repo agent-office entero. No son flows del proyecto: se ignoran.
+export const isWorktreeCopy = (p) => /(^|\/)data\/worktrees\//.test(String(p || ''));
+
 export async function syncWorkspace() {
   let files, dir;
   try {
@@ -172,6 +176,7 @@ export async function syncWorkspace() {
   const counts = new Map([['default', 0]]);
   for (const f of files) {
     if (f.type && f.type !== 'flow') continue;
+    if (isWorktreeCopy(f.path)) continue;
     const parts = String(f.path).split('/');
     const folder = parts.length > 1 ? parts[0] : 'default';
     if (folder.startsWith('.') || folder.startsWith('_')) continue; // _agentes (catálogo) y similares no son proyectos
@@ -235,6 +240,10 @@ export async function updateProject(id, patch) {
   if (patch.name?.trim()) p.name = patch.name.trim();
   if (patch.folder !== undefined) p.folder = patch.folder || null;
   if (patch.prefix !== undefined) p.prefix = codes.normalizePrefix(patch.prefix) || null; // las tareas ya numeradas conservan su código
+  if (patch.reviewPolicy !== undefined) { // '' = la de la empresa · manual | auto-qa | auto
+    p.reviewPolicy = review.POLICIES.includes(patch.reviewPolicy) ? patch.reviewPolicy : null;
+    reviewPending(p);
+  }
   if (patch.repos) {
     p.repos = await resolveRepos({ repos: patch.repos });
     p.repoPath = p.repos[0]?.path || null;
@@ -570,8 +579,9 @@ async function runChecks(cwd, checks) {
 }
 async function runReviewer(p, t, repo, cwd, checks) {
   const s = get();
-  const agent = s.agents.find((a) => a.id === t.agentId) || teamOf(p)[0];
   const engineId = ENGINES[s.settings.reviewEngine] && s.settings.reviewEngine !== 'auto' ? s.settings.reviewEngine : (ENGINES[t.lastEngine] ? t.lastEngine : 'demo');
+  // Sin autor ni equipo (tarea creada ya en revisión, proyecto sin plantilla) revisa un «Revisor» genérico en vez de fallar
+  const agent = s.agents.find((a) => a.id === t.agentId) || teamOf(p)[0] || { id: 'revisor', name: 'Revisor', role: 'qa', engine: engineId, model: '' };
   const role = Object.values(allRoles()).find((r) => r.kind === 'qa') || roleOf(agent.role) || roleOf('back');
   const job = await ENGINES[engineId].start({
     agent, task: t, project: p, cwd, mode: engineId === 'demo' ? 'review' : 'work', goal: null, roles: teamRoles(p),
@@ -586,7 +596,7 @@ async function runReviewer(p, t, repo, cwd, checks) {
 }
 // Al llegar a «Revisión» (reviewPolicy auto-qa | auto). Nunca toca tareas reviewRequired, con tope/atasco, ni con ficheros sensibles.
 export async function autoReview(p, t) {
-  const s = get(), policy = review.policyOf(s.settings);
+  const s = get(), policy = review.policyOf(s.settings, p);
   if (policy === 'manual' || t.status !== 'review' || t.kind === 'plan' || reviewing.has(t.id)) return;
   const hold = (why) => { t.reviewNote = why; reviewNote(t, 'auto', 'skipped', why); changed(); };
   reviewing.add(t.id);
@@ -619,6 +629,13 @@ export async function autoReview(p, t) {
     else await reject(t.id, v.feedback || v.reasons.join('\n') || 'El revisor automático pide cambios.', [], [], 'auto-qa');
   } catch (e) { hold(`✋ la revisión automática falló (${e.message}): la revisa una persona`); }
   finally { reviewing.delete(t.id); delete t.reviewing; changed(); }
+}
+
+// Al pasar a revisión automática, lo que ya esperaba revisión no se queda atascado: se revisa ahora (de una en una).
+export function reviewPending(p) {
+  if (review.policyOf(get().settings, p) === 'manual') return;
+  const queue = get().tasks.filter((t) => t.projectId === p.id && t.status === 'review' && !t.reviewNote);
+  (async () => { for (const t of queue) { try { await autoReview(p, t); } catch { /* queda para la persona */ } } })();
 }
 
 // Aviso proactivo: pasados reviewNudgeMin minutos en revisión, evento ReviewPending (una vez por entrada en revisión).
@@ -837,7 +854,7 @@ export async function listFlows() {
     const r = await fetch(`${flowTestUrl()}/workspace/flows`, { signal: AbortSignal.timeout(5000) });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
-    return (j.files || []).filter((f) => f.type === 'flow').map((f) => ({ path: f.path, name: f.name || f.path }));
+    return (j.files || []).filter((f) => f.type === 'flow' && !isWorktreeCopy(f.path)).map((f) => ({ path: f.path, name: f.name || f.path }));
   } catch (e) { throw fail(502, `No pude listar los flows de flow-test: ${e.message}`); }
 }
 
@@ -979,10 +996,13 @@ function buildPrompt(p, agent, t) {
     const roles = teamRoles(p);
     const repos = p.repos || [];
     return [
+      // Parte estable primero (briefing y memoria del repo): se lee de caché entre planificaciones del mismo proyecto
+      repos[0]?.path ? '\n' + briefingFor(repos[0].path) + '\n' : '',
+      repos[0]?.path && get().settings.claudeMemory !== false ? memory.claudePromptBlock(repos[0].path) : '',
       `Objetivo del equipo: ${t.goal}`,
       clientBlock(t),
       '',
-      repos.length ? `Repositorios del proyecto (estás en ${repos[0].path}): ${repos.map((r) => `«${r.key}» = ${r.path} (rama ${r.baseBranch})`).join(' · ')}. Lee su documentación y código para entender el contexto.` : 'No hay repositorio: planifica solo a partir del objetivo.',
+      repos.length ? `Repositorios del proyecto (estás en ${repos[0].path}): ${repos.map((r) => `«${r.key}» = ${r.path} (rama ${r.baseBranch})`).join(' · ')}. Arriba tienes su briefing (estructura, ficheros y documentación): parte de él y lee del código solo lo que necesites para decidir, agrupando las lecturas en pocas órdenes (cada paso reenvía todo el contexto).` : 'No hay repositorio: planifica solo a partir del objetivo.',
       `Divide el objetivo en tareas pequeñas para estos roles: ${roles.join(', ')}.`,
       'Cada tarea debe poder hacerla un agente solo, en una rama aparte, y ser verificable.',
       'Las tareas de QA van al final y dependen de lo que verifican.',
@@ -1007,6 +1027,7 @@ function buildPrompt(p, agent, t) {
     'Trabajas en una copia aislada del repo (git worktree), en tu propia rama. No cambies de rama ni hagas push.',
     'Lo que dejes sin confirmar se confirmará solo al terminar.',
     (() => { const r = repoOfTask(p, t); return r?.path ? '\n' + briefingFor(r.path) + (t.codeIndexOn ? '\n' + codeindex.BRIEFING_LINE : '') + '\n' : ''; })(), // FT-58: aviso del índice de código
+    get().settings.claudeMemory !== false ? memory.claudePromptBlock(repoOfTask(p, t)?.path) : '', // índice de la memoria de Claude Code del repo
     get().settings.agentMemory !== false ? memory.promptBlock(p.id, agent.id) : '', // FT-75: lecciones de tareas anteriores
     askRules(),
     economyBlock(t.codeIndexOn),
@@ -1047,6 +1068,7 @@ function economyBlock(codeIndexOn) {
     '- No vuelvas a leer lo que ya leíste; no hagas `cat` de ficheros largos ni de salidas largas: recorta con `| tail -30`, `| head`, `grep`.',
     '- Pruebas: ejecuta el e2e/verificación UNA vez cuando creas que está bien; repite solo si falló. Capturas de pantalla: como mucho 1 (otra solo si la primera muestra un fallo), y solo si la tarea es visual.',
     '- Ve al grano: el briefing del repo ya te da la estructura; no lo explores con ls -R/find/wc.',
+    '- Agrupa: cada paso (cada orden o lectura) reenvía TODO el contexto. Junta en UNA orden las lecturas y búsquedas que ya sabes que necesitas (p. ej. `rg -n -C3 "patrón" src/ && sed -n \'40,120p\' a.java && sed -n \'1,60p\' b.ts`) en vez de una por paso, y lee tramos de ~150 líneas, no de 20 en 20.',
     '- Para explorar más de 3 ficheros (entender un módulo, buscar todos los usos de algo), delega en el subagente «explorador» (herramienta Task/Agent, si tu motor la tiene) y trabaja con su resumen; lee tú solo los tramos que vayas a editar.',
     '- Si te acercas al tope de gasto de la tarea, deja el trabajo en un estado coherente y resume qué falta.',
   ].join('\n');
@@ -1106,6 +1128,8 @@ async function runTask(p, agent, t) {
       }
       for (const r of p.repos || []) outside[r.key] = await git.statusLines(r.path);
       addDirs = taskRepos(p, t).filter((x) => !x.main).map((x) => x.dir);
+      const memDir = get().settings.claudeMemory !== false && memory.claudePromptBlock(repo.path) ? memory.claudeDir(repo.path) : null;
+      if (memDir) addDirs.push(memDir); // el agente puede leer el detalle de la memoria de Claude del repo
       if (wt.reused) {
         log(agent.id, `↺ Sigue sobre su intento anterior en ${wt.branch}`);
         // FT-19: si la base avanzó, se actualiza antes de arrancar; si choca, el conflicto va en el prompt (salvo que ya esté en el feedback de la devolución)
@@ -1141,7 +1165,7 @@ async function runTask(p, agent, t) {
     delete t.stuck;
     // FT-62: detector de atascos. 1.ª señal → aviso en caliente (Claude: stdin; Codex/demo: se reencola la tarea con el aviso);
     // si tras el aviso vuelve a saltar → se corta y va a Revisión. t.stuckWarned sobrevive al reencolado.
-    const stuckLimits = { ...stuck.limits(s.settings), enabled: stuck.limits(s.settings).enabled && t.kind !== 'plan' };
+    const stuckLimits = { ...stuck.limits(s.settings, engineId), enabled: stuck.limits(s.settings).enabled && t.kind !== 'plan' };
     const probe = t.branch ? async () => `${await git.git(cwd, 'status', '--porcelain')}\n${await git.git(cwd, 'diff', '--stat')}` : null;
     const newDetector = () => stuck.createDetector({ limits: stuckLimits, isCode: role.kind === 'dev', probe });
     let detector = newDetector();
@@ -1188,7 +1212,9 @@ async function runTask(p, agent, t) {
       onActivity: (text) => { agent.activity = text; events.emit('AgentProgress', ev, { activity: text }); changed(); },
       onTool: (c) => { events.emit(c.phase === 'started' ? 'AgentToolStarted' : 'AgentToolFinished', ev, c.phase === 'started' ? { callId: c.callId, tool: c.tool, summary: c.summary } : { callId: c.callId, ok: c.ok }); onStuck(detector.feed(c)); },
       onLog: (line) => log(agent.id, line),
-      onUsage: (u) => { agent.usage = { ...u, engine: engineId, taskId: t.id }; t.usage = addUsage(baseUsage, u);
+      onUsage: (u) => {
+        if (engineId === 'codex' && u.costUsd == null) u = { ...u, costUsd: codexCostUsd(u, model), costEstimated: true }; // Codex no informa el coste: estimación con la tabla de precios (con suscripción es cuota, no factura)
+        agent.usage = { ...u, engine: engineId, taskId: t.id }; t.usage = addUsage(baseUsage, u);
         // FT-63: contexto por encima del umbral → pedir las notas en caliente (Claude) o, si el motor no admite mensajes, cortar
         // FT-57 manda sobre FT-63: si el intento ya está cerca de su tope de tokens, se deja que lo corte el tope (va a Revisión) en vez de compactar y relanzar
         const budgetUsd = Number(s.settings.maxTaskUsd) > 0 ? Number(s.settings.maxTaskUsd) : 3, capTok = Number(s.settings.maxTaskTokens) > 0 ? Number(s.settings.maxTaskTokens) : 0;
@@ -1208,6 +1234,7 @@ async function runTask(p, agent, t) {
     Object.assign(entry, { stop: job.stop, engine: engineId, pid: job.pid, pause: job.pause, resume: job.resume, message: job.message });
     res = await job.done;
     rec.finish(); // FT-76
+    if (res.costUsd == null && agent.usage?.costEstimated) { res.costUsd = agent.usage.costUsd; t.costEstimated = true; } // coste ≈ de este segmento (Codex)
     if (!cmp.asked || res.budgetHit || !(res.ok || cmp.cut && res.stopped)) break;
     const notesPath = path.join(cwd, compact.NOTES_FILE);
     const notes = fs.existsSync(notesPath) ? fs.readFileSync(notesPath, 'utf8').trim() : '';

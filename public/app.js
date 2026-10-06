@@ -14,7 +14,7 @@ const activityLoaded = new Set();
 
 import { Office } from './office3d.js';
 import { dictationSupported, createDictation, insertAtCursor } from './dictation.js'; // dictado por voz (FT-43)
-const office = new Office($('#office'), { onAgentClick: (id) => enterAgent(id), onFloorClick: (id) => enterFloor(id) }); // clic planta/agente → navegación continua (FT-47/FT-71)
+const office = new Office($('#office'), { onAgentClick: (id) => enterAgent(id), onFloorClick: (id) => enterFloor(id), onGuideClick: () => showTab('guide') }); // clic planta/agente → navegación continua (FT-47/FT-71)
 window.aoOffice = office; // para QA: aoOffice.debugState() / setMode() (FT-46)
 
 function safeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
@@ -815,7 +815,7 @@ function showTab(tab) {
     requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
     if (prev !== 'office' && officeInit) applyOfficeDefault(); // al entrar en la pestaña: edificio, planta recordada o la única (FT-47)
   }
-  if (tab === 'agents') renderSkills();
+  if (tab === 'agents') { renderSkills(); renderClaudeMemory(); }
   if (tab === 'guide') guideShow(); else guideRender();
   publishContext();
 }
@@ -864,6 +864,7 @@ function render() {
   renderSuite();
   renderTeam();
   renderRepos();
+  if (cmemPid !== projectId && !$('#view-agents').hidden) renderClaudeMemory();
   renderRoles();
   renderBoard();
   renderSummary();
@@ -924,17 +925,31 @@ function renderTeam() {
   renderBench();
 }
 
+// Banquillo agrupado: primero los disponibles; luego uno plegable por proyecto donde ya están fichados (el primero si son
+// varios). Dentro, por rol y nombre. Por defecto solo se abre «Disponibles» (lo elegido se recuerda, como en los roles).
 function renderBench() {
   const list = bench();
   $('#bench-summary').textContent = `${list.length} en la empresa sin fichar aquí`;
-  $('#bench').innerHTML = list.map((a) => {
+  const card = (a) => {
     const r = S.roles[a.role];
     return `<div class="member bench" style="--c:${r?.color || '#999'}">
       <div class="top" data-agent="${a.id}"><span class="avatar">${esc(a.name).charAt(0).toUpperCase()}</span><div class="member-main"><b>${esc(a.name)}</b><div class="act">${busy(a) ? esc(a.activity) : (projectsOf(a.id).length ? 'en ' + projectsOf(a.id).map(esc).join(', ') : 'disponible')}</div></div><span class="eng">${esc(a.engine)}${a.model ? ' · ' + esc(a.model) : ''}</span></div>
-      <div class="member-foot">${roleChip(a.role)}<span class="state ${a.status}"><span class="dot ${a.status}"></span>${a.status === 'paused' ? 'En pausa' : a.status === 'working' ? 'Trabajando' : 'Libre'}</span></div>
+      <div class="member-foot"><button type="button" class="chip-link" data-goto-role="${esc(a.role)}" title="Ver el rol ${esc(r?.label || a.role)}">${roleChip(a.role)}</button><span class="state ${a.status}"><span class="dot ${a.status}"></span>${a.status === 'paused' ? 'En pausa' : a.status === 'working' ? 'Trabajando' : 'Libre'}</span></div>
       <div class="acts"><button class="small" data-sign="${a.id}">↑ Fichar</button><button class="small ghost" data-agent-edit="${a.id}">✎</button><button class="small danger" data-fire="${a.id}" title="Baja definitiva de la empresa">Despedir</button></div>
     </div>`;
-  }).join('') || '<p class="empty">Nadie en el banquillo: todos los agentes de la empresa están fichados aquí.</p>';
+  };
+  if (!list.length) { $('#bench').innerHTML = '<p class="empty">Nadie en el banquillo: todos los agentes de la empresa están fichados aquí.</p>'; return; }
+  const FREE = 'Disponibles';
+  const groups = {};
+  for (const a of list) (groups[projectsOf(a.id)[0] || FREE] ||= []).push(a);
+  const label = (a) => S.roles[a.role]?.label || a.role;
+  const order = Object.keys(groups).sort((x, y) => (y === FREE) - (x === FREE) || x.localeCompare(y));
+  $('#bench').innerHTML = order.map((g) => {
+    const as = groups[g].sort((x, y) => label(x).localeCompare(label(y)) || x.name.localeCompare(y.name));
+    const key = 'roles:bench:' + g, closed = key in collapsed ? collapsed[key] : g !== FREE;
+    const working = as.filter((a) => a.status === 'working').length;
+    return `<div class="role-group ${closed ? 'collapsed' : ''}" data-role-group="bench:${esc(g)}"><h4 class="role-group-head"><span class="caret">▾</span> ${g === FREE ? '🟢 Disponibles' : `📁 ${esc(g)}`} <span class="muted">(${as.length}${working ? ` · ${working} trabajando` : ''})</span></h4><div class="role-grid bench-grid">${as.map(card).join('')}</div></div>`;
+  }).join('');
 }
 
 const short = (p) => String(p || '').replace(/^\/home\/[^/]+/, '~');
@@ -989,6 +1004,48 @@ async function renderSkills(reload = false) {
     <div class="skills-box"><h4>Catálogo central (lo que pueden usar los roles)</h4>${catalog.length ? catalog.map((s) => `<div class="skill"><span class="nm">${esc(s.name)}</span><span class="ds" title="${esc(s.description)}">${esc(s.description)}</span><span class="src" title="${esc(s.target)}">${s.broken ? '⚠ roto' : '→ ' + esc(short(s.target))}</span><button class="small ghost" data-skill-edit="${esc(s.target)}" title="Editar SKILL.md">✎</button><button class="small danger" data-skill-del="${esc(s.name)}" title="Quitar del catálogo (no borra la skill)">✕</button></div>`).join('') : '<p class="muted">Vacío. Añade skills desde el inventario →</p>'}</div>
     <div class="skills-box"><h4>Inventario del PC</h4>${Object.entries(groups).map(([g, list]) => `<div class="muted skill-group ${collapsed['skills:' + g] === false ? '' : 'collapsed'}" data-group="${esc(g)}" style="margin:8px 0 4px;font-weight:600">${esc(g)} <span class="muted">(${list.length}${list.filter((s) => s.central).length ? ` · ${list.filter((s) => s.central).length} en catálogo` : ''})</span></div>${list.map((s) => `<div class="skill" data-group="${esc(g)}"><span class="nm">${esc(s.name)}</span><span class="ds" title="${esc(s.description)}">${esc(s.description)}</span><button class="small ghost" data-skill-edit="${esc(s.dir)}" title="Editar SKILL.md">✎</button>${s.central ? `<span class="src">✓ en catálogo${s.central !== s.name ? ' como ' + esc(s.central) : ''}</span>` : `<button class="small ghost" data-skill-add="${esc(s.dir)}" title="${esc(s.dir)}">→ Catálogo</button>`}</div>`).join('')}`).join('')}</div>
   </div>`;
+}
+
+// Memoria de Claude Code de cada repo del proyecto (~/.claude/projects/<repo>/memory): índice + una memoria por fichero.
+// Los agentes reciben el índice en su prompt y pueden leer el detalle; aquí se ve y se edita.
+let cmemPid = null;
+const cmemUrl = (repo, name) => `/api/projects/${projectId}/claude-memory/file?repo=${encodeURIComponent(repo)}&name=${encodeURIComponent(name)}`;
+const CMEM_TYPES = { user: '👤 usuario', feedback: '💬 feedback', project: '📌 proyecto', reference: '🔗 referencia' };
+async function renderClaudeMemory(reload = false) {
+  const el = $('#cmemory');
+  if (!el || !projectId || (!reload && cmemPid === projectId)) return;
+  cmemPid = projectId;
+  el.innerHTML = '<p class="muted">Cargando…</p>';
+  let list;
+  try { list = await api('GET', `/api/projects/${projectId}/claude-memory`); } catch { el.innerHTML = '<p class="bad">No se pudo leer la memoria</p>'; return; }
+  const total = list.reduce((n, r) => n + (r.files?.length || 0), 0);
+  $('#cmemory-summary').textContent = list.length ? `${total} memorias · el índice va en el prompt de los agentes (≈${Math.round(list.reduce((n, r) => n + (r.indexSize || 0), 0) / 4)} tokens)${S.settings.claudeMemory === false ? ' · ⚠ desactivado en Ajustes' : ''}` : 'sin repos';
+  el.innerHTML = list.length ? list.map((r) => `<div class="skills-box cmem-box">
+    <h4>${esc(r.repo)} <span class="muted" style="text-transform:none;letter-spacing:0">· ${esc(short(r.dir))}${r.inherited ? ' (heredada de una carpeta padre)' : ''}</span></h4>
+    <div class="skill"><span class="nm">MEMORY.md</span><span class="ds">Índice: una línea por memoria · ${r.indexSize} B</span><button class="small ghost" data-cmem-repo="${esc(r.repo)}" data-cmem-edit="MEMORY.md" title="Editar el índice">✎</button></div>
+    ${r.files.map((f) => `<div class="skill"><span class="nm" title="${esc(f.file)}">${esc(f.name || f.file)}</span><span class="src">${esc(CMEM_TYPES[f.type] || f.type || '')}</span><span class="ds" title="${esc(f.description)}">${f.inIndex ? '' : '⚠ fuera del índice · '}${esc(f.description)}</span><button class="small ghost" data-cmem-repo="${esc(r.repo)}" data-cmem-edit="${esc(f.file)}">✎</button><button class="small danger" data-cmem-repo="${esc(r.repo)}" data-cmem-del="${esc(f.file)}">✕</button></div>`).join('') || '<p class="muted">Sin memorias todavía (se crean desde las sesiones de Claude Code en el repo, o con ＋).</p>'}
+    <div class="row"><button class="small ghost" data-cmem-repo="${esc(r.repo)}" data-cmem-edit="">＋ Nueva memoria</button></div>
+  </div>`).join('') : '<p class="empty">El proyecto no tiene repos: la memoria de Claude va ligada a un repo.</p>';
+}
+async function editClaudeMemory(repo, name) {
+  const isNew = !name;
+  const r = isNew ? { text: `---\nname: \ndescription: \nmetadata:\n  type: project\n---\n\n\n**Why:** \n**How to apply:** \n` } : await api('GET', cmemUrl(repo, name));
+  dialog(`
+    <h3>🧠 ${isNew ? 'Nueva memoria' : esc(name)} <span class="muted">· ${esc(repo)}</span></h3>
+    ${isNew ? '<label>Fichero</label><input name="file" placeholder="mi-memoria.md" required pattern="[\\w.\\-]+\\.md" />' : ''}
+    <textarea name="content" class="code" spellcheck="false">${esc(r.text)}</textarea>
+    ${isNew ? '<label><input type="checkbox" name="index" checked /> Añadir una línea al índice (MEMORY.md) con su descripción</label>' : ''}
+    <p class="muted">Se guarda en el fichero real de la memoria de Claude Code: la ven tus sesiones de Claude en el repo y los agentes.</p>
+    ${buttons('Guardar')}`, async (f) => {
+    const file = isNew ? f.file.trim() : name;
+    await api('PUT', cmemUrl(repo, file), { text: f.content });
+    if (isNew && f.index) {
+      const idx = await api('GET', cmemUrl(repo, 'MEMORY.md'));
+      const fm = (k) => (f.content.match(new RegExp(`^\\s*${k}:\\s*(.*)$`, 'm'))?.[1] || '').trim();
+      await api('PUT', cmemUrl(repo, 'MEMORY.md'), { text: `${idx.text.replace(/\s*$/, '\n')}- [${fm('name') || file}](${file}) — ${fm('description')}\n`.replace(/^\n/, '') });
+    }
+    toast('Memoria guardada'); renderClaudeMemory(true);
+  }, 'wide');
 }
 
 async function editSkill(dir) {
@@ -1145,6 +1202,7 @@ const updateBtn = (t) => t.status === 'review' && t.branch && t.behind ? `<butto
 // servidor calcula con la misma regla que el planificador) o aviso ámbar si nadie del equipo tiene el rol. El chip abre el
 // cajón del agente (motor, modelo, registro) o, sin agente, «Contratar agente» con el rol ya elegido; el desplegable reasigna.
 const UNSTARTED = ['backlog', 'todo', 'failed'];
+const REVIEW_LABEL = { manual: 'Manual: la revisas tú', 'auto-qa': 'Automática: un agente QA revisa, aprueba y fusiona (o la devuelve)', auto: 'Automática: se aprueba si pasan las verificaciones que declara la tarea' };
 const engineTag = (a) => `${a.engine}${a.engine === 'auto' && a.activeEngine ? '→' + a.activeEngine : ''}${a.model ? '/' + a.model : ''}`;
 const assignable = (t) => team().filter((a) => a.role === t.role || (S.roles[a.role]?.handles || []).includes(t.role));
 function whoRow(t) {
@@ -1203,7 +1261,7 @@ function compactCard(t) {
   if (t.status === 'review') ind.push(`<span class="ind warn" title="${t.reviewing ? 'Revisión automática en curso' : `Esperando tu revisión${t.reviewSince ? ' desde hace ' + waitTxt(t.reviewSince) : ''}`}${(t.blocks || []).length ? ' · bloquea: ' + t.blocks.map((b) => b.code).join(', ') : ''}">✋${t.reviewSince ? waitMin(t.reviewSince) + '′' : ''}</span>`); // FT-56 en compacto
   if (!['review', 'done'].includes(t.status) && t.waitingOn?.length) ind.push(`<span class="ind" title="Espera a ${esc(t.waitingOn.map((w) => w.code + ' (' + (TSTATUS[w.status] || w.status) + ')').join(', '))}">⏳</span>`);
   if (depsOpen.length && !t.waitingOn?.length) ind.push(`<span class="ind" title="Depende de ${esc(depsOpen.map(tcode).join(', '))}">⏳</span>`);
-  if (t.costUsd) ind.push(`<span class="ind" title="Coste de la tarea: ${t.costUsd.toFixed(3)} $">💲${t.costUsd.toFixed(2)}</span>`);
+  if (t.costUsd) ind.push(`<span class="ind" title="Coste de la tarea: ${t.costEstimated ? '≈ ' : ''}${t.costUsd.toFixed(3)} $${t.costEstimated ? ' (estimado: Codex no informa el coste)' : ''}">💲${t.costEstimated ? '≈' : ''}${t.costUsd.toFixed(2)}</span>`);
   if (['todo', 'backlog'].includes(t.status) && S.costEstimates?.[t.role] != null) ind.push(`<span class="ind" title="Estimación: mediana de las últimas tareas del rol ${esc(t.role)}">≈${S.costEstimates[t.role].toFixed(2)}</span>`);
   if (t.attempts > 1) ind.push(`<span class="ind" title="Intento ${t.attempts}">↻${t.attempts}</span>`);
   if (t.source?.flow || t.source?.url) ind.push(`<span class="ind" title="Importada de ${esc(t.source.flow || BOARD_LABELS[t.source.kind] || t.source.kind || 'un tablero')}">🗂</span>`);
@@ -1585,6 +1643,7 @@ const actions = {
   'add-repo': () => editRepo(''),
   'new-role': () => editRole('', false),
   'reload-skills': () => renderSkills(true),
+  'reload-cmemory': () => renderClaudeMemory(true),
   'new-skill': () => dialog(`
     <h3>＋ Nueva skill en el catálogo</h3>
     <label>Nombre (sin espacios)</label><input name="name" placeholder="mi-skill" required autofocus />
@@ -1661,6 +1720,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <label title="Reglas de «construir lo mínimo» en la parte estable del prompt (FT-86). Se etiqueta cada intento en 💸 Costes para comparar con/sin.">Ponytail (prueba, FT-86): roles que construyen lo mínimo</label>
     <div class="pt-roles">${Object.entries(S.roles).filter(([, r]) => r.kind !== 'planner').map(([id, r]) => `<label><input type="checkbox" name="pt_${esc(id)}" ${S.settings.ponytailRoles?.[id] ? 'checked' : ''} /> ${esc(r.label || id)}</label>`).join(' ')}</div>
     <label><input type="checkbox" name="agentMemory" ${S.settings.agentMemory !== false ? 'checked' : ''} /> Memoria de los agentes: lecciones de tareas anteriores en el prompt (FT-75; ≈1 500 tokens máx. por agente y por proyecto)</label>
+    <label><input type="checkbox" name="claudeMemory" ${S.settings.claudeMemory !== false ? 'checked' : ''} /> Memoria de Claude Code del repo: el índice (MEMORY.md) va en el prompt de los agentes y pueden leer cada memoria (se ve y edita en Agentes ▸ 🧠 Memoria del proyecto)</label>
     <label title="Codebase-Memory MCP (tree-sitter, local): el agente localiza funciones/clases con una consulta en vez de leer ficheros"><input type="checkbox" name="codeIndex" ${S.settings.codeIndex === true ? 'checked' : ''} ${S.codeIndexInstalled ? '' : 'disabled'} /> Índice de código por símbolos para Claude y Codex (FT-58)${S.codeIndexInstalled ? '' : ' — no instalado: ejecuta scripts/setup-code-index.sh'}</label>
     <label><input type="checkbox" name="quotaGuard" ${S.settings.quotaGuard !== false ? 'checked' : ''} /> Guardarraíl de cuota: no arrancar tareas con un motor cuya sesión de 5 h esté al ${97} % o más (FT-45)</label>
     <div class="section-title">🧭 Guía (FT-6)</div>
@@ -1698,6 +1758,11 @@ Pasos, convenciones y ejemplos…</textarea>
     <div id="board-cfg" class="board-cfg"><p class="muted">Cargando…</p></div>
     <div class="section-title">📁 Proyecto</div>
     <label>Prefijo de los códigos de tarea del proyecto «${esc(project()?.name)}» (p. ej. <code>GL</code> → GL-1, GL-2…; las tareas ya numeradas no cambian)</label><input name="prefix" value="${esc(project()?.prefix || "")}" placeholder="${esc(project()?.prefixDefault || "")}" maxlength="5" style="text-transform:uppercase;width:120px" />
+    <label>Revisión de las tareas de «${esc(project()?.name)}» (con revisión automática, lo que una tarea desbloquea no espera a que tú la mires)</label>
+    <select name="reviewPolicy">${[['', `Igual que la empresa (${REVIEW_LABEL[S.settings.reviewPolicy || 'manual']})`], ['manual', REVIEW_LABEL.manual], ['auto-qa', REVIEW_LABEL['auto-qa']], ['auto', REVIEW_LABEL.auto]].map(([v, l]) => `<option value="${v}" ${(project()?.reviewPolicy || '') === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+    <label>Revisión por defecto de la empresa (proyectos con «Igual que la empresa»)</label>
+    <select name="reviewPolicyAll">${['manual', 'auto-qa', 'auto'].map((v) => `<option value="${v}" ${(S.settings.reviewPolicy || 'manual') === v ? 'selected' : ''}>${esc(REVIEW_LABEL[v])}</option>`).join('')}</select>
+    <p class="muted" style="margin:2px 0 8px">Nunca se aprueban solas las tareas con «revisión obligatoria», las cortadas por tope o atasco, las que tocan ficheros sensibles ni las que el revisor devolvió dos veces: esas te esperan a ti.</p>
     <label>Repositorios del proyecto «${esc(project()?.name)}» (uno por línea: <code>clave = ruta @ roles</code>)</label>
     <textarea name="repos" rows="3">${esc((project()?.repos || []).map((r) => `${r.key} = ${r.path}${r.roles?.length ? ' @ ' + r.roles.join(',') : ''}`).join('\n'))}</textarea>
     <label>Importar un tablero de flow-test (notas = tarjetas; las columnas «En revisión»/«Hecho» conservan su estado, el resto entra en Backlog)</label>
@@ -1708,12 +1773,14 @@ Pasos, convenciones y ejemplos…</textarea>
     safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0'); (SETTINGS_EMBED ? safeSet('ao:voice-wake', f.voiceWake ? '1' : '0') : wakeSet(!!f.voiceWake)); // en el panel de flow-test no se abre el micro: el iframe principal lo recoge por el evento `storage`
     refreshSttLocal();
     ttsStop();
-    await api('POST', '/api/settings', { ...f, ponytailRoles: Object.fromEntries(Object.keys(S.roles).map((id) => [id, !!f['pt_' + id]])), quotaGuard: !!f.quotaGuard, stuckGuard: !!f.stuckGuard, cacheAffinity: !!f.cacheAffinity, agentMemory: !!f.agentMemory, modelLadder: { claude: f.ladder_claude || '', codex: f.ladder_codex || '' }, codeIndex: !!f.codeIndex, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
+    await api('POST', '/api/settings', { ...f, ponytailRoles: Object.fromEntries(Object.keys(S.roles).map((id) => [id, !!f['pt_' + id]])), quotaGuard: !!f.quotaGuard, stuckGuard: !!f.stuckGuard, cacheAffinity: !!f.cacheAffinity, agentMemory: !!f.agentMemory, claudeMemory: !!f.claudeMemory, modelLadder: { claude: f.ladder_claude || '', codex: f.ladder_codex || '' }, codeIndex: !!f.codeIndex, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
     ttsInfoLoad();
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
     if (repos.map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|') !== cur) await api('PATCH', `/api/projects/${projectId}`, { repos });
     if ((f.prefix || '').toUpperCase() !== (project()?.prefix || '')) await api('PATCH', `/api/projects/${projectId}`, { prefix: f.prefix });
+    if ((f.reviewPolicyAll || 'manual') !== (S.settings.reviewPolicy || 'manual')) await api('POST', '/api/settings', { reviewPolicy: f.reviewPolicyAll });
+    if ((f.reviewPolicy || '') !== (project()?.reviewPolicy || '')) await api('PATCH', `/api/projects/${projectId}`, { reviewPolicy: f.reviewPolicy || '' });
   }),
 };
 // Tras abrir Ajustes, rellenar el selector de flows con los del flow-test conectado.
@@ -1739,22 +1806,23 @@ let sumModal = null; // { kind: 'tokens' | 'team', projectId: id | '*' (todos lo
 function sumProjectData(p) {
   const team = (p.team || []).map((id) => S.agents.find((a) => a.id === id)).filter(Boolean);
   const ts = S.tasks.filter((t) => t.projectId === p.id);
-  return { p, team, ts, costOf: (a) => ts.filter((t) => t.agentId === a.id).reduce((n, t) => n + (t.costUsd || 0), 0) };
+  const mine = (a) => ts.filter((t) => t.agentId === a.id);
+  return { p, team, ts, costOf: (a) => mine(a).reduce((n, t) => n + (t.costUsd || 0), 0), accOf: (a) => mine(a).reduce((n, t) => n + (t.usage?.total || 0), 0), estOf: (a) => mine(a).some((t) => t.costEstimated) || !!a.usage?.costEstimated };
 }
 const sumProjects = (pid) => (pid === '*' ? S.projects.filter((p) => (p.team || []).length) : S.projects.filter((p) => p.id === pid)).map(sumProjectData);
 const byTotalDesc = (x, y) => (y.usage?.total ?? -1) - (x.usage?.total ?? -1);
 // Fila de un agente en el modal de tokens: nombre, rol, motor/modelo, total, ↓↑⚡, barra con «quedan…», coste.
-function tokensRow(a, costOf) {
+function tokensRow(a, { costOf, accOf, estOf }) {
   const u = a.usage, pct = usagePct(u);
   const cell = (v) => (u && Number.isFinite(u.total) ? `<td class="num">${fmtN(v)}</td>` : '<td class="num muted">n/d</td>');
   const bar = !u ? '<span class="muted" title="Aún sin cifras de esta sesión (o el motor no las informa)">sin sesión</span>'
     : pct == null ? '<span class="muted" title="El CLI no informa la ventana de contexto">límite n/d</span>'
       : `<span class="tokbar ${pctSev(pct)}"><i style="width:${pct}%"></i></span> <span class="muted">${pct} % · quedan ${fmtN(Math.max(0, u.limit - u.used))}</span>`;
-  const cost = costOf(a) || u?.costUsd || 0;
+  const cost = costOf(a) || u?.costUsd || 0, acc = accOf(a);
   return `<tr class="${a.status === 'idle' ? 'old' : ''}" data-sum-agent="${a.id}">
     <td><b>${esc(a.name)}</b></td><td>${roleChip(a.role)}</td><td class="muted">${esc(engineModel(a))}</td>
     <td class="num tok">${u && Number.isFinite(u.total) ? fmtN(u.total) : '<span class="muted">n/d</span>'}</td>${cell(u?.input)}${cell(u?.output)}${cell(u?.cache)}
-    <td class="ctx">${bar}</td><td class="num">${cost ? cost.toFixed(2) + ' $' : '·'}</td></tr>`;
+    <td class="ctx">${bar}</td><td class="num tok" title="Todas sus tareas de este proyecto, intentos incluidos">${acc ? fmtN(acc) : '·'}</td><td class="num" title="${estOf(a) ? 'Estimado con la tabla de precios: Codex no informa el coste (con suscripción se descuenta de la cuota)' : ''}">${cost ? (estOf(a) ? '≈ ' : '') + cost.toFixed(2) + ' $' : '·'}</td></tr>`;
 }
 const sumOf = (list, k) => list.reduce((n, a) => n + (a.usage?.[k] || 0), 0);
 function tokensModalBody(pid) {
@@ -1762,21 +1830,22 @@ function tokensModalBody(pid) {
   const agents = groups.flatMap((g) => g.team);
   const cost = groups.reduce((n, g) => n + g.team.reduce((m, a) => m + (g.costOf(a) || a.usage?.costUsd || 0), 0), 0);
   const accumulated = groups.reduce((n, g) => n + g.ts.reduce((m, t) => m + (t.usage?.total || 0), 0), 0);
-  const rows = groups.map((g) => `${groups.length > 1 ? `<tr class="sum-group"><td colspan="9">${esc(g.p.name)} <span class="muted">· ${g.team.length} agente${g.team.length === 1 ? "" : "s"} · ${fmtTok(sumOf(g.team, 'total'))}</span></td></tr>` : ''}${[...g.team].sort(byTotalDesc).map((a) => tokensRow(a, g.costOf)).join('')}`).join('');
+  const rows = groups.map((g) => `${groups.length > 1 ? `<tr class="sum-group"><td colspan="10">${esc(g.p.name)} <span class="muted">· ${g.team.length} agente${g.team.length === 1 ? "" : "s"} · ${fmtTok(sumOf(g.team, 'total'))}</span></td></tr>` : ''}${[...g.team].sort(byTotalDesc).map((a) => tokensRow(a, g)).join('')}`).join('');
   return `<table class="repos sum-detail">
-    <thead><tr><th>Agente</th><th>Rol</th><th>Motor · modelo</th><th class="num">Total</th><th class="num">↓ Entrada</th><th class="num">↑ Salida</th><th class="num">⚡ Caché</th><th>Contexto</th><th class="num">Coste</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="9" class="muted">Sin equipo</td></tr>'}</tbody>
-    <tfoot><tr data-sum-totals><td colspan="3"><b>Total</b> <span class="muted">· ${agents.length} agentes</span></td><td class="num tok">${fmtN(sumOf(agents, 'total'))}</td><td class="num">${fmtN(sumOf(agents, 'input'))}</td><td class="num">${fmtN(sumOf(agents, 'output'))}</td><td class="num">${fmtN(sumOf(agents, 'cache'))}</td><td></td><td class="num">${cost ? cost.toFixed(2) + ' $' : '·'}</td></tr></tfoot>
+    <thead><tr><th>Agente</th><th>Rol</th><th>Motor · modelo</th><th class="num">Total</th><th class="num">↓ Entrada</th><th class="num">↑ Salida</th><th class="num">⚡ Caché</th><th>Contexto</th><th class="num">Acumulado</th><th class="num">Coste</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="10" class="muted">Sin equipo</td></tr>'}</tbody>
+    <tfoot><tr data-sum-totals><td colspan="3"><b>Total</b> <span class="muted">· ${agents.length} agentes</span></td><td class="num tok">${fmtN(sumOf(agents, 'total'))}</td><td class="num">${fmtN(sumOf(agents, 'input'))}</td><td class="num">${fmtN(sumOf(agents, 'output'))}</td><td class="num">${fmtN(sumOf(agents, 'cache'))}</td><td></td><td class="num tok">${fmtN(accumulated)}</td><td class="num">${groups.some((g) => g.team.some(g.estOf)) && cost ? '≈ ' : ''}${cost ? cost.toFixed(2) + ' $' : '·'}</td></tr></tfoot>
   </table>
   <p class="muted sum-note">Cifras de la sesión actual de cada agente (se reinician con cada tarea). Acumulado de todas las tareas${pid === '*' ? '' : ' del proyecto'}, intentos incluidos: <b>${fmtTok(accumulated)}</b>.</p>`;
 }
 // El mismo contenido en texto plano, para pegarlo en un chat o un informe.
 function tokensModalText(pid) {
   const groups = sumProjects(pid);
-  const line = (a, g) => { const u = a.usage; return `  ${a.name} (${S.roles[a.role]?.label || a.role}, ${engineModel(a)}): ${u ? `${fmtTok(u.total)} · ↓${fmtN(u.input)} ↑${fmtN(u.output)} ⚡${fmtN(u.cache)}${usagePct(u) != null ? ` · contexto ${usagePct(u)} % (quedan ${fmtN(Math.max(0, u.limit - u.used))})` : ''}` : 'sin sesión'}${(g.costOf(a) || u?.costUsd) ? ` · ${(g.costOf(a) || u.costUsd).toFixed(2)} $` : ''}`; };
+  const line = (a, g) => { const u = a.usage; return `  ${a.name} (${S.roles[a.role]?.label || a.role}, ${engineModel(a)}): ${u ? `${fmtTok(u.total)} · ↓${fmtN(u.input)} ↑${fmtN(u.output)} ⚡${fmtN(u.cache)}${usagePct(u) != null ? ` · contexto ${usagePct(u)} % (quedan ${fmtN(Math.max(0, u.limit - u.used))})` : ''}` : 'sin sesión'}${g.accOf(a) ? ` · acumulado ${fmtTok(g.accOf(a))}` : ''}${(g.costOf(a) || u?.costUsd) ? ` · ${g.estOf(a) ? '≈ ' : ''}${(g.costOf(a) || u.costUsd).toFixed(2)} $` : ''}`; };
   const agents = groups.flatMap((g) => g.team);
   return [`Tokens por sesión · ${pid === '*' ? 'todos los proyectos' : groups[0]?.p.name || ''}`, ...groups.flatMap((g) => [`${g.p.name}:`, ...[...g.team].sort(byTotalDesc).map((a) => line(a, g))]),
-    `Total: ${fmtTok(sumOf(agents, 'total'))} · ↓${fmtN(sumOf(agents, 'input'))} ↑${fmtN(sumOf(agents, 'output'))} ⚡${fmtN(sumOf(agents, 'cache'))}`].join('\n');
+    `Total sesión actual: ${fmtTok(sumOf(agents, 'total'))} · ↓${fmtN(sumOf(agents, 'input'))} ↑${fmtN(sumOf(agents, 'output'))} ⚡${fmtN(sumOf(agents, 'cache'))}`,
+    `Acumulado (todas las tareas, intentos incluidos): ${fmtTok(groups.reduce((n, g) => n + g.ts.reduce((m, t) => m + (t.usage?.total || 0), 0), 0))} · ${groups.some((g) => g.ts.some((t) => t.costEstimated)) ? '≈ ' : ''}${groups.reduce((n, g) => n + g.ts.reduce((m, t) => m + (t.costUsd || 0), 0), 0).toFixed(2)} $`].join('\n');
 }
 // Estado de un agente para el modal de equipo: 💤 libre / ⚙ trabajando en FT-xx / ⏸ pausado / ❓ esperando respuesta.
 function agentState(a) {
@@ -1839,7 +1908,7 @@ function quotaCard(e) {
   const q = S.quota?.[e];
   if (!q) return `<div class="quota-card"><b>${QUOTA_NAME[e]}</b> <span class="muted">leyendo…</span></div>`;
   if (!q.ok) return `<div class="quota-card off"><b>${QUOTA_NAME[e]}</b> <span class="muted">sin dato · ${esc(q.reason || '')}</span></div>`;
-  return `<div class="quota-card"><div class="quota-head"><b>${QUOTA_NAME[e]}</b>${q.plan ? ` <span class="chip" style="--c:#93c5fd">${esc(q.plan)}</span>` : ''}${q.limitReached ? ' <span class="chip" style="--c:#f87171">límite alcanzado</span>' : ''}</div>
+  return `<div class="quota-card"><div class="quota-head"><b>${QUOTA_NAME[e]}</b>${q.plan ? ` <span class="chip" style="--c:#93c5fd">${esc(q.plan)}</span>` : ''}${q.stale ? ` <span class="chip" style="--c:#fbbf24" title="${esc(q.staleReason || '')} · se reintenta ${q.retryAt ? 'a las ' + new Date(q.retryAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) : 'más tarde'}">dato de hace ${Math.max(1, Math.round((Date.now() - q.fetchedAt) / 60000))} min</span>` : ''}${q.limitReached ? ' <span class="chip" style="--c:#f87171">límite alcanzado</span>' : ''}</div>
     ${q.windows.map((w) => `<div class="quota-row" data-quota-win="${esc(e)}:${esc(w.id)}"><span class="ql">${esc(w.label)}</span><span class="tokbar ${quotaSev(w)}"><i style="width:${Math.min(100, w.percent)}%"></i></span><b class="${quotaSev(w)}">${w.percent} %</b><span class="muted">${w.resetsAt ? 'se reinicia en ' + fmtLeft(w.resetsAt) : ''}</span></div>`).join('') || '<span class="muted">sin ventanas</span>'}</div>`;
 }
 const quotaBlockHtml = () => `<div class="section-title" style="margin-top:14px">Cuota de la suscripción</div><div class="quota-cards" id="quota-cards">${['claude', 'codex'].map(quotaCard).join('')}</div>`;
@@ -2436,6 +2505,8 @@ document.addEventListener('click', async (e) => {
   if (d.skillAdd) return api('POST', '/api/skills/centralize', { dir: d.skillAdd }).then((r) => { toast(`«${r.name}» en el catálogo`); renderSkills(true); });
   if (d.skillDel) return api('DELETE', `/api/skills/${d.skillDel}`).then(() => { toast('Quitada del catálogo'); renderSkills(true); });
   if (d.skillEdit) return editSkill(d.skillEdit);
+  if (d.cmemEdit !== undefined) return editClaudeMemory(d.cmemRepo, d.cmemEdit);
+  if (d.cmemDel) { if (confirm(`¿Borrar la memoria «${d.cmemDel}»? (también su línea del índice)`)) api('DELETE', cmemUrl(d.cmemRepo, d.cmemDel)).then(() => { toast('Memoria borrada'); renderClaudeMemory(true); }); return; }
   if (d.agentEdit) return editAgent(d.agentEdit);
   if (d.nomove) return moveTask(d.nomove, 'backlog');
   if (d.park) return api('PATCH', `/api/tasks/${d.park}`, { status: 'backlog' });
