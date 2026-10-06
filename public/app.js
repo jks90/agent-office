@@ -1376,7 +1376,8 @@ Pasos, convenciones y ejemplos…</textarea>
     <div><label>Errores de herramienta seguidos</label><input name="stuckErrors" type="number" min="2" max="30" value="${S.settings.stuckErrors || 4}" /></div>
     <div><label>Pasos sin editar (tareas de código)</label><input name="stuckNoEdit" type="number" min="5" max="200" value="${S.settings.stuckNoEdit || 25}" /></div>
     <div><label>Tokens por turno sin cambios en el worktree</label><input name="stuckTokens" type="number" min="5000" step="5000" value="${S.settings.stuckTokens || 80000}" /></div></div>
-    <label><input type="checkbox" name="agentMemory"${S.settings.agentMemory !== false ? 'checked' : ''} /> Memoria de los agentes: lecciones de tareas anteriores en el prompt (FT-75; ≈1 500 tokens máx. por agente y por proyecto)</label>
+    <label title="FT-57 · Codex: se corta al llegar a estos tokens (0 = el equivalente al tope en US$)">Tope en tokens por intento (solo Codex; 0 = el equivalente al de US$)</label><input name="maxTaskTokens" type="number" min="0" step="100000" value="${S.settings.maxTaskTokens || 0}" />
+    <label><input type="checkbox" name="agentMemory" ${S.settings.agentMemory !== false ? 'checked' : ''} /> Memoria de los agentes: lecciones de tareas anteriores en el prompt (FT-75; ≈1 500 tokens máx. por agente y por proyecto)</label>
     <label><input type="checkbox" name="quotaGuard" ${S.settings.quotaGuard !== false ? 'checked' : ''} /> Guardarraíl de cuota: no arrancar tareas con un motor cuya sesión de 5 h esté al ${97} % o más (FT-45)</label>
     <div class="section-title">🧭 Guía (FT-6)</div>
     <label>Proveedor del Guía (el LLM con el que conversa; los cuatro flujos funcionan igual con cualquiera) (FT-8)</label>
