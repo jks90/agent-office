@@ -532,7 +532,9 @@ export class Office3D {
       if (!el) continue;
       // Esquina derecha (x=RX, z=0): con la cámara en (1,1,1) es el punto más a la derecha en pantalla.
       const p = this.project(RX, g.position.y + SLAB_H + WALL_H / 2, 0);
-      el.style.left = p.x + 'px';
+      // Si la etiqueta no cabe a la derecha del edificio (lienzo estrecho, texto largo), se pega al borde del lienzo (FT-48).
+      const w = el.offsetWidth || 0, cw = this.cv.clientWidth || 0;
+      el.style.left = (cw && p.x + w + 8 > cw ? Math.max(8, cw - 8 - w) : p.x) + 'px';
       el.style.top = p.y + 'px';
       el.style.opacity = p.visible ? '1' : '0';
       el.classList.toggle('hover', g.userData.index === this.hoverFloor);
@@ -568,11 +570,28 @@ export class Office3D {
     return o ? o.userData.index : -1;
   }
 
+  // Rectángulo de la planta `i` en pantalla (px del viewport): caja envolvente de su grupo proyectada con la cámara (FT-48).
+  floorScreenRect(i) {
+    const g = this.floorGroups[i];
+    if (!g) return null;
+    this.camera.updateMatrixWorld();
+    g.updateWorldMatrix(true, true);
+    const b = new THREE.Box3().setFromObject(g), r = this.cv.getBoundingClientRect();
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) {
+      const v = new THREE.Vector3(x, y, z).project(this.camera);
+      const px = r.left + (v.x + 1) / 2 * r.width, py = r.top + (1 - v.y) / 2 * r.height;
+      x0 = Math.min(x0, px); x1 = Math.max(x1, px); y0 = Math.min(y0, py); y1 = Math.max(y1, py);
+    }
+    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  }
+
   // Para QA: `canvas.dataset.officeMode` y este resumen de lo que se pinta.
   debugState() {
     return {
       mode: this.mode, activeProjectId: this.activeProjectId, hoverFloor: this.hoverFloor, animating: !!this.camAnim,
-      floors: this.floors.map(({ projectId, name, working, queued, review, running }) => ({ projectId, name, working, queued, review, running })),
+      actors: this.actors.size,
+      floors: this.floors.map(({ projectId, name, working, queued, review, running }, i) => ({ projectId, name, working, queued, review, running, screen: this.mode === 'building' ? this.floorScreenRect(i) : null })),
     };
   }
 
