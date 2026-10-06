@@ -1,12 +1,15 @@
 #!/usr/bin/env node
-// e2e del modo EDIFICIO de la oficina 3D (FT-46), sin Claude: servidor temporal + Chrome headless (WebGL por SwiftShader).
+// e2e del EDIFICIO de la oficina 3D (FT-46) y de la navegación edificio ↔ planta (FT-47), sin Claude:
+// servidor temporal + Chrome headless (WebGL por SwiftShader).
 //
 //   node scripts/building-e2e.mjs [captura.png]
 //
-// Comprueba `?view=building` → canvas.dataset.officeMode y aoOffice.debugState(); una planta por proyecto CON equipo
-// (los sin equipo no salen), orden planta baja = más antiguo, etiqueta «nombre · N trabajando · M en cola» con ⏸ si está
-// parado, hover (cursor pointer + resalte) y clic (onFloorClick), tope de 12 plantas con la «+N» agrupada, vuelta a `floor`
-// y que no haya errores de consola.
+// Con 3 proyectos (2 con equipo): la Oficina abre en modo edificio; una planta por proyecto CON equipo (los sin equipo no
+// salen), orden planta baja = más antiguo, etiqueta «nombre · N trabajando · M en cola» con ⏸ si está parado, hover (cursor
+// pointer + resalte), tope de 12 plantas con la «+N» agrupada. Navegación (FT-47): clic en la planta → su sala (transición de
+// cámara, miga «Edificio › proyecto», `ao:officeMode`); «🏢 Edificio» y Esc vuelven; el desplegable cambia de planta en `floor`
+// y solo resalta en `building`; `app.navigate` del Guide entra en la planta; `officeMode` en `/api/context`; modo recordado
+// al recargar; con un solo proyecto con equipo se entra directo a su planta; sin errores de consola.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -42,40 +45,119 @@ try {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
-  await page.goto(base + '/?view=building', { waitUntil: 'networkidle2' });
+  const state = () => page.evaluate(() => ({
+    ds: document.querySelector('#office').dataset.officeMode, dbg: window.aoOffice.debugState(), title: window.aoOffice.title,
+    labels: [...document.querySelectorAll('.o3d-floor')].map((e) => e.textContent), activeLabels: [...document.querySelectorAll('.o3d-floor.active')].map((e) => e.textContent),
+    pills: document.querySelectorAll('.o3d-pill').length, floorLabelsShown: [...document.querySelectorAll('.o3d-floor')].filter((e) => getComputedStyle(e).display !== 'none').length,
+    crumb: document.querySelector('#office-crumb').textContent.trim(), live: document.querySelector('#office-live').textContent,
+    select: document.querySelector('#project').value, stored: localStorage.getItem('ao:officeMode'), focused: document.activeElement === document.querySelector('#office'),
+  }));
+  // Punto del canvas que cae sobre la planta `name` (raycaster del propio office3d) → clic REAL del ratón ahí.
+  const floorPoint = (name) => page.evaluate((nm) => {
+    const o = window.aoOffice, i = o.floors.findIndex((f) => f.name === nm);
+    if (i < 0) return null;
+    const r = o.cv.getBoundingClientRect();
+    for (let fy = 0.05; fy < 1; fy += 0.02) for (let fx = 0.2; fx < 0.8; fx += 0.02) { const e = { clientX: r.left + r.width * fx, clientY: r.top + r.height * fy }; if (o.pickFloor(e) === i) return { x: e.clientX, y: e.clientY }; }
+    return null;
+  }, name);
+  const clickFloor = async (name) => { const p = await floorPoint(name); if (!p) throw new Error('no encuentro la planta ' + name + ' en pantalla'); await page.mouse.move(p.x, p.y); await sleep(100); await page.mouse.click(p.x, p.y); };
+
+  await page.goto(base + '/', { waitUntil: 'networkidle2' });
   await sleep(4000);
-  const st = await page.evaluate(() => ({ ds: document.querySelector('#office').dataset.officeMode, dbg: window.aoOffice.debugState(), labels: [...document.querySelectorAll('.o3d-floor')].map((e) => e.textContent), canvasLabels: document.querySelectorAll('.o3d-pill').length }));
-  check('dataset.officeMode = building', st.ds === 'building', st.ds);
-  check('debugState().mode = building', st.dbg.mode === 'building');
+  let st = await state();
+  console.log('— FT-46: el edificio');
+  check('con 2 proyectos con equipo la Oficina abre en modo edificio (sin ?view=building)', st.ds === 'building' && st.dbg.mode === 'building', st.ds);
   const names = st.dbg.floors.map((f) => f.name);
   check('plantas = Alfa (baja) y Beta (arriba), sin «Vacío»', names.join(',') === 'Alfa,Beta', names.join(','));
   check('Beta: 1 en cola', st.dbg.floors[1]?.queued === 1, JSON.stringify(st.dbg.floors[1]));
   check('etiquetas HTML por planta', st.labels.length === 2 && /Beta · 0 trabajando · 1 en cola/.test(st.labels[1]), st.labels.join(' | '));
   check('⏸ en proyectos parados', st.labels.every((l) => l.startsWith('⏸')), st.labels.join(' | '));
-  check('sin personajes ni pills en modo edificio', st.canvasLabels === 0, String(st.canvasLabels));
+  check('sin personajes ni pills en modo edificio', st.pills === 0, String(st.pills));
+  check('miga «🏢 Edificio» y resumen de la empresa en el pie', st.crumb === '🏢 Edificio' && /2 proyectos con equipo/.test(st.live), `${st.crumb} / ${st.live}`);
+  check('la planta del proyecto del desplegable va resaltada', st.activeLabels.length === 1 && st.activeLabels[0].includes(st.select === a.id ? 'Alfa' : 'Beta'), JSON.stringify(st.activeLabels));
 
-  // Hover: buscar un punto del canvas que caiga sobre una planta (barrido por la mitad inferior).
+  // Hover con el ratón de verdad sobre la planta Beta.
+  const pb = await floorPoint('Beta');
+  check('la planta Beta se puede apuntar con el raycaster', !!pb, JSON.stringify(pb));
+  await page.mouse.move(pb.x, pb.y);
+  await sleep(200);
+  const hov = await page.evaluate(() => ({ cursor: document.querySelector('#office').style.cursor, hover: window.aoOffice.hoverFloor, hl: document.querySelectorAll('.o3d-floor.hover').length }));
+  check('hover sobre una planta → cursor pointer, planta y etiqueta resaltadas', hov.cursor === 'pointer' && hov.hover === 1 && hov.hl === 1, JSON.stringify(hov));
   const box = await (await page.$('#office')).boundingBox();
-  let hovered = null;
-  for (let fy = 0.55; fy < 0.95 && !hovered; fy += 0.05) for (let fx = 0.3; fx < 0.7; fx += 0.05) {
-    await page.mouse.move(box.x + box.width * fx, box.y + box.height * fy);
-    const r = await page.evaluate(() => ({ cursor: document.querySelector('#office').style.cursor, hover: window.aoOffice.hoverFloor }));
-    if (r.cursor === 'pointer') { hovered = { ...r, fx, fy }; break; }
-  }
-  check('hover sobre una planta → cursor pointer y planta resaltada', !!hovered && hovered.hover >= 0, JSON.stringify(hovered));
-  if (hovered) {
-    await sleep(200); // las etiquetas se recolocan en el siguiente frame
-    const hl = await page.evaluate(() => [...document.querySelectorAll('.o3d-floor.hover')].length);
-    check('etiqueta de la planta con clase hover', hl === 1, String(hl));
-    await page.evaluate(() => { window.__clicked = null; window.aoOffice.onFloorClick = (id) => { window.__clicked = id; }; });
-    await page.mouse.click(box.x + box.width * hovered.fx, box.y + box.height * hovered.fy);
-    const clicked = await page.evaluate(() => window.__clicked);
-    check('clic dispara onFloorClick con el projectId (gancho para FT-47)', [a.id, b.id].includes(clicked), String(clicked));
-    if (shot) await page.screenshot({ path: shot });
-  }
   await page.mouse.move(box.x + 5, box.y + 5);
   const off = await page.evaluate(() => ({ cursor: document.querySelector('#office').style.cursor, hover: window.aoOffice.hoverFloor }));
   check('fuera del edificio → sin hover', off.hover === -1 && off.cursor !== 'pointer', JSON.stringify(off));
+
+  console.log('— FT-47: entrar y salir de una planta');
+  await clickFloor('Beta');
+  const anim = await page.evaluate(() => window.aoOffice.debugState().animating);
+  await sleep(700);
+  st = await state();
+  check('clic en la planta Beta → modo floor con el proyecto Beta', st.ds === 'floor' && st.select === b.id && st.title === 'Beta', `${st.ds} ${st.title}`);
+  check('transición de cámara al entrar (≤ 400 ms) y ya terminada', anim === true && st.dbg.animating === false, `${anim}/${st.dbg.animating}`);
+  check('miga «Edificio › Beta» con el botón y etiquetas de planta ocultas', /Edificio\s*›\s*Beta/.test(st.crumb) && st.floorLabelsShown === 0, `${st.crumb} / ${st.floorLabelsShown}`);
+  check('modo recordado en localStorage ao:officeMode=floor', st.stored === 'floor', String(st.stored));
+  check('el canvas queda enfocado tras el clic', st.focused);
+  if (shot) await page.screenshot({ path: shot });
+  await page.click('#office-crumb button');
+  await sleep(600);
+  st = await state();
+  check('«🏢 Edificio» vuelve al edificio y lo recuerda', st.ds === 'building' && st.stored === 'building' && st.crumb === '🏢 Edificio', `${st.ds} ${st.stored}`);
+  await clickFloor('Alfa');
+  await sleep(600);
+  st = await state();
+  check('clic en Alfa → su planta', st.ds === 'floor' && st.select === a.id, `${st.ds} ${st.select}`);
+  await page.keyboard.press('Escape');
+  await sleep(600);
+  st = await state();
+  check('Esc con el canvas enfocado vuelve al edificio', st.ds === 'building', st.ds);
+
+  console.log('— FT-47: desplegable y Guide');
+  await page.select('#project', b.id);
+  await sleep(300);
+  st = await state();
+  check('en el edificio, cambiar el proyecto solo resalta su planta', st.ds === 'building' && st.activeLabels.length === 1 && st.activeLabels[0].includes('Beta'), `${st.ds} ${JSON.stringify(st.activeLabels)}`);
+  await clickFloor('Beta');
+  await sleep(500);
+  await page.select('#project', a.id);
+  await sleep(300);
+  st = await state();
+  check('en una planta, cambiar el proyecto cambia de planta', st.ds === 'floor' && st.title === 'Alfa', `${st.ds} ${st.title}`);
+  await page.click('#office-crumb button');
+  await sleep(500);
+  await api('POST', '/api/guide/tool', { name: 'app.navigate', args: { view: 'office', projectId: 'Beta' } });
+  await sleep(700);
+  st = await state();
+  check('app.navigate {view:office, projectId} del Guide entra en la planta de Beta', st.ds === 'floor' && st.select === b.id && st.title === 'Beta', `${st.ds} ${st.title}`);
+  const ctx = await api('GET', '/api/context');
+  check('/api/context lleva officeMode=floor (FT-2)', ctx.officeMode === 'floor' && ctx.view === 'office', JSON.stringify({ officeMode: ctx.officeMode, view: ctx.view }));
+  await api('POST', '/api/guide/tool', { name: 'app.navigate', args: { view: 'tasks' } });
+  await sleep(500);
+  await api('POST', '/api/guide/tool', { name: 'app.navigate', args: { view: 'office' } });
+  await sleep(700);
+  st = await state();
+  check('app.navigate {view:office} sin proyecto respeta el modo recordado (floor)', st.ds === 'floor', st.ds);
+  await page.click('#office-crumb button');
+  await sleep(500);
+  check('/api/context pasa a officeMode=building', (await api('GET', '/api/context')).officeMode === 'building');
+
+  console.log('— FT-47: persistencia y un solo proyecto');
+  await clickFloor('Alfa');
+  await sleep(500);
+  await page.reload({ waitUntil: 'networkidle2' });
+  await sleep(3500);
+  st = await state();
+  check('al recargar se recuerda el modo (floor) y el proyecto', st.ds === 'floor' && st.title === 'Alfa', `${st.ds} ${st.title}`);
+  await page.click('#office-crumb button');
+  await sleep(500);
+  await page.reload({ waitUntil: 'networkidle2' });
+  await sleep(3500);
+  st = await state();
+  check('al recargar se recuerda el modo (building)', st.ds === 'building', st.ds);
+  await page.click('.nav-item[data-tab="tasks"]');
+  await page.click('.nav-item[data-tab="office"]');
+  await sleep(400);
+  check('ir a Tareas y volver a Oficina mantiene el edificio', (await state()).ds === 'building');
 
   // Más de 12 proyectos con equipo → 11 + planta «+N» que no se abre.
   const many = await page.evaluate(() => {
@@ -91,10 +173,18 @@ try {
   check('última planta «+4 proyectos» agrupa trabajando/revisión', many.last.projectId === null && many.last.name === '+4 proyectos' && many.last.working === 2 && many.last.review === 1, JSON.stringify(many.last));
   check('12 etiquetas, 1 agrupada', many.labels === 12 && many.grouped === 1, `${many.labels}/${many.grouped}`);
 
-  // Vuelta a la sala.
-  const back = await page.evaluate(() => { window.aoOffice.setMode('floor'); return { ds: document.querySelector('#office').dataset.officeMode, mode: window.aoOffice.debugState().mode, floorsVisible: window.aoOffice.building.visible, room: window.aoOffice.room.visible }; });
-  check('setMode(floor) → dataset y grupos', back.ds === 'floor' && back.mode === 'floor' && !back.floorsVisible && back.room, JSON.stringify(back));
-  await sleep(1500);
+  // Solo UN proyecto con equipo (Beta se queda sin Bea): al abrir la Oficina se entra directo a la planta de Alfa.
+  const bea = (await api('GET', '/api/state')).agents.find((x) => x.name === 'Bea');
+  await api('PATCH', `/api/projects/${b.id}/team`, { remove: [bea.id] });
+  await page.reload({ waitUntil: 'networkidle2' });
+  await sleep(3500);
+  st = await state();
+  check('con un solo proyecto con equipo se entra directo a su planta (aunque se recordara el edificio)', st.ds === 'floor' && st.title === 'Alfa' && st.stored === 'building', `${st.ds} ${st.title} ${st.stored}`);
+  check('…y el botón Edificio sigue disponible', /Edificio/.test(st.crumb) && (await page.$('#office-crumb button')) !== null, st.crumb);
+  await page.click('#office-crumb button');
+  await sleep(500);
+  check('…y lleva al edificio de una planta', (await state()).ds === 'building');
+  await sleep(1000);
   check('sin errores de consola', errors.length === 0, errors.join(' | '));
 } catch (e) { failed++; console.log('✗ ' + e.message); }
 finally { if (browser) await browser.close().catch(() => {}); server.kill('SIGTERM'); fs.rmSync(dataDir, { recursive: true, force: true }); }

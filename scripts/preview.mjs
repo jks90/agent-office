@@ -6,7 +6,8 @@
 //   node scripts/preview.mjs out.png --wait 20000    # más tiempo (p. ej. para que alguien se siente)
 //   node scripts/preview.mjs out.png --full          # la página entera, no solo la oficina
 //   node scripts/preview.mjs out.png --query "x=1"   # parámetros extra en la URL
-//   node scripts/preview.mjs out.png --building      # el EDIFICIO (FT-46): 3 proyectos con equipo y 1 sin él, ?view=building
+//   node scripts/preview.mjs out.png --building      # el EDIFICIO (FT-46): 3 proyectos con equipo y 1 sin él (con varios equipos la Oficina abre en modo edificio, FT-47)
+//   node scripts/preview.mjs out.png --building --floor <nombre>   # entra en la planta de ese proyecto haciendo clic en ella (FT-47)
 //
 // Imprime también los errores de consola de la página. Pensado para que un agente pueda VER lo que
 // pinta: captura → mirar el PNG → corregir → repetir. Necesita `npm install` (puppeteer-core) y Chrome/Chromium.
@@ -25,6 +26,7 @@ const wait = Number(opt('wait', 12000));
 const query = opt('query', '');
 const full = args.includes('--full');
 const building = args.includes('--building');
+const floorOf = opt('floor', '');   // FT-47: nombre del proyecto cuya planta se abre (clic en su etiqueta)
 const port = 7490 + Math.floor(Math.random() * 100);
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-preview-'));
 
@@ -83,11 +85,24 @@ try {
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   page.on('console', (m) => { if (['error', 'warning'].includes(m.type())) errors.push(`${m.type()}: ${m.text()}`); });
   page.on('requestfailed', (r) => errors.push(`request failed: ${r.url()} ${r.failure()?.errorText || ''}`));
-  const qs = [building ? 'view=building' : '', query].filter(Boolean).join('&');
-  const url = `${base}/${qs ? '?' + qs : ''}`;
+  const url = `${base}/${query ? '?' + query : ''}`;
   await page.goto(url, { waitUntil: 'networkidle2' });
   await new Promise((r) => setTimeout(r, wait));
   if (building) console.log('🏢 ' + JSON.stringify(await page.evaluate(() => ({ dataset: document.querySelector('#office')?.dataset.officeMode, labels: [...document.querySelectorAll('.o3d-floor')].map((e) => e.textContent) }))));
+  if (floorOf) {
+    // Entrar en la planta por el mismo camino que el usuario: clic sobre la fachada de esa planta (FT-47).
+    const entered = await page.evaluate(async (name) => {
+      const o = window.aoOffice, i = o.floors.findIndex((f) => f.name === name);
+      if (i < 0) return 'no hay planta ' + name;
+      const r = o.cv.getBoundingClientRect(); let hit = null;
+      for (let fy = 0.05; fy < 1 && !hit; fy += 0.02) for (let fx = 0.2; fx < 0.8; fx += 0.02) { const e = { clientX: r.left + r.width * fx, clientY: r.top + r.height * fy }; if (o.pickFloor(e) === i) { hit = e; break; } }
+      if (!hit) return 'no encuentro la planta en pantalla';
+      o.cv.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: hit.clientX, clientY: hit.clientY }));
+      await new Promise((res) => setTimeout(res, 900));
+      return document.querySelector('#office').dataset.officeMode + ' · ' + document.querySelector('#office-crumb').textContent;
+    }, floorOf);
+    console.log('🚪 ' + entered);
+  }
   const fps = await page.evaluate(() => new Promise((res) => { let n = 0; const t0 = performance.now(); const f = () => { n++; if (performance.now() - t0 < 1000) requestAnimationFrame(f); else res(n); }; requestAnimationFrame(f); }));
   const target = full ? page : (await page.$('.office-wrap')) || page;
   await target.screenshot({ path: out });

@@ -5,6 +5,8 @@
 // Dos modos (FT-46): `floor` (la sala del proyecto activo, con personajes) y `building` (el EDIFICIO:
 // una planta por proyecto con equipo, sin personajes; etiquetas por planta y ventanas encendidas según
 // quién trabaja). `setMode(mode)` cambia entre ellos; `update()` acepta además {projects, allAgents, allTasks}.
+// FT-47: `setMode` hace una transición corta de cámara (≤ 400 ms, ninguna con prefers-reduced-motion), la planta del
+// proyecto activo (`update({projectId})`) va resaltada en el edificio y el canvas se enfoca al hacer clic (Esc en app.js).
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
@@ -46,6 +48,9 @@ const FLOOR_H = WALL_H + SLAB_H;             // altura de una planta (pared + lo
 const MAX_FLOORS = 12;                       // tope visual; el resto se agrupa en una planta «+N»
 const FLOOR_BOX = [RX, WALL_H, RZ];          // caja que encuadra la cámara en modo `floor`
 const WINDOW_ON = 0xffd36b, WALL_PAUSED = 0xd6dad6, SLAB_COLOR = 0xc9d2cc, INTERIOR = 0x2b333b, HOVER = 0x3ad0a0;
+const HOVER_K = 0.22, ACTIVE_K = 0.1;            // intensidad del resalte: planta bajo el ratón / planta del proyecto activo (FT-47)
+const CAM_MS = 380;                              // duración de la transición de cámara edificio ↔ planta (FT-47)
+const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // Mobiliario estático: {model, x, z, ry(rad), tint(hex)}. Se apoya solo en el suelo (base y=0).
 const FURNITURE = [
@@ -92,7 +97,7 @@ export class Office3D {
   constructor(canvas, { onAgentClick, onFloorClick } = {}) {
     this.cv = canvas;
     this.onAgentClick = onAgentClick;
-    this.onFloorClick = onFloorClick;   // clic en una planta del edificio → (projectId); la navegación llega en FT-47
+    this.onFloorClick = onFloorClick;   // clic en una planta del edificio → (projectId); app.js entra en esa planta (FT-47)
     this.agents = [];
     this.tasks = [];
     this.roles = {};
@@ -111,7 +116,11 @@ export class Office3D {
     this.floorsSig = '';
     this.floorGroups = [];         // Group por planta, con userData {mats[], label}
     this.hoverFloor = -1;
+    this.activeProjectId = null;   // proyecto del desplegable: su planta va resaltada en el edificio (FT-47)
+    this.camAnim = null;           // transición de cámara en curso {from, to, t0} (FT-47)
+    this.camCenter = CENTER.clone();
     canvas.dataset.officeMode = 'floor';
+    if (canvas.tabIndex < 0) canvas.tabIndex = 0;   // enfocable: Esc con el canvas enfocado vuelve al edificio (FT-47, en app.js)
 
     canvas.style.imageRendering = 'auto';
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -346,7 +355,8 @@ export class Office3D {
   // ── API pública ──────────────────────────────────────────────────────────────
   // `agents`/`tasks` son los del proyecto activo (modo `floor`); `projects`/`allAgents`/`allTasks`, todo el
   // estado, para el edificio (modo `building`, FT-46). Si no llegan, se conservan los últimos.
-  update({ agents, tasks, roles, title, selected, projects, allAgents, allTasks }) {
+  // `projectId` (FT-47) es el proyecto activo del desplegable: en el edificio su planta va resaltada.
+  update({ agents, tasks, roles, title, selected, projects, allAgents, allTasks, projectId }) {
     this.agents = agents || [];
     this.tasks = tasks || [];
     this.roles = roles || {};
@@ -355,29 +365,38 @@ export class Office3D {
     if (projects) this.projects = projects;
     if (allAgents) this.allAgents = allAgents;
     if (allTasks) this.allTasks = allTasks;
+    const activeChanged = projectId !== undefined && projectId !== this.activeProjectId;
+    if (projectId !== undefined) this.activeProjectId = projectId || null;
     for (const [id, a] of this.actors) if (!this.agents.some((g) => g.id === id)) { this.scene.remove(a.group); this.actors.delete(id); this.removeLabel(id); }
     const sig = JSON.stringify(this.tasks.map((t) => [t.id, t.status]));
     if (sig !== this.boardSig) { this.boardSig = sig; this.drawBoard(); }
     this.rebuildFloors();
+    if (activeChanged) this.refreshFloorTint();
   }
 
   // ── Modo edificio (FT-46) ────────────────────────────────────────────────────
+  // Cambiar de modo es ocultar un grupo y enseñar el otro, y llevar la cámara del encuadre viejo al nuevo con una
+  // transición corta (FT-47; ninguna si el usuario prefiere menos movimiento o aún no corre el bucle de render).
   setMode(mode) {
     mode = mode === 'building' ? 'building' : 'floor';
     if (mode === this.mode) return;
+    const from = this.captureFrame();
     this.mode = mode;
     this.cv.dataset.officeMode = mode;
     const b = mode === 'building';
     this.room.visible = !b;
     this.building.visible = b;
+    this.labelRoot.classList.toggle('building', b);   // el CSS esconde las etiquetas que no son del modo
     // Los personajes y sus etiquetas solo viven en la sala; step() los vuelve a enseñar al volver a `floor`.
     for (const a of this.actors.values()) if (b) a.group.visible = false;
     if (b) { for (const id of [...this.labelEls.keys()]) this.removeLabel(id); this.boardLabel.style.opacity = '0'; }
     this.setHover(-1);
     this.cv.style.cursor = 'default';
     this.floorsSig = '';
+    this.camAnim = null;
     this.rebuildFloors();
     this.resize();
+    if (this.running && !reducedMotion()) this.camAnim = { from, to: this.captureFrame(), t0: performance.now() };
   }
 
   // Plantas del edificio: solo proyectos con equipo, de más antiguo (planta baja) a más nuevo (arriba).
@@ -417,6 +436,7 @@ export class Office3D {
     this.clearBuilding();
     floors.forEach((f, i) => this.buildFloorBlock(f, i));
     if (floors.length !== before) this.resize();   // la caja a encuadrar cambia de altura
+    this.refreshFloorTint();
     this.updateFloorLabels();
   }
 
@@ -516,16 +536,25 @@ export class Office3D {
       el.style.top = p.y + 'px';
       el.style.opacity = p.visible ? '1' : '0';
       el.classList.toggle('hover', g.userData.index === this.hoverFloor);
+      el.classList.toggle('active', this.isActiveFloor(g.userData.index));
     }
+  }
+
+  isActiveFloor(i) { const f = this.floors[i]; return !!(f?.projectId && f.projectId === this.activeProjectId); }
+
+  // Resalte de las plantas: la que está bajo el ratón (fuerte) y la del proyecto activo (suave) (FT-47).
+  refreshFloorTint() {
+    this.floorGroups.forEach((g, i) => {
+      const k = i === this.hoverFloor ? HOVER_K : this.isActiveFloor(i) ? ACTIVE_K : 0;
+      for (const mt of g.userData.mats) if (mt.emissive) { mt.emissive.setHex(k ? HOVER : 0x000000); mt.emissiveIntensity = k; }
+      g.userData.label?.classList.toggle('active', this.isActiveFloor(i));
+    });
   }
 
   setHover(i) {
     if (i === this.hoverFloor) return;
-    const prev = this.floorGroups[this.hoverFloor];
-    if (prev) for (const mt of prev.userData.mats) if (mt.emissive) { mt.emissive.setHex(0x000000); mt.emissiveIntensity = 0; }
     this.hoverFloor = i;
-    const cur = this.floorGroups[i];
-    if (cur) for (const mt of cur.userData.mats) if (mt.emissive) { mt.emissive.setHex(HOVER); mt.emissiveIntensity = 0.22; }
+    this.refreshFloorTint();
   }
 
   pickFloor(e) {
@@ -541,7 +570,10 @@ export class Office3D {
 
   // Para QA: `canvas.dataset.officeMode` y este resumen de lo que se pinta.
   debugState() {
-    return { mode: this.mode, floors: this.floors.map(({ projectId, name, working, queued, review, running }) => ({ projectId, name, working, queued, review, running })) };
+    return {
+      mode: this.mode, activeProjectId: this.activeProjectId, hoverFloor: this.hoverFloor, animating: !!this.camAnim,
+      floors: this.floors.map(({ projectId, name, working, queued, review, running }) => ({ projectId, name, working, queued, review, running })),
+    };
   }
 
   // ── Personajes ──────────────────────────────────────────────────────────────
@@ -726,10 +758,12 @@ export class Office3D {
       .o3d-floor{font-size:12px;font-weight:600;color:#1f2937;background:rgba(255,255,255,.92);border:1px solid rgba(0,0,0,.1);
         border-radius:8px;padding:3px 10px;box-shadow:0 2px 6px rgba(0,0,0,.18);transform:translate(10px,-50%)}
       .o3d-floor.hover{outline:2px solid #3ad0a0;outline-offset:1px}
-      .o3d-floor.grouped{color:#64748b;font-style:italic}`;
+      .o3d-floor.active{border-color:#3ad0a0;box-shadow:0 0 0 2px rgba(58,208,160,.35),0 2px 6px rgba(0,0,0,.18);font-weight:700}
+      .o3d-floor.grouped{color:#64748b;font-style:italic}
+      .o3d-labels:not(.building) .o3d-floor,.o3d-labels.building .o3d-pill,.o3d-labels.building .o3d-bubble,.o3d-labels.building .o3d-board{display:none}`;
     document.head.appendChild(style);
     this.labelRoot = document.createElement('div');
-    this.labelRoot.className = 'o3d-labels';
+    this.labelRoot.className = 'o3d-labels';   // con la clase `building` solo se ven las etiquetas de las plantas (FT-47)
     (wrap || document.body).appendChild(this.labelRoot);
     this.labelEls = new Map();
     this.boardLabel = document.createElement('div');
@@ -821,6 +855,7 @@ export class Office3D {
   }
 
   onPointer(e, click) {
+    if (click) this.cv.focus({ preventScroll: true });   // para que Esc vuelva al edificio (FT-47)
     if (this.mode === 'building') {
       const i = this.pickFloor(e);
       const f = this.floors[i];
@@ -840,7 +875,40 @@ export class Office3D {
     const w = this.cv.clientWidth || 320, h = this.cv.clientHeight || 208;
     this.renderer.setSize(w, h, false);
     this.frameCamera(w / h, this.viewBox());
+    if (this.camAnim) this.camAnim.to = this.captureFrame();   // en plena transición: el destino es el nuevo encuadre
     if (!this.running && this.renderer) this.renderer.render(this.scene, this.camera);
+  }
+
+  // Encuadre actual de la cámara (posición, centro al que mira y frustum), para interpolarlo (FT-47).
+  captureFrame() {
+    const c = this.camera;
+    return { pos: c.position.clone(), center: this.camCenter.clone(), left: c.left, right: c.right, top: c.top, bottom: c.bottom, near: c.near, far: c.far };
+  }
+
+  applyFrame(f) {
+    const c = this.camera;
+    c.position.copy(f.pos);
+    this.camCenter.copy(f.center);
+    c.up.set(0, 1, 0);
+    c.lookAt(f.center);
+    c.left = f.left; c.right = f.right; c.top = f.top; c.bottom = f.bottom; c.near = f.near; c.far = f.far;
+    c.updateProjectionMatrix();
+    c.updateMatrixWorld();
+  }
+
+  // Un paso de la transición edificio ↔ planta: ease-out cúbico sobre todos los parámetros del encuadre.
+  tickCamera(now) {
+    const a = this.camAnim;
+    if (!a) return;
+    const k = Math.min(1, (now - a.t0) / CAM_MS);
+    const e = 1 - Math.pow(1 - k, 3);
+    const mix = (x, y) => x + (y - x) * e;
+    this.applyFrame({
+      pos: a.from.pos.clone().lerp(a.to.pos, e), center: a.from.center.clone().lerp(a.to.center, e),
+      left: mix(a.from.left, a.to.left), right: mix(a.from.right, a.to.right), top: mix(a.from.top, a.to.top), bottom: mix(a.from.bottom, a.to.bottom),
+      near: Math.min(a.from.near, a.to.near), far: Math.max(a.from.far, a.to.far),
+    });
+    if (k >= 1) { this.applyFrame(a.to); this.camAnim = null; }
   }
 
   // Caja [0..x]×[0..y]×[0..z] que debe caber en pantalla: la sala, o el edificio entero con su azotea.
@@ -858,6 +926,7 @@ export class Office3D {
     cam.position.copy(center).addScaledVector(dir, radius * 2);
     cam.up.set(0, 1, 0);
     cam.lookAt(center);
+    this.camCenter.copy(center);
     cam.updateMatrixWorld();
     const inv = cam.matrixWorldInverse;
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
@@ -885,6 +954,7 @@ export class Office3D {
     this.elapsed += dt;
     const now = this.elapsed;
     try {
+      this.tickCamera(t);
       if (this.mode === 'building') this.updateFloorLabels();   // sin personajes: solo recolocar las etiquetas
       else { this.step(dt, now); this.updateLabels(now); }
     } catch (err) { /* nunca romper el bucle de render */ }
