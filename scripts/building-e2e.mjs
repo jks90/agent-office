@@ -58,7 +58,7 @@ try {
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   const state = () => page.evaluate(() => ({
     ds: document.querySelector('#office').dataset.officeMode, dbg: window.aoOffice.debugState(), title: window.aoOffice.title,
-    labels: [...document.querySelectorAll('.o3d-floor')].map((e) => e.textContent), activeLabels: [...document.querySelectorAll('.o3d-floor.active')].map((e) => e.textContent),
+    labels: [...document.querySelectorAll('.o3d-floor')].map((e) => e.title || e.textContent), activeLabels: [...document.querySelectorAll('.o3d-floor.active')].map((e) => e.title || e.textContent),
     pills: document.querySelectorAll('.o3d-pill').length, floorLabelsShown: [...document.querySelectorAll('.o3d-floor')].filter((e) => getComputedStyle(e).display !== 'none').length,
     crumb: document.querySelector('#office-crumb').textContent.trim(), live: document.querySelector('#office-live').textContent,
     select: document.querySelector('#project').value, stored: localStorage.getItem('ao:officeMode'), focused: document.activeElement === document.querySelector('#office'),
@@ -117,7 +117,7 @@ try {
     const agents = d.floors.flatMap((f) => f.visibleAgents.map((a) => ({ ...a, projectId: f.projectId })));
     window.aoOffice.update({ projects, allAgents: agents, allTasks: [{ id: 'fail-1', projectId: pid, agentId: agents.find((a) => a.projectId === pid)?.id, status: 'failed', title: 'Fallo visible' }] });
     const after = window.aoOffice.debugState();
-    return { beta: after.floors.find((f) => f.projectId === pid), labels: [...document.querySelectorAll('.o3d-floor')].map((e) => e.textContent) };
+    return { beta: after.floors.find((f) => f.projectId === pid), labels: [...document.querySelectorAll('.o3d-floor')].map((e) => e.title || e.textContent) };
   }, b.id);
   check('FT-70: los fallidos se cuentan y rotulan en la tarjeta de planta', withFailed.beta.failed === 1 && /1 fallidos/.test(withFailed.labels.find((l) => l.includes('Beta')) || ''), JSON.stringify(withFailed));
   check('sin personajes ni pills en modo edificio', st.pills === 0, String(st.pills));
@@ -160,6 +160,24 @@ try {
   });
   check('FT-70: con 5 plantas encuadradas los rectángulos siguen separados', five.floors === 5 && five.rects.every((r, i) => five.rects.every((s, j) => i >= j || overlap(r, s) < Math.min(r.w * r.h, s.w * s.h) * 0.08)), JSON.stringify(five.rects));
   check('FT-70: con 5 plantas todos los agentes de proyecto siguen visibles desde cámara', five.agents.length === 8 && five.agents.every((a) => a.clearSight && a.inRect), JSON.stringify(five.agents));
+  // FT-77 v2 · contrato visual (spec/visual-contract.json del pack) medido a 1920×1080 con 5 plantas
+  {
+    const vp = page.viewport();
+    await page.setViewport({ width: 1920, height: 1080 });
+    await sleep(900);
+    const m = await page.evaluate(() => {
+      const o = window.aoOffice, cv = document.querySelector('#office').getBoundingClientRect();
+      const rs = o.floors.map((_, i) => o.floorFullScreenRect(i));
+      const top = Math.min(...rs.map((r) => r.y)), bottom = Math.max(...rs.map((r) => r.y + r.h));
+      return { widths: rs.map((r) => Math.round(r.w)), xs: rs.map((r) => Math.round(r.x)), heightShare: (bottom - top) / cv.height, canvasH: cv.height };
+    });
+    check('v2: plantas alineadas en un único eje vertical (mismo x en pantalla, ±4 px)', m.xs.every((x) => Math.abs(x - m.xs[0]) <= 4), JSON.stringify(m.xs));
+    check('v2: ancho visual de planta 550–750 px a 1920×1080', m.widths.every((w) => w >= 550 && w <= 750), JSON.stringify(m.widths));
+    check('v2: el edificio ocupa el 65–80 % del alto útil (±5 %)', m.heightShare >= 0.6 && m.heightShare <= 0.85, m.heightShare.toFixed(2));
+    await page.screenshot({ path: path.join(shotDir, 'building-v2-1920.png') });
+    await page.setViewport(vp);
+    await sleep(500);
+  }
   await page.screenshot({ path: path.join(shotDir, 'building-1-edificio-5-plantas.png') });
   await page.reload({ waitUntil: 'networkidle2' });
   await sleep(1200);

@@ -82,7 +82,8 @@ try {
     args: ['--no-sandbox', '--disable-gpu', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--hide-scrollbars'],
   });
   const page = await browser.newPage();
-  await page.setViewport({ width: 1600, height: 950 });
+  const argNum = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? Number(process.argv[i + 1]) || d : d; };
+  await page.setViewport({ width: argNum('--width', 1600), height: argNum('--height', 950) }); // --width/--height: capturas a 1920×1080 para comparar con la referencia (FT-77 v2)
   const errors = [];
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   page.on('console', (m) => { if (['error', 'warning'].includes(m.type())) errors.push(`${m.type()}: ${m.text()}`); });
