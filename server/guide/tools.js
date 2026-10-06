@@ -75,13 +75,21 @@ function ui(cmd, ctx) {
   return { sent: true, client };
 }
 
+// FT-44: una tarea puede tener rama en varios repos; `files` son rutas relativas (con `repo:` delante fuera del principal)
+// y `repos` el detalle por repo.
 const gitFiles = async (t) => {
   const p = projectOf(t);
-  const repo = p && team.repoOfTask(p, t);
-  if (!t.branch || !repo) return { files: [], note: t.branch ? 'La tarea no tiene repo' : 'La tarea no tiene rama (motor demo o sin empezar)' };
-  if (!(await git.branchExists(repo, t.branch))) return { files: [], branch: t.branch, note: `La rama ${t.branch} ya se fusionó en ${repo.baseBranch} y se borró (tarea ${t.status}); los ficheros están en el diffStat de la tarea y en git log de ${repo.key}` };
-  const out = await git.git(repo.path, 'diff', '--name-only', `${repo.baseBranch}...${t.branch}`);
-  return { files: out ? out.split('\n') : [], base: repo.baseBranch, branch: t.branch };
+  const xs = p ? team.taskRepos(p, t) : [];
+  if (!t.branch || !xs.length) return { files: [], note: t.branch ? 'La tarea no tiene repo' : 'La tarea no tiene rama (motor demo o sin empezar)' };
+  const repos = {}, files = [], notes = [];
+  for (const x of xs) {
+    if (!(await git.branchExists(x.repo, x.branch))) { notes.push(`La rama ${x.branch} ya se fusionó en ${x.repo.baseBranch} (${x.key}) y se borró (tarea ${t.status}); los ficheros están en el diffStat de la tarea y en git log de ${x.key}`); continue; }
+    const out = await git.git(x.repo.path, 'diff', '--name-only', `${x.repo.baseBranch}...${x.branch}`);
+    const list = out ? out.split('\n') : [];
+    repos[x.key] = { files: list, base: x.repo.baseBranch, branch: x.branch };
+    files.push(...list.map((f) => x.main ? f : `${x.key}:${f}`));
+  }
+  return { files, ...(xs.length > 1 ? { repos } : {}), base: xs[0].repo.baseBranch, branch: t.branch, ...(notes.length ? { note: notes.join(' · ') } : {}) };
 };
 
 // ── Escritorio (FT-22) · regla «solo fuera»: si la ventana activa es flow-test/AgentOffice no se devuelve nada del escritorio ──
@@ -147,7 +155,7 @@ export const tools = [
   T('task.list', 'Lista tareas, filtradas por proyecto y/o estado.', obj({ projectId: str('Id o nombre del proyecto'), status: { type: 'string', enum: team.STATUSES } }), 'read',
     ({ projectId, status }) => { const pid = projectId ? findProject(projectId).id : null; return store.get().tasks.filter((t) => (!pid || t.projectId === pid) && (!status || t.status === status)).map(brief); }),
   T('task.get', 'Detalle de una tarea: descripción, resumen del agente, diffStat, error, preguntas y respuestas.', obj({ code: str('Código de la tarea') }, ['code']), 'read',
-    ({ code }) => { const t = findTask(code); return { ...brief(t), context: t.context || null, description: t.description, summary: t.summary, diffStat: t.diffStat, error: t.error, feedback: t.feedback, questions: t.questions || [], costUsd: t.costUsd, attempts: t.attempts, createdAt: t.createdAt }; }),
+    ({ code }) => { const t = findTask(code); return { ...brief(t), context: t.context || null, description: t.description, summary: t.summary, diffStat: t.diffStat, repos: t.repos || null, outsideWrites: t.outsideWrites || null, error: t.error, feedback: t.feedback, questions: t.questions || [], costUsd: t.costUsd, attempts: t.attempts, createdAt: t.createdAt }; }),
   // FT-7: borrador de tarea con la IA de «✨ Redactar con IA» + el contexto que el usuario tiene delante. No crea nada.
   T('task.draft', 'Redacta (sin crearlo) el borrador de una tarea a partir de lo que pide el usuario y de lo que está viendo (flow/nodo de flow-test, tarea o agente abiertos): título, descripción con «Hecho cuando», rol, repo y skills. Enséñaselo al usuario y, si lo aprueba, pásalo a task_create. Tarda unos segundos.', obj({
     projectId: str('Id o nombre del proyecto'), text: str('Lo que pide el usuario, tal cual'),
@@ -196,16 +204,21 @@ export const tools = [
     ({ agentId }) => { const a = findAgent(agentId); const t = store.get().tasks.find((x) => x.agentId === a.id && x.status === 'doing'); return { ...briefAgent(a), task: t ? brief(t) : null }; }),
   T('agent.getLastActions', 'Últimas acciones de un agente: líneas de su log y eventos recientes.', obj({ agentId: str('Id o nombre del agente'), limit: { type: 'integer', description: 'Máx. (20 por defecto)' } }, ['agentId']), 'read',
     ({ agentId, limit }) => { const a = findAgent(agentId); return { agent: a.name, log: lastActions(a.id, limit), events: activity.list({ agentId: a.id, limit: Number(limit) || 20 }) }; }),
-  T('agent.getModifiedFiles', 'Ficheros que ha modificado una tarea/agente (git diff --name-only base...rama).', obj({ code: str('Código de la tarea'), agentId: str('Alternativa: agente (su tarea actual o la última)') }), 'read',
+  T('agent.getModifiedFiles', 'Ficheros que ha modificado una tarea/agente (git diff --name-only base...rama, en cada repo con rama; los de repos secundarios llevan «repo:» delante).', obj({ code: str('Código de la tarea'), agentId: str('Alternativa: agente (su tarea actual o la última)') }), 'read',
     async (a) => { const t = taskFrom(a); return { task: t.code || t.id, ...(await gitFiles(t)) }; }),
-  T('agent.getArtifacts', 'Artefactos de una tarea/agente: diffStat, resumen y commits de la rama.', obj({ code: str('Código de la tarea'), agentId: str('Alternativa: agente (su tarea actual o la última)') }), 'read',
+  T('agent.getArtifacts', 'Artefactos de una tarea/agente: diffStat, resumen y commits de la rama (por repo si hay varios) y, si los hay, avisos de escritura fuera del worktree.', obj({ code: str('Código de la tarea'), agentId: str('Alternativa: agente (su tarea actual o la última)') }), 'read',
     async (a) => {
       const t = taskFrom(a);
-      const p = projectOf(t), repo = p && team.repoOfTask(p, t);
-      let commits = [];
-      if (t.branch && repo && await git.branchExists(repo, t.branch)) { const out = await git.git(repo.path, 'log', '--format=%h %s', `${repo.baseBranch}..${t.branch}`); commits = out ? out.split('\n') : []; }
-      else if (t.branch && repo) { const out = await git.git(repo.path, 'log', '--format=%h %s', '--grep', `Merge branch '${t.branch}'`, '-1'); commits = out ? [out + ' (ya fusionada)'] : []; }
-      return { task: t.code || t.id, branch: t.branch || null, summary: t.summary, diffStat: t.diffStat, commits };
+      const p = projectOf(t);
+      const commits = [], repos = {};
+      for (const x of p ? team.taskRepos(p, t) : []) {
+        let list = [];
+        if (await git.branchExists(x.repo, x.branch)) { const out = await git.git(x.repo.path, 'log', '--format=%h %s', `${x.repo.baseBranch}..${x.branch}`); list = out ? out.split('\n') : []; }
+        else { const out = await git.git(x.repo.path, 'log', '--format=%h %s', '--grep', `Merge branch '${x.branch}'`, '-1'); list = out ? [out + ' (ya fusionada)'] : []; }
+        repos[x.key] = { branch: x.branch, diffStat: t.repos?.[x.key]?.diffStat ?? (x.main ? t.diffStat : ''), commits: list };
+        commits.push(...list.map((c) => x.main ? c : `${x.key}: ${c}`));
+      }
+      return { task: t.code || t.id, branch: t.branch || null, summary: t.summary, diffStat: t.diffStat, commits, ...(Object.keys(repos).length > 1 ? { repos } : {}), ...(t.outsideWrites ? { outsideWrites: t.outsideWrites } : {}) };
     }),
 
   // — Integraciones deterministas (FT-10): IDE, git, filesystem, terminal, navegador. Solo repos/worktrees del proyecto —
@@ -213,7 +226,7 @@ export const tools = [
     obj({ path: str('Fichero, relativo al repo/worktree'), line: { type: 'integer', description: 'Línea (opcional)' }, task: str('Código de la tarea a la que pertenece el fichero (recomendado)'), repo: str('Clave del repo (si no das tarea)') }, ['path']), 'navigate',
     (a) => integ.ideOpenFile(a)),
   T('git.status', 'git status del repo (o del worktree de la rama indicada).', obj({ repo: str('Clave del repo'), branch: str('Rama de una tarea (opcional)') }, ['repo']), 'read', (a) => integ.gitStatus(a)),
-  T('git.diff', 'git diff del repo: con «branch», rama base...rama; sin ella, los cambios sin confirmar frente a HEAD. Recortado a 200 KB.', obj({ repo: str('Clave del repo'), branch: str('Rama de una tarea (opcional)') }, ['repo']), 'read', (a) => integ.gitDiff(a)),
+  T('git.diff', 'git diff de UN repo (clave): con «branch», rama base...rama (en tareas multi-repo, una llamada por repo); sin ella, los cambios sin confirmar frente a HEAD. Recortado a 200 KB.', obj({ repo: str('Clave del repo'), branch: str('Rama de una tarea (opcional)') }, ['repo']), 'read', (a) => integ.gitDiff(a)),
   T('git.log', 'git log del repo (o de una rama): hash, fecha, autor y asunto.', obj({ repo: str('Clave del repo'), branch: str('Rama (opcional)'), limit: { type: 'integer', description: 'Máx. de commits (20 por defecto, 100 como mucho)' } }, ['repo']), 'read', (a) => integ.gitLog(a)),
   T('filesystem.read', 'Lee un fichero de un repo/worktree del proyecto (máx. 200 KB). Nunca .env, .git ni data/; fuera del repo da error.', obj({ repo: str('Clave del repo'), task: str('Código de la tarea (lee su worktree)'), path: str('Fichero, relativo al repo') }, ['path']), 'read', (a) => integ.fsRead(a)),
   T('filesystem.write', 'Escribe (crea o sobrescribe) un fichero dentro de un repo/worktree del proyecto (máx. 200 KB). Pide confirmación. Nunca .env, .git ni data/.', obj({ repo: str('Clave del repo'), task: str('Código de la tarea (escribe en su worktree)'), path: str('Fichero, relativo al repo'), content: str('Contenido completo') }, ['path', 'content']), 'write', (a) => integ.fsWrite(a)),

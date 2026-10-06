@@ -26,6 +26,7 @@ escribe un objetivo, pulsa **Encargar al PO** y luego **▶ Poner a trabajar**.
 6. **Mover tarjetas (FT-27)**: en el tablero se arrastra una tarjeta a otra columna o se usa su botón (→ Por hacer / ← Backlog). Solo se mueven a mano las tareas sin empezar (Backlog ↔ Por hacer; las fallidas vuelven a cualquiera de las dos). `PATCH /api/tasks/:id {status}` responde 409 con el motivo si la tarea está en curso/revisión/hecha o el destino es En curso/Revisión/Hecho, y la UI lo muestra como aviso.
 7. **Quién hará la tarea (FT-50)**: cada tarjeta de Backlog / Por hacer lleva, bajo el título, el chip «👤 Nombre · motor/modelo» del agente que la hará: el asignado si lo hay, el **previsto** si no (`task.plannedAgentId`, calculado en cada snapshot y nunca persistido, con la misma regla que el planificador: `plannedAgentFor()` en `team.js` — primer agente del equipo con el rol de la tarea o que lo atiende por `handles`, libre antes que ocupado) y, si nadie del equipo tiene el rol, «⚠️ sin agente para este rol» en ámbar (`plannedReason`). Clic en el chip = abrir el cajón del agente (motor, modelo, registro); en el ámbar, «Contratar agente» con el rol ya elegido. El desplegable «Asignar a…» (agentes del equipo compatibles con el rol) llama a `POST /api/tasks/:id/assign {agentId}` (vacío = volver a la regla del rol; 400 si no está fichado, 409 si la tarea ya empezó) y el chip pasa a fijo. La misma fila está en el modal «Ver la tarea». Prueba: `node scripts/card-agent-e2e.mjs [captura.png]` (28 checks: API y UI con Chrome headless, sin Claude).
 8. **Preguntas al cliente**: si un agente necesita una decisión tuya (regla de negocio, nombre visible, qué opción prefieres) ejecuta `node bin/ao-ask.mjs "¿Pregunta?" --opt A --opt B` (el prompt se lo explica); la pregunta aparece en AgentOffice como aviso fijo arriba y en un modal con las opciones o respuesta libre, y el comando espera tu respuesta (hasta `AO_ASK_TIMEOUT_MIN`, 120 min) y la imprime para que el agente siga. Sin respuesta, decide él con el criterio más conservador y lo deja visible en el resumen. Cada pregunta y su respuesta quedan en la tarea («Conversación con el agente») y se le repiten si vuelve a intentarla.
+9. **Tablero compacto (FT-74)**: por defecto cada tarjeta ocupa 2–3 líneas (rol, código, repo e iconos con tooltip: ✖ fallo, ⚠ conflicto, ⏸ cuota, ✋ revisión, ⏳ dependencia, 💲 coste, ≈ estimación; título a 2 líneas; agente) y sus acciones salen al pasar el ratón o con foco (principal según la columna + «⋯»); clic en la tarjeta abre «Ver la tarea». El interruptor «Compacto / Detallado» de la cabecera (recordado en `localStorage ao:boardDensity`) devuelve el diseño anterior. Prueba: `node scripts/board-density-e2e.mjs`.
 5. **Tú decides**: *Ver cambios* (diff), *Aprobar y fusionar* (`merge --no-ff` a la rama base; exige el repo limpio y en esa rama) o *Devolver* con comentarios (se descarta la rama y el agente lo rehace con tu feedback).
 6. **QA + flow-test**: el agente QA recibe el MCP de flow-test (`Ajustes`, por defecto `http://localhost:9998/mcp`) para crear y ejecutar flows que verifiquen la API.
 
@@ -45,6 +46,7 @@ Además de las líneas de texto por agente (`log`), el servidor emite **eventos 
 | `AgentToolStarted` / `AgentToolFinished` | el motor (claude/codex/demo) llama a una herramienta (`callId, tool, summary` / `callId, ok`). El resumen no lleva contenido sensible: de Bash solo el programa, nunca el comando |
 | `AgentFileModified` | un fichero entra en el commit de la tarea (`path`) |
 | `AgentArtifactCreated` | commit (`kind:'commit', branch, repo, sha, files, diffStat`) o diff simulado (`kind:'diff'`) |
+| `ReviewPending` | FT-56: tarea esperando revisión más de `reviewNudgeMin` min (`taskCode, minutes, blocks[]`) |
 | `AgentBlocked` | pregunta pendiente al cliente (`questionId, question, options`) |
 | `UserInstructionAdded` | respuesta del cliente o feedback de *Devolver* (`kind:'answer'\|'feedback', text`) |
 | `AgentPaused` / `AgentResumed` | el usuario para al agente / vuelve tras una respuesta o un reintento (`reason`) |
@@ -116,6 +118,8 @@ Fase 4 de la especificación (preferencia 2: API/CLI antes que visión). Nuevas 
 Prueba: `node scripts/integrations-e2e.mjs` (55 comprobaciones, sin Claude: servidor temporal, repo git de pega, IDE/navegador falsos que registran sus argumentos). Incluye `rm -rf`, encadenados y rutas fuera del repo rechazados, `.env`/`data/`/symlinks, tope de 200 KB y timeout.
 
 ## 🧭 Guía (FT-6 · FT-9 · FT-12)
+- **Lista de chats (FT-51)**: en la vista Guía la columna de chats se ensancha arrastrando su borde (160–480 px, doble clic = 220; `ao:guideListW`), se pliega a una tira con ◀/▶ (`ao:guideListMin`), cada chat tiene 🗑 (con confirmación; no con un turno en curso) y «Borrar todos…»; con el foco en la lista: ↑/↓ cambian de chat, Supr borra, Ctrl+N nuevo. En móvil y en el cajón flotante queda el selector con 🗑.
+
 
 Mapa rápido (cada pieza es una tarea y tiene su sección en este README): eventos **FT-1** · contexto de la UI **FT-2** · contexto de flow-test **FT-3** (en el repo flow-test) · tools, políticas y MCP **FT-4** · control de workers **FT-5** · chat y proveedores **FT-6** · proveedores API **FT-8** · Task Capture **FT-7** · e2e **FT-11** · documentación **FT-12**. Cómo encaja todo: flow `flowtest/arquitectura-guide.flow.json` del workspace (Mermaid de arquitectura, eventos y permisos + cajitas ejecutables contra `/api/context`, `/api/events` y `/api/guide/tool`) y, comparado con la especificación, `AgentOffice - Guía y oficina de agentes.md` en la carpeta docs/ del proyecto (12-flowtest).
 
@@ -174,6 +178,39 @@ Cada respuesta del Guía (vista Guía y cajón flotante, también dentro del ifr
 - **Variables**: `AO_TTS_CMD` (sustituye a piper: se ejecuta con `<salida.wav> <voz> <idioma>` y recibe el texto por stdin; sirve para probar sin piper), `AO_TTS_VOICES_DIR` (carpeta de modelos), `AO_TTS_VOICES`, `AO_TTS_HF_BASE`, `AO_TTS_OPENAI_MODEL`, `AO_OPENAI_BASE`.
 - **Prueba**: `node scripts/tts-e2e.mjs [captura.png]` (servidor temporal con `AO_TTS_CMD` falso que genera un WAV, Chrome headless con autoplay): API, ▶ con el texto plano, `play`/`ended` del `<audio>`, ⏸, una sola reproducción, cambio y prueba de voz en Ajustes, 503 con respaldo del navegador y botón deshabilitado sin ninguno.
 
+## ✋ Revisión (FT-56)
+
+Cuando una tarea llega a **Revisión** el trabajo se para hasta que alguien pulsa Aprobar/Devolver, y las tareas que dependen de ella esperan en «Por hacer». Para que nunca «parezca que no pasa nada»:
+
+- **Tarjeta en Revisión**: franja ámbar «✋ Esperando tu revisión desde hace 14 min» (el tiempo se actualiza solo), «bloquea: FT-47, FT-48» (con enlace) y los botones **Aprobar / Devolver / Ver diff** en la propia tarjeta.
+- **Tarjetas dependientes** (Por hacer / Backlog): «⏳ espera a FT-46 (en revisión)» con enlace.
+- **Contadores**: `✋N` en la pestaña Tareas, «✋ N por revisar» en la cabecera (clic → la más antigua), KPI y columna Revisión del 📊 Resumen en ámbar con «desde hace X min» en el tooltip; el edificio 3D ya enseña «✋ K en revisión» (FT-46).
+- **Aviso proactivo**: toast al entrar una tarea en revisión («Óscar terminó FT-46: revísala»). Pasados `settings.reviewNudgeMin` minutos (10 por defecto; 0 = enseguida) el servidor emite **`ReviewPending {taskCode, minutes, blocks[]}`** en el Activity Stream (una vez por entrada en revisión) y el Guía recibe un bloque `<pendientes_de_revision>` en su siguiente turno para mencionarlo.
+
+### Política de revisión (`settings.reviewPolicy`, Ajustes vía `POST /api/settings`)
+
+| Valor | Qué hace |
+|---|---|
+| `manual` (por defecto) | Siempre decide una persona. |
+| `auto-qa` | Al llegar a revisión, el orquestador lanza un **revisor** interno (rol QA; mismo motor que el autor o `settings.reviewEngine`) sobre la rama: lee `git diff <base>...HEAD`, el resumen y ejecuta las verificaciones declaradas, y acaba con un JSON `{"approve": bool, "reasons": [], "feedback": ""}`. `approve` → se aprueba y fusiona sola («✅ aprobada por revisión automática (QA): …»); si no → se **devuelve** al autor con el feedback (intento N+1). Tope de **2 ciclos automáticos**; después queda para el humano con «⚠️ dos revisiones automáticas fallidas». Una devolución humana reinicia el contador. |
+| `auto` | Sin LLM: ejecuta las verificaciones declaradas en el worktree y, si **todas** pasan, aprueba. Si una falla se queda en revisión con el motivo. Sin verificaciones declaradas se comporta como `manual`. |
+
+- **Verificaciones declaradas**: `checks: ["npm run lint", …]` al crear la tarea (`POST /api/tasks`) o comandos en `código` de la descripción que parezcan tests/lint/typecheck/e2e (`node scripts/x-e2e.mjs`, `npm run typecheck`…).
+- **Nunca se aprueba sola** una tarea con `reviewRequired: true`, una cortada por tope de gasto o atasco, ni una que toque ficheros sensibles: `settings.reviewSensitive[]` (por defecto `.github/workflows`, `Dockerfile`, `package.json` —solo si cambian dependencias— y `server/access`).
+- Todo queda en el Activity Stream (`TaskReviewed {by:'auto-qa'|'auto', verdict}`) y en `task.reviewLog` (historial de la tarea).
+- 💡 **Consejo**: deja `manual` en los proyectos cuyas tareas toquen producción (despliegues, infraestructura, accesos, migraciones); usa `auto` para repos con buenos tests y `auto-qa` para una segunda opinión barata.
+- Pruebas: `node scripts/review-e2e.mjs` (motor demo; un título con `[revisor:devolver]` hace que el revisor demo devuelva) y `node scripts/review-shot.mjs out.png` (captura de la pestaña Tareas).
+
+## Un worktree por cada repo del proyecto (FT-44)
+
+Si el proyecto tiene varios repos, cada tarea real (motores claude/codex) recibe un worktree y la rama `ao/<código>` en **todos**: el principal (`task.repo`) en `data/worktrees/<proyecto>/<código>/` como siempre y los demás como hermanos `data/worktrees/<proyecto>/<código>.<repoKey>/` (anidarlos en el principal los ensuciaría). El prompt lista cada repo con **su** ruta de worktree y prohíbe escribir en los checkouts principales; los motores reciben los demás worktrees como directorios adicionales (`--add-dir`).
+
+- **Schema aditivo**: `task.branch`/`task.diffStat` siguen siendo los del repo principal; `task.repos = { <key>: { branch, diffStat, sha } }` trae todos. Al terminar se confirma en cada worktree y los repos **sin cambios se sueltan** (worktree y rama fuera) para no fusionar nada vacío.
+- **Revisión**: la tarjeta/modal enseña un diffStat por repo, el diff (`GET /api/tasks/:id/diff`, «Ver cambios») recorre todos con cabecera `══ repo <key> ══`, y las tools `agent.getModifiedFiles` (ficheros de otros repos con prefijo `repo:`, más `repos`), `agent.getArtifacts` (commits y diffStat por repo) y `task.get` entienden varios repos. `git.diff` del Guide ya es por clave de repo (una llamada por repo).
+- **Aprobar / Devolver / Actualizar con main (FT-19)**: se ponen al día todas las ramas antes de fusionar ninguna; si una choca, la tarea vuelve al agente con el feedback del repo afectado («Tu rama choca con main (repo api, tu worktree …) en: …») y no se fusiona nada. Borrar la tarea quita todos los worktrees y ramas. `behind`/`conflicts` de la tarea son la suma de los repos (`repo:ruta` fuera del principal).
+- **Guardarraíl**: se guarda el `git status --porcelain` de cada checkout principal al empezar y al terminar; si hay líneas nuevas, la tarea lleva `outsideWrites: [{ repo, path, files }]`, la tarjeta un chip «⚠ escribió fuera de su worktree» y el modal el detalle (también en `agent.getArtifacts`). Es solo un aviso para el humano: no se fusiona ni se revierte nada. Con tareas simultáneas en el mismo repo puede haber falsos avisos.
+- e2e: `node scripts/multirepo-e2e.mjs` (2 repos git temporales, `claude` falso).
+
 ## Fusión sin conflictos a mano (FT-19)
 
 Las tareas nacen de la rama base en su worktree; si varias tocan los mismos ficheros, al aprobar la fusión chocaba y había que resolverla a mano. Ahora lo gestiona el plugin:
@@ -186,16 +223,21 @@ Las tareas nacen de la rama base en su worktree; si varias tocan los mismos fich
 
 ## Motores
 
+**Selector de modelo único (FT-55):** el modelo nunca se escribe a mano salvo en «Otro…»; `modelSelect()` (`public/app.js`) es el mismo `<select>` en el cajón del agente, contratar, editar, roles y Ajustes (grupos Claude/Codex, no disponibles deshabilitados con su nota, lista de `GET /api/engines/models` cacheada 5 min con botón ↻). Prueba: `node scripts/model-select-e2e.mjs`.
+
 | Motor | Cómo se lanza | Permisos |
 |---|---|---|
 | `demo` | simulado | — |
 | `claude` | `claude -p --output-format stream-json` en el worktree | lectura/edición + shell de andar por casa (node, npm, git sin push, grep, sed, cp…; sin rm/sudo/docker/ssh); `--strict-mcp-config`: no hereda tus MCP globales; puede ver sus capturas con `scripts/preview.mjs` |
 | `codex` | `codex exec --json -s workspace-write` en el worktree | sandbox de Codex (el PO, `read-only`) |
+| `local` (FT-54) | el mismo `codex exec`, con un proveedor propio (LM Studio / Ollama) por `-c` | como `codex` |
 
 Cada agente elige motor y modelo desde su panel (clic en el personaje o en su ficha).
 Variables: `AO_PORT` (7420), `AO_HOST` (127.0.0.1), `AO_DATA_DIR`, `AO_CLAUDE_BIN`, `AO_CODEX_BIN`.
 
 ## Consumo de tokens (FT-26)
+
+**Resumen limpio (FT-53):** la tabla del 📊 Resumen queda en una línea por proyecto — «Tokens por sesión» = solo el total (`23,9M tok`) con un punto ámbar/rojo si algún agente pasa del 80 % de su contexto y botón «Ver» (`data-sum-tokens`); «Equipo» = «6 agentes» con hasta 3 avatares + «+3» (`data-sum-team`); «Trabajando en» = «2 en curso» (+ código si es una); «Libres» = «4 libres». El detalle vive en modales (`dialog()`, clase `summary-modal`, a pantalla completa en ≤760 px): **Tokens por sesión · proyecto** (una fila por agente: rol, motor/modelo, total, ↓↑⚡, barra con «quedan…», coste; totales al pie; orden por total; «Copiar como texto») y **Equipo · proyecto** (💤 libre / ⚙ trabajando en FT-xx / ⏸ pausado / ❓ esperando respuesta, actividad, «Abrir» el cajón y «Ir a la tarea»). Se repintan en vivo con cada `state` del SSE sin cerrarse; Esc cierra. Con varios proyectos, la fila «Total» trae «Ver todos» (tokens agrupados por proyecto). Solo UI, sin cambios de API; prueba: `node scripts/summary-e2e.mjs`.
 
 El Resumen muestra, por agente y sesión, los tokens gastados (↓ entrada · ↑ salida · ⚡ caché · total) y un total por proyecto, en vivo por el mismo SSE `state` (`agent.usage`, y `task.usage` acumulado entre intentos). Solo se guardan cifras, nunca prompts ni transcripts. Lógica en `server/usage.js`; prueba: `node scripts/usage-e2e.mjs`.
 
@@ -265,6 +307,7 @@ server/engines/allowlist.js  lista blanca de shell compartida por el motor Claud
 bin/ao-mcp.mjs      servidor MCP stdio del Guide (FT-4)
 bin/stt-whisper.py  STT local con faster-whisper (FT-9)
 server/desktop/     DesktopProvider: ventana activa/lista/captura, linux X11+Wayland GNOME, fake (FT-20); capture.js guarda capturas (FT-21)
+server/review.js    revisión visible y automática: política, checks, ficheros sensibles, veredicto (FT-56)
 server/git.js       worktrees, commit, diff, merge, estado frente a la base y actualizar con ella (FT-19)
 server/engines/     demo · claude · codex (+ describe.js: herramienta → frase del bocadillo)
 public/office3d.js  la oficina 3D (three.js + Kenney): sala con personajes y, desde FT-46, el edificio con una planta por proyecto (navegación edificio ↔ planta en app.js, FT-47)
@@ -332,10 +375,65 @@ Medido el 6 OCT 2026: lo caro no es el arranque (≈31k tokens con `--strict-mcp
 - **Briefing por repo** (`server/briefing.js`): mapa generado con git (carpetas, ficheros grandes a leer por tramos, scripts, e2e, secciones de README/CLAUDE.md, últimos commits), cacheado por commit en `data/briefings/` e inyectado en cada prompt, para que el agente no explore.
 - **Reglas de lectura en el prompt** (`economyBlock` en `team.js`): Grep + Read por tramos en ficheros grandes, sin releer, salidas recortadas, un e2e salvo fallo, una captura.
 - **Tope de gasto por intento** (Ajustes, `maxTaskUsd`, 3 $; `claude --max-budget-usd`): al alcanzarlo la tarea NO falla, va a Revisión con «⚠️ tope de gasto alcanzado»; Devolver le da otro intento desde su rama.
+- **Agente atascado (FT-62)** (`server/stuck.js`, Ajustes ▸ «Detectar agentes atascados»): sobre el stream que ya llega (`AgentToolStarted/Finished` y `t.usage`, igual con `claude`, `codex` y `auto`) detecta: la misma orden o lectura de fichero ≥3 veces sin editar nada entre medias (editar reinicia el contador), ≥4 errores de herramienta seguidos, 25 pasos sin editar en una tarea de código (rol `dev`), el mismo e2e/test fallando igual ≥3 veces y tokens por turno >80 k durante 4 turnos sin cambios en el worktree (`git status` + `git diff --stat`). Todos los umbrales se cambian en Ajustes. Acción escalonada: 1.ª señal → aviso en caliente de redacción neutra («Parece que das vueltas…; cambia de enfoque o termina con lo que tienes y explica qué te bloquea»; Claude por stdin, Codex/demo —sin entrada en caliente— reencolando la misma tarea con el aviso en el prompt); si la señal vuelve a saltar tras el aviso, se corta y la tarea va a Revisión con «⚠️ atascado: <señal>» (como el tope de gasto: lo hecho queda en la rama, `t.stuck`, evento `AgentBlocked {reason:'stuck', signal}`). Prueba: `node scripts/stuck-unit.mjs` (cada señal) y `node scripts/stuck-e2e.mjs` (`claude`/`codex` falsos que repiten una orden: aviso, corte y Revisión).
 - **Esfuerzo** (Ajustes, `agentEffort`, medio; `claude --effort`).
 - **Reanudar sesión** en reintentos de la misma tarea en su worktree si el anterior acabó hace <50 min (`claude --resume`, la caché de contexto aún vale).
+- **Paridad Codex (FT-57)** — mismas medidas con `codex exec --json` (`server/engines/codex.js`); `team.js` pasa `budgetUsd`/`maxTokens`/`effort`/`resumeSession` a ambos motores (y con `auto`):
+
+  | Medida | Claude | Codex |
+  |---|---|---|
+  | Esfuerzo (`agentEffort`) | `--effort` | `-c model_reasoning_effort="…"` + `-c model_reasoning_summary="concise"` |
+  | Tope por intento | `--max-budget-usd` (lo corta el CLI) | el servidor lo calcula con el uso del stream (llega al cerrar cada turno): coste estimado con `CODEX_PRICES` (`usage.js`, **estimación**) ≥ `maxTaskUsd`, o tokens ≥ `maxTaskTokens` si está fijado (Ajustes; 0 = equivalente al de $, ≈ 7 M tokens para 3 $). Al superarlo `SIGTERM` al grupo → `{budgetHit:true}` → Revisión con aviso, igual que Claude |
+  | Reanudar (<50 min, misma tarea y **mismo motor**) | `--resume <id>` | `codex exec … resume <thread_id> -` (el `thread_id` sale del evento `thread.started`) |
+  | RTK (solo agentes, no planificación) | `--settings` con `rtk hook claude` + `RTK_RULES` | `-c features.codex_hooks=true -c hooks.PreToolUse=[…]` por línea de órdenes: **no se toca `~/.codex/config.toml`** ni hace falta `CODEX_HOME` temporal. El hook es `bin/ao-rtk-codex.mjs`, que ejecuta `rtk hook codex` y solo deja pasar la reescritura si es de `RTK_RULES` sin metacaracteres de shell (nunca `rtk run`); si no, se ejecuta el comando original. PATH con el directorio de `rtk` |
+
+  Prueba: `node scripts/codex-economy-e2e.mjs` (codex y rtk falsos). ⚠️ **No verificado contra el `codex` real**: al desarrollar esto el entorno no permitió ejecutar `codex --help`/`rtk hook --help`; los nombres `exec resume`, `features.codex_hooks`, `hooks.PreToolUse` y `model_reasoning_summary` salen de la documentación conocida y deben confirmarse con `codex exec --help` / una pasada real de una línea. Los precios de `CODEX_PRICES` son una estimación.
 - **Estimación** en las tarjetas de Por hacer / Backlog: mediana del coste de las últimas 10 tareas hechas del mismo rol (`costEstimates()`).
+- **Afinidad de caché** (FT-64; Ajustes, `cacheAffinity`, activa por defecto): la caché de prompt dura ~5 min y dos tareas seguidas del mismo repo+rol+motor comparten el prefijo estable. `tick()` ordena las «Por hacer» como pausadas por cuota → prioridad → **la «caliente»** (repo+rol+motor igual a una en curso o terminada hace <5 min; con agente `auto` basta repo+rol) → la más antigua (`server/affinity.js`). Con `maxParallel` alto, además, no abre un repo distinto mientras haya otra tarea lista de un repo que ya está en marcha esperando agente (no hay starvation: se libera al acabar lo que corre). Es solo planificación, vale igual para `claude`, `codex` y `auto`; no usa flags nuevos. Prueba: `node scripts/cache-affinity-e2e.mjs` (motor demo). Medir el `cache_read_input_tokens` del primer turno de la 2ª tarea con y sin agrupado requiere ejecuciones reales de `claude`/`codex` (no hechas aquí).
 - **RTK** (rtk-ai/rtk, Apache-2.0): si está instalado (`~/.local/bin/rtk` o `AO_RTK_BIN`; `AO_RTK=off` lo apaga), los agentes Claude arrancan con su hook PreToolUse por `--settings` (NO se toca `~/.claude/settings.json`) y se permiten solo los `rtk …` equivalentes a la lista blanca (`RTK_RULES`, nunca `rtk run`). Comprime salidas de git/grep/ls/lint; no las de Read/Grep nativos. `rtk gain` enseña el ahorro.
+- **Índice de código por símbolos (FT-58)**, para Claude **y** Codex. Evaluado: **Codebase-Memory MCP** (DeusData, **MIT**, binario C único con tree-sitter, JS/TS/Java entre sus lenguajes, sin root, indexado incremental (`detect_changes`), herramientas `search_graph`, `trace_path`, `get_code_snippet`, `search_code`, `query_graph`, `get_architecture`, `detect_changes`…) frente a **jCodeMunch MCP** (Python/PyPI, licencia propia «dual-use», no permisiva; hace falta Python+uv). Elegido el primero por licencia e instalación (un binario). Los tiempos de indexado de agent-office/flow-test **no se midieron** (ver «Medición»).
+  - Instalar: `scripts/setup-code-index.sh [vX.Y.Z]` (idempotente, con checksum, en `data/tools/bin/`; también se detecta `~/.local/bin/codebase-memory-mcp` o `AO_CODEINDEX_BIN`).
+  - Índice por repo en `data/code-index/<repoKey>/` (`CBM_CACHE_DIR`), regenerado al arrancar una tarea si cambió HEAD (marca `HEAD` en el directorio; si falla, el agente sigue sin índice y queda un aviso en el log).
+  - Conexión: Claude → segundo servidor `code-index` (stdio) en `--mcp-config` (sigue `--strict-mcp-config`) + `mcp__code-index` en `--allowedTools`; Codex → `-c mcp_servers.code_index.command/args/env`. El prompt añade una línea al briefing y una regla en `economyBlock` («para encontrar dónde está algo usa primero el índice; lee el fichero solo en el tramo que devuelva»).
+  - **Ajustes ▸ «Índice de código por símbolos»** (`settings.codeIndex`): **apagado por defecto** — no se ha podido medir una mejora clara (ver abajo) y solo se puede encender si está instalado. `node scripts/code-index-e2e.mjs` verifica con binarios falsos el indexado por HEAD y los flags de ambos motores.
+  - **Medición pendiente:** en el entorno de esta tarea el sandbox pide aprobación para ejecutar `codebase-memory-mcp`, `claude` y `codex`, así que no se pudo comparar tokens/coste con y sin índice (misma tarea pequeña, Sonnet y Codex, `t.usage`). Hazlo encendiendo el ajuste en una tarea y comparando el coste en el resumen antes de dejarlo activo.
+  - Pendiente de verificar con el binario real: el argumento `repo_path` de `index_repository` y la sintaxis `-c mcp_servers.…env={…}` de Codex.
+
+- **Herramientas por rol** (FT-59, `server/engines/toolscope.js`): cada definición de herramienta viaja en TODOS los turnos, así que cada rol recibe solo las suyas. Por `kind`: **dev** = lo de siempre; **docs** = Read/Grep/Glob/Edit/Write + shell de lectura (+ `git add/commit`) + MCP flow-test; **QA** = Read/Grep/Glob/Write (solo scripts de prueba, sin Edit) + shell de pruebas (npm/node/python3/curl/mvn…) + MCP flow-test; **planificador** = lectura + `ao-ask`. Nadie lleva WebFetch/WebSearch/NotebookEdit/Task. Un rol puede sustituirlas con `tools: Read, Grep, Bash, Bash(make *)` en su frontmatter (nombres de herramientas integradas; `Bash(patrón)` añade regla de shell). **Claude**: `--tools` (herramientas DISPONIBLES, sus definiciones no se envían) + `--allowedTools` (permitidas sin preguntar); la skill del rol añade `Skill`. **Codex**: `-c tools.web_search=false` siempre y `-c tools.view_image=false` en docs/planificador sin imágenes (Codex no permite elegir herramientas por nombre).
+- **Prompt ordenado para la caché** (FT-59, `buildPrompt` en `team.js`): primero lo ESTABLE y siempre igual (system del rol por `--append-system-prompt`/inicio del prompt de Codex, carpeta, reglas, briefing del repo, memoria, cómo preguntar, `economyBlock`), después la marca `════════ TAREA` y lo VARIABLE (código, título, rama, descripción, contexto, restricciones, feedback, adjuntos, respuestas del cliente). Nada de fechas ni ids en la parte estable.
+- **Medido el 6 OCT 2026** (`node scripts/tools-scope-measure.mjs`: primer `assistant` del stream, `input + cache_creation + cache_read`, haiku, prompt mínimo, sin MCP):
+
+  | Rol | Antes (sin `--tools`) | Después | Ahorro |
+  |---|---|---|---|
+  | dev | 22 813 | 13 123 | 42 % |
+  | QA | 22 813 | 12 683 | 44 % |
+  | docs | 22 813 | 13 123 | 42 % |
+  | planificador | 22 813 | 12 406 | 46 % |
+
+  Codex no se midió (el binario real pide aprobación en este entorno): lo que reporte `turn.completed` en `usage` queda en la tarjeta de cada tarea. Prueba: `node scripts/tools-scope-e2e.mjs` (binarios falsos que vuelcan sus argumentos).
+- **Cascada de modelos con escalado (FT-60)** — vale para `claude`, `codex` y `auto` (la escalera es la del motor que toque en cada intento). Código: `server/model-ladder.js` (lógica pura) + `modelFor()`/`escalate()` en `team.js`.
+  - **Escalera por motor** (Ajustes ▸ «Escalera de modelos», `settings.modelLadder`): de serie Claude `haiku → sonnet` (opus solo a mano) y Codex `<mini/rápido que liste ~/.codex/models_cache.json> → gpt-5.5` (si la caché no trae ninguno, un solo peldaño: no hay cascada). Vacío = la de serie. El snapshot la publica en `modelLadders`.
+  - **Cuándo sube un peldaño** (`t.escalations`, máximo 2): al «Devolver» desde Revisión (salvo si la cortó el tope de gasto: un modelo más caro no lo arregla), y cuando el agente termina con error (la tarea va a Fallidas ya escalada; «Reintentar» no escala otra vez). `escalate(t, motivo)` está exportada para enganchar la revisión automática de FT-56 cuando exista.
+  - **Cuándo NO empieza abajo:** tareas `kind: plan` (empiezan en el peldaño alto), `minModel` de la tarea (`POST /api/tasks {minModel}` / `PATCH`) o del rol (campo «Modelo mínimo» del rol, `minModel:` en su `.md`; un `sonnet` en un agente Codex vale como «el 2.º peldaño»), y reintentos que ya escalaron. Un modelo fijado en el agente o el rol (`model`) manda y no entra en la cascada.
+  - **Rastro:** `t.modelHistory[]` (modelo, motor, intento, motivo) y la tarjeta enseña «🧠 haiku → sonnet». La estimación de coste («≈ 0,8 $») usa solo las tareas que empezaron por el modelo inicial del rol (si hay ≥3; si no, todas).
+  - Prueba: `node scripts/model-ladder-e2e.mjs` (claude y codex falsos que registran `--model`/`-m`).
+
+### Compactar antes o partir la tarea (FT-63)
+
+La compactación automática salta cerca del 93 % de la ventana y relee/resume varias veces. Se evita con dos medidas (`server/compact.js`, funciones puras; `team.js` las enruta):
+- **Medir y compactar en caliente.** `claudeTracker` ya da el contexto por llamada (`used` = entrada + caché del último mensaje); la ventana sale de `modelUsage.contextWindow` o, mientras no llega, 200 k (1 M con `[1m]`; `AO_CONTEXT_WINDOW` la fuerza). Al pasar el umbral (`settings.compactAt`, 62 % por defecto, rango 30–90, 0 lo apaga; `POST /api/settings {compactAt: 60}`) se manda por stdin (stream-json) la instrucción de escribir `NOTAS.md` (hecho, decisiones, ficheros, lo que falta, cómo probar) y terminar el turno. Al acabar, `runTask` lee y borra `NOTAS.md` (no entra en la rama), confirma el avance y **relanza** la tarea en un contexto limpio con las notas en el prompt (sin `--resume`, justo lo que se quiere evitar). Máx. 3 relanzamientos por intento; si el agente no escribe notas es que había terminado y vale su resumen. El coste y el uso se acumulan; la tarea guarda `compactions`; evento `AgentResumed {reason:'compact'}`.
+- **No se comprobó que `claude -p` acepte `/compact` como mensaje de usuario** (los binarios piden aprobación en este entorno), así que se usa siempre el truco de las notas, que no depende del CLI.
+- **Codex:** `codex exec --json` solo informa del uso en `turn.completed` (el turno entero), así que a mitad de la ejecución **no hay medida** y no se puede compactar en caliente. El código ya lo cubre si un motor informa `ctx` (el tracker de Codex lo rellena con la entrada del último turno): al no admitir mensajes, corta la sesión y la relanza desde su rama (`git log`/`git diff`). En la práctica, para Codex vale la segunda medida. `auto` hereda el comportamiento del motor elegido.
+- **Partir antes de empezar.** En `tick()`, una tarea nueva de trabajo (primer intento, no troceada ya) se evalúa una vez con `bigTaskReason`: ≥6 puntos enumerados, ≥2 «y además…», descripción >2 500 caracteres, o estimación por rol (`costEstimates`, FT-26) ≥70 % del tope de gasto con varias piezas. Si lo es, pasa a Backlog con `sizeHint` y `splitInto`, y se crea una tarea «Planificar:» para el PO con su texto (evento `TaskSplitRequested`); las tareas que crea el PO nacen con `sizeChecked`. `settings.bigTasks`: `plan` (por defecto) · `suggest` (solo avisa en el log y la lanza entera) · `off`. Sin PO en el equipo, solo avisa.
+- Prueba: `node scripts/compact-e2e.mjs` (claude falso con uso creciente que escribe `NOTAS.md` al recibir la instrucción; 26 checks).
+
+### Subagente explorador (FT-65)
+
+Lo leído se reenvía en cada turno; para exploraciones amplias el agente delega en un subagente que lee en **su propio contexto** y devuelve solo un resumen.
+- **Claude (opcional, `AO_EXPLORER=on`; apagado por defecto hasta que el benchmark FT-61 confirme el ahorro y para respetar las herramientas por rol de FT-59):** `server/engines/claude.js` pasa `--agents` con `explorador` (modelo `haiku`, tools solo de lectura: Read/Grep/Glob + shell de lectura de la lista blanca; sin Edit/Write ni MCP, así que respeta la allowlist y `--strict-mcp-config`), permite `Task`/`Agent` al agente principal y veta con `--disallowedTools` los subagentes integrados (`general-purpose`, `Explore`, `Plan`). `AO_EXPLORER=off` lo desactiva.
+- **Prompt:** `economyBlock` añade «para explorar más de 3 ficheros, delega en el explorador y trabaja con su resumen».
+- **Codex: no aplica.** `codex exec` no tiene subagentes/`spawn` que se puedan declarar por flag (no verificable aquí: `codex` pide aprobación en este entorno); ese caso lo cubre el índice de código (FT-58). Con motor `auto` cada agente usa lo de su motor; el texto del prompt dice «si tu motor la tiene».
+- **Medición pendiente:** la comparación con/sin explorador (tarea «enumera dónde se emite cada tipo de evento») requiere consumir cuota real; compárala con `AO_EXPLORER=off` en el benchmark de FT-61.
 
 ## ⏸ Sin cuota a mitad de tarea: pausa y reanudación automática (FT-66)
 
@@ -346,6 +444,46 @@ Si un agente se queda sin cuota de la suscripción mientras trabaja (Claude: «u
 - El proyecto sigue «en marcha» y el estado sobrevive a reinicios del servicio.
 - Prueba: `node scripts/quota-pause-e2e.mjs` (claude falso que se corta y luego termina, mock de cuota, reinicio del servidor durante la espera, «Reanudar ya»).
 
+## 📈 Observabilidad de costes (FT-76)
+
+Objetivo: que una tarea hecha por los agentes cueste **igual o menos** que hacerla en una sesión interactiva de Claude Code, con datos para afinar.
+
+**Qué se mide.** Cada turno de cada tarea (Claude y Codex) se anota en `data/costs/<proyectoId>/<tareaId>.jsonl`: `ts, attempt, engine, model, role, turn, input, cacheRead, cacheWrite, output, costUsd, tool, tools[{name,file,bytes,image}], bytes, image`. Claude: `message.usage` de cada mensaje `assistant` del stream-json (un turno por `message.id`) y los `tool_result` de la herramienta (bytes devueltos, imágenes). Codex: eventos `item.completed` + `turn.completed` (la entrada fresca = `input_tokens − cached_input_tokens`). `t.usage`/`t.costUsd` (FT-26) siguen siendo el acumulado; los motores solo ganan un hook `onEvent(ev)`.
+
+**Precios.** `server/pricing.js` (US$/Mtok por modelo: input, cacheRead, cacheWrite, output; coincidencia por fragmento del id, modelo desconocido → tarifa Sonnet). Se sobreescriben con `data/pricing.json` (`{"opus": {"input": 5, ...}}`). En **API** el coste es el que se paga; en **suscripción** no se paga por token, pero el coste calculado con tarifas de API es la unidad común para comparar agente vs interactivo (y `total_cost_usd` del CLI cuando existe sigue en `t.costUsd`). _Pendiente: % de cuota consumido por tarea._
+
+**Desglose por causa** (`breakdown()`): lo que cuesta un turno es reenviar todo el contexto + generar la salida. La salida va a «Salida»; el coste del contexto de cada turno se reparte entre lo que lo compone: el **arranque** (contexto del turno 1: system prompt, memoria, skills, herramientas), y lo que devolvió cada herramienta en turnos anteriores (**lecturas** por fichero, **comandos**/e2e, **imágenes** ≈1 500 tokens; bytes/4 como estimación de tokens). Los intentos anteriores al último (tirados o devueltos) van enteros a **reintentos**. Es una atribución estimada, no una medida exacta; la suma siempre iguala el coste total.
+
+**KPI** (`GET /api/costs`): **coste por tarea aprobada** (incluye intentos fallidos/devueltos) por rol, modelo, motor y proyecto; % aprobadas a la primera (`t.returns` cuenta las devoluciones); gasto en intentos tirados y por devolución; ahorro por caché; tendencia de 7 días; por tarea: turnos, curva de contexto, % de caché, ficheros más caros.
+
+**Línea base interactiva.** `POST /api/costs/baseline {code, title?, transcript?, costUsd?, files?, lines?}` importa el coste por turnos de un transcript de Claude Code (`~/.claude/projects/**/*.jsonl`, solo bajo `~/.claude`; un mensaje por id) o un coste manual. Ejemplo: `curl -XPOST :7420/api/costs/baseline -d '{"code":"FT-66","transcript":"~/.claude/projects/-home-…-flow-test/<sesión>.jsonl","lines":220}'`. La comparación se normaliza por **$/línea cambiada** cuando hay `lines` en ambos lados (las del agente salen del `diffStat`); si no, por coste medio por tarea.
+
+**Cómo leerlo y afinar.** 📊 Resumen ▸ **💸 Costes**: KPI arriba (y si se cumple el objetivo), recomendaciones, objetivo semana a semana, tablas por rol/modelo/motor/proyecto y por tarea la barra apilada (arranque · lecturas · comandos · imágenes · salida · reintentos) con la curva de contexto; clic en una fila abre la tarea, cuya ficha («Ver la tarea») repite el desglose y los ficheros más caros. Reglas de recomendación (`recommend()`): arranque ≥40 %, reintentos ≥25 %, comandos ≥30 %, imágenes ≥15 %, un fichero ≥15 % del coste de un proyecto, un modelo barato con ≥20 pts menos de aprobadas a la primera que otro del mismo rol (≥3 tareas cada uno), y objetivo incumplido.
+
+**Objetivo.** Ajustes ▸ «Objetivo de costes» (`costTargetPct`, 100 por defecto): coste por tarea aprobada ≤ X % del interactivo; la pestaña lo muestra global y semana a semana (lunes).
+
+**Export y flow-test.** `GET /api/costs/export[?format=csv]` (una fila por turno), `GET /api/costs/:proyectoId/:tarea` (detalle por turno) y `GET /api/costs` para el flow `costes-agentes.flow.json`.
+
+**Prueba:** `node scripts/costs-e2e.mjs [captura.png]` (claude falso con usos conocidos en dos intentos con imagen, Codex falso, línea base por transcript, pestaña sin errores de consola).
+
+**Fuera de esta entrega (siguientes fases):** ahorro de RTK (`rtk gain`) y coste de memoria/briefing por separado, % de cuota por tarea, alertas (2× la mediana del rol, presupuesto diario/semanal), experimentos A/B con el benchmark FT-61 e informe inicial con las tareas FT-xx históricas (esas no tienen telemetría por turno; solo su `costUsd`).
+
+## ⏱️ Benchmark de costes (FT-61)
+
+Verifica que las medidas de ahorro (FT-57 a FT-65) funcionan realmente. Script: `node scripts/cost-benchmark.mjs` (binarios falsos con costes predecibles).
+
+- **Variantes medidas:** 6 combinaciones (Claude/Codex × sin/con medidas × sin/con memoria)
+- **Métricas:** tokens entrada/caché_lectura/caché_escritura/salida, coste USD, nº turnos, herramientas usadas, si la tarea se completó
+- **Salida:** tabla en `resumen/cost-benchmark-YYYY-MM-DD.md` con comparativas de ahorro y resumen de conclusiones
+- **Flow de verificación:** `flowtest/benchmark-costes-ft61.flow.json` prueba los endpoints de observabilidad (`GET /api/costs`, `/api/costs/:proyecto/:tarea`, `/api/costs/export?format=csv`, `POST /api/costs/baseline`)
+- **Prueba:** `node scripts/cost-benchmark.mjs` (requiere permisos para `spawn` y `git`); no está en el CI porque depende de binarios falsos y consume varios minutos
+
+**Lo que falta verificar en entorno real:**
+- Precios estimados de Codex vs reales (`CODEX_PRICES` en `usage.js`)
+- Ahorro real del índice de código (FT-58): requiere ejecutar la misma tarea con/sin índice en Claude/Codex reales
+- Comparación del explorador (FT-65) vs sin: requiere `AO_EXPLORER=off` y `AO_EXPLORER=on` con tarea real
+- Flags de Codex no verificados contra binario real: `exec resume`, `features.codex_hooks`, `hooks.PreToolUse`, `-c model_reasoning_summary`
+
 ## 🧠 Memoria de los agentes (FT-75)
 
 Cada tarea empezaba de cero. Ahora cada agente tiene una memoria corta por proyecto, y el proyecto otra común (`server/memory.js`, ficheros `data/memory/<proyecto>/agent-<id>.md` y `project.md`, una lección por línea con su código de tarea):
@@ -354,3 +492,14 @@ Cada tarea empezaba de cero. Ahora cada agente tiene una memoria corta por proye
 - **Para que salga rentable:** tope de ≈1 500 tokens por fichero (`MAX_CHARS` = 6 000; al pasarse se descartan las más antiguas) y deduplicado (≥80 % de palabras en común).
 - **Control:** sección «🧠 Memoria» en la ficha del agente para verla y editarla (`GET/PUT /api/memory/:projectId[?agent=id]`), interruptor en Ajustes (`agentMemory`).
 - Prueba: `node scripts/memory-e2e.mjs` (11 checks). Su efecto en el coste entra en el benchmark de FT-61 (variante con y sin memoria).
+
+## 🖥️ IA local (LM Studio / Ollama) (FT-54)
+
+Cuarto motor, `local`: trabaja con un modelo que corre en tu máquina, sin cuota ni nube. **Quien ejecuta es el CLI de Codex** (`server/engines/local.js` envuelve `codex.js`): mismo worktree, stream JSON, mensajes en caliente y sandbox; solo cambia el proveedor, que se pasa por línea de comandos (`-c model_provider=aolocal -c model_providers.aolocal.base_url=… -c …wire_api="responses"`) sin tocar tu `~/.codex/config.toml`. Si el servidor pide clave, va por `env_key` (`AO_LOCAL_API_KEY`).
+
+- **Requisitos**: el CLI `codex` instalado y un servidor OpenAI-compatible con **un modelo con soporte de herramientas** cargado: LM Studio con el servidor activado (`:1234`, ≥ 0.3.29) u `ollama serve` (`:11434`, ≥ 0.13). Un modelo sin tools (se detecta en LM Studio y Ollama) se rechaza al arrancar con un mensaje claro; sirven p. ej. qwen2.5-coder, llama-3.x-instruct, devstral. El Codex actual solo admite `wire_api = "responses"` (`/v1/responses`); `AO_LOCAL_WIRE_API=chat` es para un Codex antiguo.
+- **Configuración** (Ajustes ▸ Motores de IA ▸ IA local): preajustes «LM Studio :1234» / «Ollama :11434» (URL editable), clave opcional (en `data/.ai-keys.json`; no viaja por el SSE) y **Probar** (`GET /v1/models`): lista los modelos y guarda `settings.local = {baseUrl, model, allowAuto}`. Ahí se elige el modelo por defecto; en «Contratar agente» / ficha del agente, el motor `local` ofrece la lista del servidor. El motor `auto` solo elige `local` si marcas «Permitir…» (`allowAuto`, apagado de serie). API: `POST /api/engines/local/probe` y `/settings`; `GET /api/engines` trae `local: {installed, loggedIn, text: «LM Studio · 3 modelos», model}`.
+- **Guía**: proveedor `local-api` en «Proveedor del Guía» (el cliente de `openai-api.js` con la URL base y la clave de la IA local).
+- **Cuota y coste**: sin cuota (`quota.gate('local')` nunca bloquea) y `costUsd` 0; los tokens por sesión se cuentan igual (`turn.completed`), con «límite n/d».
+- **Limitaciones**: más lento y menos capaz que Claude/Codex en la nube (el prompt añade una nota de brevedad); un modelo pequeño puede no usar las herramientas (se avisa en el log si no ejecutó ninguna).
+- Prueba: `node scripts/local-engine-e2e.mjs` (servidor OpenAI-compatible falso + `codex` real; sin `codex` se salta la tarea).

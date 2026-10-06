@@ -6,22 +6,32 @@ import os from 'node:os';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-import { describeTool, toolSummary, firstLine } from './describe.js';
-import { RTK_RULES, BASH_TOOLS } from './allowlist.js';
+import { describeTool, toolSummary, toolKey, firstLine } from './describe.js';
+import { RTK_RULES } from './allowlist.js';
+import { claudeScope } from './toolscope.js';
 import { claudeTracker } from '../usage.js';
+import { SERVER_NAME } from '../codeindex.js';
 
-// Lectura/edición + shell de andar por casa (sin rm, sudo, docker, ssh ni git push; lista blanca compartida con terminal.execute del Guide, FT-10).
-const WORK_TOOLS = ['Read', 'Edit', 'MultiEdit', 'Write', 'Glob', 'Grep', 'TodoWrite', ...BASH_TOOLS];
-// El planificador no escribe código, pero sí puede preguntar al cliente (bin/ao-ask.mjs) y leer el repo con el shell básico.
-const ASK_RULE = `Bash(node ${path.join(ROOT, 'bin', 'ao-ask.mjs')} *)`;
-const PLAN_TOOLS = ['Read', 'Glob', 'Grep', ASK_RULE, 'Bash(ls *)', 'Bash(cat *)', 'Bash(head *)', 'Bash(sed -n *)', 'Bash(grep *)', 'Bash(find *)', 'Bash(wc *)', 'Bash(git log*)', 'Bash(git status*)', 'Bash(git diff*)'];
+// Subagente explorador (FT-65): solo lectura (Read/Grep/Glob + shell de lectura de la lista blanca), modelo barato.
+export const EXPLORER = {
+  name: 'explorador',
+  def: {
+    description: 'Explora el repo en un contexto aparte (entender un módulo, buscar todos los usos de algo, enumerar dónde ocurre algo) y devuelve solo un resumen corto con rutas y líneas. Solo lectura.',
+    prompt: 'Eres un explorador de código de SOLO LECTURA. Responde a la pregunta que te den leyendo lo necesario (Grep -n y Read con offset/limit; nunca ficheros grandes enteros). Devuelve únicamente un resumen breve (máx. ~25 líneas): hallazgos con `ruta:línea` y una frase cada uno. No pegues código largo ni modifiques nada.',
+    tools: ['Read', 'Grep', 'Glob', 'Bash(ls *)', 'Bash(cat *)', 'Bash(head *)', 'Bash(sed -n *)', 'Bash(grep *)', 'Bash(find *)', 'Bash(wc *)', 'Bash(git log*)', 'Bash(git status*)', 'Bash(git diff*)'],
+    model: 'haiku',
+  },
+};
 
 // RTK instalado → hook solo para los agentes (por --settings; no se toca ~/.claude/settings.json del usuario).
 const RTK_BIN = [process.env.AO_RTK_BIN, path.join(os.homedir(), '.local/bin/rtk'), '/usr/local/bin/rtk'].find((f) => f && fs.existsSync(f)) || null;
+export const rtkBin = () => RTK_BIN;
 export const rtkAvailable = () => !!RTK_BIN && process.env.AO_RTK !== 'off';
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, effort, resumeSession, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
-  const tools = [...(mode === 'plan' ? PLAN_TOOLS : WORK_TOOLS)];
+export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kind, roleTools, hasSkills, budgetUsd, effort, resumeSession, addDirs = [], env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {}, onEvent = () => {} }) {
+  // FT-59: --tools limita las herramientas DISPONIBLES (sus definiciones no se envían); --allowedTools, lo que se permite sin preguntar.
+  const scope = claudeScope({ kind, mode, roleTools, hasSkills });
+  const tools = [...scope.allowed];
   // FT-5: entrada stream-json con stdin abierto → se pueden inyectar mensajes del cliente en caliente.
   const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--append-system-prompt', system];
   if (resumeSession) args.push('--resume', resumeSession); // reintento de la MISMA tarea en su worktree: reaprovecha el contexto (y su caché) en vez de volver a explorar
@@ -34,12 +44,26 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, eff
   args.push('--model', model || 'sonnet'); // nunca heredar el modelo por defecto de la sesión del usuario (puede no estar disponible en -p)
   // --strict-mcp-config: el agente NO hereda los MCP globales del usuario; solo flow-test para el QA.
   const mcpServers = {};
-  if (mcpUrl && mode !== 'plan') {
+  if (mcpUrl && scope.mcp) {
     mcpServers['flow-test'] = { type: 'http', url: mcpUrl };
     tools.push('mcp__flow-test');
   }
+  if (addDirs.length) args.push('--add-dir', ...addDirs); // FT-44: worktrees de los demás repos del proyecto
+  if (codeIndex) { // FT-58: índice de código local (stdio); solo lectura de símbolos
+    mcpServers[SERVER_NAME] = { type: 'stdio', command: codeIndex.command, args: [], env: codeIndex.env };
+    tools.push(`mcp__${SERVER_NAME}`);
+  }
   args.push('--strict-mcp-config', '--mcp-config', JSON.stringify({ mcpServers }));
-  args.push('--allowedTools', ...tools);
+  // FT-65: subagente «explorador» (solo lectura, haiku): lee en SU contexto y devuelve un resumen; lo leído no se reenvía en cada turno del agente.
+  // Su lista de tools es explícita (sin MCP, sin Edit/Write) y --strict-mcp-config sigue vigente; el resto de subagentes integrados se veta.
+  // Con las herramientas acotadas por rol (FT-59), Task/Agent se añaden a las DISPONIBLES solo cuando el explorador está activo.
+  const builtin = [...scope.builtin];
+  if (process.env.AO_EXPLORER === 'on' && mode !== 'plan') { // opcional hasta que el benchmark FT-61 confirme que ahorra
+    args.push('--agents', JSON.stringify({ [EXPLORER.name]: EXPLORER.def }));
+    for (const x of ['Task', 'Agent']) { if (!builtin.includes(x)) builtin.push(x); tools.push(x); }
+    args.push('--disallowedTools', 'Task(general-purpose)', 'Task(Explore)', 'Task(Plan)', 'Agent(general-purpose)', 'Agent(Explore)', 'Agent(Plan)');
+  }
+  args.push('--tools', builtin.join(','), '--allowedTools', ...tools);
 
   const env = { ...process.env, ...extraEnv, BROWSER: 'true' };
   if (rtkAvailable() && !String(env.PATH || '').split(':').includes(path.dirname(RTK_BIN))) env.PATH = `${path.dirname(RTK_BIN)}:${env.PATH || ''}`; // el comando reescrito («rtk git …») tiene que encontrarse
@@ -65,6 +89,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, eff
     let ev;
     try { ev = JSON.parse(line); } catch { if (line.trim()) onLog(line); return; }
     if (closeTimer && ev.type !== 'result') cancelClose(); // otro turno en marcha
+    onEvent(ev); // FT-76: telemetría por turno
     const u = tracker.feed(ev); // FT-26: solo cifras de uso
     if (u) onUsage(u);
     if (ev.type === 'assistant') {
@@ -72,7 +97,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, eff
         if (c.type === 'tool_use') {
           const d = describeTool(c.name, c.input);
           onActivity(d);
-          onTool({ phase: 'started', callId: c.id, tool: c.name, summary: toolSummary(c.name, c.input) });
+          onTool({ phase: 'started', callId: c.id, tool: c.name, summary: toolSummary(c.name, c.input), key: toolKey(c.name, c.input) });
           onLog('🔧 ' + d);
         } else if (c.type === 'text' && c.text.trim()) {
           onActivity('Pensando: ' + firstLine(c.text, 50));
@@ -117,12 +142,13 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, eff
     pause() { signal('SIGSTOP'); },
     resume() { signal('SIGCONT'); },
     // Mensaje en caliente (FT-5): nuevo mensaje de usuario por stdin. false si el CLI ya no admite entrada.
-    message(text) {
+    message(text, opt = false) { const raw = opt === true || !!(opt && opt.raw); // raw: instrucción del propio orquestador (FT-62 pasa true, FT-63 {raw:true}), sin el envoltorio «el cliente añade…»
       if (child.stdin.destroyed || child.stdin.writableEnded) return false;
       cancelClose();
+      if (raw) { child.stdin.write(userMsg(text)); return true; }
       // Redacción neutra a propósito: un encabezado en mayúsculas tipo «INSTRUCCIÓN… prioritaria… confírmala literalmente» hace que
       // el modelo lo trate como inyección y lo rechace (probado con el CLI real).
-      child.stdin.write(userMsg(`El cliente (quien revisa tu trabajo) añade esta indicación para lo que queda de la tarea: «${text}». Aplícala a partir de ahora y menciónala en tu resumen final.`));
+      else child.stdin.write(userMsg(`El cliente (quien revisa tu trabajo) añade esta indicación para lo que queda de la tarea: «${text}». Aplícala a partir de ahora y menciónala en tu resumen final.`));
       return true;
     },
     stop() { stopped = true; cancelClose(); signal('SIGTERM'); signal('SIGCONT'); setTimeout(() => signal('SIGKILL'), 3000).unref(); }, // SIGCONT: un grupo parado no recibe SIGTERM

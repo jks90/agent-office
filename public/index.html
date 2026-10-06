@@ -17,6 +17,7 @@
       <span id="repo" class="muted"></span>
     </div>
     <div class="spacer"></div>
+    <button id="review-chip" class="ghost review-chip" hidden></button>
     <button id="quota-chip" data-action="quota" class="ghost quota-chip" hidden></button>
     <button id="suite" data-action="suite" class="ghost suite" title="Estado de flow-test (la suite)"></button>
     <button id="run" data-action="toggle-run"></button>
@@ -30,7 +31,7 @@
   <aside id="sidebar" class="sidebar">
     <button class="nav-item active" data-tab="office" title="Oficina"><span class="ico">🏢</span><span class="lbl">Oficina</span></button>
     <button class="nav-item" data-tab="summary" title="Resumen de toda la empresa"><span class="ico">📊</span><span class="lbl">Resumen</span><span class="tab-count" id="tab-summary-count"></span></button>
-    <button class="nav-item" data-tab="tasks" title="Tareas"><span class="ico">🗂</span><span class="lbl">Tareas</span><span class="tab-count" id="tab-tasks-count"></span></button>
+    <button class="nav-item" data-tab="tasks" title="Tareas"><span class="ico">🗂</span><span class="lbl">Tareas</span><span class="tab-count" id="tab-tasks-count"></span><span class="tab-count review-badge" id="tab-tasks-review" title="Tareas esperando tu revisión"></span></button>
     <button class="nav-item" data-tab="agents" title="Agentes"><span class="ico">👥</span><span class="lbl">Agentes</span><span class="tab-count" id="tab-agents-count"></span></button>
     <button class="nav-item" data-tab="guide" title="Guía (Ctrl+G)"><span class="ico">🧭</span><span class="lbl">Guía</span></button>
     <div class="spacer"></div>
@@ -58,7 +59,8 @@
         <button type="submit" class="small">Encargar al PO</button>
         <button type="button" data-action="new-task" class="ghost small">＋ Tarea a mano</button>
         <span id="board-chip" class="board-chip"></span>
-        <input id="task-filter" class="small" placeholder="🔍 filtrar…" />
+        <span id="density" class="seg" title="FT-74: densidad del tablero"><button type="button" data-density="compact">Compacto</button><button type="button" data-density="detailed">Detallado</button></span>
+        <input id="task-filter"class="small" placeholder="🔍 filtrar…" />
       </form>
       <div id="board"></div>
     </section>

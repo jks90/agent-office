@@ -22,6 +22,13 @@ export const RTK_RULES = [
   'rtk lint*', 'rtk tsc*', 'rtk npm *', 'rtk mvn *', 'rtk gradle *', 'rtk gain*',
 ];
 
+// FT-57: ¿es el comando reescrito por RTK uno de los equivalentes permitidos? Sin metacaracteres de shell (encadenar, redirigir, sustituir).
+export const rtkAllowed = (cmd) => {
+  const c = String(cmd || '').trim();
+  if (/[;&|<>`$\n]/.test(c)) return false;
+  return RTK_RULES.some((r) => (r.endsWith('*') ? c.startsWith(r.slice(0, -1)) : c === r));
+};
+
 // ¿Encaja el comando (ya sin metacaracteres de shell) con alguna regla?
 export function bashAllowed(cmd) {
   const c = String(cmd || '').trim();

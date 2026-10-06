@@ -8,13 +8,15 @@ import * as store from '../store.js';
 import * as context from '../context.js';
 import * as activity from '../events.js';
 import { SYSTEM } from './prompt.js';
+import * as review from '../review.js';
 import * as claudeCli from './providers/claude-cli.js';
 import * as anthropicApi from './providers/anthropic-api.js';
 import * as openaiApi from './providers/openai-api.js';
+import { provider as localApi } from './providers/local-api.js';
 import * as fakeProvider from './providers/fake.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
-const PROVIDERS = { 'claude-cli': claudeCli, 'anthropic-api': anthropicApi, 'openai-api': openaiApi, ...(process.env.AO_GUIDE_FAKE === '1' ? { fake: fakeProvider } : {}) }; // `fake` (FT-11): solo para pruebas e2e
+const PROVIDERS = { 'claude-cli': claudeCli, 'anthropic-api': anthropicApi, 'openai-api': openaiApi, 'local-api': localApi, ...(process.env.AO_GUIDE_FAKE === '1' ? { fake: fakeProvider } : {}) }; // `fake` (FT-11): solo para pruebas e2e
 export const providerNames = () => Object.keys(PROVIDERS);
 // Para Ajustes (FT-8): proveedores elegibles con su modelo por defecto y si tienen credenciales. El modelo de cada uno va en
 // settings.guideModels[proveedor]; claude-cli conserva settings.guideModel (FT-6).
@@ -71,6 +73,12 @@ function eventsBlock(since) {
   const omitted = evs.length - shown.length;
   return `<eventos_desde_tu_ultimo_turno>\n${lines.length ? (omitted > 0 ? `(… ${omitted} anteriores omitidos)\n` : '') + lines.join('\n') : '(ninguno)'}\n</eventos_desde_tu_ultimo_turno>`;
 }
+// FT-56: tareas en revisión desde hace más de reviewNudgeMin → el Guía las menciona en su siguiente respuesta
+function pendingReview() {
+  const st = store.get();
+  const b = review.pendingBlock(st.tasks, Date.now(), review.nudgeMin(st.settings));
+  return b ? `\n${b}` : '';
+}
 function appContext(client) {
   const { recentEvents, ...c } = context.get(client); // los eventos van en su propio bloque
   return c;
@@ -100,7 +108,7 @@ export async function* chat({ chatId, text, client = null }) {
 
   const ctx = appContext(client);
   const turnStart = Date.now();
-  const prompt = `<app_context>\n${JSON.stringify(ctx, null, 1).slice(0, 12_000)}\n</app_context>\n${eventsBlock(c.lastEventTs)}`;
+  const prompt = `<app_context>\n${JSON.stringify(ctx, null, 1).slice(0, 12_000)}\n</app_context>\n${eventsBlock(c.lastEventTs)}${pendingReview()}`;
   const { host, ...ctxLite } = ctx; // en el chat guardado, sin el contexto de flow-test (puede ser grande)
   c.messages.push({ role: 'user', ts: turnStart, text, context: { ...ctxLite, task: ctx.task && { code: ctx.task.code, title: ctx.task.title, status: ctx.task.status }, agent: ctx.agent && { name: ctx.agent.name }, project: ctx.project && { name: ctx.project.name }, hasHost: !!host } });
   c.updatedAt = turnStart;

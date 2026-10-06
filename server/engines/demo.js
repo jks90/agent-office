@@ -38,6 +38,12 @@ const slugOf = (s) => String(s).toLowerCase().normalize('NFD').replace(/[^a-z0-9
 const capital = (s) => s.charAt(0).toUpperCase() + s.slice(1).replace(/-(\w)/g, (_, c) => c.toUpperCase());
 
 export function start({ agent, task, mode, goal, roles, onActivity, onLog, onTool = () => {} }) {
+  if (mode === 'review') { // FT-56: revisor simulado con veredicto fijo; «[revisor:devolver]» en el título lo hace devolver
+    const back = /\[revisor:devolver\]/i.test(task.title);
+    onActivity('Revisando los cambios'); onLog('🔎 Revisión simulada');
+    const verdict = back ? { approve: false, reasons: ['demo: no cumple'], feedback: 'Demo: corrige lo indicado por el revisor.' } : { approve: true, reasons: ['demo: todo correcto'], feedback: '' };
+    return { done: new Promise((r) => setTimeout(() => r({ ok: true, summary: `Revisado (simulado).\n${JSON.stringify(verdict)}`, costUsd: 0 }), 150)), stop() {} };
+  }
   const role = mode === 'plan' ? 'po' : agent.role;
   const slug = slugOf(mode === 'plan' ? goal : task.title);
   const steps = STEPS[role].map((s) => s.replace('{slug}', slug).replace('{Slug}', capital(slug)));
@@ -62,7 +68,7 @@ export function start({ agent, task, mode, goal, roles, onActivity, onLog, onToo
     onActivity(step);
     onLog('🔧 ' + step);
     callId = `demo${i}`;
-    onTool({ phase: 'started', callId, tool: /^(Leyendo|Revisando)/.test(step) ? 'Read' : /^Editando/.test(step) ? 'Edit' : /^Ejecutando/.test(step) ? 'Bash' : /^Buscando/.test(step) ? 'Grep' : /^flow-test/.test(step) ? 'mcp__flow-test' : 'Think', summary: step });
+    onTool({ phase: 'started', callId, tool: /^(Leyendo|Revisando)/.test(step) ? 'Read' : /^Editando/.test(step) ? 'Edit' : /^Ejecutando/.test(step) ? 'Bash' : /^Buscando/.test(step) ? 'Grep' : /^flow-test/.test(step) ? 'mcp__flow-test' : 'Think', summary: step, key: step });
     timer = setTimeout(next, 2200 + Math.random() * 2800);
   };
   timer = setTimeout(next, 600);
