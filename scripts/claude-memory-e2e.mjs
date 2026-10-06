@@ -88,6 +88,20 @@ try {
   check('el prompt trae el índice de la memoria y su carpeta', /Memoria del proyecto/.test(pr1) && /max-old-space-size=4096/.test(pr1) && pr1.includes(memDir), pr1.slice(0, 300));
   check('el índice va en la parte estable (antes de la TAREA)', pr1.indexOf('Memoria del proyecto') < pr1.indexOf('════════ TAREA'));
   check('la carpeta de la memoria va en --add-dir', av1.includes('--add-dir') && av1.includes(memDir), JSON.stringify(av1));
+  console.log('Revisor automático con Claude');
+  const nRuns = lines(argvLog).length;
+  await call('PATCH', `/api/projects/${p.id}`, { reviewPolicy: 'auto-qa' }); // revisa en el momento lo que ya esperaba (t1)
+  check('activar auto-qa lanza el revisor sobre lo que ya esperaba', !!(await until(async () => lines(argvLog).length > nRuns, 20_000, 300)));
+  const rv = lines(argvLog).at(-1);
+  const mi = rv.indexOf('--model');
+  check('el revisor recibe un modelo de verdad (no «[object Object]»)', mi >= 0 && typeof rv[mi + 1] === 'string' && !/object/i.test(rv[mi + 1]), rv[mi + 1]);
+  const held = await until(async () => { const x = await task(t1.id); return x?.reviewNote ? x : null; }, 20_000, 300);
+  check('sin veredicto válido queda para la persona, con motivo', /veredicto válido/.test(held?.reviewNote || ''), held?.reviewNote);
+  const again = await call('POST', `/api/tasks/${t1.id}/review-again`);
+  check('«🔎 Revisar otra vez» relanza el revisor', again.ok && !!(await until(async () => lines(argvLog).length > nRuns + 1, 20_000, 300)), JSON.stringify(again));
+  await until(async () => !!(await task(t1.id))?.reviewNote, 20_000, 300);
+  await call('PATCH', `/api/projects/${p.id}`, { reviewPolicy: '' });
+
   console.log('Desactivada');
   await call('POST', '/api/settings', { claudeMemory: false });
   const t2 = await call('POST', '/api/tasks', { projectId: p.id, title: 'Segunda sin memoria', role: 'back', repo: 'demo' });

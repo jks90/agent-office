@@ -585,7 +585,7 @@ async function runReviewer(p, t, repo, cwd, checks) {
   const role = Object.values(allRoles()).find((r) => r.kind === 'qa') || roleOf(agent.role) || roleOf('back');
   const job = await ENGINES[engineId].start({
     agent, task: t, project: p, cwd, mode: engineId === 'demo' ? 'review' : 'work', goal: null, roles: teamRoles(p),
-    prompt: review.reviewPrompt(t, repo?.baseBranch || 'main', checks), system: role.system, model: modelFor(engineId, agent, role),
+    prompt: review.reviewPrompt(t, repo?.baseBranch || 'main', checks), system: role.system, model: modelFor(engineId, agent, role).model, // FT-60: modelFor devuelve {model, level, why}
     kind: 'dev', roleTools: null, hasSkills: false, images: [], budgetUsd: Number(s.settings.maxTaskUsd) > 0 ? Number(s.settings.maxTaskUsd) : 3,
     effort: ['low', 'medium', 'high'].includes(s.settings.agentEffort) ? s.settings.agentEffort : 'medium',
     env: { ...engineEnv(engineId), AO_URL: `http://127.0.0.1:${process.env.AO_PORT || 7420}`, AO_TASK: t.id, AO_AGENT: 'revisor' },
@@ -629,6 +629,18 @@ export async function autoReview(p, t) {
     else await reject(t.id, v.feedback || v.reasons.join('\n') || 'El revisor automático pide cambios.', [], [], 'auto-qa');
   } catch (e) { hold(`✋ la revisión automática falló (${e.message}): la revisa una persona`); }
   finally { reviewing.delete(t.id); delete t.reviewing; changed(); }
+}
+
+// «🔎 Revisar otra vez»: relanza la revisión automática de una tarea que se quedó esperando por un fallo técnico.
+export async function reReview(id) {
+  const t = get().tasks.find((x) => x.id === id || x.code === String(id).toUpperCase());
+  if (!t) throw fail(404, 'Tarea no encontrada');
+  if (t.status !== 'review') throw fail(409, 'La tarea no está en revisión');
+  const p = get().projects.find((x) => x.id === t.projectId);
+  if (review.policyOf(get().settings, p) === 'manual') throw fail(409, 'La revisión de este proyecto es manual');
+  delete t.reviewNote; changed();
+  setImmediate(() => autoReview(p, t).catch(() => {}));
+  return { ok: true };
 }
 
 // Al pasar a revisión automática, lo que ya esperaba revisión no se queda atascado: se revisa ahora (de una en una).
