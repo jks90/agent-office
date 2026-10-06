@@ -705,23 +705,55 @@ document.addEventListener('click', async (e) => {
 // Pestañas de administración (Oficina / Tareas / Agentes), recordadas por navegador.
 let skillsData = null; // catálogo e inventario de skills (se carga al abrir Agentes)
 let MODELS = { claude: [], codex: [] }; // modelos disponibles por motor (GET /api/engines/models)
-const loadModels = () => api('GET', '/api/engines/models').then((m) => { MODELS = m; }).catch(() => {});
-loadModels();
-// <select> de modelo: grupos por motor (en «auto» salen los dos), los no disponibles deshabilitados con su motivo, y «otro…» libre.
+let modelsAt = 0;
+// Lista viva (FT-55): caché de 5 min en el cliente; `force` (botón ↻) o caducada → se vuelve a pedir. Si falla, se queda lo que hubiera.
+const loadModels = (force) => (!force && Date.now() - modelsAt < 300000 ? Promise.resolve() : api('GET', '/api/engines/models').then((m) => { MODELS = m; modelsAt = Date.now(); }).catch(() => {}));
+loadModels(true);
+const MODEL_OF = { claude: /^(sonnet|opus|haiku|claude-)/i, codex: /^(gpt-|o[0-9]|codex)/i }; // espejo de team.js
+const GROUP_LABEL = { claude: 'Claude', codex: 'Codex', local: 'Local' };
+const AUTO_HINT = 'con motor automático, el modelo decide si va a Claude o a Codex';
+// ÚNICO selector de modelo (FT-55): cajón, contratar, editar, roles y Ajustes. Grupos por motor (en «auto» salen los dos), no disponibles
+// deshabilitados con su nota, valor actual siempre presente y «Otro…» (campo libre solo al elegirlo).
 function modelSelect(name, engine, current) {
   const groups = engine === 'auto' ? ['claude', 'codex'] : engine === 'demo' ? [] : [engine];
   const known = groups.flatMap((g) => MODELS[g] || []).some((m) => m.id === current);
-  return `<select name="${name}" class="model-select" data-engine="${engine}">
+  const opt = (m) => `<option value="${esc(m.id)}" title="${esc(m.note || '')}" ${m.id === current ? 'selected' : ''} ${m.available === false ? 'disabled' : ''}>${esc(m.label)} · ${esc(m.id)}${m.available === false ? ' — ' + esc(m.note || 'no disponible') : m.note ? ' (' + esc(m.note) + ')' : ''}</option>`;
+  return `<span class="model-pick" data-name="${esc(name)}" data-engine="${esc(engine)}"><span class="model-row"><select name="${esc(name)}" class="model-select">
     <option value="" ${!current ? 'selected' : ''}>por defecto del rol / motor</option>
-    ${groups.map((g) => `<optgroup label="${g === 'claude' ? 'Claude Code' : 'Codex'}">${(MODELS[g] || []).map((m) => `<option value="${esc(m.id)}" ${m.id === current ? 'selected' : ''} ${m.available ? '' : 'disabled'}>${esc(m.label)}${m.available ? (m.note ? ' (' + esc(m.note) + ')' : '') : ' — ' + esc(m.note || 'no disponible')}</option>`).join('')}</optgroup>`).join('')}
-    <option value="__other" ${current && !known ? 'selected' : ''}>otro… (escribir id)</option>
-  </select><input name="${name}_other" class="model-other" placeholder="id del modelo" value="${current && !known ? esc(current) : ''}" style="${current && !known ? '' : 'display:none'}" />`;
+    ${current && !known ? `<option value="${esc(current)}" selected>actual: ${esc(current)}</option>` : ''}
+    ${groups.map((g) => `<optgroup label="${GROUP_LABEL[g] || esc(g)}">${(MODELS[g] || []).map(opt).join('')}</optgroup>`).join('')}
+    <option value="__other">Otro… (escribir id)</option>
+  </select><button type="button" class="ghost small model-refresh" title="Refrescar la lista de modelos" aria-label="Refrescar modelos">↻</button></span>
+  <input name="${esc(name)}_other" class="model-other" placeholder="id del modelo" style="display:none" /><div class="muted model-hint">${engine === 'auto' ? AUTO_HINT : ''}</div></span>`;
+}
+// Valor actual de un .model-pick (el id elegido o el escrito en «Otro…»).
+const modelPickValue = (w) => { const s = w.querySelector('.model-select').value; return s === '__other' ? w.querySelector('.model-other').value.trim() : s; };
+// Repinta un selector (otro motor o lista refrescada) conservando el valor.
+function repaintModel(w, engine, current) {
+  const t = document.createElement('div');
+  t.innerHTML = modelSelect(w.dataset.name, engine, current);
+  w.replaceWith(t.firstElementChild);
+}
+// Validación de «Otro…»: sin espacios; aviso (no bloquea) si el motor no lo reconoce.
+function checkModelOther(inp) {
+  const w = inp.closest('.model-pick'), v = inp.value.trim(), eng = w.dataset.engine;
+  inp.setCustomValidity(/\s/.test(v) ? 'El id del modelo no puede llevar espacios' : '');
+  const ok = !v || (eng === 'auto' ? Object.values(MODEL_OF).some((re) => re.test(v)) : !MODEL_OF[eng] || MODEL_OF[eng].test(v));
+  w.querySelector('.model-hint').textContent = !ok ? `⚠ «${v}» no parece un modelo de ${eng}: se usará el modelo por defecto del motor` : eng === 'auto' ? AUTO_HINT : '';
 }
 document.addEventListener('change', (e) => {
   const sel = e.target.closest('.model-select');
-  if (sel) { const other = sel.parentElement.querySelector('.model-other'); if (other) other.style.display = sel.value === '__other' ? '' : 'none'; return; }
+  if (sel) { const other = sel.closest('.model-pick').querySelector('.model-other'); other.style.display = sel.value === '__other' ? '' : 'none'; if (sel.value === '__other') other.focus(); return; }
   const eng = e.target.closest('select[name=engine]');
-  if (eng) { const ms = eng.closest('form')?.querySelector('.model-select'); if (ms) ms.outerHTML = modelSelect(ms.name, eng.value, '').replace(/<input[^>]*>$/, ''); }
+  if (eng) { const w = eng.closest('form')?.querySelector('.model-pick'); if (w) repaintModel(w, eng.value, ''); }
+});
+document.addEventListener('input', (e) => { if (e.target.closest('.model-other')) checkModelOther(e.target); });
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('.model-refresh');
+  if (!b) return;
+  b.disabled = true;
+  await loadModels(true);
+  document.querySelectorAll('.model-pick').forEach((w) => repaintModel(w, w.dataset.engine, modelPickValue(w)));
 });
 const pickModel = (f) => (f.model === '__other' ? (f.model_other || '').trim() : f.model || '');
 const VIEW_PARAM = new URLSearchParams(location.search).get('view'); // ?view=guide (botón «Guía» de flow-test, FT-3)
@@ -1265,7 +1297,7 @@ function renderDrawer() {
       <div class="grid">
         <span class="muted">Motor</span>
         <select data-f="engine">${S.engines.map((e) => `<option ${e === a.engine ? 'selected' : ''}>${e}</option>`).join('')}</select>
-        <span class="muted">Modelo</span><input data-f="model" value="${esc(a.model)}" placeholder="por defecto del CLI (p. ej. sonnet, opus)" />
+        <span class="muted">Modelo</span><div data-f="modelbox">${modelSelect('model', a.engine, a.model || '')}</div>
       </div>
     </section>
     <section class="agent-panel-card">
@@ -1302,8 +1334,22 @@ function renderDrawer() {
     await api('PUT', `/api/memory/${pid}`, { text: memBox.querySelector('[data-mem=project]').value });
     toast('Memoria guardada'); memLoad().catch(() => {});
   };
-  d.querySelector('[data-f=engine]').onchange = (e) => api('PATCH', `/api/agents/${a.id}`, { engine: e.target.value }).then(() => toast(`${a.name} usa ahora ${e.target.value}`));
-  d.querySelector('[data-f=model]').onchange = (e) => api('PATCH', `/api/agents/${a.id}`, { model: e.target.value });
+  d.querySelector('[data-f=engine]').onchange = (e) => {
+    const box = d.querySelector('[data-f=modelbox] .model-pick');
+    repaintModel(box, e.target.value, modelPickValue(box)); // FT-55: la lista de modelos sigue al motor elegido
+    api('PATCH', `/api/agents/${a.id}`, { engine: e.target.value }).then(() => toast(`${a.name} usa ahora ${e.target.value}`));
+  };
+  // FT-55: guardar al elegir (en «Otro…», al confirmar el id escrito)
+  const saveModel = (e) => {
+    const w = e.target.closest('.model-pick');
+    if (!w || e.target.closest('.model-refresh')) return;
+    if (e.target.matches('.model-select') && e.target.value === '__other') return;
+    const inp = w.querySelector('.model-other');
+    if (e.target.matches('.model-other') && !inp.reportValidity()) return;
+    const model = modelPickValue(w);
+    api('PATCH', `/api/agents/${a.id}`, { model }).then(() => toast(model ? `${a.name} usa el modelo ${model}` : `${a.name}: modelo por defecto`));
+  };
+  d.querySelector('[data-f=modelbox]').addEventListener('change', saveModel);
   renderDrawer();
   renderLog();
 }
@@ -1338,6 +1384,7 @@ function dialog(html, onSubmit, cls = '') {
     try { await onSubmit?.(Object.fromEntries(new FormData(form))); dlg.close(); } catch { /* el toast ya avisó */ }
   };
   dlg.showModal();
+  if (Date.now() - modelsAt >= 300000) loadModels().then(() => dlg.querySelectorAll('.model-pick').forEach((w) => repaintModel(w, w.dataset.engine, modelPickValue(w)))); // lista viva (FT-55)
 }
 // Dictado por voz en campos del diálogo (FT-43): sin soporte el botón no se pinta; con él, un clic dicta y otro para.
 // STT del servidor disponible (GET /api/guide/stt): el dictado prefiere ese camino (audio local) y deja la Web Speech API de respaldo.

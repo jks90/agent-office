@@ -198,6 +198,8 @@ Las tareas nacen de la rama base en su worktree; si varias tocan los mismos fich
 
 ## Motores
 
+**Selector de modelo único (FT-55):** el modelo nunca se escribe a mano salvo en «Otro…»; `modelSelect()` (`public/app.js`) es el mismo `<select>` en el cajón del agente, contratar, editar, roles y Ajustes (grupos Claude/Codex, no disponibles deshabilitados con su nota, lista de `GET /api/engines/models` cacheada 5 min con botón ↻). Prueba: `node scripts/model-select-e2e.mjs`.
+
 | Motor | Cómo se lanza | Permisos |
 |---|---|---|
 | `demo` | simulado | — |
