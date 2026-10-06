@@ -17,6 +17,7 @@ import { resolveApp } from '../desktop/apps.js';
 import * as vision from './vision.js';
 import { gate, audit, summarize, getPolicy, POLICIES } from './policy.js';
 import { parseKeys } from '../desktop/input.js';
+import { flowTestUrl } from '../suite.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
 const VIEWS = ['office', 'summary', 'tasks', 'agents', 'guide', 'settings'];
@@ -128,6 +129,29 @@ const LAST = 'ÚLTIMO RECURSO: antes ui.find/ui.act. Entrada «ciega» sin ver e
 const OUTSIDE = 'Si la ventana activa es flow-test/AgentOffice responde {inside:true} sin tocar nada. Desactivada de serie (Ajustes ▸ Guide Agent): con el ajuste apagado responde 403.';
 const xy = { x: { type: 'integer', description: 'Coordenada X en píxeles de pantalla' }, y: { type: 'integer', description: 'Coordenada Y en píxeles de pantalla' } };
 
+
+// ── Workspace de flow-test (los flows NO están en los repos: viven en flows/ de flow-test, con enlaces a cada repo) ──
+async function ftGet(pathAndQuery) {
+  let r;
+  try { r = await fetch(flowTestUrl() + pathAndQuery, { signal: AbortSignal.timeout(8000) }); } catch (e) { throw fail(502, `flow-test no responde (${flowTestUrl()}): ${e.message}`); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw fail(r.status === 404 ? 404 : 502, j.error || `flow-test respondió HTTP ${r.status}`);
+  return j;
+}
+const cut = (v, n) => { const t = String(v ?? '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
+// Método y URL de un curl, para el resumen de un nodo HTTP.
+const curlLine = (c) => { const src = String(c || ''); const m = src.match(/-X\s+([A-Z]+)/); const u = src.match(/["']?((?:https?:\/\/|\{\{)[^\s"']+)/); return cut(`${m ? m[1] : 'GET'} ${u ? u[1] : ''}`, 140); };
+export function summarizeFlow(flow, max = 150) {
+  const nodes = [
+    ...(flow.nodes || []).map((n) => ({ id: n.id, kind: 'http', name: cut(n.name, 90), detail: curlLine(n.curl) })),
+    ...(flow.sqlNodes || []).map((n) => ({ id: n.id, kind: 'sql', name: cut(n.name, 90), detail: cut(n.query || n.sql || '', 120) })),
+    ...(flow.webNodes || []).map((n) => ({ id: n.id, kind: 'web', name: cut(n.name, 90), detail: cut(n.url || '', 120) })),
+    ...(flow.infoNodes || []).map((n) => ({ id: n.id, kind: n.renderMode === 'mermaid' ? 'mermaid' : n.renderMode === 'image' ? 'imagen' : 'nota', name: cut(n.name, 90), detail: cut(n.content || '', 160) })),
+  ];
+  return { name: flow.name || '', counts: nodes.reduce((m, n) => ((m[n.kind] = (m[n.kind] || 0) + 1), m), {}), connections: (flow.connections || []).length,
+    drawings: (flow.drawings || []).length, variables: Object.keys(flow.envVariables || {}).length, nodes: nodes.slice(0, max), truncated: nodes.length > max ? nodes.length - max : 0 };
+}
+
 // ── Registro ────────────────────────────────────────────────────────────────
 const T = (name, description, input, policy, handler, extra = {}) => ({ name, description, input, policy, handler, ...extra });
 const later = (name, description, input, policy, who = 'FT-5') =>
@@ -145,6 +169,20 @@ export const tools = [
     ({ agentId }, ctx) => { const a = findAgent(agentId); return { ...ui({ type: 'selectAgent', agentId: a.id }, ctx), agent: a.name }; }),
   T('app.openArtifact', 'Abre la tarea en la UI y devuelve su diff (rama base...rama de la tarea).', obj({ code: str('Código de la tarea') }, ['code']), 'navigate',
     async ({ code }, ctx) => { const t = findTask(code); ui({ type: 'openTask', taskId: t.id, projectId: t.projectId }, ctx); return { task: t.code || t.id, diff: (await team.taskDiff(t.id)).slice(0, 20_000) }; }),
+  T('flowtest.listFlows', 'Lista los flows del workspace de flow-test (los de cada proyecto están en su carpeta, con enlaces a los repos; NO están solo en el repo, no los busques con ls). Por defecto, la carpeta del proyecto indicado; sin projectId, todos. Filtro opcional por texto en la ruta.', obj({ projectId: str('Id o nombre del proyecto (opcional)'), query: str('Texto a buscar en la ruta (opcional)') }), 'read',
+    async ({ projectId, query }) => {
+      const p = projectId ? findProject(projectId) : null;
+      const folder = p ? (p.folder || (p.name === 'default' ? '' : null)) : null;
+      const j = await ftGet('/workspace/flows');
+      const q = String(query || '').toLowerCase();
+      const all = (j.files || []).filter((f) => f.type === 'flow' && !team.isWorktreeCopy(f.path)) // sin las copias de los worktrees de los agentes
+        .filter((f) => folder == null || (folder === '' ? !f.path.includes('/') : f.path.startsWith(folder + '/')))
+        .filter((f) => !q || f.path.toLowerCase().includes(q));
+      return { folder: folder ?? (p ? null : '(todas)'), total: all.length, flows: all.slice(0, 300).map((f) => ({ path: f.path, name: f.name, mtime: f.mtime })), truncated: Math.max(0, all.length - 300),
+        ...(p && folder == null ? { note: `El proyecto «${p.name}» no tiene carpeta en el workspace de flow-test` } : {}) };
+    }),
+  T('flowtest.readFlow', 'Lee un flow del workspace de flow-test y devuelve su resumen: nombre, nodos (HTTP con método y URL, SQL, web, notas con su texto, diagramas), conexiones y variables. Usa la ruta que da flowtest.listFlows.', obj({ path: str('Ruta del flow dentro de flows/, p. ej. flowtest/agent-office/x.flow.json') }, ['path']), 'read',
+    async ({ path: rel }) => { const j = await ftGet(`/workspace/flow?path=${encodeURIComponent(rel)}`); return { path: j.path, mtime: j.mtime, ...summarizeFlow(j.flow || {}) }; }),
   T('flowtest.show', 'Pide a flow-test (host, FT-3) que muestre un flow y, opcionalmente, un nodo. Solo tiene efecto con AgentOffice embebido en flow-test.', obj({ flow: str('Ruta o nombre del flow'), node: str('Id del nodo (opcional)') }, ['flow']), 'navigate',
     ({ flow, node }, ctx) => ({ ...ui({ type: 'flowtest.show', flow, node: node || null }, ctx), flow, node: node || null })),
 

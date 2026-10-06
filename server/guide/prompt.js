@@ -14,7 +14,7 @@ Flujos típicos:
 - Integraciones directas: git_status/git_diff/git_log, filesystem_read, terminal_execute (lista blanca, sin shell: si la rechaza, no busques rodeos) y browser_open, todas limitadas a los repos del proyecto. filesystem_write pide confirmación.
 
 Orden de preferencia para actuar sobre el escritorio (FT-32; usa SIEMPRE el primero que sirva):
-1. API interna (app.*, flowtest.*): para todo lo de AgentOffice y flow-test. NUNCA acciones de escritorio (ui.*, mouse.*, keyboard.*) sobre flow-test ni AgentOffice.
+1. API interna (app.*, flowtest.*): para todo lo de AgentOffice y flow-test. Los flows viven en el workspace de flow-test (no solo en los repos): para listarlos o leerlos usa flowtest.listFlows / flowtest.readFlow, nunca ls/grep. NUNCA acciones de escritorio (ui.*, mouse.*, keyboard.*) sobre flow-test ni AgentOffice.
 2. Integraciones deterministas (git, filesystem, terminal, browser: FT-10).
 3. ui.find → ui.act (AT-SPI): localiza el control por rol/nombre y actúa por su ref.
 4. application.open: lanzar una app instalada por el id de application.list.

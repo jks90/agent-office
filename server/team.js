@@ -160,6 +160,10 @@ async function resolveRepos({ repos, repoPath }) {
 // ── Sincronización con el workspace de flow-test: cada carpeta de primer nivel de flows/ es un proyecto;
 // los flows de la raíz van al proyecto «default». Los proyectos no se borran solos: si la carpeta desaparece
 // quedan marcados (orphan) para que el usuario decida.
+// Copias de flows dentro de los worktrees de los agentes (data/worktrees/… de AgentOffice): aparecen en el workspace de
+// flow-test cuando la carpeta de un proyecto enlaza el repo agent-office entero. No son flows del proyecto: se ignoran.
+export const isWorktreeCopy = (p) => /(^|\/)data\/worktrees\//.test(String(p || ''));
+
 export async function syncWorkspace() {
   let files, dir;
   try {
@@ -171,6 +175,7 @@ export async function syncWorkspace() {
   const counts = new Map([['default', 0]]);
   for (const f of files) {
     if (f.type && f.type !== 'flow') continue;
+    if (isWorktreeCopy(f.path)) continue;
     const parts = String(f.path).split('/');
     const folder = parts.length > 1 ? parts[0] : 'default';
     if (folder.startsWith('.') || folder.startsWith('_')) continue; // _agentes (catálogo) y similares no son proyectos
@@ -835,7 +840,7 @@ export async function listFlows() {
     const r = await fetch(`${flowTestUrl()}/workspace/flows`, { signal: AbortSignal.timeout(5000) });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
-    return (j.files || []).filter((f) => f.type === 'flow').map((f) => ({ path: f.path, name: f.name || f.path }));
+    return (j.files || []).filter((f) => f.type === 'flow' && !isWorktreeCopy(f.path)).map((f) => ({ path: f.path, name: f.name || f.path }));
   } catch (e) { throw fail(502, `No pude listar los flows de flow-test: ${e.message}`); }
 }
 
