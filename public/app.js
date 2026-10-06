@@ -8,6 +8,9 @@ let openTaskId = null; // tarea abierta en el modal «Ver la tarea» (FT-2)
 let hostCtx = null, ctxTimer = null, ctxSent = ""; // hostFeatures: lo que el flow-test que nos embebe sabe hacer (p. ej. 'settingsPanel', FT-42)
 let hostFeatures = []; // publicación del contexto (FT-2)
 const logs = new Map();
+const activityByAgent = new Map(); // FT-68: Activity Stream por agente para la ficha operativa.
+const statusSinceByAgent = new Map();
+const activityLoaded = new Set();
 
 import { Office } from './office3d.js';
 import { dictationSupported, createDictation, insertAtCursor } from './dictation.js'; // dictado por voz (FT-43)
@@ -66,6 +69,11 @@ function connectEvents() {
     if (arr.length > 400) arr.shift();
     logs.set(entry.agentId, arr);
     if (drawerAgent === entry.agentId) renderLog();
+  });
+  es.addEventListener('activity', (e) => {
+    const ev = JSON.parse(e.data);
+    rememberActivity(ev);
+    if (drawerAgent === ev.agentId) renderDrawer();
   });
   // Órdenes del Guide Agent (FT-4): llegan por SSE `ui` (navegar, abrir tarea/agente, enseñar un flow en flow-test).
   es.addEventListener('ui', (e) => {
@@ -867,12 +875,95 @@ function card(t) {
   </div>`;
 }
 
-// ── Panel del agente ───────────────────────────────────────────────────────
+// ── Panel del agente (AgentDetailPanel, FT-68) ─────────────────────────────
+const STATUS_META = {
+  working: { label: 'Trabajando', color: '#34d399' },
+  waiting: { label: 'Esperando', color: '#60a5fa' },
+  reviewing: { label: 'Revisando', color: '#fbbf24' },
+  blocked: { label: 'Bloqueado', color: '#f59e0b' },
+  failed: { label: 'Fallido', color: '#f87171' },
+  idle: { label: 'Descansando', color: '#94a3b8' },
+  paused: { label: 'En pausa', color: '#fbbf24' },
+};
+const STATUS_EVENTS = {
+  AgentStarted: 'working', AgentResumed: 'working', AgentProgress: 'working',
+  AgentPaused: 'paused', AgentBlocked: 'blocked', AgentFailed: 'failed', AgentCompleted: 'idle',
+};
+function effectiveStatus(a) {
+  const task = S.tasks.find((t) => t.id === a?.taskId);
+  if (a?.status === 'working' && task?.status === 'review') return 'reviewing';
+  if (a?.status === 'idle' && S.tasks.some((t) => t.agentId === a.id && t.status === 'failed')) return 'failed';
+  return a?.status || 'idle';
+}
+function statusMeta(a) { return STATUS_META[effectiveStatus(a)] || STATUS_META.idle; }
+function rememberActivity(ev) {
+  if (!ev?.agentId) return;
+  const arr = activityByAgent.get(ev.agentId) || [];
+  if (!arr.some((x) => x.id === ev.id)) arr.push(ev);
+  arr.sort((a, b) => a.ts - b.ts);
+  if (arr.length > 80) arr.splice(0, arr.length - 80);
+  activityByAgent.set(ev.agentId, arr);
+  if (STATUS_EVENTS[ev.type]) statusSinceByAgent.set(ev.agentId, { status: STATUS_EVENTS[ev.type], ts: ev.ts });
+}
+async function loadAgentActivity(id) {
+  if (activityLoaded.has(id)) return;
+  activityLoaded.add(id);
+  try {
+    const events = await api('GET', `/api/events?agentId=${encodeURIComponent(id)}&limit=80`);
+    events.forEach(rememberActivity);
+    if (drawerAgent === id) renderDrawer();
+  } catch { activityLoaded.delete(id); }
+}
+function statusSince(a) {
+  const now = Date.now(), current = effectiveStatus(a);
+  const events = activityByAgent.get(a.id) || [];
+  for (let i = events.length - 1; i >= 0; i--) {
+    const st = STATUS_EVENTS[events[i].type];
+    if (st && (st === current || (current === 'reviewing' && st === 'working'))) return events[i].ts;
+  }
+  const cached = statusSinceByAgent.get(a.id);
+  return cached?.ts || a.updatedAt || a.createdAt || now;
+}
+function durationSince(ts) {
+  const s = Math.max(0, Math.floor((Date.now() - Number(ts || Date.now())) / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  if (h) return `${h}h ${String(m).padStart(2, '0')}m`;
+  if (m) return `${m}m ${String(sec).padStart(2, '0')}s`;
+  return `${sec}s`;
+}
+function eventText(ev) {
+  const d = ev.data || {};
+  if (ev.type === 'AgentToolStarted') return `usando ${d.tool || 'herramienta'}${d.summary ? ': ' + d.summary : ''}`;
+  if (ev.type === 'AgentToolFinished') return d.ok === false ? 'herramienta con error' : 'herramienta completada';
+  if (ev.type === 'AgentProgress') return d.activity || 'actualizando progreso';
+  if (ev.type === 'AgentFileModified') return `modificando ${d.path || 'fichero'}`;
+  if (ev.type === 'AgentArtifactCreated') return d.kind === 'commit' ? `commit${d.sha ? ' ' + String(d.sha).slice(0, 7) : ''}${d.branch ? ' en ' + d.branch : ''}` : `creando ${d.kind || 'artefacto'}`;
+  if (ev.type === 'AgentStarted') return `empezando ${ev.taskCode || 'tarea'}${d.engine ? ' con ' + d.engine : ''}`;
+  if (ev.type === 'TaskAssigned') return `asignado a ${ev.taskCode || 'tarea'}`;
+  if (ev.type === 'AgentPaused') return 'pausado';
+  if (ev.type === 'AgentResumed') return 'reanudado';
+  if (ev.type === 'AgentBlocked') return `bloqueado${d.reason ? ': ' + d.reason : ''}`;
+  if (ev.type === 'AgentFailed') return `error: ${d.error || 'fallo del agente'}`;
+  if (ev.type === 'AgentCompleted') return d.status === 'review' ? 'entregado a revisión' : 'tarea completada';
+  if (ev.type === 'UserInstructionAdded') return d.kind === 'message' ? 'mensaje recibido del usuario' : 'instrucción añadida';
+  return ev.type.replace(/^Agent/, '').replace(/([A-Z])/g, ' $1').trim().toLowerCase();
+}
+function activeTool(a) {
+  const events = activityByAgent.get(a.id) || [];
+  const tool = [...events].reverse().find((e) => e.type === 'AgentToolStarted');
+  const engine = a.activeEngine || a.engine || 'auto';
+  return `${engine}${a.model ? ' · ' + a.model : ''}${tool ? ` · ${tool.data?.tool || 'herramienta'}${tool.data?.summary ? ' · ' + tool.data.summary : ''}` : ''}`;
+}
 function openDrawer(id) {
   drawerAgent = id;
   $('#drawer').hidden = false;
+  $('#drawer').setAttribute('role', 'dialog');
+  $('#drawer').setAttribute('aria-modal', 'true');
+  $('#drawer').tabIndex = -1;
+  loadAgentActivity(id);
   render();
   renderLog();
+  requestAnimationFrame(() => $('#drawer')?.focus({ preventScroll: true }));
 }
 function closeDrawer() { drawerAgent = null; $('#drawer').hidden = true; render(); }
 
@@ -896,29 +987,54 @@ function renderDrawer() {
   if (!a) return closeDrawer();
   const task = S.tasks.find((t) => t.id === a.taskId);
   const d = $('#drawer');
+  const role = S.roles[a.role];
+  const meta = statusMeta(a);
+  const recent = (activityByAgent.get(a.id) || []).slice(-8).reverse();
+  const controlsHtml = busy(a) ? controls(a) : `<button class="small ghost" data-msg="${a.id}" title="Mandarle una instrucción">✉ Mensaje</button>`;
+  const taskHtml = task ? `<button class="linklike" data-open="${task.id}"><b>${esc(tcode(task))}</b> ${esc(task.title)}</button>` : '<span class="muted">Sin tarea activa</span>';
+  const activityHtml = recent.length ? recent.map((ev) => `<li class="${ev.type === 'AgentFailed' ? 'bad' : ''}"><span>${esc(eventText(ev))}</span><time>${ago(ev.ts)}</time></li>`).join('') : '<li><span class="muted">Sin actividad reciente en el stream.</span></li>';
   // Si ya está pintado, solo refrescamos lo que cambia (no perder el foco de los inputs).
   if (d.dataset.agent === a.id) {
-    d.querySelector('[data-f=status]').innerHTML = a.status === 'paused' ? '⏸ en pausa' : a.status === 'working' ? `🟢 ${esc(a.activity)}` : '☕ descansando';
-    d.querySelector('[data-f=controls]').innerHTML = busy(a) ? controls(a) : '';
-    d.querySelector('[data-f=task]').innerHTML = task ? `${esc(tcode(task))} ${esc(task.title)}` : '—';
+    d.querySelector('[data-f=status]').innerHTML = `<span class="dot" style="background:${meta.color};box-shadow:0 0 8px ${meta.color}"></span>${esc(meta.label)}<span class="muted">${durationSince(statusSince(a))}</span>`;
+    d.querySelector('[data-f=activity]').innerHTML = activityHtml;
+    d.querySelector('[data-f=tool]').textContent = activeTool(a);
+    d.querySelector('[data-f=controls]').innerHTML = controlsHtml;
+    d.querySelector('[data-f=task]').innerHTML = taskHtml;
+    d.querySelector('[data-f=current]').textContent = a.activity || (effectiveStatus(a) === 'idle' ? 'Disponible' : meta.label);
     d.querySelector('[data-stop]').hidden = !busy(a);
     return;
   }
   d.dataset.agent = a.id;
   d.innerHTML = `
-    <div class="head"><span class="avatar" style="--c:${S.roles[a.role]?.color}">${esc(a.name).charAt(0).toUpperCase()}</span><h2>${esc(a.name)}</h2>${roleChip(a.role)}<div class="spacer"></div><button class="ghost small" data-close>✕</button></div>
-    <div class="grid">
-      <span class="muted">Estado</span><span data-f="status"></span>
-      <span class="muted">Tarea</span><span data-f="task"></span>
-      <span class="muted">Motor</span>
-      <select data-f="engine">${S.engines.map((e) => `<option ${e === a.engine ? 'selected' : ''}>${e}</option>`).join('')}</select>
-      <span class="muted">Modelo</span><input data-f="model" value="${esc(a.model)}" placeholder="por defecto del CLI (p. ej. sonnet, opus)" />
-    </div>
-    <div class="row" style="display:flex;gap:8px">
-      <span data-f="controls" style="display:inline-flex;gap:8px"></span>
+    <div class="agent-panel-head"><span class="avatar big" style="--c:${role?.color || '#999'}">${esc(a.name).charAt(0).toUpperCase()}</span><div><h2>${esc(a.name)}</h2><div>${roleChip(a.role)}</div></div><div class="spacer"></div><button class="ghost small" data-close aria-label="Cerrar ficha">✕</button></div>
+    <div class="agent-status" data-f="status"></div>
+    <div class="agent-current" data-f="current"></div>
+    <section class="agent-panel-card">
+      <h3>Tarea actual</h3>
+      <div data-f="task"></div>
+    </section>
+    <section class="agent-panel-card">
+      <h3>Herramienta activa</h3>
+      <div class="tool-line" data-f="tool"></div>
+    </section>
+    <section class="agent-panel-card">
+      <h3>Motor y modelo</h3>
+      <div class="grid">
+        <span class="muted">Motor</span>
+        <select data-f="engine">${S.engines.map((e) => `<option ${e === a.engine ? 'selected' : ''}>${e}</option>`).join('')}</select>
+        <span class="muted">Modelo</span><input data-f="model" value="${esc(a.model)}" placeholder="por defecto del CLI (p. ej. sonnet, opus)" />
+      </div>
+    </section>
+    <section class="agent-panel-card">
+      <h3>Actividad reciente</h3>
+      <ul class="agent-activity" data-f="activity"></ul>
+    </section>
+    <div class="agent-actions" data-f="controls"></div>
+    <div class="agent-actions">
+      ${task ? `<button class="small" data-open="${task.id}">Abrir tarea</button>` : ''}
+      <button class="small ghost" data-log-focus>Ver log</button>
+      <button class="small ghost" data-agent-edit="${a.id}">Reasignar / editar</button>
       <button class="danger small" data-stop="${a.id}">⏹ Parar</button>
-      <div class="spacer"></div>
-      <button class="danger small" data-fire="${a.id}">Despedir</button>
     </div>
     <div class="muted">Registro en vivo</div>
     <div id="log"></div>`;
@@ -1564,6 +1680,7 @@ document.addEventListener('click', async (e) => {
   if (d.action) return actions[d.action]?.();
   if (d.agent) return openDrawer(d.agent);
   if (d.close !== undefined) return closeDrawer();
+  if (d.logFocus !== undefined) { $('#log')?.focus(); return; }
   if (d.stop) return api('POST', `/api/agents/${d.stop}/stop`);
   if (d.pause) return api('POST', `/api/agents/${d.pause}/pause`);
   if (d.resume) return api('POST', `/api/agents/${d.resume}/resume`);
