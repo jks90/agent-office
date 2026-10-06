@@ -893,7 +893,11 @@ function dialog(html, onSubmit, cls = '') {
   dlg.showModal();
 }
 // Dictado por voz en campos del diálogo (FT-43): sin soporte el botón no se pinta; con él, un clic dicta y otro para.
-const micField = (field) => `<div class="mic-wrap">${field}${dictationSupported() ? '<button type="button" class="mic-btn" data-mic title="Dictar por voz (clic para empezar, otro para parar)" aria-pressed="false">🎤</button>' : ''}</div>`;
+// STT del servidor disponible (GET /api/guide/stt): el dictado prefiere ese camino (audio local) y deja la Web Speech API de respaldo.
+let sttLocalOk = false;
+const refreshSttLocal = () => api('GET', '/api/guide/stt').then((st) => { sttLocalOk = !!(st.providers || []).find((p) => p.name === st.provider)?.ok; }).catch(() => {});
+const dictationViaServer = () => sttLocalOk && safeGet('ao:dictation') !== 'browser';
+const micField = (field) => `<div class="mic-wrap">${field}${dictationSupported({ server: dictationViaServer() }) ? '<button type="button" class="mic-btn" data-mic title="Dictar por voz (clic para empezar, otro para parar)" aria-pressed="false">🎤</button>' : ''}</div>`;
 let dictation = null; // { btn, dict }: un solo dictado a la vez
 function micStop() { dictation?.dict.stop(); }
 document.addEventListener('click', (e) => {
@@ -904,7 +908,8 @@ document.addEventListener('click', (e) => {
   micStop();
   const mark = (on) => { btn.classList.toggle('rec', on); btn.setAttribute('aria-pressed', on); btn.title = on ? 'Grabando… clic para parar' : 'Dictar por voz (clic para empezar, otro para parar)'; if (!on && dictation?.btn === btn) dictation = null; };
   const lang = ({ es: 'es-ES', en: 'en-US', ca: 'ca-ES', fr: 'fr-FR', de: 'de-DE', pt: 'pt-PT', it: 'it-IT' })[S.settings.sttLang] || navigator.language || 'es-ES';
-  const dict = createDictation({ lang, onText: (t) => insertAtCursor(field, t), onState: mark, onError: (m) => { btn.disabled = /permiso|permite/.test(m); toast(m, 'error'); } });
+  const server = dictationViaServer() ? { record: (o) => voiceRecord(null, o), transcribe: voiceTranscribe } : null; // audio al STT local del servidor
+  const dict = createDictation({ lang, server, onText: (t) => insertAtCursor(field, t), onState: mark, onError: (m) => { btn.disabled = /permiso|permite/.test(m); toast(m, 'error'); } });
   dictation = { btn, dict };
   field.focus();
   dict.start();
@@ -1013,6 +1018,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <button type="button" class="danger small" data-delete-project>Borrar el proyecto «${esc(project()?.name)}»</button>
     ${buttons()}`, async (f) => {
     safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0'); (SETTINGS_EMBED ? safeSet('ao:voice-wake', f.voiceWake ? '1' : '0') : wakeSet(!!f.voiceWake)); // en el panel de flow-test no se abre el micro: el iframe principal lo recoge por el evento `storage`
+    refreshSttLocal();
     await api('POST', '/api/settings', { ...f, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
@@ -1575,6 +1581,7 @@ window.addEventListener('message', (e) => {
   publishContext();
 });
 publishContext();
+refreshSttLocal(); // para saber si el dictado (FT-43) puede ir por el STT del servidor
 if (voicePref.wake() && !SETTINGS_EMBED) wakeSet(true); // escucha continua recordada en este navegador (FT-36); con la casilla sin tocar nunca se pide el micro
 if (EMBEDDED && !SETTINGS_EMBED) { try { window.parent.postMessage({ type: 'agentoffice:ready' }, location.origin); } catch { /* padre de otro origen */ } } // flow-test responde con su contexto (FT-3)
 
