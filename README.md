@@ -493,6 +493,18 @@ Cada tarea empezaba de cero. Ahora cada agente tiene una memoria corta por proye
 - **Control:** sección «🧠 Memoria» en la ficha del agente para verla y editarla (`GET/PUT /api/memory/:projectId[?agent=id]`), interruptor en Ajustes (`agentMemory`).
 - Prueba: `node scripts/memory-e2e.mjs` (11 checks). Su efecto en el coste entra en el benchmark de FT-61 (variante con y sin memoria).
 
+## 🐴 Ponytail (prueba) (FT-86)
+
+Prueba medida de si las reglas «construir lo mínimo» abaratan las tareas sin empeorar el resultado. Inspirada en la escalera de decisión del plugin [Ponytail](https://github.com/DietrichGebert/ponytail) (no hacerlo → ya existe → configurarlo → reutilizar/extender → una línea → lo mínimo → solo entonces código nuevo). El texto (`server/ponytail.js`, `BLOCK`) es **nuestro, en castellano, no una copia**. Licencia del repo original: **no verificada** desde este entorno (sin acceso a red); como no se copia texto ni código, no hace falta, pero compruébala antes de reutilizar nada literal. Sus cifras publicadas (≈54 % menos código, ≈22 % menos tokens, ≈20 % menos coste) son suyas: aquí se mide con las tareas reales.
+
+- **Apagada por defecto.** Se activa **por rol** (Ajustes → «Ponytail», o casilla en la ficha del rol; se guarda en `settings.ponytailRoles`) y/o **por agente** (casilla en su ficha; `agent.ponytail`, `PATCH /api/agents/:id`). Basta con una de las dos.
+- Con la opción activa el bloque va en la parte **estable** del prompt (tras `economyBlock`, antes de «TAREA»; FT-59), igual para Claude y Codex (comparten `buildPrompt`). Apagada, el prompt queda **byte a byte igual** (lo comprueba el e2e).
+- Cada intento se etiqueta con `variant: 'base' | 'ponytail'` (`task.variant` y cada línea de `data/costs/…jsonl`; también en el CSV de `/api/costs/export`).
+- «💸 Costes» → tabla **Ponytail vs base** con medias por tarea aprobada (coste, tokens, salida, devoluciones, líneas del diff) y selector para filtrar el resto de la pestaña (`GET /api/costs?variant=base|ponytail`; `byVariant` siempre trae la comparación).
+- Con pocas tareas por variante no hay conclusión: lanza varias del mismo tipo con y sin la opción antes de decidir.
+
+Prueba: `node scripts/ponytail-e2e.mjs` (motores falsos Claude y Codex).
+
 ## 🖥️ IA local (LM Studio / Ollama) (FT-54)
 
 Cuarto motor, `local`: trabaja con un modelo que corre en tu máquina, sin cuota ni nube. **Quien ejecuta es el CLI de Codex** (`server/engines/local.js` envuelve `codex.js`): mismo worktree, stream JSON, mensajes en caliente y sandbox; solo cambia el proveedor, que se pasa por línea de comandos (`-c model_provider=aolocal -c model_providers.aolocal.base_url=… -c …wire_api="responses"`) sin tocar tu `~/.codex/config.toml`. Si el servidor pide clave, va por `env_key` (`AO_LOCAL_API_KEY`).

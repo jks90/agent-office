@@ -10,6 +10,7 @@ import * as questions from './questions.js';
 import * as team from './team.js';
 import * as review from './review.js'; // FT-56
 import * as costs from './costs.js'; // FT-76
+import * as ponytail from './ponytail.js'; // FT-86
 import { allRoles } from './roles.js';
 import { checkSuite, suiteInfo } from './suite.js';
 import * as auth from './engines/auth.js';
@@ -161,7 +162,7 @@ const routes = [
   ['DELETE', /^\/api\/projects\/(\w+)$/, ([id]) => team.deleteProject(id)],
   ['PATCH', /^\/api\/projects\/(\w+)$/, ([id], b) => team.updateProject(id, b)],
   // Costes de los agentes (FT-76): KPI, desglose y línea base interactiva. Para seguirlo desde flows de flow-test.
-  ['GET', /^\/api\/costs$/, () => costs.overview(store.get())],
+  ['GET', /^\/api\/costs$/, (_, __, q) => costs.overview(store.get(), Date.now(), { variant: q.variant })],
   ['GET', /^\/api\/costs\/export$/, (_, __, q) => { const rows = costs.exportRows(store.get()); return q.format === 'csv' ? { csv: costs.toCsv(rows) } : rows; }],
   ['GET', /^\/api\/costs\/baseline$/, () => costs.readBaseline()],
   ['POST', /^\/api\/costs\/baseline$/, (_, b) => costs.addBaseline(b, fail)],
@@ -240,6 +241,7 @@ const routes = [
     if (Array.isArray(b.reviewSensitive)) st.reviewSensitive = b.reviewSensitive.map((x) => String(x).trim()).filter(Boolean).slice(0, 40);
     if (typeof b.reviewEngine === 'string' && ['', 'claude', 'codex', 'demo'].includes(b.reviewEngine)) st.reviewEngine = b.reviewEngine;
     if (typeof b.agentMemory === 'boolean') st.agentMemory = b.agentMemory; // FT-75
+    if (b.ponytailRoles && typeof b.ponytailRoles === 'object') st.ponytailRoles = ponytail.cleanRoles(b.ponytailRoles); // FT-86
     if (typeof b.codeIndex === 'boolean') st.codeIndex = b.codeIndex; // FT-58
     if (typeof b.cacheAffinity === 'boolean') st.cacheAffinity = b.cacheAffinity; // FT-64
     if (b.maxTaskUsd !== undefined) st.maxTaskUsd = Math.max(0.5, Math.min(50, Number(b.maxTaskUsd) || 3)); // tope de gasto por intento de tarea
