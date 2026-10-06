@@ -438,6 +438,22 @@ Objetivo: que una tarea hecha por los agentes cueste **igual o menos** que hacer
 
 **Fuera de esta entrega (siguientes fases):** ahorro de RTK (`rtk gain`) y coste de memoria/briefing por separado, % de cuota por tarea, alertas (2× la mediana del rol, presupuesto diario/semanal), experimentos A/B con el benchmark FT-61 e informe inicial con las tareas FT-xx históricas (esas no tienen telemetría por turno; solo su `costUsd`).
 
+## ⏱️ Benchmark de costes (FT-61)
+
+Verifica que las medidas de ahorro (FT-57 a FT-65) funcionan realmente. Script: `node scripts/cost-benchmark.mjs` (binarios falsos con costes predecibles).
+
+- **Variantes medidas:** 6 combinaciones (Claude/Codex × sin/con medidas × sin/con memoria)
+- **Métricas:** tokens entrada/caché_lectura/caché_escritura/salida, coste USD, nº turnos, herramientas usadas, si la tarea se completó
+- **Salida:** tabla en `resumen/cost-benchmark-YYYY-MM-DD.md` con comparativas de ahorro y resumen de conclusiones
+- **Flow de verificación:** `flowtest/benchmark-costes-ft61.flow.json` prueba los endpoints de observabilidad (`GET /api/costs`, `/api/costs/:proyecto/:tarea`, `/api/costs/export?format=csv`, `POST /api/costs/baseline`)
+- **Prueba:** `node scripts/cost-benchmark.mjs` (requiere permisos para `spawn` y `git`); no está en el CI porque depende de binarios falsos y consume varios minutos
+
+**Lo que falta verificar en entorno real:**
+- Precios estimados de Codex vs reales (`CODEX_PRICES` en `usage.js`)
+- Ahorro real del índice de código (FT-58): requiere ejecutar la misma tarea con/sin índice en Claude/Codex reales
+- Comparación del explorador (FT-65) vs sin: requiere `AO_EXPLORER=off` y `AO_EXPLORER=on` con tarea real
+- Flags de Codex no verificados contra binario real: `exec resume`, `features.codex_hooks`, `hooks.PreToolUse`, `-c model_reasoning_summary`
+
 ## 🧠 Memoria de los agentes (FT-75)
 
 Cada tarea empezaba de cero. Ahora cada agente tiene una memoria corta por proyecto, y el proyecto otra común (`server/memory.js`, ficheros `data/memory/<proyecto>/agent-<id>.md` y `project.md`, una lección por línea con su código de tarea):
