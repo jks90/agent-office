@@ -13,6 +13,7 @@ import { draftTask } from '../ai-draft.js';
 import { cleanContext } from '../task-context.js';
 import * as integ from './integrations.js';
 import { getProvider } from '../desktop/index.js';
+import { resolveApp } from '../desktop/apps.js';
 import * as vision from './vision.js';
 import { gate, audit, summarize, POLICIES } from './policy.js';
 
@@ -244,6 +245,15 @@ export const tools = [
         return isDestructive(n) ? { policy: 'irreversible', context: `⚠ Control potencialmente destructivo\n${ctx}` } : { policy: 'execute', context: ctx };
       },
     }),
+
+  // — Aplicaciones (FT-31): listar y lanzar apps instaladas —
+  T('application.list', 'Lista las aplicaciones instaladas (.desktop visibles): {id, name, exec}. El id es lo único que acepta application.open.', obj(), 'read',
+    async () => getProvider().listApps()),
+  T('application.open', 'Abre una aplicación instalada por su «id» de application.list (sin argumentos ni comandos libres). Veta AgentOffice, flow-test y terminales (403); un id que no esté en la lista da 400.',
+    obj({ id: str('id de application.list, p. ej. «gedit»') }, ['id']), 'execute',
+    async ({ id }) => getProvider().openApp({ id }),
+    // se valida antes de pedir confirmación: un id no válido o vetado falla sin molestar al usuario
+    { precheck: async ({ id }) => { resolveApp(await getProvider().listApps(), id); return null; } }),
 
   // — Ejecución y borrado —
   T('project.run', 'Pone a trabajar (running=true) o pausa (false) al equipo del proyecto.', obj({ projectId: str('Id o nombre del proyecto'), running: { type: 'boolean' } }, ['projectId', 'running']), 'execute',
