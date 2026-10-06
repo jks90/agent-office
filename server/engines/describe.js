@@ -37,7 +37,9 @@ export function toolSummary(name, input = {}) {
 // FT-62: clave de repetición (orden completa / ruta completa). Solo para el detector de atascos: nunca se publica.
 export function toolKey(name, input = {}) {
   if (name === 'Bash') return String(input.command ?? '').trim().slice(0, 300) || null;
-  if (name === 'Read') return input.file_path ? String(input.file_path) : null;
+  // Read: el tramo cuenta (offset/limit). Leer por tramos un fichero grande es justo lo que piden las reglas de ahorro;
+  // solo es «releer» volver al MISMO tramo.
+  if (name === 'Read') return input.file_path ? String(input.file_path) + (input.offset != null || input.limit != null ? ` @${input.offset ?? 1}+${input.limit ?? ''}` : '') : null;
   return null;
 }
 
