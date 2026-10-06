@@ -268,7 +268,11 @@ export const tools = [
     obj({ id: str('id de application.list, p. ej. «gedit»') }, ['id']), 'execute',
     async ({ id }) => getProvider().openApp({ id }),
     // se valida antes de pedir confirmación: un id no válido o vetado falla sin molestar al usuario
-    { precheck: async ({ id }) => { resolveApp(await getProvider().listApps(), id); return null; } }),
+    {
+      precheck: async ({ id }) => { resolveApp(await getProvider().listApps(), id); return null; },
+      // FT-32 · el modal muestra qué app se lanzará (el id ya está validado por el precheck)
+      dynamic: async ({ id }) => { const a = resolveApp(await getProvider().listApps(), id); return { policy: 'execute', context: `App: ${a.name} (${a.id})\nControl: —\nAcción: abrir la aplicación` }; },
+    }),
   // — Fallback de entrada (FT-30): xdotool (X11) / ydotool (Wayland) —
   T('mouse.click', `${LAST}hace clic en unas coordenadas de pantalla (left|right|middle, doble opcional). ${OUTSIDE}`,
     obj({ ...xy, button: { type: 'string', enum: ['left', 'right', 'middle'], description: 'left por defecto' }, double: { type: 'boolean', description: 'Doble clic' } }, ['x', 'y']), 'execute',
@@ -285,7 +289,13 @@ export const tools = [
     async ({ keys }) => { await inputProvider().keyPress({ keys }); return { ok: true, keys }; },
     {
       precheck: inputPrecheck,
-      dynamic: async ({ keys }) => (isIrreversibleKeys(keys) ? { policy: 'irreversible', context: `⚠ Atajo potencialmente destructivo: ${keys}` } : null),
+      // FT-32 · el modal muestra la app con foco, la tecla y la acción
+      dynamic: async ({ keys }) => {
+        const w = await getProvider().getActive().catch(() => null);
+        const irr = isIrreversibleKeys(keys);
+        const ctx = `App: ${w?.app || w?.title || 'ventana activa'}\nControl: ventana con foco\nAcción: pulsar «${keys}»`;
+        return { policy: irr ? 'irreversible' : 'execute', context: irr ? `⚠ Atajo potencialmente destructivo\n${ctx}` : ctx };
+      },
     }),
 
   // — Ejecución y borrado —
