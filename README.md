@@ -276,7 +276,7 @@ La misma clase `Office3D` tiene dos modos: **`floor`** (la sala de siempre: el p
 
 - **API**: `office.setMode('building'|'floor')`; `office.update({agents, tasks, roles, title, selected, projects, allAgents, allTasks, projectId})` (`app.js` pasa `S.projects`, `S.agents`, `S.tasks` y el proyecto activo; el modo `floor` sigue usando solo `agents`/`tasks` del proyecto activo). La cámara isométrica encuadra la caja que toque (`frameCamera(aspect, [x, y, z])`): la sala o `[RX, nPlantas·FLOOR_H, RZ]`; `resize()` vale en ambos modos.
 - **Rendimiento**: las plantas se reconstruyen solo cuando cambia su firma (proyectos con equipo + contadores), nunca por frame; en el edificio no se instancian personajes ni sombras.
-- **QA**: `canvas.dataset.officeMode` (`building`|`floor`) y `window.aoOffice.debugState()` → `{mode, activeProjectId, hoverFloor, animating, floors:[{projectId, name, working, queued, review, running}]}`. Prueba: `node scripts/building-e2e.mjs [captura.png]` (36 checks con Chrome headless: el edificio de FT-46 y la navegación de FT-47; detalle abajo).
+- **QA**: `canvas.dataset.officeMode` (`building`|`floor`) y `window.aoOffice.debugState()` → `{mode, activeProjectId, hoverFloor, animating, actors, floors:[{projectId, name, working, queued, review, running, screen:{x,y,w,h}}]}` (`screen` = rectángulo de la planta en px del viewport en modo edificio, para hacer clic en ella; FT-48). Prueba: `node scripts/building-e2e.mjs [captura.png]` (51 checks con Chrome headless: el edificio de FT-46, la navegación de FT-47 y el QA de FT-48 con repos git temporales, contadores contra `/api/state`, altas/bajas de equipo en vivo por SSE y capturas `resumen/building-*.png`; detalle abajo).
 
 ### Edificio ↔ planta (FT-47)
 
