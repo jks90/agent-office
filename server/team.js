@@ -117,7 +117,9 @@ export function escalate(t, reason) {
   log(t.agentId, `⬆ ${t.code || t.id}: el próximo intento sube de modelo (${reason})`);
   return true;
 }
-export const STATUSES = ['backlog', 'todo', 'doing', 'review', 'done', 'failed'];
+export const STATUSES = ['backlog', 'todo', 'doing', 'review', 'done', 'failed', 'discarded'];
+// «Descartada»: no se va a hacer (duplicada, absorbida por otra, ya no aplica). Como dependencia cuenta como resuelta.
+export const RESOLVED = new Set(['done', 'discarded']);
 
 const { get, changed, newId, log } = store;
 const jobs = new Map(); // agentId -> { stop, taskId, engine, pid?, pause?, resume?, message?, requeue? }
@@ -444,8 +446,8 @@ export function updateTask(id, patch) {
   }
   if (patch.status && patch.status !== t.status) {
     // FT-27: antes un cambio no permitido se ignoraba en silencio; ahora avisa con el motivo.
-    if (!['backlog', 'todo'].includes(patch.status)) throw fail(409, 'A esa columna no se mueve a mano: «En curso» la ocupa el agente, y «Revisión»/«Hecho» se alcanzan al terminar (Aprobar / Devolver en la tarjeta)');
-    if (!['backlog', 'todo', 'failed'].includes(t.status)) throw fail(409, 'Solo se mueven entre Backlog y Por hacer las tareas que no han empezado; esta ya está en curso, en revisión o hecha');
+    if (!['backlog', 'todo', 'discarded'].includes(patch.status)) throw fail(409, 'A esa columna no se mueve a mano: «En curso» la ocupa el agente, y «Revisión»/«Hecho» se alcanzan al terminar (Aprobar / Devolver en la tarjeta)');
+    if (!['backlog', 'todo', 'failed', 'discarded'].includes(t.status)) throw fail(409, 'Solo se mueven entre Backlog, Por hacer y Descartada las tareas que no han empezado; esta ya está en curso, en revisión o hecha');
     t.status = patch.status;
     t.error = null;
     reflect(t);
@@ -768,7 +770,7 @@ export function taskRepos(p, t) {
   return out;
 }
 const projectOf = (t) => get().projects.find((p) => p.id === t.projectId);
-const depsDone = (t) => t.dependsOn.every((d) => get().tasks.find((x) => x.id === d)?.status === 'done');
+const depsDone = (t) => t.dependsOn.every((d) => RESOLVED.has(get().tasks.find((x) => x.id === d)?.status));
 
 // ── Importar un tablero de flow-test (notas = tarjetas, textos de pizarra = listas) ──────────────
 const COLUMN_STATUS = [[/revisi/i, 'review'], [/hecho|done/i, 'done'], [/en curso|progreso|doing/i, 'todo']];

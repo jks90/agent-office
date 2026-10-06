@@ -11,7 +11,7 @@ const ROLE_ZONE = [
   [/manager|lead|guide|pm|po|product/i, 'meeting'],
 ];
 
-const DONE = new Set(['done', 'merged', 'approved']);
+const DONE = new Set(['done', 'merged', 'approved', 'discarded']);
 const QUEUED = new Set(['todo', 'backlog', 'queued', 'pending']);
 const RUNNING = new Set(['doing', 'working', 'running']);
 
