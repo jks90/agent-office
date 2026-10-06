@@ -1,6 +1,7 @@
 // FT-20 · Provider falso (AO_DESKTOP=fake): datos fijos para las pruebas.
 import { readFileSync } from 'node:fs';
 import { saveCapture } from './capture.js';
+import { resolveApp } from './apps.js';
 import { filterNodes, pidOfRef, ACTIONS, MAX_DEPTH, MAX_NODES } from './atspi.js';
 const WINDOWS = [
   { id: '0x04000001', title: 'agent-office — Visual Studio Code', app: 'code', pid: 1111, active: true },
@@ -22,6 +23,16 @@ const fakeTree = (pid) => [
   { ref: `${pid}:0.2`, role: 'text', name: 'Nombre', states: ['enabled', 'showing', 'editable', 'focusable'], actions: [], bounds: { x: 10, y: 50, width: 300, height: 30 } },
 ];
 const uiActions = [];
+// FT-31 · Apps simuladas y registro de lanzamientos
+const FAKE_APPS = [
+  { id: 'gedit', name: 'Editor de texto', exec: 'gedit %U' },
+  { id: 'firefox', name: 'Firefox', exec: 'firefox %u' },
+  { id: 'org.gnome.Calculator', name: 'Calculadora', exec: 'gnome-calculator' },
+  { id: 'gnome-terminal', name: 'Terminal', exec: 'gnome-terminal' },
+  { id: 'agentoffice', name: 'AgentOffice', exec: 'xdg-open http://localhost:7420' },
+  { id: 'flowtest', name: 'flow-test', exec: 'flowtest' },
+];
+const launched = [];
 const bad = (status, msg) => Object.assign(new Error(msg), { status });
 const depthOf = (n) => (n.ref.split(':')[1] ? n.ref.split(':')[1].split('.').length : 0);
 
@@ -54,6 +65,9 @@ export function createFakeProvider() {
       uiActions.push({ ts: Date.now(), ref, name: n.name, action, ...(action === 'setText' ? { text } : {}) });
       return { ok: true, node: n };
     },
+    listApps: async () => FAKE_APPS.map(a => ({ ...a })),
+    openApp: async ({ id } = {}) => { const a = resolveApp(FAKE_APPS, id); launched.push({ ts: Date.now(), id: a.id }); return { ok: true, id: a.id, launcher: 'fake' }; },
+    launchedApps: () => launched.slice(),
     uiActions: () => uiActions.slice(),
   };
 }

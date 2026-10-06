@@ -12,6 +12,7 @@
 //     a11yAvailable(): { ok, missing[] }
 //     uiTree({pid|windowId, depth≤6, maxNodes≤500}) / uiFind({pid|windowId, role?, name?}) → [{ref, role, name, states[], actions[], bounds}]
 //     uiNode(ref) → nodo + {pid, app} · uiAct({ref, action:'click'|'press'|'focus'|'setText', text?}) → {ok, node}
+//     // FT-31 · listApps() → [{id, name, exec}] · openApp({id}) → {ok, id}: solo ids de la lista (apps.js); 403 si vetada, 400 si no existe
 //   }
 // Los errores llevan `.status` (501 no soportado, 503 faltan herramientas) para que index.js los enrute.
 // FT-24: AO_DESKTOP_PLATFORM=darwin|win32 simula otra plataforma (pruebas del 501).
@@ -33,6 +34,8 @@ export function createUnsupportedProvider(os = process.platform) {
     uiFind: async () => { throw err(); },
     uiNode: async () => { throw err(); },
     uiAct: async () => { throw err(); },
+    listApps: async () => { throw err(); },
+    openApp: async () => { throw err(); },
   };
 }
 

@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { saveCapture } from './capture.js';
 import * as atspi from './atspi.js';
+import * as apps from './apps.js';
 
 const TIMEOUT = 3000;
 const fail503 = msg => Object.assign(new Error(msg), { status: 503 });
@@ -173,6 +174,9 @@ export function createLinuxProvider(env = process.env) {
     uiFind: async (o = {}) => atspi.filterNodes(await atspi.tree({ pid: await pidFor(o), depth: atspi.MAX_DEPTH, maxNodes: atspi.MAX_NODES }), o),
     uiNode: async (ref) => atspi.nodeInfo(ref),
     uiAct: async (o) => atspi.act(o),
+    // FT-31 · aplicaciones instaladas (.desktop); solo se lanza un id de la lista
+    listApps: async () => apps.listFromDirs(),
+    openApp: async ({ id } = {}) => apps.launch(apps.resolveApp(apps.listFromDirs(), id).id),
     // FT-21 · capture({target:'screen'|'window', windowId?}) → { path, width, height, bytes, tool, ts }
     capture: async ({ target = 'screen', windowId } = {}) => {
       if (!be) throw nope();
