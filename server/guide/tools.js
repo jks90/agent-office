@@ -85,7 +85,7 @@ const gitFiles = async (t) => {
 };
 
 // ── Escritorio (FT-22) · regla «solo fuera»: si la ventana activa es flow-test/AgentOffice no se devuelve nada del escritorio ──
-const INSIDE_RE = () => new RegExp(`flowtest|agentoffice|agent office|(localhost|127\\.0\\.0\\.1):${process.env.AO_PORT || 7420}\\b`, 'i');
+const INSIDE_RE = () => new RegExp(`flow[-_ ]?test|agentoffice|agent office|(localhost|127\\.0\\.0\\.1):${process.env.AO_PORT || 7420}\\b`, 'i');
 const INSIDE = { inside: true, hint: 'usa app.getContext' };
 const isInside = (w) => !!w && INSIDE_RE().test(`${w.title || ''} ${w.app || ''}`);
 // Se ejecuta antes de la política: si el usuario está dentro de la app no hay nada que confirmar.
