@@ -235,6 +235,11 @@ Las tareas nacen de la rama base en su worktree; si varias tocan los mismos fich
 Cada agente elige motor y modelo desde su panel (clic en el personaje o en su ficha).
 Variables: `AO_PORT` (7420), `AO_HOST` (127.0.0.1), `AO_DATA_DIR`, `AO_CLAUDE_BIN`, `AO_CODEX_BIN`.
 
+## Adjuntos del chat (FT-95)
+
+`POST /api/upload {files:[{name, data}]}` (`data` en base64 o data URL) guarda en `data/uploads/<hex>/` con el nombre saneado (solo basename, sin `..` ni ocultos; duplicados renumerados) y devuelve `[{name, path, size}]`. Límites (`server/uploads.js`): 10 ficheros, 25 MB por fichero, 30 MB por envío → 413; vacío o sin `files` → 400.
+`POST /api/guide/chat {chatId?, text?, attachments:[{path}]}` acepta esas referencias (solo rutas dentro de `data/uploads`; otras → 400). El mensaje guardado lleva `attachments` y al proveedor le llega el texto con la lista de rutas. Se puede enviar solo adjuntos, sin texto. Se leen con `GET /api/file?path=…`.
+
 ## Consumo de tokens (FT-26)
 
 **Resumen limpio (FT-53):** la tabla del 📊 Resumen queda en una línea por proyecto — «Tokens por sesión» = solo el total (`23,9M tok`) con un punto ámbar/rojo si algún agente pasa del 80 % de su contexto y botón «Ver» (`data-sum-tokens`); «Equipo» = «6 agentes» con hasta 3 avatares + «+3» (`data-sum-team`); «Trabajando en» = «2 en curso» (+ código si es una); «Libres» = «4 libres». El detalle vive en modales (`dialog()`, clase `summary-modal`, a pantalla completa en ≤760 px): **Tokens por sesión · proyecto** (una fila por agente: rol, motor/modelo, total, ↓↑⚡, barra con «quedan…», coste; totales al pie; orden por total; «Copiar como texto») y **Equipo · proyecto** (💤 libre / ⚙ trabajando en FT-xx / ⏸ pausado / ❓ esperando respuesta, actividad, «Abrir» el cajón y «Ir a la tarea»). Se repintan en vivo con cada `state` del SSE sin cerrarse; Esc cierra. Con varios proyectos, la fila «Total» trae «Ver todos» (tokens agrupados por proyecto). Solo UI, sin cambios de API; prueba: `node scripts/summary-e2e.mjs`.
