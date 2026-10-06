@@ -12,10 +12,11 @@ import * as review from '../review.js';
 import * as claudeCli from './providers/claude-cli.js';
 import * as anthropicApi from './providers/anthropic-api.js';
 import * as openaiApi from './providers/openai-api.js';
+import { provider as localApi } from './providers/local-api.js';
 import * as fakeProvider from './providers/fake.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
-const PROVIDERS = { 'claude-cli': claudeCli, 'anthropic-api': anthropicApi, 'openai-api': openaiApi, ...(process.env.AO_GUIDE_FAKE === '1' ? { fake: fakeProvider } : {}) }; // `fake` (FT-11): solo para pruebas e2e
+const PROVIDERS = { 'claude-cli': claudeCli, 'anthropic-api': anthropicApi, 'openai-api': openaiApi, 'local-api': localApi, ...(process.env.AO_GUIDE_FAKE === '1' ? { fake: fakeProvider } : {}) }; // `fake` (FT-11): solo para pruebas e2e
 export const providerNames = () => Object.keys(PROVIDERS);
 // Para Ajustes (FT-8): proveedores elegibles con su modelo por defecto y si tienen credenciales. El modelo de cada uno va en
 // settings.guideModels[proveedor]; claude-cli conserva settings.guideModel (FT-6).

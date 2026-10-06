@@ -9,14 +9,17 @@ import { prefixOf } from './codes.js';
 import * as questions from './questions.js';
 import * as team from './team.js';
 import * as review from './review.js'; // FT-56
+import * as costs from './costs.js'; // FT-76
 import { allRoles } from './roles.js';
 import { checkSuite, suiteInfo } from './suite.js';
 import * as auth from './engines/auth.js';
+import * as localServer from './engines/local-server.js';
 import * as boards from './boards/index.js';
 import * as skills from './skills.js';
 import { draftTask } from './ai-draft.js';
 import crypto2 from 'node:crypto';
 import { saveRole, deleteRole } from './roles.js';
+import { ladders, normalizeLadder } from './model-ladder.js'; // FT-60
 import * as activity from './events.js';
 import * as context from './context.js';
 import * as guideTools from './guide/tools.js';
@@ -28,6 +31,7 @@ import * as wake from './guide/stt/wake.js';
 import * as tts from './guide/tts/index.js'; // FT-52
 import * as quota from './quota.js';
 import * as memory from './memory.js';
+import * as codeindex from './codeindex.js'; // FT-58
 import * as claudeEngine from './engines/claude.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
@@ -87,7 +91,7 @@ const inputStatus = () => {
   return inputCache.v;
 };
 // FT-50: cada tarea sin empezar lleva `plannedAgentId`/`plannedReason` (calculados en cada snapshot, no persistidos).
-const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), tasks: review.decorate(team.withPlannedAgents(st)), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), costEstimates: team.costEstimates(), rtk: claudeEngine.rtkAvailable(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot() }; };
+const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), tasks: review.decorate(team.withPlannedAgents(st)), modelLadders: ladders(st.settings), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), costEstimates: team.costEstimates(), rtk: claudeEngine.rtkAvailable(), codeIndexInstalled: codeindex.available(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot() }; };
 
 async function readBody(req) {
   const limit = req.url.startsWith('/api/upload') ? 40e6 : req.url.startsWith('/api/guide/stt') ? 12e6 : 1e6; // adjuntos y audio del Guide (FT-9) en base64
@@ -140,10 +144,28 @@ const routes = [
   ['POST', /^\/api\/engines\/(claude|codex)\/code$/, ([e], b) => auth.submitCode(e, b.code)],
   ['POST', /^\/api\/engines\/(claude|codex)\/cancel$/, ([e]) => auth.cancelLogin(e)],
   ['POST', /^\/api\/engines\/(claude|codex)\/logout$/, ([e]) => auth.logout(e)],
+  // FT-54 · IA local: «Probar» (lista modelos y guarda URL/clave/modelo) y ajustes sueltos (modelo por defecto, allowAuto)
+  ['POST', /^\/api\/engines\/local\/probe$/, async (_, b) => {
+    if (typeof b.apiKey === 'string') auth.setLocalKey(b.apiKey.trim());
+    const p = await localServer.probe(b.baseUrl, auth.localKey());
+    if (p.ok) localServer.save({ baseUrl: p.baseUrl, models: p.models });
+    return { ...p, local: (await auth.enginesStatus()).local };
+  }],
+  ['POST', /^\/api\/engines\/local\/settings$/, async (_, b) => {
+    if (typeof b.apiKey === 'string') auth.setLocalKey(b.apiKey.trim());
+    localServer.save({ model: typeof b.model === 'string' ? b.model : undefined, allowAuto: typeof b.allowAuto === 'boolean' ? b.allowAuto : undefined });
+    return (await auth.enginesStatus()).local;
+  }],
   ['GET', /^\/api\/suite$/, () => checkSuite(true).then((suite) => { store.changed(); return suite; })],
   ['POST', /^\/api\/projects$/, (_, b) => team.createProject(b)],
   ['DELETE', /^\/api\/projects\/(\w+)$/, ([id]) => team.deleteProject(id)],
   ['PATCH', /^\/api\/projects\/(\w+)$/, ([id], b) => team.updateProject(id, b)],
+  // Costes de los agentes (FT-76): KPI, desglose y línea base interactiva. Para seguirlo desde flows de flow-test.
+  ['GET', /^\/api\/costs$/, () => costs.overview(store.get())],
+  ['GET', /^\/api\/costs\/export$/, (_, __, q) => { const rows = costs.exportRows(store.get()); return q.format === 'csv' ? { csv: costs.toCsv(rows) } : rows; }],
+  ['GET', /^\/api\/costs\/baseline$/, () => costs.readBaseline()],
+  ['POST', /^\/api\/costs\/baseline$/, (_, b) => costs.addBaseline(b, fail)],
+  ['GET', /^\/api\/costs\/(\w+)\/([\w-]+)$/, ([pid, tid]) => { const t = store.get().tasks.find((x) => x.projectId === pid && (x.id === tid || x.code === tid)); if (!t) throw fail(404, 'Tarea no encontrada'); return costs.taskDetail(t); }],
   // Resumen compacto de las tareas de un proyecto (para seguimiento desde flows de flow-test)
   ['GET', /^\/api\/projects\/(\w+)\/tasks$/, ([id]) => { const s = store.get(); return s.tasks.filter((t) => t.projectId === id).map((t) => ({ id: t.id, code: t.code, status: t.status, kind: t.kind, role: t.role, repo: t.repo, agent: s.agents.find((a) => a.id === t.agentId)?.name || null, title: t.title, dependsOn: t.dependsOn, costUsd: t.costUsd, summary: (t.summary || '').slice(0, 300), updatedAt: t.updatedAt })); }],
   ['POST', /^\/api\/projects\/(\w+)\/import-flow$/, ([id], b) => team.importFlow(id, b.path)],
@@ -218,6 +240,8 @@ const routes = [
     if (Array.isArray(b.reviewSensitive)) st.reviewSensitive = b.reviewSensitive.map((x) => String(x).trim()).filter(Boolean).slice(0, 40);
     if (typeof b.reviewEngine === 'string' && ['', 'claude', 'codex', 'demo'].includes(b.reviewEngine)) st.reviewEngine = b.reviewEngine;
     if (typeof b.agentMemory === 'boolean') st.agentMemory = b.agentMemory; // FT-75
+    if (typeof b.codeIndex === 'boolean') st.codeIndex = b.codeIndex; // FT-58
+    if (typeof b.cacheAffinity === 'boolean') st.cacheAffinity = b.cacheAffinity; // FT-64
     if (b.maxTaskUsd !== undefined) st.maxTaskUsd = Math.max(0.5, Math.min(50, Number(b.maxTaskUsd) || 3)); // tope de gasto por intento de tarea
     if (b.compactAt !== undefined) st.compactAt = Number(b.compactAt) > 0 ? Math.min(90, Math.max(30, Number(b.compactAt))) / 100 : 0; // FT-63: % de contexto que dispara la compactación (0 = apagada)
     if (['plan', 'suggest', 'off'].includes(b.bigTasks)) st.bigTasks = b.bigTasks; // FT-63: qué hacer con las tareas grandes
@@ -225,6 +249,11 @@ const routes = [
     for (const [k, lo, hi] of [['stuckRepeat', 2, 20], ['stuckErrors', 2, 30], ['stuckNoEdit', 5, 200], ['stuckTokens', 5000, 5_000_000]]) if (b[k] !== undefined && Number(b[k]) > 0) st[k] = Math.max(lo, Math.min(hi, Math.round(Number(b[k]))));
     if (b.maxTaskTokens !== undefined) st.maxTaskTokens = Math.max(0, Math.min(50_000_000, Math.round(Number(b.maxTaskTokens) || 0))); // FT-57: tope en tokens por intento (0 = el equivalente al de US$)
     if (['low', 'medium', 'high'].includes(b.agentEffort)) st.agentEffort = b.agentEffort;
+    if (b.modelLadder && typeof b.modelLadder === 'object') { // FT-60: escalera de modelos por motor (vacía = la de serie)
+      st.modelLadder = { ...st.modelLadder };
+      for (const e of ['claude', 'codex']) if (b.modelLadder[e] !== undefined) { const l = normalizeLadder(b.modelLadder[e], e).slice(0, 4); if (l.length) st.modelLadder[e] = l; else delete st.modelLadder[e]; }
+    }
+    if (b.costTargetPct !== undefined) st.costTargetPct = Math.max(10, Math.min(500, Number(b.costTargetPct) || 100)); // FT-76: objetivo «coste por tarea aprobada ≤ X % del interactivo»
     if (b.maxParallel) st.maxParallel = Math.max(1, Math.min(8, Number(b.maxParallel) || 4));
     if (typeof b.guideModel === 'string') st.guideModel = b.guideModel.trim();
     if (guide.providerNames().includes(b.guideProvider)) st.guideProvider = b.guideProvider;

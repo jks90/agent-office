@@ -10,13 +10,25 @@ import { describeTool, toolSummary, toolKey, firstLine } from './describe.js';
 import { RTK_RULES } from './allowlist.js';
 import { claudeScope } from './toolscope.js';
 import { claudeTracker } from '../usage.js';
+import { SERVER_NAME } from '../codeindex.js';
+
+// Subagente explorador (FT-65): solo lectura (Read/Grep/Glob + shell de lectura de la lista blanca), modelo barato.
+export const EXPLORER = {
+  name: 'explorador',
+  def: {
+    description: 'Explora el repo en un contexto aparte (entender un módulo, buscar todos los usos de algo, enumerar dónde ocurre algo) y devuelve solo un resumen corto con rutas y líneas. Solo lectura.',
+    prompt: 'Eres un explorador de código de SOLO LECTURA. Responde a la pregunta que te den leyendo lo necesario (Grep -n y Read con offset/limit; nunca ficheros grandes enteros). Devuelve únicamente un resumen breve (máx. ~25 líneas): hallazgos con `ruta:línea` y una frase cada uno. No pegues código largo ni modifiques nada.',
+    tools: ['Read', 'Grep', 'Glob', 'Bash(ls *)', 'Bash(cat *)', 'Bash(head *)', 'Bash(sed -n *)', 'Bash(grep *)', 'Bash(find *)', 'Bash(wc *)', 'Bash(git log*)', 'Bash(git status*)', 'Bash(git diff*)'],
+    model: 'haiku',
+  },
+};
 
 // RTK instalado → hook solo para los agentes (por --settings; no se toca ~/.claude/settings.json del usuario).
 const RTK_BIN = [process.env.AO_RTK_BIN, path.join(os.homedir(), '.local/bin/rtk'), '/usr/local/bin/rtk'].find((f) => f && fs.existsSync(f)) || null;
 export const rtkBin = () => RTK_BIN;
 export const rtkAvailable = () => !!RTK_BIN && process.env.AO_RTK !== 'off';
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, kind, roleTools, hasSkills, budgetUsd, effort, resumeSession, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kind, roleTools, hasSkills, budgetUsd, effort, resumeSession, addDirs = [], env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {}, onEvent = () => {} }) {
   // FT-59: --tools limita las herramientas DISPONIBLES (sus definiciones no se envían); --allowedTools, lo que se permite sin preguntar.
   const scope = claudeScope({ kind, mode, roleTools, hasSkills });
   const tools = [...scope.allowed];
@@ -36,8 +48,22 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, kind, roleTool
     mcpServers['flow-test'] = { type: 'http', url: mcpUrl };
     tools.push('mcp__flow-test');
   }
+  if (addDirs.length) args.push('--add-dir', ...addDirs); // FT-44: worktrees de los demás repos del proyecto
+  if (codeIndex) { // FT-58: índice de código local (stdio); solo lectura de símbolos
+    mcpServers[SERVER_NAME] = { type: 'stdio', command: codeIndex.command, args: [], env: codeIndex.env };
+    tools.push(`mcp__${SERVER_NAME}`);
+  }
   args.push('--strict-mcp-config', '--mcp-config', JSON.stringify({ mcpServers }));
-  args.push('--tools', scope.builtin.join(','), '--allowedTools', ...tools);
+  // FT-65: subagente «explorador» (solo lectura, haiku): lee en SU contexto y devuelve un resumen; lo leído no se reenvía en cada turno del agente.
+  // Su lista de tools es explícita (sin MCP, sin Edit/Write) y --strict-mcp-config sigue vigente; el resto de subagentes integrados se veta.
+  // Con las herramientas acotadas por rol (FT-59), Task/Agent se añaden a las DISPONIBLES solo cuando el explorador está activo.
+  const builtin = [...scope.builtin];
+  if (process.env.AO_EXPLORER === 'on' && mode !== 'plan') { // opcional hasta que el benchmark FT-61 confirme que ahorra
+    args.push('--agents', JSON.stringify({ [EXPLORER.name]: EXPLORER.def }));
+    for (const x of ['Task', 'Agent']) { if (!builtin.includes(x)) builtin.push(x); tools.push(x); }
+    args.push('--disallowedTools', 'Task(general-purpose)', 'Task(Explore)', 'Task(Plan)', 'Agent(general-purpose)', 'Agent(Explore)', 'Agent(Plan)');
+  }
+  args.push('--tools', builtin.join(','), '--allowedTools', ...tools);
 
   const env = { ...process.env, ...extraEnv, BROWSER: 'true' };
   if (rtkAvailable() && !String(env.PATH || '').split(':').includes(path.dirname(RTK_BIN))) env.PATH = `${path.dirname(RTK_BIN)}:${env.PATH || ''}`; // el comando reescrito («rtk git …») tiene que encontrarse
@@ -63,6 +89,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, kind, roleTool
     let ev;
     try { ev = JSON.parse(line); } catch { if (line.trim()) onLog(line); return; }
     if (closeTimer && ev.type !== 'result') cancelClose(); // otro turno en marcha
+    onEvent(ev); // FT-76: telemetría por turno
     const u = tracker.feed(ev); // FT-26: solo cifras de uso
     if (u) onUsage(u);
     if (ev.type === 'assistant') {

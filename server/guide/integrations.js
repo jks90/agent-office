@@ -40,9 +40,10 @@ export function scopeOf({ repo: key, task: ref } = {}) {
   if (!repo?.path) throw fail(400, 'Indica «repo» (clave de un repo del proyecto) o «task» (código de una tarea con repo)');
   const repoReal = realOr(repo.path);
   // Worktrees de las tareas de este repo: también son «el repo» para el Guide.
-  const worktrees = s.tasks.filter((t) => t.projectId === project.id && team.repoOfTask(project, t)?.path === repo.path)
-    .map((t) => git.worktreeDir(project, t)).filter((d) => fs.existsSync(d)).map(realOr);
-  const own = task && git.worktreeDir(project, task);
+  // FT-44: una tarea puede tener worktree en varios repos del proyecto; cada uno es «el repo» de su clave.
+  const dirsIn = (t) => team.taskRepos(project, t).filter((x) => x.repo.path === repo.path).map((x) => x.dir);
+  const worktrees = s.tasks.filter((t) => t.projectId === project.id).flatMap(dirsIn).filter((d) => fs.existsSync(d)).map(realOr);
+  const own = task && dirsIn(task)[0];
   const root = own && fs.existsSync(own) ? realOr(own) : repoReal;
   return { project, repo, task, root, roots: [...new Set([repoReal, ...worktrees])] };
 }

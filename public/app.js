@@ -223,10 +223,11 @@ const GUIDE_HINTS = ['Créame una tarea para solucionar esto', '¿Cómo va?', '�
 
 function guideMount(el, panel) {
   if (guideRoots.some((r) => r.el === el)) return;
-  el.innerHTML = `<div class="guide">
-    <div class="g-list"><button class="small" data-g="new">＋ Nuevo chat</button><div class="g-chats"></div></div>
+  el.innerHTML = `<div class="guide ${panel ? 'panel' : ''}">
+    <div class="g-list" tabindex="0" title="↑/↓ cambian de chat · Supr borra · Ctrl+N nuevo"><div class="g-lhead"><button class="small" data-g="new" title="Nuevo chat (Ctrl+N)">＋<span class="g-lbl"> Nuevo chat</span></button><button class="ghost small g-fold" data-g="fold"></button></div><div class="g-chats"></div><button class="ghost small g-delall" data-g="delall">Borrar todos…</button></div>
+    <div class="g-grip" title="Arrastra para ensanchar · doble clic = ancho por defecto"></div>
     <div class="g-main">
-      <div class="g-head"><b class="g-title">🧭 Guía</b><button class="ghost small g-ear" data-g="ear" hidden></button>${panel ? '<select class="g-pick" title="Chats"></select><button class="ghost small" data-g="new">＋</button><button class="ghost small" data-g="close" title="Cerrar (Ctrl+G)">✕</button>' : ''}</div>
+      <div class="g-head"><b class="g-title">🧭 Guía</b><button class="ghost small g-ear" data-g="ear" hidden></button><span class="g-pickbar"><select class="g-pick" title="Chats"></select><button class="ghost small" data-g="new">＋</button><button class="ghost small g-pdel" data-g="delcur" title="Borrar este chat">🗑</button></span>${panel ? '<button class="ghost small" data-g="close" title="Cerrar (Ctrl+G)">✕</button>' : ''}</div>
       <div class="g-msgs"></div>
       <div class="g-voice" hidden><span class="g-vtxt"></span><i class="g-vlevel"></i></div>
       <form class="g-form"><button type="button" class="ghost g-mic" data-g="mic" title="Mantén pulsado para hablar (o barra espaciadora con la caja vacía)">🎤</button><textarea rows="1" placeholder="Pídeme algo…" title="Intro envía · Mayús+Intro salto de línea · barra espaciadora con la caja vacía = hablar"></textarea><button class="g-send">Enviar</button><button type="button" class="ghost g-stop" data-g="stop" hidden>■ Parar</button></form>
@@ -246,17 +247,42 @@ function guideMount(el, panel) {
   mic.addEventListener('keyup', (e) => { if (e.key === ' ') voiceHold(false); });
   ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 140) + 'px'; });
   el.addEventListener('click', (e) => {
-    const b = e.target.closest('[data-g], [data-gchat], [data-ghint]');
+    const b = e.target.closest('[data-g], [data-gchat], [data-gdel], [data-ghint]');
     if (!b) return;
     if (b.dataset.g === 'new') guideNew();
+    else if (b.dataset.g === 'fold') guideFold();
+    else if (b.dataset.g === 'delall') guideDeleteAll();
+    else if (b.dataset.g === 'delcur') { if (G.chatId) guideDelete(G.chatId); }
+    else if (b.dataset.gdel) guideDelete(b.dataset.gdel);
     else if (b.dataset.g === 'stop') guideStop();
     else if (b.dataset.g === 'close') guideToggle(false);
     else if (b.dataset.g === 'ear') wakeSet(false);
     else if (b.dataset.g === 'play') ttsSpeak(G.messages[b.dataset.i]?.text, Number(b.dataset.i));
-    else if (b.dataset.gchat) guideOpen(b.dataset.gchat);
+    else if (b.dataset.gchat) guideOpen(b.dataset.gchat).then(() => el.querySelector('.g-chat.sel')?.focus()); // el pintado rehace la lista: se devuelve el foco para el teclado (FT-51)
     else if (b.dataset.ghint) { ta.value = b.dataset.ghint; ta.focus(); }
   });
   el.addEventListener('toggle', (e) => { const d = e.target.closest?.('.g-tool'); if (d && G.messages[d.dataset.i]) G.messages[d.dataset.i].open = d.open; }, true); // el pintado rehace el HTML: recordar qué tool call está desplegada
+  // Lista de chats (FT-51): tirador (ratón y dedo) y teclado
+  const grip = el.querySelector('.g-grip');
+  grip.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); grip.setPointerCapture(e.pointerId);
+    const x0 = e.clientX, w0 = GL.w;
+    const move = (ev) => guideListWidth(w0 + ev.clientX - x0);
+    const up = () => { grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', up); grip.removeEventListener('pointercancel', up); safeSet('ao:guideListW', String(GL.w)); };
+    grip.addEventListener('pointermove', move); grip.addEventListener('pointerup', up); grip.addEventListener('pointercancel', up);
+  });
+  grip.addEventListener('dblclick', () => { guideListWidth(220); safeSet('ao:guideListW', '220'); });
+  el.querySelector('.g-list').addEventListener('keydown', async (e) => {
+    if (e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'n') { e.preventDefault(); guideNew(); return; }
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    const i = G.chats.findIndex((c) => c.id === G.chatId);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const next = G.chats[e.key === 'ArrowDown' ? Math.min(G.chats.length - 1, i + 1) : Math.max(0, i - 1)];
+      if (next && next.id !== G.chatId) await guideOpen(next.id);
+      el.querySelector('.g-chat.sel')?.focus();
+    } else if (e.key === 'Delete' && i >= 0) { e.preventDefault(); await guideDelete(G.chatId); el.querySelector('.g-list').focus(); }
+  });
   el.querySelector('.g-pick')?.addEventListener('change', (e) => (e.target.value ? guideOpen(e.target.value) : guideNew()));
   guideRender();
 }
@@ -274,7 +300,14 @@ function guideRender() {
     if (atBottom || G.busy) msgs.scrollTop = msgs.scrollHeight;
     const cur = G.chats.find((c) => c.id === G.chatId);
     el.querySelector('.g-title').textContent = panel ? '🧭' : '🧭 ' + (cur?.title || 'Nuevo chat');
-    el.querySelector('.g-chats').innerHTML = G.chats.map((c) => `<button class="g-chat ${c.id === G.chatId ? 'sel' : ''}" data-gchat="${c.id}" title="${esc(c.title)}">${c.busy ? '⏳ ' : ''}${esc(c.title)}</button>`).join('') || '<p class="muted small">Sin chats todavía</p>';
+    const lock = (c) => c.busy || (G.busy && c.id === G.chatId); // un turno en curso no se borra
+    el.querySelector('.g-chats').innerHTML = G.chats.map((c) => `<div class="g-row ${c.id === G.chatId ? 'sel' : ''}"><button class="g-chat ${c.id === G.chatId ? 'sel' : ''}" data-gchat="${c.id}" title="${esc(c.title)}${c.updatedAt ? ' · ' + esc(new Date(c.updatedAt).toLocaleString()) : ''}">${c.busy ? '⏳ ' : ''}${esc(c.title)}</button><button class="ghost g-del" data-gdel="${c.id}" ${lock(c) ? 'disabled' : ''} title="${lock(c) ? 'Hay un turno en curso: espera o pulsa «Parar»' : 'Borrar este chat'}">🗑</button></div>`).join('') || '<p class="muted small">Sin chats todavía</p>';
+    el.querySelector('.g-list').classList.toggle('min', GL.min);
+    const fold = el.querySelector('.g-fold');
+    fold.textContent = GL.min ? '▶' : '◀'; fold.title = GL.min ? 'Expandir la lista' : 'Plegar la lista';
+    el.querySelector('.g-delall').disabled = !G.chats.length;
+    const pdel = el.querySelector('.g-pdel');
+    pdel.disabled = !cur || lock(cur); pdel.title = cur && lock(cur) ? 'Hay un turno en curso: espera o pulsa «Parar»' : 'Borrar este chat';
     const pick = el.querySelector('.g-pick');
     if (pick) pick.innerHTML = `<option value="">＋ Nuevo chat</option>${G.chats.map((c) => `<option value="${c.id}" ${c.id === G.chatId ? 'selected' : ''}>${esc(c.title.slice(0, 40))}</option>`).join('')}`;
     el.querySelector('.g-send').hidden = G.busy;
@@ -300,11 +333,38 @@ function guideMsg(m, i) {
     <pre>${esc(JSON.stringify(m.args || {}, null, 1))}</pre>${m.result != null ? `<pre class="${m.ok ? '' : 'bad'}">${esc(m.result.slice(0, 4000))}</pre>` : ''}</details>`;
 }
 
-async function guideRefresh() { try { G.chats = await api('GET', '/api/guide/chats'); } catch { /* sin servidor */ } G.loaded = true; guideRender(); }
+const guideGone = new Set(); // ids borrados: una carga de la lista en vuelo no los resucita (FT-51)
+async function guideRefresh() { try { G.chats = (await api('GET', '/api/guide/chats')).filter((c) => !guideGone.has(c.id)); } catch { /* sin servidor */ } G.loaded = true; guideRender(); }
 async function guideOpen(id) {
   if (G.busy) return toast('Espera a que el Guía termine o pulsa «Parar»');
   ttsStop(); G.chatId = id; safeSet('ao:guide-chat', id);
   try { G.messages = (await api('GET', `/api/guide/chats/${id}`)).messages; } catch { G.chatId = null; G.messages = []; }
+  guideRender();
+}
+// Lista de chats (FT-51): ancho y plegado se recuerdan en localStorage
+const GL = { w: 220, min: safeGet('ao:guideListMin') === '1' };
+function guideListWidth(w) { GL.w = Math.max(160, Math.min(480, Math.round(w) || 220)); document.documentElement.style.setProperty('--g-list-w', GL.w + 'px'); }
+guideListWidth(Number(safeGet('ao:guideListW')) || 220);
+function guideFold() { GL.min = !GL.min; safeSet('ao:guideListMin', GL.min ? '1' : '0'); guideRender(); }
+async function guideDelete(id) {
+  const c = G.chats.find((x) => x.id === id);
+  if (!c) return;
+  if (c.busy || (G.busy && id === G.chatId)) return toast('Hay un turno en curso: espera o pulsa «Parar»');
+  if (!confirm(`¿Borrar «${c.title}»?`)) return;
+  try { await api('DELETE', `/api/guide/chats/${id}`); } catch (e) { return toast(e.message || 'No se pudo borrar', 'err'); }
+  guideGone.add(id); G.chats = G.chats.filter((x) => x.id !== id);
+  if (id === G.chatId) { ttsStop(); G.chatId = null; G.messages = []; safeSet('ao:guide-chat', ''); }
+  guideRender();
+}
+async function guideDeleteAll() {
+  const del = G.chats.filter((c) => !c.busy && !(G.busy && c.id === G.chatId));
+  if (!del.length) return toast('No hay chats que se puedan borrar ahora');
+  if (!confirm(`¿Borrar ${del.length === G.chats.length ? 'todos los chats' : `${del.length} chats (los que tienen un turno en curso se conservan)`}? No se puede deshacer.`)) return;
+  for (const c of del) { try { await api('DELETE', `/api/guide/chats/${c.id}`); } catch { /* ya no existía */ } }
+  const ids = new Set(del.map((c) => c.id));
+  ids.forEach((i) => guideGone.add(i));
+  G.chats = G.chats.filter((c) => !ids.has(c.id));
+  if (ids.has(G.chatId)) { G.chatId = null; G.messages = []; safeSet('ao:guide-chat', ''); }
   guideRender();
 }
 function guideNew() { if (G.busy) return; ttsStop(); G.chatId = null; G.messages = []; safeSet('ao:guide-chat', ''); guideRender(); guideRoots.forEach((r) => r.el.querySelector('textarea').focus()); }
@@ -646,24 +706,56 @@ document.addEventListener('click', async (e) => {
 // ── Pintado ─────────────────────────────────────────────────────────────────
 // Pestañas de administración (Oficina / Tareas / Agentes), recordadas por navegador.
 let skillsData = null; // catálogo e inventario de skills (se carga al abrir Agentes)
-let MODELS = { claude: [], codex: [] }; // modelos disponibles por motor (GET /api/engines/models)
-const loadModels = () => api('GET', '/api/engines/models').then((m) => { MODELS = m; }).catch(() => {});
-loadModels();
-// <select> de modelo: grupos por motor (en «auto» salen los dos), los no disponibles deshabilitados con su motivo, y «otro…» libre.
+let MODELS = { claude: [], codex: [], local: [] }; // modelos disponibles por motor (GET /api/engines/models)
+let modelsAt = 0;
+// Lista viva (FT-55): caché de 5 min en el cliente; `force` (botón ↻) o caducada → se vuelve a pedir. Si falla, se queda lo que hubiera.
+const loadModels = (force) => (!force && Date.now() - modelsAt < 300000 ? Promise.resolve() : api('GET', '/api/engines/models').then((m) => { MODELS = m; modelsAt = Date.now(); }).catch(() => {}));
+loadModels(true);
+const MODEL_OF = { claude: /^(sonnet|opus|haiku|claude-)/i, codex: /^(gpt-|o[0-9]|codex)/i }; // espejo de team.js
+const GROUP_LABEL = { claude: 'Claude', codex: 'Codex', local: 'Local' };
+const AUTO_HINT = 'con motor automático, el modelo decide si va a Claude o a Codex';
+// ÚNICO selector de modelo (FT-55): cajón, contratar, editar, roles y Ajustes. Grupos por motor (en «auto» salen los dos), no disponibles
+// deshabilitados con su nota, valor actual siempre presente y «Otro…» (campo libre solo al elegirlo).
 function modelSelect(name, engine, current) {
   const groups = engine === 'auto' ? ['claude', 'codex'] : engine === 'demo' ? [] : [engine];
   const known = groups.flatMap((g) => MODELS[g] || []).some((m) => m.id === current);
-  return `<select name="${name}" class="model-select" data-engine="${engine}">
+  const opt = (m) => `<option value="${esc(m.id)}" title="${esc(m.note || '')}" ${m.id === current ? 'selected' : ''} ${m.available === false ? 'disabled' : ''}>${esc(m.label)} · ${esc(m.id)}${m.available === false ? ' — ' + esc(m.note || 'no disponible') : m.note ? ' (' + esc(m.note) + ')' : ''}</option>`;
+  return `<span class="model-pick" data-name="${esc(name)}" data-engine="${esc(engine)}"><span class="model-row"><select name="${esc(name)}" class="model-select">
     <option value="" ${!current ? 'selected' : ''}>por defecto del rol / motor</option>
-    ${groups.map((g) => `<optgroup label="${g === 'claude' ? 'Claude Code' : 'Codex'}">${(MODELS[g] || []).map((m) => `<option value="${esc(m.id)}" ${m.id === current ? 'selected' : ''} ${m.available ? '' : 'disabled'}>${esc(m.label)}${m.available ? (m.note ? ' (' + esc(m.note) + ')' : '') : ' — ' + esc(m.note || 'no disponible')}</option>`).join('')}</optgroup>`).join('')}
-    <option value="__other" ${current && !known ? 'selected' : ''}>otro… (escribir id)</option>
-  </select><input name="${name}_other" class="model-other" placeholder="id del modelo" value="${current && !known ? esc(current) : ''}" style="${current && !known ? '' : 'display:none'}" />`;
+    ${current && !known ? `<option value="${esc(current)}" selected>actual: ${esc(current)}</option>` : ''}
+    ${groups.map((g) => `<optgroup label="${GROUP_LABEL[g] || esc(g)}">${(MODELS[g] || []).map(opt).join('')}</optgroup>`).join('')}
+    <option value="__other">Otro… (escribir id)</option>
+  </select><button type="button" class="ghost small model-refresh" title="Refrescar la lista de modelos" aria-label="Refrescar modelos">↻</button></span>
+  <input name="${esc(name)}_other" class="model-other" placeholder="id del modelo" style="display:none" /><div class="muted model-hint">${engine === 'auto' ? AUTO_HINT : ''}</div></span>`;
+}
+// Valor actual de un .model-pick (el id elegido o el escrito en «Otro…»).
+const modelPickValue = (w) => { const s = w.querySelector('.model-select').value; return s === '__other' ? w.querySelector('.model-other').value.trim() : s; };
+// Repinta un selector (otro motor o lista refrescada) conservando el valor.
+function repaintModel(w, engine, current) {
+  const t = document.createElement('div');
+  t.innerHTML = modelSelect(w.dataset.name, engine, current);
+  w.replaceWith(t.firstElementChild);
+}
+// Validación de «Otro…»: sin espacios; aviso (no bloquea) si el motor no lo reconoce.
+function checkModelOther(inp) {
+  const w = inp.closest('.model-pick'), v = inp.value.trim(), eng = w.dataset.engine;
+  inp.setCustomValidity(/\s/.test(v) ? 'El id del modelo no puede llevar espacios' : '');
+  const ok = !v || (eng === 'auto' ? Object.values(MODEL_OF).some((re) => re.test(v)) : !MODEL_OF[eng] || MODEL_OF[eng].test(v));
+  w.querySelector('.model-hint').textContent = !ok ? `⚠ «${v}» no parece un modelo de ${eng}: se usará el modelo por defecto del motor` : eng === 'auto' ? AUTO_HINT : '';
 }
 document.addEventListener('change', (e) => {
   const sel = e.target.closest('.model-select');
-  if (sel) { const other = sel.parentElement.querySelector('.model-other'); if (other) other.style.display = sel.value === '__other' ? '' : 'none'; return; }
+  if (sel) { const other = sel.closest('.model-pick').querySelector('.model-other'); other.style.display = sel.value === '__other' ? '' : 'none'; if (sel.value === '__other') other.focus(); return; }
   const eng = e.target.closest('select[name=engine]');
-  if (eng) { const ms = eng.closest('form')?.querySelector('.model-select'); if (ms) ms.outerHTML = modelSelect(ms.name, eng.value, '').replace(/<input[^>]*>$/, ''); }
+  if (eng) { const w = eng.closest('form')?.querySelector('.model-pick'); if (w) repaintModel(w, eng.value, ''); }
+});
+document.addEventListener('input', (e) => { if (e.target.closest('.model-other')) checkModelOther(e.target); });
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('.model-refresh');
+  if (!b) return;
+  b.disabled = true;
+  await loadModels(true);
+  document.querySelectorAll('.model-pick').forEach((w) => repaintModel(w, w.dataset.engine, modelPickValue(w)));
 });
 const pickModel = (f) => (f.model === '__other' ? (f.model_other || '').trim() : f.model || '');
 const VIEW_PARAM = new URLSearchParams(location.search).get('view'); // ?view=guide (botón «Guía» de flow-test, FT-3)
@@ -881,6 +973,7 @@ function editRole(id, duplicate = false) {
       <div><label>Identificador (sin espacios)</label><input name="id" value="${esc(rid)}" placeholder="unity-dev" ${rid ? 'readonly' : 'required autofocus'} /></div>
       <div><label>Tipo</label><select name="kind"><option value="dev" ${r.kind === 'dev' ? 'selected' : ''}>desarrolla</option><option value="qa" ${r.kind === 'qa' ? 'selected' : ''}>QA (MCP de flow-test)</option><option value="docs" ${r.kind === 'docs' ? 'selected' : ''}>documenta (MCP de flow-test)</option><option value="planner" ${r.kind === 'planner' ? 'selected' : ''}>planifica (PO)</option></select></div>
       <div><label>Modelo por defecto</label>${modelSelect('model', 'auto', r.model || '')}</div>
+      <div><label>Modelo mínimo (cascada FT-60: no empezar más abajo)</label><input name="minModel" value="${esc(r.minModel || '')}" placeholder="vacío = empieza barato (p. ej. sonnet)" /></div>
       <div><label>Atiende tareas de rol (Ctrl+clic)</label><select name="handles" multiple>${['po', 'back', 'front', 'qa'].map((h) => `<option value="${h}" ${(r.handles || []).includes(h) ? 'selected' : ''}>${h}</option>`).join('')}</select></div>
     </div>
     <label>Descripción (una línea)</label><input name="description" value="${esc(r.description || '')}" />
@@ -970,9 +1063,16 @@ $('#board').addEventListener('drop', (e) => {
 // FT-19: estado de la rama en revisión respecto a la base (lo calcula el servidor): desfasada N commits / conflicto en ficheros.
 const baseOf = (t) => { const rs = S.projects.find((p) => p.id === t.projectId)?.repos || []; return (rs.find((r) => r.key === t.repo) || rs[0])?.baseBranch || 'main'; };
 const mergeChips = (t) => t.status !== 'review' || !t.branch ? '' : [
+  (t.outsideWrites || []).length ? `<span class="merge-chip conflict" title="FT-44: cambios sin confirmar en el checkout principal de ${esc(t.outsideWrites.map((o) => o.repo).join(', '))}: no pasan por esta revisión">⚠ escribió fuera de su worktree</span>` : '',
   t.behind ? `<span class="merge-chip behind" title="A la rama le faltan ${t.behind} commits de ${esc(baseOf(t))}: «Actualizar con ${esc(baseOf(t))}» los trae (al aprobar se hace solo)">desfasada ${t.behind} commit${t.behind === 1 ? '' : 's'}</span>` : '',
   (t.conflicts || []).length ? `<span class="merge-chip conflict" title="${esc(t.conflicts.join('\n'))}">⚠ conflicto en ${esc(t.conflicts.slice(0, 2).join(', '))}${t.conflicts.length > 2 ? ` +${t.conflicts.length - 2}` : ''}</span>` : '',
 ].join(' ');
+// FT-44: tarea con rama en varios repos → un diffStat por repo; escribir fuera del worktree → aviso para el humano.
+const repoStats = (t) => Object.entries(t.repos || {}).filter(([, r]) => r.diffStat);
+const diffStatsHtml = (t, cls = '') => repoStats(t).length > 1
+  ? repoStats(t).map(([k, r]) => `<pre${cls}><b>📁 ${esc(k)}</b> · ${esc(r.branch || t.branch || '')}\n${esc(r.diffStat)}</pre>`).join('')
+  : (t.diffStat ? `<pre${cls}>${esc(t.diffStat)}</pre>` : '');
+const outsideWarn = (t) => (t.outsideWrites || []).length ? `<div class="task-sec outside-warn"><h4>⚠ Escribió fuera de su worktree</h4><p>Hay cambios sin confirmar en el checkout principal que no pasan por esta revisión (no se fusionarán con «Aprobar» y pueden estar sirviéndose ya):</p><ul>${t.outsideWrites.map((o) => `<li><code>${esc(o.repo)}</code> · ${esc(o.path)}<br>${o.files.map((f) => `<code>${esc(f)}</code>`).join(' · ')}</li>`).join('')}</ul></div>` : '';
 const updateBtn = (t) => t.status === 'review' && t.branch && t.behind ? `<button class="small ghost" data-update="${t.id}" title="Fusiona ${esc(baseOf(t))} en la rama de la tarea; si choca, vuelve al agente con el conflicto">⬆ Actualizar con ${esc(baseOf(t))}</button>` : '';
 
 // FT-50: quién hará la tarea. Fijo (el agente que la tiene o el asignado con «Asignar a…»), previsto (`plannedAgentId`, que el
@@ -1044,6 +1144,7 @@ function card(t) {
     <div class="t">${esc(t.title)}</div>
     ${whoRow(t)}
     ${t.context ? `<div class="meta">${bornFrom(t)}</div>` : ''}
+    ${t.modelHistory?.length ? `<div class="meta"><span class="model-ladder" title="Cascada de modelos (FT-60): empieza barato y sube al devolverla o si falla${t.minModel ? '. Mínimo de la tarea: ' + esc(t.minModel) : ''}">🧠 ${esc(t.modelHistory.map((x) => x.model).filter((m, i, a) => m !== a[i - 1]).join(' → '))}</span></div>` : ''}
     ${deps || t.costUsd ? `<div class="meta">${deps ? `<span>depende de ${deps}</span>` : ''}${t.costUsd ? ` <span>💲${t.costUsd.toFixed(3)}</span>` : ''}</div>` : ''}
     ${t.status === 'doing' && agent ? `<div class="live">● ${esc(agent.activity)}</div>` : ''}
     ${t.status === 'todo' && t.quotaBlocked && t.activity ? `<div class="quota-hold">${esc(t.activity)}</div>` : ''}
@@ -1220,7 +1321,7 @@ function renderDrawer() {
       <div class="grid">
         <span class="muted">Motor</span>
         <select data-f="engine">${S.engines.map((e) => `<option ${e === a.engine ? 'selected' : ''}>${e}</option>`).join('')}</select>
-        <span class="muted">Modelo</span><input data-f="model" value="${esc(a.model)}" placeholder="por defecto del CLI (p. ej. sonnet, opus)" />
+        <span class="muted">Modelo</span><div data-f="modelbox">${modelSelect('model', a.engine, a.model || '')}</div>
       </div>
     </section>
     <section class="agent-panel-card">
@@ -1257,8 +1358,22 @@ function renderDrawer() {
     await api('PUT', `/api/memory/${pid}`, { text: memBox.querySelector('[data-mem=project]').value });
     toast('Memoria guardada'); memLoad().catch(() => {});
   };
-  d.querySelector('[data-f=engine]').onchange = (e) => api('PATCH', `/api/agents/${a.id}`, { engine: e.target.value }).then(() => toast(`${a.name} usa ahora ${e.target.value}`));
-  d.querySelector('[data-f=model]').onchange = (e) => api('PATCH', `/api/agents/${a.id}`, { model: e.target.value });
+  d.querySelector('[data-f=engine]').onchange = (e) => {
+    const box = d.querySelector('[data-f=modelbox] .model-pick');
+    repaintModel(box, e.target.value, modelPickValue(box)); // FT-55: la lista de modelos sigue al motor elegido
+    api('PATCH', `/api/agents/${a.id}`, { engine: e.target.value }).then(() => toast(`${a.name} usa ahora ${e.target.value}`));
+  };
+  // FT-55: guardar al elegir (en «Otro…», al confirmar el id escrito)
+  const saveModel = (e) => {
+    const w = e.target.closest('.model-pick');
+    if (!w || e.target.closest('.model-refresh')) return;
+    if (e.target.matches('.model-select') && e.target.value === '__other') return;
+    const inp = w.querySelector('.model-other');
+    if (e.target.matches('.model-other') && !inp.reportValidity()) return;
+    const model = modelPickValue(w);
+    api('PATCH', `/api/agents/${a.id}`, { model }).then(() => toast(model ? `${a.name} usa el modelo ${model}` : `${a.name}: modelo por defecto`));
+  };
+  d.querySelector('[data-f=modelbox]').addEventListener('change', saveModel);
   renderDrawer();
   renderLog();
 }
@@ -1293,6 +1408,7 @@ function dialog(html, onSubmit, cls = '') {
     try { await onSubmit?.(Object.fromEntries(new FormData(form))); dlg.close(); } catch { /* el toast ya avisó */ }
   };
   dlg.showModal();
+  if (Date.now() - modelsAt >= 300000) loadModels().then(() => dlg.querySelectorAll('.model-pick').forEach((w) => repaintModel(w, w.dataset.engine, modelPickValue(w)))); // lista viva (FT-55)
 }
 // Dictado por voz en campos del diálogo (FT-43): sin soporte el botón no se pinta; con él, un clic dicta y otro para.
 // STT del servidor disponible (GET /api/guide/stt): el dictado prefiere ese camino (audio local) y deja la Web Speech API de respaldo.
@@ -1327,7 +1443,7 @@ document.addEventListener('close', (e) => { if (e.target.id === 'dialog') micSto
 const buttons = (ok = 'Guardar') => `<div class="row"><button class="ghost" value="cancel">Cancelar</button>${ok ? `<button>${ok}</button>` : ''}</div>`;
 const roleOptions = (sel, skipPo) => Object.entries(S.roles).filter(([, r]) => !(skipPo && r.kind === 'planner'))
   .map(([k, r]) => `<option value="${k}" ${k === sel ? 'selected' : ''} title="${esc(r.description || '')}">${esc(r.label)}${r.custom ? ` · ${esc(r.source)}` : ''}${r.kind === 'planner' ? ' (planifica)' : r.kind === 'qa' ? ' (QA)' : r.kind === 'docs' ? ' (documenta)' : ''}</option>`).join('');
-const ENGINE_LABEL = { auto: 'automático (el que esté libre: Claude o Codex)', claude: 'Claude Code', codex: 'Codex', demo: 'demo (simulado)' };
+const ENGINE_LABEL = { auto: 'automático (el que esté libre: Claude o Codex)', claude: 'Claude Code', codex: 'Codex', local: 'IA local (LM Studio / Ollama)', demo: 'demo (simulado)' };
 const engineOptions = (sel) => S.engines.map((e) => `<option value="${e}" ${e === sel ? 'selected' : ''}>${ENGINE_LABEL[e] || e}</option>`).join('');
 
 const actions = {
@@ -1389,12 +1505,18 @@ Pasos, convenciones y ejemplos…</textarea>
     <h3>Ajustes</h3>
     <div class="section-title">🧠 Motores de IA — las inteligencias que llevan la empresa</div>
     <div id="engines" class="engines"><p class="muted">Comprobando cuentas…</p></div>
+    <div id="local-ai" class="engines"></div>
     <div class="section-title">🧪 Suite</div>
     <label>URL de flow-test (la suite; su MCP se usa para el QA)</label><input name="flowTestUrl" value="${esc(S.settings.flowTestUrl)}" placeholder="http://localhost:9998" />
     <label>Carpeta del workspace de flow-test en esta máquina (para deducir los repos de cada proyecto por sus enlaces)</label><input name="workspaceHostDir" value="${esc(S.settings.workspaceHostDir || '')}" placeholder="~/JksDocs/workspace" />
     <label>Agentes trabajando a la vez (máx.)</label><input name="maxParallel" type="number" min="1" max="8" value="${S.settings.maxParallel}" />
     <div class="grid2"><div><label>Tope de gasto por tarea (US$, por intento; al pasarlo se corta)</label><input name="maxTaskUsd" type="number" min="0.5" max="50" step="0.5" value="${S.settings.maxTaskUsd || 3}" /></div>
     <div><label>Esfuerzo de los agentes (más = más tokens)</label><select name="agentEffort">${['low', 'medium', 'high'].map((v) => `<option value="${v}" ${(S.settings.agentEffort || 'medium') === v ? 'selected' : ''}>${({ low: 'bajo', medium: 'medio (recomendado)', high: 'alto' })[v]}</option>`).join('')}</select></div></div>
+    <div class="grid2"><div><label>Escalera de modelos · Claude (de barato a caro, separados por coma; FT-60)</label><input name="ladder_claude" value="${esc((S.modelLadders?.claude || []).join(', '))}" placeholder="haiku, sonnet" /></div>
+    <div><label>Escalera de modelos · Codex (el mini sale de models_cache.json)</label><input name="ladder_codex" value="${esc((S.modelLadders?.codex || []).join(', '))}" placeholder="gpt-5.5" /></div></div>
+    <p class="muted">Cada tarea empieza en el primer peldaño y sube uno al devolverla desde revisión o si el agente falla (máx. 2 veces). Un modelo fijado en el agente o el rol no entra en la cascada.</p>
+    <label>Objetivo de costes (FT-76): coste por tarea aprobada ≤ X % del interactivo</label><input name="costTargetPct" type="number" min="10" max="500" step="5" value="${S.settings.costTargetPct || 100}" />
+    <label><input type="checkbox" name="cacheAffinity" ${S.settings.cacheAffinity !== false ? 'checked' : ''} /> Agrupar tareas del mismo repo y rol seguidas para aprovechar la caché del prompt (FT-64)</label>
     <label><input type="checkbox" name="stuckGuard" ${S.settings.stuckGuard !== false ? 'checked' : ''} /> Detectar agentes atascados: aviso y, si sigue, parar y pasar a Revisión (FT-62)</label>
     <div class="grid2"><div><label>Mismo comando/lectura (veces)</label><input name="stuckRepeat" type="number" min="2" max="20" value="${S.settings.stuckRepeat || 3}" /></div>
     <div><label>Errores de herramienta seguidos</label><input name="stuckErrors" type="number" min="2" max="30" value="${S.settings.stuckErrors || 4}" /></div>
@@ -1402,10 +1524,11 @@ Pasos, convenciones y ejemplos…</textarea>
     <div><label>Tokens por turno sin cambios en el worktree</label><input name="stuckTokens" type="number" min="5000" step="5000" value="${S.settings.stuckTokens || 80000}" /></div></div>
     <label title="FT-57 · Codex: se corta al llegar a estos tokens (0 = el equivalente al tope en US$)">Tope en tokens por intento (solo Codex; 0 = el equivalente al de US$)</label><input name="maxTaskTokens" type="number" min="0" step="100000" value="${S.settings.maxTaskTokens || 0}" />
     <label><input type="checkbox" name="agentMemory" ${S.settings.agentMemory !== false ? 'checked' : ''} /> Memoria de los agentes: lecciones de tareas anteriores en el prompt (FT-75; ≈1 500 tokens máx. por agente y por proyecto)</label>
+    <label title="Codebase-Memory MCP (tree-sitter, local): el agente localiza funciones/clases con una consulta en vez de leer ficheros"><input type="checkbox" name="codeIndex" ${S.settings.codeIndex === true ? 'checked' : ''} ${S.codeIndexInstalled ? '' : 'disabled'} /> Índice de código por símbolos para Claude y Codex (FT-58)${S.codeIndexInstalled ? '' : ' — no instalado: ejecuta scripts/setup-code-index.sh'}</label>
     <label><input type="checkbox" name="quotaGuard" ${S.settings.quotaGuard !== false ? 'checked' : ''} /> Guardarraíl de cuota: no arrancar tareas con un motor cuya sesión de 5 h esté al ${97} % o más (FT-45)</label>
     <div class="section-title">🧭 Guía (FT-6)</div>
     <label>Proveedor del Guía (el LLM con el que conversa; los cuatro flujos funcionan igual con cualquiera) (FT-8)</label>
-    <select name="guideProvider">${(S.guideProviders || []).map((p) => `<option value="${esc(p.id)}" ${(S.settings.guideProvider || 'claude-cli') === p.id ? 'selected' : ''}>${esc(p.label)}${p.ready ? '' : ' — sin clave API'}</option>`).join('')}</select>
+    <select name="guideProvider">${(S.guideProviders || []).map((p) => `<option value="${esc(p.id)}" ${(S.settings.guideProvider || 'claude-cli') === p.id ? 'selected' : ''}>${esc(p.label)}${p.ready ? '' : p.id === 'local-api' ? ' — sin configurar' : ' — sin clave API'}</option>`).join('')}</select>
     <label>Modelo con Claude Code (CLI)</label>${modelSelect('guideModel', 'claude', S.settings.guideModel || '')}
     ${(S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => `<label>Modelo con ${esc(p.label)}</label><input name="gm_${esc(p.id)}" value="${esc(S.settings.guideModels?.[p.id] || '')}" placeholder="${esc(p.defaultModel)}" />`).join('')}
     <p class="muted">Las APIs usan la clave guardada en «Motores de IA» (Claude → Anthropic, Codex → OpenAI) o ANTHROPIC_API_KEY / OPENAI_API_KEY; URL base con ANTHROPIC_BASE_URL / OPENAI_BASE_URL. El coste por turno sale en el chat cuando el proveedor lo da.</p>
@@ -1448,7 +1571,7 @@ Pasos, convenciones y ejemplos…</textarea>
     safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0'); (SETTINGS_EMBED ? safeSet('ao:voice-wake', f.voiceWake ? '1' : '0') : wakeSet(!!f.voiceWake)); // en el panel de flow-test no se abre el micro: el iframe principal lo recoge por el evento `storage`
     refreshSttLocal();
     ttsStop();
-    await api('POST', '/api/settings', { ...f, quotaGuard: !!f.quotaGuard, stuckGuard: !!f.stuckGuard, agentMemory: !!f.agentMemory, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
+    await api('POST', '/api/settings', { ...f, quotaGuard: !!f.quotaGuard, stuckGuard: !!f.stuckGuard, cacheAffinity: !!f.cacheAffinity, agentMemory: !!f.agentMemory, modelLadder: { claude: f.ladder_claude || '', codex: f.ladder_codex || '' }, codeIndex: !!f.codeIndex, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
     ttsInfoLoad();
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
@@ -1466,14 +1589,109 @@ let sumShowEmpty = false;
 // Consumo de tokens (FT-26): «48,2k tok»; la barra solo existe si el CLI informó la ventana de contexto (Claude); Codex no la da → «n/d».
 const fmtTok = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) : n >= 1e3 ? (n / 1e3).toFixed(1) : String(n)).replace('.', ',') + (n >= 1e6 ? 'M' : n >= 1e3 ? 'k' : '') + ' tok';
 const fmtN = (n) => fmtTok(n).replace(' tok', '');
-function usageHtml(a) {
-  const u = a.usage;
-  if (!u || !Number.isFinite(u.total)) return `<div class="tokrow"><b>${esc(a.name)}</b> <span class="muted" title="Aún sin cifras de esta sesión (o el motor no las informa)">n/d</span></div>`;
-  const pct = u.limit && u.used != null ? Math.min(100, Math.round((u.used / u.limit) * 100)) : null;
-  const tip = `${a.name} (${u.engine || a.activeEngine || '?'}) · entrada ${u.input} · salida ${u.output} · caché ${u.cache} · total ${u.total}${u.limit ? ` · contexto ${u.used}/${u.limit}` : ' · límite: n/d (el CLI no lo informa)'}${u.costUsd != null ? ` · ${u.costUsd.toFixed(3)} $` : ''}`;
-  const bar = pct == null ? '<span class="muted">límite n/d</span>' : `<span class="tokbar ${pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : ''}"><i style="width:${pct}%"></i></span><span class="muted">${pct}% · quedan ${fmtN(Math.max(0, u.limit - u.used))}</span>`;
-  return `<div class="tokrow ${a.status === 'idle' ? 'old' : ''}" title="${esc(tip)}"><b>${esc(a.name)}</b> <span class="tok">${fmtTok(u.total)}</span> <span class="muted">↓${fmtN(u.input)} ↑${fmtN(u.output)} ⚡${fmtN(u.cache)}</span>${bar}</div>`;
+// % de la ventana de contexto que lleva usada la sesión del agente (null si el motor no informa el límite).
+const usagePct = (u) => (u?.limit && u.used != null ? Math.min(100, Math.round((u.used / u.limit) * 100)) : null);
+const pctSev = (pct) => (pct == null ? '' : pct >= 90 ? 'bad' : pct >= 80 ? 'warn' : '');
+const engineModel = (a) => `${a.usage?.engine || a.activeEngine || a.engine || '?'}${a.model ? ` · ${a.model}` : ''}`;
+
+// ── Modales del Resumen (FT-53): «Tokens por sesión» y «Equipo» ──────────────
+// La tabla del Resumen queda en una línea por proyecto y el detalle vive aquí. Mientras un modal está abierto, cada
+// `state` del SSE repinta solo su cuerpo (`[data-sum-body]`) sin cerrarlo ni perder el foco del botón pulsado.
+let sumModal = null; // { kind: 'tokens' | 'team', projectId: id | '*' (todos los proyectos) }
+// Datos de un proyecto para los modales: su equipo y sus tareas (y el coste acumulado por agente, sumando sus tareas).
+function sumProjectData(p) {
+  const team = (p.team || []).map((id) => S.agents.find((a) => a.id === id)).filter(Boolean);
+  const ts = S.tasks.filter((t) => t.projectId === p.id);
+  return { p, team, ts, costOf: (a) => ts.filter((t) => t.agentId === a.id).reduce((n, t) => n + (t.costUsd || 0), 0) };
 }
+const sumProjects = (pid) => (pid === '*' ? S.projects.filter((p) => (p.team || []).length) : S.projects.filter((p) => p.id === pid)).map(sumProjectData);
+const byTotalDesc = (x, y) => (y.usage?.total ?? -1) - (x.usage?.total ?? -1);
+// Fila de un agente en el modal de tokens: nombre, rol, motor/modelo, total, ↓↑⚡, barra con «quedan…», coste.
+function tokensRow(a, costOf) {
+  const u = a.usage, pct = usagePct(u);
+  const cell = (v) => (u && Number.isFinite(u.total) ? `<td class="num">${fmtN(v)}</td>` : '<td class="num muted">n/d</td>');
+  const bar = !u ? '<span class="muted" title="Aún sin cifras de esta sesión (o el motor no las informa)">sin sesión</span>'
+    : pct == null ? '<span class="muted" title="El CLI no informa la ventana de contexto">límite n/d</span>'
+      : `<span class="tokbar ${pctSev(pct)}"><i style="width:${pct}%"></i></span> <span class="muted">${pct} % · quedan ${fmtN(Math.max(0, u.limit - u.used))}</span>`;
+  const cost = costOf(a) || u?.costUsd || 0;
+  return `<tr class="${a.status === 'idle' ? 'old' : ''}" data-sum-agent="${a.id}">
+    <td><b>${esc(a.name)}</b></td><td>${roleChip(a.role)}</td><td class="muted">${esc(engineModel(a))}</td>
+    <td class="num tok">${u && Number.isFinite(u.total) ? fmtN(u.total) : '<span class="muted">n/d</span>'}</td>${cell(u?.input)}${cell(u?.output)}${cell(u?.cache)}
+    <td class="ctx">${bar}</td><td class="num">${cost ? cost.toFixed(2) + ' $' : '·'}</td></tr>`;
+}
+const sumOf = (list, k) => list.reduce((n, a) => n + (a.usage?.[k] || 0), 0);
+function tokensModalBody(pid) {
+  const groups = sumProjects(pid);
+  const agents = groups.flatMap((g) => g.team);
+  const cost = groups.reduce((n, g) => n + g.team.reduce((m, a) => m + (g.costOf(a) || a.usage?.costUsd || 0), 0), 0);
+  const accumulated = groups.reduce((n, g) => n + g.ts.reduce((m, t) => m + (t.usage?.total || 0), 0), 0);
+  const rows = groups.map((g) => `${groups.length > 1 ? `<tr class="sum-group"><td colspan="9">${esc(g.p.name)} <span class="muted">· ${g.team.length} agente${g.team.length === 1 ? "" : "s"} · ${fmtTok(sumOf(g.team, 'total'))}</span></td></tr>` : ''}${[...g.team].sort(byTotalDesc).map((a) => tokensRow(a, g.costOf)).join('')}`).join('');
+  return `<table class="repos sum-detail">
+    <thead><tr><th>Agente</th><th>Rol</th><th>Motor · modelo</th><th class="num">Total</th><th class="num">↓ Entrada</th><th class="num">↑ Salida</th><th class="num">⚡ Caché</th><th>Contexto</th><th class="num">Coste</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="9" class="muted">Sin equipo</td></tr>'}</tbody>
+    <tfoot><tr data-sum-totals><td colspan="3"><b>Total</b> <span class="muted">· ${agents.length} agentes</span></td><td class="num tok">${fmtN(sumOf(agents, 'total'))}</td><td class="num">${fmtN(sumOf(agents, 'input'))}</td><td class="num">${fmtN(sumOf(agents, 'output'))}</td><td class="num">${fmtN(sumOf(agents, 'cache'))}</td><td></td><td class="num">${cost ? cost.toFixed(2) + ' $' : '·'}</td></tr></tfoot>
+  </table>
+  <p class="muted sum-note">Cifras de la sesión actual de cada agente (se reinician con cada tarea). Acumulado de todas las tareas${pid === '*' ? '' : ' del proyecto'}, intentos incluidos: <b>${fmtTok(accumulated)}</b>.</p>`;
+}
+// El mismo contenido en texto plano, para pegarlo en un chat o un informe.
+function tokensModalText(pid) {
+  const groups = sumProjects(pid);
+  const line = (a, g) => { const u = a.usage; return `  ${a.name} (${S.roles[a.role]?.label || a.role}, ${engineModel(a)}): ${u ? `${fmtTok(u.total)} · ↓${fmtN(u.input)} ↑${fmtN(u.output)} ⚡${fmtN(u.cache)}${usagePct(u) != null ? ` · contexto ${usagePct(u)} % (quedan ${fmtN(Math.max(0, u.limit - u.used))})` : ''}` : 'sin sesión'}${(g.costOf(a) || u?.costUsd) ? ` · ${(g.costOf(a) || u.costUsd).toFixed(2)} $` : ''}`; };
+  const agents = groups.flatMap((g) => g.team);
+  return [`Tokens por sesión · ${pid === '*' ? 'todos los proyectos' : groups[0]?.p.name || ''}`, ...groups.flatMap((g) => [`${g.p.name}:`, ...[...g.team].sort(byTotalDesc).map((a) => line(a, g))]),
+    `Total: ${fmtTok(sumOf(agents, 'total'))} · ↓${fmtN(sumOf(agents, 'input'))} ↑${fmtN(sumOf(agents, 'output'))} ⚡${fmtN(sumOf(agents, 'cache'))}`].join('\n');
+}
+// Estado de un agente para el modal de equipo: 💤 libre / ⚙ trabajando en FT-xx / ⏸ pausado / ❓ esperando respuesta.
+function agentState(a) {
+  const t = S.tasks.find((x) => x.id === a.taskId);
+  const asking = (S.questions || []).some((q) => q.agentId === a.id);
+  const code = t ? esc(tcode(t)) : '';
+  if (a.status === 'paused') return { icon: '⏸', label: `pausado${code ? ` en ${code}` : ''}`, cls: 'paused', t };
+  if (asking) return { icon: '❓', label: `esperando respuesta${code ? ` (${code})` : ''}`, cls: 'asking', t };
+  if (a.status === 'working') return { icon: '⚙', label: `trabajando en ${code || 'una tarea'}`, cls: 'working', t };
+  return { icon: '💤', label: 'libre', cls: 'idle', t };
+}
+function teamModalBody(pid) {
+  const groups = sumProjects(pid);
+  const order = { asking: 0, working: 1, paused: 2, idle: 3 };
+  const rows = groups.map((g) => `${groups.length > 1 ? `<tr class="sum-group"><td colspan="5">${esc(g.p.name)}</td></tr>` : ''}${g.team.map((a) => ({ a, s: agentState(a) })).sort((x, y) => order[x.s.cls] - order[y.s.cls] || x.a.name.localeCompare(y.a.name)).map(({ a, s }) => `
+    <tr data-sum-agent="${a.id}"><td><span class="avatar xs" style="--c:${S.roles[a.role]?.color}">${esc(a.name).charAt(0).toUpperCase()}</span> <b>${esc(a.name)}</b> ${roleChip(a.role)}</td>
+    <td class="sum-state ${s.cls}">${s.icon} ${s.label}</td><td class="muted sum-act" title="${esc(s.t?.title || '')}">${esc(a.status === 'idle' ? '' : a.activity || '')}${s.t ? `<div class="muted small">${esc(s.t.title.slice(0, 60))}${s.t.title.length > 60 ? '…' : ''}</div>` : ''}</td>
+    <td class="muted">${esc(engineModel(a))}</td>
+    <td class="sum-acts"><button type="button" class="small ghost" data-sum-open="${a.id}" title="Abrir el panel del agente (registro en vivo, motor, pausar…)">Abrir</button>${s.t ? `<button type="button" class="small ghost" data-sum-task="${s.t.id}" title="Abrir la tarea ${esc(tcode(s.t))}">Ir a la tarea</button>` : ''}</td></tr>`).join('')}`).join('');
+  const all = groups.flatMap((g) => g.team), n = (cls) => all.filter((a) => agentState(a).cls === cls).length;
+  return `<table class="repos sum-detail"><thead><tr><th>Agente</th><th>Estado</th><th>Actividad</th><th>Motor · modelo</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="5" class="muted">Sin equipo</td></tr>'}</tbody>
+    <tfoot><tr data-sum-totals><td colspan="5"><b>${all.length} agentes</b> <span class="muted">· ${n('working')} trabajando · ${n('idle')} libres${n('paused') ? ` · ${n('paused')} en pausa` : ''}${n('asking') ? ` · ${n('asking')} esperando respuesta` : ''}</span></td></tr></tfoot></table>`;
+}
+const sumModalTitle = (kind, pid) => `${kind === 'tokens' ? 'Tokens por sesión' : 'Equipo'} · ${pid === '*' ? 'todos los proyectos' : esc(S.projects.find((p) => p.id === pid)?.name || '')}`;
+const sumModalBody = ({ kind, projectId: pid }) => (kind === 'tokens' ? tokensModalBody(pid) : teamModalBody(pid));
+function openSumModal(kind, pid) {
+  sumModal = { kind, projectId: pid };
+  dialog(`<h3>${sumModalTitle(kind, pid)}</h3><div data-sum-body>${sumModalBody(sumModal)}</div>
+    <div class="row">${kind === 'tokens' ? '<button type="button" class="ghost" data-sum-copy title="Copiar la tabla como texto">📋 Copiar como texto</button>' : ''}<div class="spacer"></div><button class="ghost" value="cancel" autofocus>Cerrar</button></div>`, null, 'summary-modal');
+}
+// Repinta el modal abierto con el estado nuevo (lo llama renderSummary en cada `state`). Conserva el foco por data-*.
+function refreshSumModal() {
+  const dlg = $('#dialog');
+  if (!sumModal || !dlg.open || dlg.className !== 'summary-modal') return;
+  const body = dlg.querySelector('[data-sum-body]');
+  if (!body) return;
+  const f = document.activeElement, key = f && body.contains(f) ? [...f.attributes].find((at) => at.name.startsWith('data-sum-')) : null;
+  dlg.querySelector('h3').innerHTML = sumModalTitle(sumModal.kind, sumModal.projectId);
+  body.innerHTML = sumModalBody(sumModal);
+  if (key) body.querySelector(`[${key.name}="${key.value}"]`)?.focus();
+}
+$('#dialog').addEventListener('close', () => { sumModal = null; });
+document.addEventListener('click', (e) => {
+  const open = e.target.closest('[data-sum-open]'), task = e.target.closest('[data-sum-task]'), copy = e.target.closest('[data-sum-copy]');
+  if (!open && !task && !copy) return;
+  if (copy) { navigator.clipboard?.writeText(tokensModalText(sumModal?.projectId ?? '*')).then(() => toast('Tabla copiada'), () => toast('No se pudo copiar', 'error')); return; }
+  sumModal = null;
+  $('#dialog').close();
+  if (open) { showTab('agents'); openDrawer(open.dataset.sumOpen); }
+  else { const t = S.tasks.find((x) => x.id === task.dataset.sumTask); if (t) { goProject(t.projectId); showTab('tasks'); openTask(t.id); } }
+});
 // ── Cuota de las suscripciones (FT-45) ──────────────────────────────────────
 // Llega en S.quota por el SSE (el servidor la refresca cada 60 s). Barras como las del /usage de Claude Code.
 const QUOTA_NAME = { claude: 'Claude', codex: 'Codex' };
@@ -1499,10 +1717,80 @@ function renderQuotaChip() {
   el.textContent = parts.map((x) => `${QUOTA_NAME[x.e]} ${x.w.percent} %`).join(' · ');
   el.title = 'Cuota restante de las suscripciones (peor ventana de cada motor). Clic: abre el Resumen';
 }
+// Celdas de una línea del Resumen (FT-53); el detalle va en los modales «Ver» / «Ver equipo».
+const sumBtn = (attr, id, label, tip) => `<button type="button" class="small ghost sum-view" ${attr}="${id}" title="${esc(tip)}">${label}</button>`;
+function tokensCell(p, team, tokens) {
+  const withUsage = team.filter((a) => a.usage && Number.isFinite(a.usage.total));
+  if (!withUsage.length && !tokens) return '<span class="muted" title="Las cifras aparecen en cuanto alguien del equipo ejecute una tarea">sin sesiones aún</span>';
+  const worst = Math.max(-1, ...withUsage.map((a) => usagePct(a.usage) ?? -1));
+  const dot = worst >= 80 ? `<span class="tokdot ${worst >= 90 ? 'bad' : 'warn'}" title="Algún agente supera el 80 % de su ventana de contexto (${worst} %)" aria-label="contexto casi lleno"></span>` : '';
+  const total = tokens || withUsage.reduce((n, a) => n + a.usage.total, 0);
+  return `<span class="tok">${fmtTok(total)}</span>${dot} ${sumBtn('data-sum-tokens', p.id, 'Ver', 'Detalle de tokens por agente')}`;
+}
+function teamCell(p, team) {
+  if (!team.length) return '<span class="muted">sin equipo</span>';
+  const ini = team.slice(0, 3).map((a) => `<span class="avatar xs" style="--c:${S.roles[a.role]?.color}" title="${esc(a.name)}">${esc(a.name).charAt(0).toUpperCase()}</span>`).join('');
+  return `<span class="avatars">${ini}</span>${team.length > 3 ? `<span class="muted">+${team.length - 3}</span> ` : ' '}${sumBtn('data-sum-team', p.id, `${team.length} agente${team.length === 1 ? '' : 's'}`, 'Ver equipo')}`;
+}
+function busyCell(busy) {
+  if (!busy.length) return '<span class="muted">—</span>';
+  const one = busy.length === 1 && busy[0].t ? ` <b>${esc(tcode(busy[0].t))}</b>` : '';
+  return `<span class="dot ${busy[0].a.status}"></span>${busy.length} en curso${one}`;
+}
 const SUM_COLS = [['backlog', 'Backlog'], ['todo', 'Por hacer'], ['doing', 'En curso'], ['review', 'Revisión'], ['done', 'Hecho'], ['failed', 'Fallidas']];
+// ── 💸 Costes (FT-76) ──────────────────────────────────────────────────────
+// Datos de GET /api/costs; se piden al abrir la pestaña y cuando cambia el coste acumulado (llega por el SSE), sin polling.
+let sumView = 'general', costsData = null, costsSig = '';
+const usd = (n) => (n == null ? 'n/d' : n.toFixed(n < 1 ? 3 : 2) + ' $');
+const CAUSES = [['arranque', 'Arranque', '#64748b'], ['lecturas', 'Lecturas', '#38bdf8'], ['comandos', 'Comandos', '#fbbf24'], ['imagenes', 'Imágenes', '#c084fc'], ['salida', 'Salida', '#34d399'], ['reintentos', 'Reintentos', '#f87171']];
+const stackBar = (b) => !b || !b.total ? '' : `<div class="cost-stack" title="${esc(CAUSES.map(([k, l]) => `${l} ${usd(b[k])}`).join(' · '))}">${CAUSES.filter(([k]) => b[k] > 0).map(([k, l, c]) => `<i style="width:${(100 * b[k] / b.total).toFixed(1)}%;background:${c}" title="${l} ${usd(b[k])}"></i>`).join('')}</div>`;
+const causeLegend = () => `<div class="cost-legend">${CAUSES.map(([, l, c]) => `<span><i style="background:${c}"></i>${l}</span>`).join('')}</div>`;
+function spark(vals) {
+  if (!vals?.length) return '';
+  const max = Math.max(...vals) || 1, w = 160, h = 28;
+  return `<svg class="cost-curve" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline fill="none" stroke="#38bdf8" stroke-width="1.5" points="${vals.map((v, i) => `${vals.length > 1 ? (i * w) / (vals.length - 1) : w / 2},${(h - 2 - (v / max) * (h - 4)).toFixed(1)}`).join(' ')}"/></svg>`;
+}
+function costDetailHtml(d) {
+  if (!d.telemetry) return `<span class="muted">Sin telemetría por turno (tarea anterior a FT-76). Coste total: ${usd(d.costUsd)}</span>`;
+  const b = d.breakdown;
+  return `<div>Total <b>${usd(d.costUsd)}</b> · intento aceptado (${d.attempts}º) ${usd(d.acceptedUsd)} · tirado ${usd(d.discardedUsd)} · ${d.turns} turnos · caché ${d.cachePct} % (ahorró ${usd(d.cacheSavedUsd)})</div>${stackBar(b)}${causeLegend()}
+    <div class="muted">Contexto por turno (tokens) ${spark(d.curve)} ${d.curve.length ? fmtN(d.curve.at(-1)) : ''}</div>
+    ${b.files.length ? `<table class="repos"><thead><tr><th>Ficheros que más costaron</th><th class="num">≈ $</th></tr></thead><tbody>${b.files.slice(0, 5).map((f) => `<tr><td><code>${esc(f.file)}</code></td><td class="num">${usd(f.usd)}</td></tr>`).join('')}</tbody></table>` : ''}
+    <p class="muted" style="margin:4px 0 0">El reparto por causa es una atribución estimada (README «Observabilidad de costes»).</p>`;
+}
+const groupTable = (title, rows) => `<table class="repos"><thead><tr><th>${title}</th><th class="num">Aprobadas</th><th class="num">Coste</th><th class="num">$/aprobada</th><th class="num">1ª vez</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.key)}</td><td class="num">${r.tasks}</td><td class="num">${usd(r.costUsd)}</td><td class="num">${usd(r.perApprovedUsd)}</td><td class="num">${r.firstTryPct} %</td></tr>`).join('') || '<tr><td colspan="5" class="muted">sin tareas aprobadas</td></tr>'}</tbody></table>`;
+function costsHtml(d) {
+  if (!d) return '<p class="muted">Leyendo costes…</p>';
+  const k = d.kpi, kp = (v, l, cls = '') => `<div class="kpi ${cls}"><b>${v}</b><span>${l}</span></div>`;
+  const cmp = k.ratioLinePct ?? k.ratioPct;
+  const tr = d.trend7d.map((x) => x.perApprovedUsd);
+  return `<div class="summary-kpis">
+      ${kp(usd(k.perApprovedUsd), `coste por tarea aprobada (${k.approved})`)}
+      ${kp(k.interactiveUsd != null ? usd(k.interactiveUsd) : 'n/d', 'interactivo (línea base)')}
+      ${kp(cmp != null ? cmp + ' %' : 'n/d', `agente vs interactivo · objetivo ≤ ${k.targetPct} %${k.ratioLinePct != null ? ' (por línea)' : ''}`, k.meetsTarget == null ? '' : k.meetsTarget ? 'on' : 'bad')}
+      ${kp(k.firstTryPct != null ? k.firstTryPct + ' %' : 'n/d', 'aprobadas a la primera')}
+      ${kp(usd(k.discardedUsd), 'gastado en intentos tirados', k.discardedUsd > 0 ? 'warn' : '')}${kp(usd(k.cacheSavedUsd), 'ahorro por caché')}
+      <div class="kpi"><b>${spark(tr)}</b><span>tendencia 7 días ($/aprobada)</span></div>
+    </div>
+    ${d.recommendations.length ? `<div class="section-title">💡 Recomendaciones</div><ul class="cost-recs">${d.recommendations.map((r) => `<li>${esc(r.text)}</li>`).join('')}</ul>` : ''}
+    <div class="section-title">Objetivo semana a semana</div>
+    ${d.weekly.length ? `<div class="cost-weeks">${d.weekly.map((w) => `<span class="chip" style="--c:${w.meetsTarget == null ? '#94a3b8' : w.meetsTarget ? '#34d399' : '#f87171'}" title="${w.approved} aprobadas · ${usd(w.perApprovedUsd)}">${esc(w.week)} · ${w.ratioPct != null ? w.ratioPct + ' %' : 'sin base'}</span>`).join(' ')}</div>` : '<span class="muted">sin tareas aprobadas</span>'}
+    <div class="grid2" style="gap:14px"><div>${groupTable('Rol', d.byRole)}</div><div>${groupTable('Modelo', d.byModel)}</div><div>${groupTable('Motor', d.byEngine)}</div><div>${groupTable('Proyecto', d.byProject)}</div></div>
+    <div class="section-title">Por tarea (desglose por causa)</div>${causeLegend()}
+    <table class="repos"><thead><tr><th>Tarea</th><th>Estado</th><th class="num">Coste</th><th>Desglose</th><th class="num">Turnos</th><th class="num">Caché</th><th>Contexto</th></tr></thead><tbody>${d.tasks.slice(0, 40).map((t) => `<tr data-cost-task="${esc(t.taskId)}"><td><b>${esc(t.code || t.taskId)}</b> <span class="muted">${esc((t.title || '').slice(0, 40))}</span></td><td>${esc(t.status)}</td><td class="num">${usd(t.costUsd)}</td><td style="min-width:160px">${t.breakdown ? stackBar(t.breakdown) : '<span class="muted">sin telemetría</span>'}</td><td class="num">${t.turns || '·'}</td><td class="num">${t.telemetry ? t.cachePct + ' %' : '·'}</td><td>${t.curve ? spark(t.curve) : ''}</td></tr>`).join('')}</tbody></table>
+    <p class="muted" style="margin:8px 2px">Línea base interactiva: ${d.baseline.length ? esc(d.baseline.map((b) => `${b.code} ${usd(b.costUsd)}`).join(' · ')) : 'sin importar (POST /api/costs/baseline con el transcript de Claude Code)'}. Export: <a href="/api/costs/export?format=csv" target="_blank">CSV</a> · <a href="/api/costs/export" target="_blank">JSON</a></p>`;
+}
+const sumTabs = () => `<div class="sum-tabs"><button class="small ${sumView === 'general' ? 'on' : 'ghost'}" data-sum-view="general">📋 General</button><button class="small ${sumView === 'costs' ? 'on' : 'ghost'}" data-sum-view="costs">💸 Costes</button></div>`;
+function renderCosts(el) {
+  const sig = S.tasks.map((t) => `${t.id}:${t.costUsd}:${t.status}`).join('|');
+  if (sig !== costsSig) { costsSig = sig; api('GET', '/api/costs').then((d) => { costsData = d; if (sumView === 'costs') renderSummary(); }).catch(() => {}); }
+  el.innerHTML = sumTabs() + costsHtml(costsData);
+}
+
 function renderSummary() {
   const el = $('#summary');
   if (!el) return;
+  if (sumView === 'costs') return renderCosts(el);
   const all = S.tasks, agents = S.agents, qs = S.questions || [];
   const byId = (id) => agents.find((a) => a.id === id);
   const rows = [...S.projects].map((p) => {
@@ -1522,7 +1810,7 @@ function renderSummary() {
   const n = (st) => all.filter((t) => t.status === st).length;
   const working = agents.filter((a) => a.status === 'working').length, paused = agents.filter((a) => a.status === 'paused').length;
   const kpi = (v, l, cls = '') => `<div class="kpi ${cls}"><b>${v}</b><span>${l}</span></div>`;
-  el.innerHTML = `
+  el.innerHTML = sumTabs() + `
     <div class="summary-kpis">
       ${kpi(S.projects.filter((p) => p.running).length + '/' + S.projects.length, 'proyectos en marcha', 'on')}
       ${kpi(`${working}${paused ? ' +' + paused + '⏸' : ''}/${agents.length}`, 'agentes trabajando', working ? 'on' : '')}
@@ -1538,19 +1826,26 @@ function renderSummary() {
           <td><b>${esc(p.name)}</b>${p.folder && p.folder !== p.name ? ` <span class="muted">(${esc(p.folder)})</span>` : ''} <span class="muted">${esc(p.prefixDefault || '')}</span>${open ? ` <span title="preguntas pendientes">❓${open}</span>` : ''}</td>
           <td><button class="small ${p.running ? 'on' : 'ghost'}" data-sum-run="${p.id}" title="${p.running ? 'Parar el equipo' : 'Poner a trabajar'}">${p.running ? '🟢 En marcha' : '⏸ Parado'}</button></td>
           ${SUM_COLS.map(([st]) => { const c = ts.filter((t) => t.status === st).length; if (st === 'review' && c) { const old = Math.min(...ts.filter((t) => t.status === 'review').map((t) => t.reviewSince)); return `<td class="num st-review" title="Esperando revisión desde hace ${waitTxt(old)}">${c}</td>`; } return st === 'failed' && c ? `<td class="num st-failed"><button class="linklike" data-sum-failed="${p.id}" title="Ver por qué fallaron">${c}</button></td>` : `<td class="num ${c ? 'st-' + st : 'zero'}">${c || '·'}</td>`; }).join('')}
-          <td>${team.length ? `${team.length} <span class="muted">${esc(team.map((a) => a.name).join(', '))}</span>` : '<span class="muted">sin equipo</span>'}</td>
-          <td>${busy.length ? busy.map(({ a, t }) => `<div class="busy"><span class="dot ${a.status}"></span>${esc(a.name)}${t ? ` → <b>${esc(tcode(t))}</b> <span class="muted" title="${esc(t.title)}">${esc(t.title.slice(0, 40))}${t.title.length > 40 ? '…' : ''}</span>` : ''}${a.status === 'paused' ? ' <span class="muted">(en pausa)</span>' : ''}</div>`).join('') : '<span class="muted">—</span>'}</td>
-          <td>${free.length ? esc(free.map((a) => a.name).join(', ')) : '<span class="muted">—</span>'}</td>
-          <td>${team.some((a) => a.usage) || tokens ? `${tokens ? `<div class="tokrow"><b>Total</b> <span class="tok">${fmtTok(tokens)}</span></div>` : ''}${team.filter((a) => a.usage || a.status !== 'idle').map(usageHtml).join('')}` : '<span class="muted" title="Las cifras se toman de la sesión de cada agente mientras trabaja: aparecen en cuanto alguien del equipo ejecute una tarea (las tareas anteriores a esta función no las guardaron)">sin sesiones aún</span>'}</td>
+          <td>${teamCell(p, team)}</td>
+          <td>${busyCell(busy)}</td>
+          <td>${free.length ? `<span title="${esc(free.map((a) => a.name).join(', '))}">${free.length} libre${free.length === 1 ? '' : 's'}</span>` : '<span class="muted">—</span>'}</td>
+          <td>${tokensCell(p, team, tokens)}</td>
           <td class="num">${cost ? cost.toFixed(2) + ' $' : '·'}</td>
           <td class="muted">${last ? 'hace ' + ago(last) : '—'}</td>
-        </tr>`).join('')}${idle.length ? `<tr class="idle-row"><td colspan="${SUM_COLS.length + 8}"><button class="small ghost" data-sum-empty>${sumShowEmpty ? '▾ Ocultar' : '▸ Mostrar'} ${idle.length} proyectos sin equipo ni tareas (${esc(idle.map((r) => r.p.name).join(', '))})</button></td></tr>` : ''}</tbody>
+        </tr>`).join('')}${idle.length ? `<tr class="idle-row"><td colspan="${SUM_COLS.length + 8}"><button class="small ghost" data-sum-empty>${sumShowEmpty ? '▾ Ocultar' : '▸ Mostrar'} ${idle.length} proyectos sin equipo ni tareas (${esc(idle.map((r) => r.p.name).join(', '))})</button></td></tr>` : ''}</tbody>${shown.length > 1 ? `<tfoot><tr class="sum-total"><td><b>Total</b></td><td></td><td colspan="${SUM_COLS.length + 3}"></td><td><span class="tok">${fmtTok(shown.reduce((n, r) => n + r.tokens, 0))}</span> ${sumBtn('data-sum-all', '*', 'Ver todos', 'Tokens de todos los agentes, agrupados por proyecto')}</td><td class="num">${shown.reduce((n, r) => n + r.cost, 0).toFixed(2)} $</td><td></td></tr></tfoot>` : ''}
     </table>
     <p class="muted" style="margin:8px 2px">Clic en una fila: abre sus tareas. Los datos llegan por SSE: la tabla se actualiza sola.</p>`;
+  refreshSumModal();
   const sc = $('#tab-summary-count'); if (sc) sc.textContent = (all.filter((t) => t.status === 'review' && S.projects.find((p) => p.id === t.projectId)?.running).length + qs.length) || ''; // solo lo que pide acción: revisiones de proyectos en marcha + preguntas
 }
 document.addEventListener('click', async (e) => {
+  const sv = e.target.closest('[data-sum-view]');
+  if (sv) { sumView = sv.dataset.sumView; costsSig = ''; renderSummary(); return; }
+  const ct = e.target.closest('[data-cost-task]');
+  if (ct) { openTask(ct.dataset.costTask); return; }
   if (e.target.closest('[data-sum-empty]')) { sumShowEmpty = !sumShowEmpty; renderSummary(); return; }
+  const vt = e.target.closest('[data-sum-tokens],[data-sum-team],[data-sum-all]');
+  if (vt) { e.stopPropagation(); openSumModal(vt.dataset.sumTeam ? 'team' : 'tokens', vt.dataset.sumTokens || vt.dataset.sumTeam || vt.dataset.sumAll); return; }
   const fb = e.target.closest('[data-sum-failed]');
   if (fb) { e.stopPropagation(); failedDialog(fb.dataset.sumFailed === 'all' ? null : fb.dataset.sumFailed); return; }
   const run = e.target.closest('[data-sum-run]');
@@ -1680,7 +1975,7 @@ let enginesTimer = null;
 async function refreshEngines() {
   const el = $('#engines');
   if (!el || !el.isConnected) { clearInterval(enginesTimer); enginesTimer = null; return; }
-  try { renderEngines(await api('GET', '/api/engines')); } catch { /* el toast ya avisó */ }
+  try { const st = await api('GET', '/api/engines'); renderEngines(st); renderLocal(st.local); } catch { /* el toast ya avisó */ }
 }
 const ENGINE_META = {
   claude: { name: 'Claude Code', vendor: 'Anthropic', oauthLabel: 'Entrar con Claude (suscripción)', consoleLabel: 'Entrar con Console (pago por uso)', keyHint: 'sk-ant-…' },
@@ -1718,6 +2013,35 @@ function renderEngines(st) {
     return `<div class="engine"><div class="top"><b>${m.name}</b> <span class="muted">${m.vendor}</span><div class="spacer"></div>${actions}</div><div class="status">${status}</div>${flow}</div>`;
   }).join('');
 }
+
+// FT-54 · IA local: URL (preajustes LM Studio / Ollama), clave opcional, «Probar» (lista modelos) y modelo por defecto.
+function renderLocal(l) {
+  const el = $('#local-ai');
+  if (!el || !l || el.contains(document.activeElement)) return; // no pisar lo que se está escribiendo
+  const status = !l.baseUrl ? '<span class="muted">○ Sin configurar</span>' : l.loggedIn ? `<span class="ok">● Servidor responde</span> · ${esc(l.text)}` : `<span class="bad">● ${esc(l.text)}</span>${l.error ? ` <span class="muted">· ${esc(l.error)}</span>` : ''}`;
+  el.innerHTML = `<div class="engine"><div class="top"><b>IA local</b> <span class="muted">LM Studio · Ollama · API compatible con OpenAI</span></div><div class="status">${status}${l.installed ? '' : ' <span class="bad">· falta el CLI codex (es quien ejecuta)</span>'}</div>
+    <div class="row">${(l.presets || []).map((p) => `<button type="button" class="small ghost" data-local-preset="${esc(p.baseUrl)}">${esc(p.label)}</button>`).join('')}</div>
+    <div class="row"><input id="local-url" placeholder="http://localhost:1234/v1" value="${esc(l.baseUrl)}" /><input id="local-key" type="password" placeholder="clave (opcional)${l.apiKey ? ' ' + esc(l.apiKey) : ''}" /><button type="button" class="small" data-local-probe>Probar</button></div>
+    ${l.models?.length ? `<div class="row"><label>Modelo por defecto</label><select id="local-model">${l.models.map((m) => `<option value="${esc(m)}" ${m === l.model ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
+    <label class="check"><input type="checkbox" id="local-auto" ${l.allowAuto ? 'checked' : ''}/> Permitir que el motor «automático» use la IA local (más lenta y menos capaz)</label>` : ''}</div>`;
+}
+document.addEventListener('click', async (e) => {
+  const lp = e.target.closest('[data-local-preset]'), pr = e.target.closest('[data-local-probe]');
+  if (lp) { $('#local-url').value = lp.dataset.localPreset; return; }
+  if (!pr) return;
+  pr.disabled = true;
+  try {
+    const r = await api('POST', '/api/engines/local/probe', { baseUrl: $('#local-url').value, apiKey: $('#local-key').value });
+    toast(r.ok ? r.text : r.error, r.ok ? undefined : 'error');
+    document.activeElement?.blur();
+    await loadModels(); renderLocal(r.local);
+  } catch { /* toast */ }
+  pr.disabled = false;
+});
+document.addEventListener('change', async (e) => {
+  if (!e.target.closest('#local-model,#local-auto')) return;
+  try { const l = await api('POST', '/api/engines/local/settings', { model: $('#local-model').value, allowAuto: $('#local-auto').checked }); document.activeElement?.blur(); renderLocal(l); toast('IA local guardada'); } catch { /* toast */ }
+});
 
 document.addEventListener('click', async (e) => {
   const el = e.target.closest('[data-eng-login],[data-eng-key],[data-eng-code],[data-eng-cancel],[data-eng-logout]');
@@ -1867,10 +2191,13 @@ function openTask(id) {
     ${t.feedback ? `<div class="task-sec"><h4>Comentarios de revisión</h4><div class="md">${md(t.feedback)}</div></div>` : ''}
     ${t.summary ? `<div class="task-sec"><h4>Resumen del agente</h4><div class="md">${md(t.summary)}</div></div>` : ''}
     ${mergeChips(t) ? `<div class="task-sec"><h4>Estado frente a ${esc(baseOf(t))}</h4><div>${mergeChips(t)}</div>${(t.conflicts || []).length ? `<ul>${t.conflicts.map((f) => `<li><code>${esc(f)}</code></li>`).join('')}</ul>` : ''}</div>` : ''}
-    ${t.diffStat ? `<div class="task-sec"><h4>Cambios en la rama ${esc(t.branch || '')}</h4><pre class="md">${esc(t.diffStat)}</pre></div>` : ''}
+    ${outsideWarn(t)}
+    ${t.diffStat || repoStats(t).length ? `<div class="task-sec"><h4>Cambios en la rama ${esc(t.branch || '')}${repoStats(t).length > 1 ? ` (${repoStats(t).length} repos)` : ''}</h4>${diffStatsHtml(t, ' class="md"')}</div>` : ''}
     ${t.error ? `<div class="task-sec"><h4>Error</h4><div class="md bad">${esc(t.error)}</div></div>` : ''}
+    ${t.costUsd > 0 ? '<div class="task-sec" id="task-costs"><h4>💸 Coste (FT-76)</h4><span class="muted">leyendo…</span></div>' : ''}
     <div class="task-acts">${acts.join('')}<div class="spacer"></div><button class="ghost" value="cancel">Cerrar</button></div>`, null, 'task');
   openTaskId = id;
+  if (t.costUsd > 0) api('GET', `/api/costs/${t.projectId}/${t.id}`).then((d) => { const el = $('#task-costs'); if (el) el.innerHTML = '<h4>💸 Coste (FT-76)</h4>' + costDetailHtml(d); }).catch(() => {});
   publishContext();
 }
 
@@ -1980,7 +2307,8 @@ document.addEventListener('click', async (e) => {
           : l.startsWith('@@') ? `<span class="diff-hunk">${l}</span>` : l).join('\n');
     return dialog(`<h3>${esc(tcode(t))} ${esc(t.title)}</h3>
       ${t.summary ? `<p>${esc(t.summary)}</p>` : ''}
-      ${t.diffStat ? `<pre>${esc(t.diffStat)}</pre>` : ''}
+      ${outsideWarn(t)}
+      ${diffStatsHtml(t)}
       <pre>${html}</pre>${buttons(null)}`, null, 'wide');
   }
   if (d.importFlow !== undefined) {
