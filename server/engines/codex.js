@@ -5,6 +5,7 @@ import path from 'node:path';
 import { firstLine, toolSummary } from './describe.js';
 import { fileURLToPath } from 'node:url';
 import { codexTracker, codexCostUsd, tokensForUsd } from '../usage.js';
+import { codexScope } from './toolscope.js';
 import { rtkBin, rtkAvailable } from './claude.js';
 
 // FT-57: filtro del hook de RTK (solo reescrituras de la lista blanca).
@@ -37,13 +38,14 @@ function bwrapWorks() {
   return sandboxOk;
 }
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, images = [], budgetUsd, maxTokens, effort, resumeSession, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, kind, images = [], budgetUsd, maxTokens, effort, resumeSession, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
   const noSandbox = !bwrapWorks();
   const sandbox = mode === 'plan' ? 'read-only' : 'workspace-write';
   const args = ['exec', '--json', '--skip-git-repo-check', '-C', cwd, ...(noSandbox ? ['--dangerously-bypass-approvals-and-sandbox'] : ['-s', sandbox])];
   if (noSandbox) onLog('⚠ Codex sin sandbox (bwrap no disponible bajo el servicio): aislamiento por worktree + revisión');
   if (model) args.push('-m', model);
   if (mcpUrl && mode !== 'plan') args.push('-c', `mcp_servers.flow_test.url="${mcpUrl}"`);
+  for (const c of codexScope({ kind, mode, images })) args.push('-c', c); // FT-59: sin herramientas que el rol no usa
   const useRtk = rtkAvailable() && mode !== 'plan';
   args.push(...configArgs({ effort, rtk: useRtk ? rtkBin() : null, mode }));
   for (const img of images) args.push(`--image=${img}`); // con «=» para que -i (variádico) no se trague el «-»
