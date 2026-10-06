@@ -21,11 +21,12 @@ function bwrapWorks() {
   return sandboxOk;
 }
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, images = [], env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, images = [], addDirs = [], env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
   const noSandbox = !bwrapWorks();
   const sandbox = mode === 'plan' ? 'read-only' : 'workspace-write';
   const args = ['exec', '--json', '--skip-git-repo-check', '-C', cwd, ...(noSandbox ? ['--dangerously-bypass-approvals-and-sandbox'] : ['-s', sandbox])];
   if (noSandbox) onLog('⚠ Codex sin sandbox (bwrap no disponible bajo el servicio): aislamiento por worktree + revisión');
+  for (const d of addDirs) args.push('--add-dir', d); // FT-44: worktrees de los demás repos del proyecto
   if (model) args.push('-m', model);
   if (mcpUrl && mode !== 'plan') args.push('-c', `mcp_servers.flow_test.url="${mcpUrl}"`);
   for (const img of images) args.push(`--image=${img}`); // con «=» para que -i (variádico) no se trague el «-»

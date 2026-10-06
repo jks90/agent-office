@@ -20,7 +20,7 @@ const PLAN_TOOLS = ['Read', 'Glob', 'Grep', ASK_RULE, 'Bash(ls *)', 'Bash(cat *)
 const RTK_BIN = [process.env.AO_RTK_BIN, path.join(os.homedir(), '.local/bin/rtk'), '/usr/local/bin/rtk'].find((f) => f && fs.existsSync(f)) || null;
 export const rtkAvailable = () => !!RTK_BIN && process.env.AO_RTK !== 'off';
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, effort, resumeSession, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, effort, resumeSession, addDirs = [], env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
   const tools = [...(mode === 'plan' ? PLAN_TOOLS : WORK_TOOLS)];
   // FT-5: entrada stream-json con stdin abierto → se pueden inyectar mensajes del cliente en caliente.
   const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--append-system-prompt', system];
@@ -38,6 +38,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, eff
     mcpServers['flow-test'] = { type: 'http', url: mcpUrl };
     tools.push('mcp__flow-test');
   }
+  if (addDirs.length) args.push('--add-dir', ...addDirs); // FT-44: worktrees de los demás repos del proyecto
   args.push('--strict-mcp-config', '--mcp-config', JSON.stringify({ mcpServers }));
   args.push('--allowedTools', ...tools);
 
