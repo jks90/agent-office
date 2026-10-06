@@ -62,6 +62,7 @@ try {
     pills: document.querySelectorAll('.o3d-pill').length, floorLabelsShown: [...document.querySelectorAll('.o3d-floor')].filter((e) => getComputedStyle(e).display !== 'none').length,
     crumb: document.querySelector('#office-crumb').textContent.trim(), live: document.querySelector('#office-live').textContent,
     select: document.querySelector('#project').value, stored: localStorage.getItem('ao:officeMode'), focused: document.activeElement === document.querySelector('#office'),
+    drawerHidden: document.querySelector('#drawer').hidden, drawerText: document.querySelector('#drawer').textContent,
   }));
   // Punto del canvas que cae sobre la planta `name` (raycaster del propio office3d) → clic REAL del ratón ahí.
   const floorPoint = (name) => page.evaluate((nm) => {
@@ -85,6 +86,12 @@ try {
     await page.waitForFunction(() => !!document.querySelector('#office-crumb button'), { timeout: 8000 });
     await page.evaluate(() => document.querySelector('#office-crumb button').click());
   };
+  const agentPoint = (id) => page.evaluate((agentId) => {
+    const o = window.aoOffice, a = o.actors.get(agentId);
+    if (!a?.group.visible) return null;
+    const p = o.project(a.x, 0.8, a.z), r = o.cv.getBoundingClientRect();
+    return { x: r.left + p.x, y: r.top + p.y };
+  }, id);
 
   await page.goto(base + '/', { waitUntil: 'networkidle2' });
   await sleep(4000);
@@ -166,6 +173,31 @@ try {
   check('el canvas muestra personajes de Beta (actors ≥ 1)', st.dbg.actors >= 1 && st.pills >= 1, `actors=${st.dbg.actors} pills=${st.pills}`);
   check('debugState.projectId activo = Beta', st.dbg.activeProjectId === b.id, String(st.dbg.activeProjectId));
 
+  console.log('— FT-71: nivel agente y vuelta paso a paso');
+  const betaAgent = (await api('GET', '/api/state')).agents.find((ag) => ag.name === 'Bea') || (await api('GET', '/api/state')).agents.find((ag) => ag.projectId === b.id);
+  const ap = await agentPoint(betaAgent.id);
+  check('un agente de la planta Beta se puede apuntar con la cámara', !!ap, JSON.stringify(ap));
+  const beforeAgentCam = st.dbg.camera;
+  await page.mouse.move(ap.x, ap.y);
+  await sleep(150);
+  await page.mouse.click(ap.x, ap.y);
+  await sleep(700);
+  st = await state();
+  check('clic en agente → officeLevel=agent y ficha lateral abierta con sus datos', st.ds === 'floor' && st.dbg.officeLevel === 'agent' && st.dbg.selectedAgentId === betaAgent.id && !st.drawerHidden && st.drawerText.includes(betaAgent.name), JSON.stringify({ level: st.dbg.officeLevel, selected: st.dbg.selectedAgentId, drawerHidden: st.drawerHidden }));
+  check('debugState expone cámara acercada al agente', st.dbg.camera.span < beforeAgentCam.span && st.dbg.camera.center.x !== beforeAgentCam.center.x, JSON.stringify({ before: beforeAgentCam, after: st.dbg.camera }));
+  const ctxAgent = await api('GET', '/api/context');
+  check('/api/context publica officeLevel=agent y selectedAgentId', ctxAgent.officeLevel === 'agent' && ctxAgent.selectedAgentId === betaAgent.id, JSON.stringify(ctxAgent));
+  await page.keyboard.press('Escape');
+  await sleep(650);
+  st = await state();
+  check('Esc desde agente vuelve solo a planta y cierra la ficha', st.ds === 'floor' && st.dbg.officeLevel === 'floor' && st.drawerHidden, JSON.stringify({ level: st.dbg.officeLevel, drawerHidden: st.drawerHidden }));
+  await page.keyboard.press('Escape');
+  await sleep(650);
+  st = await state();
+  check('segundo Esc vuelve de planta a edificio', st.ds === 'building' && st.dbg.officeLevel === 'building', JSON.stringify({ ds: st.ds, level: st.dbg.officeLevel }));
+  await clickFloor('Beta');
+  await sleep(700);
+
   console.log('— FT-69: planta compacta por zonas');
   const floor69 = await page.evaluate(async () => {
     const mkAgent = (id, role, status = 'working', taskId = 't-' + id) => ({ id, name: id.toUpperCase(), role, status, taskId, projectId: 'ft69', activity: 'FT-69' });
@@ -230,6 +262,7 @@ try {
   await sleep(2600);
   await page.screenshot({ path: path.join(shotDir, 'ft-69-planta-10-agentes.png') });
   await page.screenshot({ path: path.join(shotDir, 'building-2-planta-beta.png') });
+  st = await state();
   check('modo recordado en localStorage ao:officeMode=floor', st.stored === 'floor', String(st.stored));
   check('el canvas queda enfocado tras el clic', st.focused);
   if (shot) await page.screenshot({ path: shot });
