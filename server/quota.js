@@ -4,6 +4,8 @@
 // Caché de 60 s por motor; los fallos también se cachean (no se martillea al proveedor). Lo consume el snapshot SSE (`quota`),
 // `GET /api/quota` y el guardarraíl del planificador (`gate`).
 import fs from 'node:fs';
+import http from 'node:http';
+import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -28,10 +30,23 @@ const ms = (iso) => { const t = typeof iso === 'number' ? iso : Date.parse(iso);
 const bad = (engine, reason, plan = null) => ({ engine, ok: false, plan, windows: [], limitReached: false, reason, fetchedAt: Date.now() });
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 
-async function getJson(url, headers) {
-  const r = await fetch(url, { headers: { accept: 'application/json', ...headers }, signal: AbortSignal.timeout(TIMEOUT) });
-  if (!r.ok) throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status });
-  return r.json();
+// Petición GET con el módulo http(s) de Node, NO con `fetch`: Cloudflare (chatgpt.com) responde 403 «challenge» al cliente
+// de fetch/undici aunque lleve el user-agent del CLI de Codex (huella TLS/ALPN), y acepta la de `https.request` con ese UA.
+function getJson(url, headers) {
+  return new Promise((resolve, reject) => {
+    const mod = url.startsWith('https:') ? https : http;
+    const req = mod.get(url, { headers: { accept: 'application/json', 'user-agent': 'codex_cli_rs', ...headers }, timeout: TIMEOUT }, (r) => {
+      let body = '';
+      r.setEncoding('utf8');
+      r.on('data', (c) => { body += c; });
+      r.on('end', () => {
+        if (r.statusCode < 200 || r.statusCode >= 300) return reject(Object.assign(new Error(`HTTP ${r.statusCode}`), { status: r.statusCode }));
+        try { resolve(JSON.parse(body)); } catch { reject(new Error('respuesta no es JSON')); }
+      });
+    });
+    req.on('timeout', () => { req.destroy(Object.assign(new Error('timeout'), { name: 'TimeoutError' })); });
+    req.on('error', reject);
+  });
 }
 const netReason = (e) => (e.name === 'TimeoutError' || e.name === 'AbortError' ? 'sin respuesta (8 s)' : e.status ? e.message : 'sin conexión');
 
@@ -46,7 +61,10 @@ export function normalizeClaude(j, plan = null) {
     const at = ms(l.resets_at);
     if (kind === 'session') add(win('session', 'Sesión 5 h', l.percent, at, l.severity));
     else if (kind === 'weekly_all' || kind === 'weekly') add(win('weekly', 'Semanal 7 d', l.percent, at, l.severity));
-    else if (/^weekly_/.test(kind)) { const n = kind.replace(/^weekly_/, ''); add(win(`model:${n}`, `${MODEL_LABEL(n)} 7 d`, l.percent, at, l.severity)); }
+    else if (/^weekly_/.test(kind)) { // ventana acotada a un modelo: `weekly_scoped` trae scope.model.display_name («Fable»); si no, el sufijo del kind
+      const n = String(l.scope?.model?.display_name || l.scope?.model?.id || kind.replace(/^weekly_/, ''));
+      add(win(`model:${n.toLowerCase()}`, `${MODEL_LABEL(n)} 7 d`, l.percent, at, l.severity));
+    }
   }
   // Campos clásicos como respaldo si `limits` no trae esa ventana
   const old = (k, id, label) => { const v = j?.[k]; if (v && v.utilization != null) add(win(id, label, v.utilization, ms(v.resets_at))); };
@@ -80,14 +98,14 @@ async function fetchClaude() {
   if (cred.expiresAt && Number(cred.expiresAt) < Date.now()) return bad('claude', 'token caducado: usa claude una vez', plan); // no se refresca aquí: cada tarea con el CLI lo renueva
   try {
     return normalizeClaude(await getJson(CLAUDE_URL(), { authorization: `Bearer ${cred.accessToken}`, 'anthropic-beta': 'oauth-2025-04-20' }), plan);
-  } catch (e) { return bad('claude', e.status === 401 || e.status === 403 ? 'token rechazado: usa claude una vez' : netReason(e), plan); }
+  } catch (e) { return bad('claude', e.status === 401 ? 'token rechazado: usa claude una vez' : netReason(e), plan); }
 }
 async function fetchCodex() {
   const t = readJson(codexFile())?.tokens;
   if (!t?.access_token) return bad('codex', 'sin login');
   try {
     return normalizeCodex(await getJson(CODEX_URL(), { authorization: `Bearer ${t.access_token}`, ...(t.account_id ? { 'chatgpt-account-id': t.account_id } : {}) }));
-  } catch (e) { return bad('codex', e.status === 401 || e.status === 403 ? 'sesión de Codex caducada: usa codex una vez' : netReason(e)); }
+  } catch (e) { return bad('codex', e.status === 401 ? 'sesión de Codex caducada: usa codex una vez' : e.status === 403 ? 'rechazado (403) por chatgpt.com' : netReason(e)); }
 }
 
 // ── Caché ─────────────────────────────────────────────────────────────────
