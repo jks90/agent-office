@@ -244,7 +244,7 @@ const routes = [
     if (typeof b.flowTestUrl === 'string' && b.flowTestUrl.trim()) st.flowTestUrl = b.flowTestUrl.trim().replace(/\/+$/, '').replace(/\/mcp$/, '');
     if (typeof b.workspaceHostDir === 'string') st.workspaceHostDir = b.workspaceHostDir.trim();
     if (typeof b.quotaGuard === 'boolean') st.quotaGuard = b.quotaGuard; // FT-45
-    if (review.POLICIES.includes(b.reviewPolicy)) st.reviewPolicy = b.reviewPolicy; // FT-56: manual | auto-qa | auto
+    if (review.POLICIES.includes(b.reviewPolicy) && b.reviewPolicy !== st.reviewPolicy) { st.reviewPolicy = b.reviewPolicy; for (const p of store.get().projects) if (!p.reviewPolicy) team.reviewPending(p); } // FT-56: manual | auto-qa | auto
     if (b.reviewNudgeMin !== undefined && Number(b.reviewNudgeMin) >= 0) st.reviewNudgeMin = Math.min(1440, Math.round(Number(b.reviewNudgeMin)));
     if (Array.isArray(b.reviewSensitive)) st.reviewSensitive = b.reviewSensitive.map((x) => String(x).trim()).filter(Boolean).slice(0, 40);
     if (typeof b.reviewEngine === 'string' && ['', 'claude', 'codex', 'demo'].includes(b.reviewEngine)) st.reviewEngine = b.reviewEngine;

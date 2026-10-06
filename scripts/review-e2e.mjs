@@ -94,6 +94,24 @@ try {
   check('el tope son 2 ciclos automáticos', review.MAX_AUTO_CYCLES === 2);
   check('el historial de la tarea recoge las decisiones', (capped?.reviewLog || []).filter((r) => r.by === 'auto-qa' && r.verdict === 'rejected').length === 2, JSON.stringify(capped?.reviewLog));
 
+  console.log('Política por proyecto');
+  await call('POST', '/api/settings', { reviewPolicy: 'manual' });
+  const proj2 = await call('POST', '/api/projects', { name: 'rev2', engine: 'demo' });
+  const waiting = await call('POST', '/api/tasks', { projectId: proj2.id, title: 'Ya esperaba', role: 'back', status: 'review' });
+  const blocked = await call('POST', '/api/tasks', { projectId: proj2.id, title: 'Depende de la que esperaba', role: 'back', dependsOn: [waiting.id] });
+  await sleep(800);
+  check('empresa en manual: la del proyecto sigue esperando', (await task(waiting.id)).status === 'review');
+  await call('PATCH', `/api/projects/${proj2.id}`, { reviewPolicy: 'auto-qa' });
+  check('el proyecto pasa a auto-qa y guarda su política', (await state()).projects.find((p) => p.id === proj2.id)?.reviewPolicy === 'auto-qa');
+  check('al activarla, lo que ya esperaba se revisa y se aprueba (sin tocar nada más)', !!(await until(async () => (await task(waiting.id))?.status === 'done')), (await task(waiting.id)).reviewNote);
+  check('…y la dependiente deja de esperar', !(await task(blocked.id)).waitingOn?.length, JSON.stringify((await task(blocked.id)).waitingOn));
+  const other = await mk('Otro proyecto en manual');
+  await sleep(1000);
+  check('los proyectos sin política propia siguen la de la empresa (manual)', (await task(other.id)).status === 'review');
+  await call('PATCH', `/api/projects/${proj2.id}`, { reviewPolicy: '' });
+  check('«Igual que la empresa» quita la política propia', !(await state()).projects.find((p) => p.id === proj2.id)?.reviewPolicy);
+  check('policyOf: el proyecto manda sobre la empresa', review.policyOf({ reviewPolicy: 'manual' }, { reviewPolicy: 'auto' }) === 'auto' && review.policyOf({ reviewPolicy: 'auto-qa' }, {}) === 'auto-qa' && review.policyOf({}, null) === 'manual');
+
   console.log('Ficheros sensibles y utilidades (funciones puras)');
   check('workflows y Dockerfile son sensibles', review.sensitiveHits(['.github/workflows/ci.yml', 'src/a.js', 'Dockerfile'], '', review.SENSITIVE_DEFAULT).length === 2);
   check('server/access* es sensible', review.sensitiveHits(['server/access-gate.js'], '', review.SENSITIVE_DEFAULT).length === 1);

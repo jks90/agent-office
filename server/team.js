@@ -239,6 +239,10 @@ export async function updateProject(id, patch) {
   if (patch.name?.trim()) p.name = patch.name.trim();
   if (patch.folder !== undefined) p.folder = patch.folder || null;
   if (patch.prefix !== undefined) p.prefix = codes.normalizePrefix(patch.prefix) || null; // las tareas ya numeradas conservan su código
+  if (patch.reviewPolicy !== undefined) { // '' = la de la empresa · manual | auto-qa | auto
+    p.reviewPolicy = review.POLICIES.includes(patch.reviewPolicy) ? patch.reviewPolicy : null;
+    reviewPending(p);
+  }
   if (patch.repos) {
     p.repos = await resolveRepos({ repos: patch.repos });
     p.repoPath = p.repos[0]?.path || null;
@@ -573,8 +577,9 @@ async function runChecks(cwd, checks) {
 }
 async function runReviewer(p, t, repo, cwd, checks) {
   const s = get();
-  const agent = s.agents.find((a) => a.id === t.agentId) || teamOf(p)[0];
   const engineId = ENGINES[s.settings.reviewEngine] && s.settings.reviewEngine !== 'auto' ? s.settings.reviewEngine : (ENGINES[t.lastEngine] ? t.lastEngine : 'demo');
+  // Sin autor ni equipo (tarea creada ya en revisión, proyecto sin plantilla) revisa un «Revisor» genérico en vez de fallar
+  const agent = s.agents.find((a) => a.id === t.agentId) || teamOf(p)[0] || { id: 'revisor', name: 'Revisor', role: 'qa', engine: engineId, model: '' };
   const role = Object.values(allRoles()).find((r) => r.kind === 'qa') || roleOf(agent.role) || roleOf('back');
   const job = await ENGINES[engineId].start({
     agent, task: t, project: p, cwd, mode: engineId === 'demo' ? 'review' : 'work', goal: null, roles: teamRoles(p),
@@ -589,7 +594,7 @@ async function runReviewer(p, t, repo, cwd, checks) {
 }
 // Al llegar a «Revisión» (reviewPolicy auto-qa | auto). Nunca toca tareas reviewRequired, con tope/atasco, ni con ficheros sensibles.
 export async function autoReview(p, t) {
-  const s = get(), policy = review.policyOf(s.settings);
+  const s = get(), policy = review.policyOf(s.settings, p);
   if (policy === 'manual' || t.status !== 'review' || t.kind === 'plan' || reviewing.has(t.id)) return;
   const hold = (why) => { t.reviewNote = why; reviewNote(t, 'auto', 'skipped', why); changed(); };
   reviewing.add(t.id);
@@ -622,6 +627,13 @@ export async function autoReview(p, t) {
     else await reject(t.id, v.feedback || v.reasons.join('\n') || 'El revisor automático pide cambios.', [], [], 'auto-qa');
   } catch (e) { hold(`✋ la revisión automática falló (${e.message}): la revisa una persona`); }
   finally { reviewing.delete(t.id); delete t.reviewing; changed(); }
+}
+
+// Al pasar a revisión automática, lo que ya esperaba revisión no se queda atascado: se revisa ahora (de una en una).
+export function reviewPending(p) {
+  if (review.policyOf(get().settings, p) === 'manual') return;
+  const queue = get().tasks.filter((t) => t.projectId === p.id && t.status === 'review' && !t.reviewNote);
+  (async () => { for (const t of queue) { try { await autoReview(p, t); } catch { /* queda para la persona */ } } })();
 }
 
 // Aviso proactivo: pasados reviewNudgeMin minutos en revisión, evento ReviewPending (una vez por entrada en revisión).

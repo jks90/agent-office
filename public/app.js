@@ -1199,6 +1199,7 @@ const updateBtn = (t) => t.status === 'review' && t.branch && t.behind ? `<butto
 // servidor calcula con la misma regla que el planificador) o aviso ámbar si nadie del equipo tiene el rol. El chip abre el
 // cajón del agente (motor, modelo, registro) o, sin agente, «Contratar agente» con el rol ya elegido; el desplegable reasigna.
 const UNSTARTED = ['backlog', 'todo', 'failed'];
+const REVIEW_LABEL = { manual: 'Manual: la revisas tú', 'auto-qa': 'Automática: un agente QA revisa, aprueba y fusiona (o la devuelve)', auto: 'Automática: se aprueba si pasan las verificaciones que declara la tarea' };
 const engineTag = (a) => `${a.engine}${a.engine === 'auto' && a.activeEngine ? '→' + a.activeEngine : ''}${a.model ? '/' + a.model : ''}`;
 const assignable = (t) => team().filter((a) => a.role === t.role || (S.roles[a.role]?.handles || []).includes(t.role));
 function whoRow(t) {
@@ -1752,6 +1753,11 @@ Pasos, convenciones y ejemplos…</textarea>
     <div id="board-cfg" class="board-cfg"><p class="muted">Cargando…</p></div>
     <div class="section-title">📁 Proyecto</div>
     <label>Prefijo de los códigos de tarea del proyecto «${esc(project()?.name)}» (p. ej. <code>GL</code> → GL-1, GL-2…; las tareas ya numeradas no cambian)</label><input name="prefix" value="${esc(project()?.prefix || "")}" placeholder="${esc(project()?.prefixDefault || "")}" maxlength="5" style="text-transform:uppercase;width:120px" />
+    <label>Revisión de las tareas de «${esc(project()?.name)}» (con revisión automática, lo que una tarea desbloquea no espera a que tú la mires)</label>
+    <select name="reviewPolicy">${[['', `Igual que la empresa (${REVIEW_LABEL[S.settings.reviewPolicy || 'manual']})`], ['manual', REVIEW_LABEL.manual], ['auto-qa', REVIEW_LABEL['auto-qa']], ['auto', REVIEW_LABEL.auto]].map(([v, l]) => `<option value="${v}" ${(project()?.reviewPolicy || '') === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+    <label>Revisión por defecto de la empresa (proyectos con «Igual que la empresa»)</label>
+    <select name="reviewPolicyAll">${['manual', 'auto-qa', 'auto'].map((v) => `<option value="${v}" ${(S.settings.reviewPolicy || 'manual') === v ? 'selected' : ''}>${esc(REVIEW_LABEL[v])}</option>`).join('')}</select>
+    <p class="muted" style="margin:2px 0 8px">Nunca se aprueban solas las tareas con «revisión obligatoria», las cortadas por tope o atasco, las que tocan ficheros sensibles ni las que el revisor devolvió dos veces: esas te esperan a ti.</p>
     <label>Repositorios del proyecto «${esc(project()?.name)}» (uno por línea: <code>clave = ruta @ roles</code>)</label>
     <textarea name="repos" rows="3">${esc((project()?.repos || []).map((r) => `${r.key} = ${r.path}${r.roles?.length ? ' @ ' + r.roles.join(',') : ''}`).join('\n'))}</textarea>
     <label>Importar un tablero de flow-test (notas = tarjetas; las columnas «En revisión»/«Hecho» conservan su estado, el resto entra en Backlog)</label>
@@ -1768,6 +1774,8 @@ Pasos, convenciones y ejemplos…</textarea>
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
     if (repos.map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|') !== cur) await api('PATCH', `/api/projects/${projectId}`, { repos });
     if ((f.prefix || '').toUpperCase() !== (project()?.prefix || '')) await api('PATCH', `/api/projects/${projectId}`, { prefix: f.prefix });
+    if ((f.reviewPolicyAll || 'manual') !== (S.settings.reviewPolicy || 'manual')) await api('POST', '/api/settings', { reviewPolicy: f.reviewPolicyAll });
+    if ((f.reviewPolicy || '') !== (project()?.reviewPolicy || '')) await api('PATCH', `/api/projects/${projectId}`, { reviewPolicy: f.reviewPolicy || '' });
   }),
 };
 // Tras abrir Ajustes, rellenar el selector de flows con los del flow-test conectado.
