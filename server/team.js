@@ -22,12 +22,13 @@ import { briefingFor } from './briefing.js';
 import { detectQuotaHit } from './quota-pause.js';
 import * as memory from './memory.js';
 import * as stuck from './stuck.js';
+import * as ladder from './model-ladder.js';
 
 const ENGINES = { demo, claude, codex };
 export const ENGINE_IDS = ['auto', 'claude', 'codex', 'demo'];
 
 // Motor automático: el que tenga sesión y menos trabajo en curso (empate → Claude). Sin ninguno con sesión → error claro.
-const MODEL_OF = { claude: /^(sonnet|opus|haiku|claude-)/i, codex: /^(gpt-|o[0-9]|codex)/i };
+const MODEL_OF = ladder.MODEL_OF;
 // FT-45: con el guardarraíl de cuota activo, un motor con la sesión agotada no es candidato; entre los que quedan manda el margen.
 const guardOn = () => get().settings.quotaGuard !== false;
 function pickEngine(agent, exclude = null) {
@@ -89,11 +90,24 @@ export function resumeNow(id) {
   return { ok: true };
 }
 
-const modelFor = (engineId, agent, role) => {
+// FT-60 · Modelo del intento. Un modelo fijado a mano (agente o rol) manda y no entra en la cascada; si no, escalera del motor:
+// empieza en el peldaño barato y sube con t.escalations (salvo plan / minModel de la tarea o del rol). Devuelve { model, level, why }.
+const modelFor = (engineId, agent, role, t = null) => {
   const wanted = agent.model || role.model || '';
-  if (wanted && MODEL_OF[engineId]?.test(wanted)) return wanted;
-  return engineId === 'claude' ? 'sonnet' : engineId === 'codex' ? 'gpt-5.5' : '';
+  if (wanted && MODEL_OF[engineId]?.test(wanted)) return { model: wanted, level: null, why: 'fijado' };
+  const st = get().settings;
+  const lad = ladder.ladderFor(engineId, st);
+  if (!lad.length) return { model: '', level: null, why: '' };
+  return ladder.pick(engineId, lad, { floor: t?.minModel || role.minModel || '', plan: t?.kind === 'plan', escalations: t?.escalations || 0, all: ladder.ladders(st) });
 };
+const cleanMinModel = (v) => { const m = String(v || '').trim(); return m && Object.values(MODEL_OF).some((re) => re.test(m)) ? m.slice(0, 60) : ''; };
+// Sube un peldaño la tarea (el próximo intento usa el siguiente modelo). Máximo MAX_ESCALATIONS; false si ya no puede.
+export function escalate(t, reason) {
+  if ((t.escalations || 0) >= ladder.MAX_ESCALATIONS) return false;
+  t.escalations = (t.escalations || 0) + 1;
+  log(t.agentId, `⬆ ${t.code || t.id}: el próximo intento sube de modelo (${reason})`);
+  return true;
+}
 export const STATUSES = ['backlog', 'todo', 'doing', 'review', 'done', 'failed'];
 
 const { get, changed, newId, log } = store;
@@ -363,7 +377,7 @@ export function messageAgent(id, { text, constraint = false, origin = 'user' } =
 }
 
 // ── Tareas ─────────────────────────────────────────────────────────────────
-export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null, context = null, skills = [], priority = 0 }) {
+export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null, context = null, skills = [], priority = 0, minModel = '' }) {
   // attachments (subidos): imágenes → images (las ve el agente), el resto → files (se citan en el prompt)
   for (const a of attachments) { if (/\.(png|jpe?g|webp)$/i.test(a.path)) images = [...images, a.path]; else files = [...files, a.path]; }
   const s = get();
@@ -378,6 +392,7 @@ export function createTask({ projectId, title, description = '', role, repo = nu
     agentId: null, branch: null, summary: '', diffStat: '', error: null, feedback: '', source, files: files.filter((f) => fs.existsSync(f)),
     constraints: [], priority: Math.max(0, Math.min(100, Number(priority) || 0)), context: cleanContext(context), skills: (Array.isArray(skills) ? skills : []).map(String).slice(0, 10), costUsd: null, attempts: 0, createdAt: Date.now(), updatedAt: Date.now(),
   };
+  if (cleanMinModel(minModel)) task.minModel = cleanMinModel(minModel); // FT-60: esta tarea no empieza por el peldaño barato
   codes.assignCode(s.tasks, p, task);
   task.feedbackImages = copyImages(task, images);
   s.tasks.push(task);
@@ -423,6 +438,7 @@ export function updateTask(id, patch) {
     reflect(t);
   }
   if (Array.isArray(patch.dependsOn)) t.dependsOn = patch.dependsOn.filter((d) => d !== id && s.tasks.some((x) => x.id === d));
+  if (typeof patch.minModel === 'string') t.minModel = cleanMinModel(patch.minModel) || undefined; // FT-60
   t.updatedAt = Date.now();
   changed();
   tick();
@@ -492,6 +508,10 @@ export async function reject(id, feedback = '', images = [], attachments = []) {
   if (!['review', 'failed'].includes(t.status)) throw fail(409, 'Solo se devuelven tareas en revisión o fallidas');
   // La rama y el worktree se conservan: el agente corrige sobre su intento anterior.
   if (feedback.trim()) t.feedback = [t.feedback, feedback.trim()].filter(Boolean).join('\n');
+  // FT-60: devolver desde revisión = el modelo barato no bastó → el reintento sube de peldaño (desde «fallida» ya subió al fallar;
+  // y si se cortó por el tope de gasto, un modelo más caro no arregla nada: sigue con el mismo).
+  if (t.status === 'review' && !t.budgetHit) escalate(t, 'devuelta desde revisión');
+  delete t.budgetHit;
   // FT-75: cada corrección de una revisión se recuerda (la primera frase) para no repetir el error en otras tareas
   if (feedback.trim() && t.agentId && get().settings.agentMemory !== false) memory.addLesson(t.projectId, t.agentId, `Corrección de revisión: ${feedback.trim().split(/(?<=[.!?])\s|\n/)[0]}`, t.code || t.id);
   t.feedbackImages = copyImages(t, images);
@@ -831,6 +851,7 @@ async function runTask(p, agent, t) {
   reflect(t, `▶ ${agent.name} (${roleOf(agent.role)?.label || agent.role}) empieza a trabajar en AgentOffice`);
 
   let engineId;
+  let agentError = false; // FT-60: el motor terminó con error (no un fallo de git/preparación)
   const resumingQuota = !!t.quotaPaused;
   const excludeEngine = t.quotaPaused && Date.now() < (t.quotaPaused.resetsAt || 0) && !t.quotaPaused.force ? t.quotaPaused.engine : null;
   if (resumingQuota) { t.resumeAfterQuota = true; events.emit('AgentResumed', events.ctxOf(t, agent), { reason: 'quota-reset', engine: t.quotaPaused.engine }); delete t.quotaPaused; delete t.preferAgentId; t.activity = ''; }
@@ -878,6 +899,12 @@ async function runTask(p, agent, t) {
     const probe = t.branch ? async () => `${await git.git(cwd, 'status', '--porcelain')}\n${await git.git(cwd, 'diff', '--stat')}` : null;
     const newDetector = () => stuck.createDetector({ limits: stuckLimits, isCode: role.kind === 'dev', probe });
     let detector = newDetector();
+    const pickedModel = modelFor(engineId, agent, role, t);
+    if (pickedModel.model) { // FT-60: historial de modelos de la tarea (la tarjeta enseña «haiku → sonnet»)
+      (t.modelHistory ||= []).push({ model: pickedModel.model, engine: engineId, attempt: t.attempts, why: pickedModel.why, at: Date.now() });
+      t.modelHistory = t.modelHistory.slice(-10);
+      log(agent.id, `🧠 Modelo ${pickedModel.model} (${pickedModel.why}${t.escalations ? `, escalada ${t.escalations}` : ''})`);
+    }
     const onStuck = (signal) => {
       const entry = jobs.get(agent.id);
       if (!signal || !entry?.stop || entry.stuck || entry.requeue) return;
@@ -903,7 +930,7 @@ async function runTask(p, agent, t) {
       images: (t.feedbackImages || []).filter((f) => fs.existsSync(f)),
       system: role.system,
       kind: role.kind, roleTools: role.tools, hasSkills: !!role.skills?.length, // FT-59: herramientas acotadas por rol
-      model: modelFor(engineId, agent, role),
+      model: pickedModel.model,
       // Reintento de la MISMA tarea en su worktree hace <50 min (la caché de contexto aún vale): se reanuda su sesión.
       // FT-57: vale para claude y codex, pero solo si la sesión guardada es DEL MISMO motor (un id de Claude no sirve a Codex).
       resumeSession: t.reused && t.sessionId && (t.sessionEngine || 'claude') === engineId && (t.resumeAfterQuota || Date.now() - (t.sessionAt || 0) < 50 * 60_000) ? t.sessionId : null,
@@ -956,7 +983,7 @@ async function runTask(p, agent, t) {
         return; // finally: agente libre y tick()
       }
     }
-    if (!res.ok) throw new Error(res.error || 'El agente no terminó bien');
+    if (!res.ok) { if (!res.stopped) agentError = true; throw new Error(res.error || 'El agente no terminó bien'); }
     t.summary = res.summary || '';
     if (t.kind !== 'plan' && s.settings.agentMemory !== false) { // FT-75: el bloque «LECCIONES:» del resumen pasa a la memoria
       const h = memory.harvest(p.id, agent.id, t.summary, t.code || t.id);
@@ -1003,6 +1030,7 @@ async function runTask(p, agent, t) {
     }
     t.status = 'failed';
     t.error = e.message;
+    if (agentError && t.kind !== 'plan') escalate(t, 'error del agente'); // FT-60: el reintento (Reintentar) usa el siguiente modelo
     events.emit('AgentFailed', ev, { error: String(e.message).slice(0, 500) });
     log(agent.id, '❌ ' + e.message);
     reflect(t, `❌ Falló en AgentOffice: ${String(e.message).slice(0, 500)}`);
@@ -1022,8 +1050,16 @@ async function runTask(p, agent, t) {
 export function costEstimates() {
   const byRole = {};
   const done = get().tasks.filter((t) => t.status === 'done' && t.costUsd > 0 && t.kind !== 'plan').sort((a, b) => b.updatedAt - a.updatedAt);
-  for (const t of done) (byRole[t.role] ||= []).length < 10 && byRole[t.role].push(t.costUsd);
+  for (const t of done) (byRole[t.role] ||= []).push(t);
+  const st = get().settings, all = ladder.ladders(st), roles = allRoles();
+  const med = (v) => { const x = v.map((t) => t.costUsd).sort((a, b) => a - b); return +x[Math.floor(x.length / 2)].toFixed(2); };
   const out = {};
-  for (const [r, v] of Object.entries(byRole)) if (v.length >= 3) { const x = [...v].sort((a, b) => a - b); out[r] = +x[Math.floor(x.length / 2)].toFixed(2); }
+  for (const [r, list] of Object.entries(byRole)) {
+    // FT-60: la tarea empieza por el modelo inicial de la cascada → se estima con las tareas que empezaron por él (si hay ≥3)
+    const initial = new Set(['claude', 'codex'].map((e) => ladder.pick(e, all[e], { floor: roles[r]?.minModel || '', all })?.model).filter(Boolean));
+    const same = list.filter((t) => initial.has(t.modelHistory?.[0]?.model)).slice(0, 10);
+    const v = same.length >= 3 ? same : list.slice(0, 10);
+    if (v.length >= 3) out[r] = med(v);
+  }
   return out;
 }

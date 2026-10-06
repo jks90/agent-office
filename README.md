@@ -355,6 +355,12 @@ Medido el 6 OCT 2026: lo caro no es el arranque (≈31k tokens con `--strict-mcp
   | planificador | 22 813 | 12 406 | 46 % |
 
   Codex no se midió (el binario real pide aprobación en este entorno): lo que reporte `turn.completed` en `usage` queda en la tarjeta de cada tarea. Prueba: `node scripts/tools-scope-e2e.mjs` (binarios falsos que vuelcan sus argumentos).
+- **Cascada de modelos con escalado (FT-60)** — vale para `claude`, `codex` y `auto` (la escalera es la del motor que toque en cada intento). Código: `server/model-ladder.js` (lógica pura) + `modelFor()`/`escalate()` en `team.js`.
+  - **Escalera por motor** (Ajustes ▸ «Escalera de modelos», `settings.modelLadder`): de serie Claude `haiku → sonnet` (opus solo a mano) y Codex `<mini/rápido que liste ~/.codex/models_cache.json> → gpt-5.5` (si la caché no trae ninguno, un solo peldaño: no hay cascada). Vacío = la de serie. El snapshot la publica en `modelLadders`.
+  - **Cuándo sube un peldaño** (`t.escalations`, máximo 2): al «Devolver» desde Revisión (salvo si la cortó el tope de gasto: un modelo más caro no lo arregla), y cuando el agente termina con error (la tarea va a Fallidas ya escalada; «Reintentar» no escala otra vez). `escalate(t, motivo)` está exportada para enganchar la revisión automática de FT-56 cuando exista.
+  - **Cuándo NO empieza abajo:** tareas `kind: plan` (empiezan en el peldaño alto), `minModel` de la tarea (`POST /api/tasks {minModel}` / `PATCH`) o del rol (campo «Modelo mínimo» del rol, `minModel:` en su `.md`; un `sonnet` en un agente Codex vale como «el 2.º peldaño»), y reintentos que ya escalaron. Un modelo fijado en el agente o el rol (`model`) manda y no entra en la cascada.
+  - **Rastro:** `t.modelHistory[]` (modelo, motor, intento, motivo) y la tarjeta enseña «🧠 haiku → sonnet». La estimación de coste («≈ 0,8 $») usa solo las tareas que empezaron por el modelo inicial del rol (si hay ≥3; si no, todas).
+  - Prueba: `node scripts/model-ladder-e2e.mjs` (claude y codex falsos que registran `--model`/`-m`).
 
 ## ⏸ Sin cuota a mitad de tarea: pausa y reanudación automática (FT-66)
 

@@ -16,6 +16,7 @@ import * as skills from './skills.js';
 import { draftTask } from './ai-draft.js';
 import crypto2 from 'node:crypto';
 import { saveRole, deleteRole } from './roles.js';
+import { ladders, normalizeLadder } from './model-ladder.js'; // FT-60
 import * as activity from './events.js';
 import * as context from './context.js';
 import * as guideTools from './guide/tools.js';
@@ -86,7 +87,7 @@ const inputStatus = () => {
   return inputCache.v;
 };
 // FT-50: cada tarea sin empezar lleva `plannedAgentId`/`plannedReason` (calculados en cada snapshot, no persistidos).
-const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), tasks: team.withPlannedAgents(st), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), costEstimates: team.costEstimates(), rtk: claudeEngine.rtkAvailable(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot() }; };
+const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), tasks: team.withPlannedAgents(st), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), costEstimates: team.costEstimates(), rtk: claudeEngine.rtkAvailable(), modelLadders: ladders(st.settings), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot() }; };
 
 async function readBody(req) {
   const limit = req.url.startsWith('/api/upload') ? 40e6 : req.url.startsWith('/api/guide/stt') ? 12e6 : 1e6; // adjuntos y audio del Guide (FT-9) en base64
@@ -218,6 +219,10 @@ const routes = [
     for (const [k, lo, hi] of [['stuckRepeat', 2, 20], ['stuckErrors', 2, 30], ['stuckNoEdit', 5, 200], ['stuckTokens', 5000, 5_000_000]]) if (b[k] !== undefined && Number(b[k]) > 0) st[k] = Math.max(lo, Math.min(hi, Math.round(Number(b[k]))));
     if (b.maxTaskTokens !== undefined) st.maxTaskTokens = Math.max(0, Math.min(50_000_000, Math.round(Number(b.maxTaskTokens) || 0))); // FT-57: tope en tokens por intento (0 = el equivalente al de US$)
     if (['low', 'medium', 'high'].includes(b.agentEffort)) st.agentEffort = b.agentEffort;
+    if (b.modelLadder && typeof b.modelLadder === 'object') { // FT-60: escalera de modelos por motor (vacía = la de serie)
+      st.modelLadder = { ...st.modelLadder };
+      for (const e of ['claude', 'codex']) if (b.modelLadder[e] !== undefined) { const l = normalizeLadder(b.modelLadder[e], e).slice(0, 4); if (l.length) st.modelLadder[e] = l; else delete st.modelLadder[e]; }
+    }
     if (b.maxParallel) st.maxParallel = Math.max(1, Math.min(8, Number(b.maxParallel) || 4));
     if (typeof b.guideModel === 'string') st.guideModel = b.guideModel.trim();
     if (guide.providerNames().includes(b.guideProvider)) st.guideProvider = b.guideProvider;
