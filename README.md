@@ -46,6 +46,7 @@ Además de las líneas de texto por agente (`log`), el servidor emite **eventos 
 | `AgentToolStarted` / `AgentToolFinished` | el motor (claude/codex/demo) llama a una herramienta (`callId, tool, summary` / `callId, ok`). El resumen no lleva contenido sensible: de Bash solo el programa, nunca el comando |
 | `AgentFileModified` | un fichero entra en el commit de la tarea (`path`) |
 | `AgentArtifactCreated` | commit (`kind:'commit', branch, repo, sha, files, diffStat`) o diff simulado (`kind:'diff'`) |
+| `ReviewPending` | FT-56: tarea esperando revisión más de `reviewNudgeMin` min (`taskCode, minutes, blocks[]`) |
 | `AgentBlocked` | pregunta pendiente al cliente (`questionId, question, options`) |
 | `UserInstructionAdded` | respuesta del cliente o feedback de *Devolver* (`kind:'answer'\|'feedback', text`) |
 | `AgentPaused` / `AgentResumed` | el usuario para al agente / vuelve tras una respuesta o un reintento (`reason`) |
@@ -177,6 +178,29 @@ Cada respuesta del Guía (vista Guía y cajón flotante, también dentro del ifr
 - **Variables**: `AO_TTS_CMD` (sustituye a piper: se ejecuta con `<salida.wav> <voz> <idioma>` y recibe el texto por stdin; sirve para probar sin piper), `AO_TTS_VOICES_DIR` (carpeta de modelos), `AO_TTS_VOICES`, `AO_TTS_HF_BASE`, `AO_TTS_OPENAI_MODEL`, `AO_OPENAI_BASE`.
 - **Prueba**: `node scripts/tts-e2e.mjs [captura.png]` (servidor temporal con `AO_TTS_CMD` falso que genera un WAV, Chrome headless con autoplay): API, ▶ con el texto plano, `play`/`ended` del `<audio>`, ⏸, una sola reproducción, cambio y prueba de voz en Ajustes, 503 con respaldo del navegador y botón deshabilitado sin ninguno.
 
+## ✋ Revisión (FT-56)
+
+Cuando una tarea llega a **Revisión** el trabajo se para hasta que alguien pulsa Aprobar/Devolver, y las tareas que dependen de ella esperan en «Por hacer». Para que nunca «parezca que no pasa nada»:
+
+- **Tarjeta en Revisión**: franja ámbar «✋ Esperando tu revisión desde hace 14 min» (el tiempo se actualiza solo), «bloquea: FT-47, FT-48» (con enlace) y los botones **Aprobar / Devolver / Ver diff** en la propia tarjeta.
+- **Tarjetas dependientes** (Por hacer / Backlog): «⏳ espera a FT-46 (en revisión)» con enlace.
+- **Contadores**: `✋N` en la pestaña Tareas, «✋ N por revisar» en la cabecera (clic → la más antigua), KPI y columna Revisión del 📊 Resumen en ámbar con «desde hace X min» en el tooltip; el edificio 3D ya enseña «✋ K en revisión» (FT-46).
+- **Aviso proactivo**: toast al entrar una tarea en revisión («Óscar terminó FT-46: revísala»). Pasados `settings.reviewNudgeMin` minutos (10 por defecto; 0 = enseguida) el servidor emite **`ReviewPending {taskCode, minutes, blocks[]}`** en el Activity Stream (una vez por entrada en revisión) y el Guía recibe un bloque `<pendientes_de_revision>` en su siguiente turno para mencionarlo.
+
+### Política de revisión (`settings.reviewPolicy`, Ajustes vía `POST /api/settings`)
+
+| Valor | Qué hace |
+|---|---|
+| `manual` (por defecto) | Siempre decide una persona. |
+| `auto-qa` | Al llegar a revisión, el orquestador lanza un **revisor** interno (rol QA; mismo motor que el autor o `settings.reviewEngine`) sobre la rama: lee `git diff <base>...HEAD`, el resumen y ejecuta las verificaciones declaradas, y acaba con un JSON `{"approve": bool, "reasons": [], "feedback": ""}`. `approve` → se aprueba y fusiona sola («✅ aprobada por revisión automática (QA): …»); si no → se **devuelve** al autor con el feedback (intento N+1). Tope de **2 ciclos automáticos**; después queda para el humano con «⚠️ dos revisiones automáticas fallidas». Una devolución humana reinicia el contador. |
+| `auto` | Sin LLM: ejecuta las verificaciones declaradas en el worktree y, si **todas** pasan, aprueba. Si una falla se queda en revisión con el motivo. Sin verificaciones declaradas se comporta como `manual`. |
+
+- **Verificaciones declaradas**: `checks: ["npm run lint", …]` al crear la tarea (`POST /api/tasks`) o comandos en `código` de la descripción que parezcan tests/lint/typecheck/e2e (`node scripts/x-e2e.mjs`, `npm run typecheck`…).
+- **Nunca se aprueba sola** una tarea con `reviewRequired: true`, una cortada por tope de gasto o atasco, ni una que toque ficheros sensibles: `settings.reviewSensitive[]` (por defecto `.github/workflows`, `Dockerfile`, `package.json` —solo si cambian dependencias— y `server/access`).
+- Todo queda en el Activity Stream (`TaskReviewed {by:'auto-qa'|'auto', verdict}`) y en `task.reviewLog` (historial de la tarea).
+- 💡 **Consejo**: deja `manual` en los proyectos cuyas tareas toquen producción (despliegues, infraestructura, accesos, migraciones); usa `auto` para repos con buenos tests y `auto-qa` para una segunda opinión barata.
+- Pruebas: `node scripts/review-e2e.mjs` (motor demo; un título con `[revisor:devolver]` hace que el revisor demo devuelva) y `node scripts/review-shot.mjs out.png` (captura de la pestaña Tareas).
+
 ## Un worktree por cada repo del proyecto (FT-44)
 
 Si el proyecto tiene varios repos, cada tarea real (motores claude/codex) recibe un worktree y la rama `ao/<código>` en **todos**: el principal (`task.repo`) en `data/worktrees/<proyecto>/<código>/` como siempre y los demás como hermanos `data/worktrees/<proyecto>/<código>.<repoKey>/` (anidarlos en el principal los ensuciaría). El prompt lista cada repo con **su** ruta de worktree y prohíbe escribir en los checkouts principales; los motores reciben los demás worktrees como directorios adicionales (`--add-dir`).
@@ -283,6 +307,7 @@ server/engines/allowlist.js  lista blanca de shell compartida por el motor Claud
 bin/ao-mcp.mjs      servidor MCP stdio del Guide (FT-4)
 bin/stt-whisper.py  STT local con faster-whisper (FT-9)
 server/desktop/     DesktopProvider: ventana activa/lista/captura, linux X11+Wayland GNOME, fake (FT-20); capture.js guarda capturas (FT-21)
+server/review.js    revisión visible y automática: política, checks, ficheros sensibles, veredicto (FT-56)
 server/git.js       worktrees, commit, diff, merge, estado frente a la base y actualizar con ella (FT-19)
 server/engines/     demo · claude · codex (+ describe.js: herramienta → frase del bocadillo)
 public/office3d.js  la oficina 3D (three.js + Kenney): sala con personajes y, desde FT-46, el edificio con una planta por proyecto (navegación edificio ↔ planta en app.js, FT-47)

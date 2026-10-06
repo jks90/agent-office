@@ -51,7 +51,9 @@ function connectEvents() {
   const es = new EventSource(BASE + 'events');
   es.addEventListener('open', () => { esRetry = 1000; });
   es.addEventListener('state', (e) => {
+    const was = new Set(S.tasks.filter((t) => t.status === 'review').map((t) => t.id)), hadState = S.tasks.length > 0;
     S = JSON.parse(e.data);
+    if (hadState) for (const t of S.tasks) if (t.status === 'review' && !was.has(t.id)) toast(`${S.agents.find((a) => a.id === t.agentId)?.name || 'Un agente'} terminó ${t.code || '#' + t.id}: ${t.reviewing ? 'se está revisando sola' : 'revísala'}`, 'review'); // FT-56
     if (!S.projects.some((p) => p.id === projectId)) projectId = S.projects[0]?.id ?? null;
     render();
     renderQuestions();
@@ -825,6 +827,10 @@ function render() {
   const working = team().filter((a) => a.status === 'working');
   const paused = team().filter((a) => a.status === 'paused').length;
   $('#tab-tasks-count').textContent = ts.filter((t) => ['todo', 'doing', 'review'].includes(t.status)).length || '';
+  const nRev = ts.filter((t) => t.status === 'review').length, allRev = S.tasks.filter((t) => t.status === 'review'); // FT-56
+  $('#tab-tasks-review').textContent = nRev ? `✋${nRev}` : '';
+  const rc = $('#review-chip'); rc.hidden = !allRev.length; rc.textContent = `✋ ${allRev.length} por revisar`;
+  rc.title = allRev.map((t) => `${t.code || t.id}: desde hace ${waitTxt(t.reviewSince)}`).join('\n');
   $('#tab-agents-count').textContent = team().length || '';
   $('#tab-summary').innerHTML = `${ts.filter((t) => t.status === 'doing').length} en curso<br>${ts.filter((t) => t.status === 'review').length} por revisar<br>${working.length}/${team().length} agentes trabajando${paused ? ` · ${paused} en pausa` : ''}`;
   renderOfficeFoot();
@@ -1129,8 +1135,9 @@ function compactCard(t) {
   else if (t.budgetHit && t.status === 'review') ind.push('<span class="ind warn" title="Cortada por el tope de gasto: revisa y decide">⚠</span>');
   if (t.status === 'review' && t.behind) ind.push(`<span class="ind" title="Desfasada ${t.behind} commit${t.behind === 1 ? '' : 's'} respecto a ${esc(baseOf(t))}">⇣${t.behind}</span>`);
   if (t.quotaPaused || t.quotaBlocked) ind.push(`<span class="ind warn" title="${esc(t.activity || '⏸ sin cuota')}${t.quotaPaused?.resetsAt > Date.now() ? ` (en ${esc(fmtLeft(t.quotaPaused.resetsAt))})` : ''}">⏸</span>`);
-  if (t.status === 'review') ind.push('<span class="ind" title="Esperando tu revisión">✋</span>');
-  if (depsOpen.length) ind.push(`<span class="ind" title="Depende de ${esc(depsOpen.map(tcode).join(', '))}">⏳</span>`);
+  if (t.status === 'review') ind.push(`<span class="ind warn" title="${t.reviewing ? 'Revisión automática en curso' : `Esperando tu revisión${t.reviewSince ? ' desde hace ' + waitTxt(t.reviewSince) : ''}`}${(t.blocks || []).length ? ' · bloquea: ' + t.blocks.map((b) => b.code).join(', ') : ''}">✋${t.reviewSince ? waitMin(t.reviewSince) + '′' : ''}</span>`); // FT-56 en compacto
+  if (!['review', 'done'].includes(t.status) && t.waitingOn?.length) ind.push(`<span class="ind" title="Espera a ${esc(t.waitingOn.map((w) => w.code + ' (' + (TSTATUS[w.status] || w.status) + ')').join(', '))}">⏳</span>`);
+  if (depsOpen.length && !t.waitingOn?.length) ind.push(`<span class="ind" title="Depende de ${esc(depsOpen.map(tcode).join(', '))}">⏳</span>`);
   if (t.costUsd) ind.push(`<span class="ind" title="Coste de la tarea: ${t.costUsd.toFixed(3)} $">💲${t.costUsd.toFixed(2)}</span>`);
   if (['todo', 'backlog'].includes(t.status) && S.costEstimates?.[t.role] != null) ind.push(`<span class="ind" title="Estimación: mediana de las últimas tareas del rol ${esc(t.role)}">≈${S.costEstimates[t.role].toFixed(2)}</span>`);
   if (t.attempts > 1) ind.push(`<span class="ind" title="Intento ${t.attempts}">↻${t.attempts}</span>`);
@@ -1160,6 +1167,22 @@ function compactCard(t) {
     ${bar}
   </div>`;
 }
+// FT-56 · revisión visible
+const TSTATUS = { backlog: 'en backlog', todo: 'por hacer', doing: 'en curso', review: 'en revisión', done: 'hecha', failed: 'fallida' };
+const waitMin = (since) => Math.max(0, Math.floor((Date.now() - since) / 60000));
+const waitTxt = (since) => { const m = waitMin(since); return m < 1 ? 'un momento' : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`; };
+const taskLink = (x) => `<button class="linklike" data-open="${x.id}">${esc(x.code)}</button>`;
+function reviewStrip(t) {
+  if (t.status === 'review') {
+    const blocks = (t.blocks || []).length ? `<div class="rw-blocks">bloquea: ${t.blocks.map(taskLink).join(', ')}</div>` : '';
+    const head = t.reviewing ? `🔎 Revisión automática en curso (${t.reviewing === 'auto' ? 'tests' : 'QA'})…` : `✋ Esperando tu revisión desde hace <span class="rw-t" data-since="${t.reviewSince}">${waitTxt(t.reviewSince)}</span>`;
+    return `<div class="review-wait">${head}${blocks}${t.reviewNote ? `<div class="rw-note">${esc(t.reviewNote)}</div>` : ''}</div>`;
+  }
+  if (t.autoApproved) return `<div class="review-ok">✅ aprobada por revisión automática (${t.autoApproved.by === 'auto' ? 'tests' : 'QA'})${t.autoApproved.text ? ': ' + esc(t.autoApproved.text) : ''}</div>`;
+  if (t.waitingOn?.length) return `<div class="rw-dep">⏳ espera a ${t.waitingOn.map((w) => `${taskLink(w)} (${TSTATUS[w.status] || w.status})`).join(', ')}</div>`;
+  return '';
+}
+setInterval(() => document.querySelectorAll('.rw-t[data-since]').forEach((el) => { el.textContent = waitTxt(Number(el.dataset.since)); }), 15000); // tiempo vivo sin repintar
 
 function card(t) {
   if (boardDensity === 'compact') return compactCard(t);
@@ -1170,7 +1193,7 @@ function card(t) {
   }).join(' ');
   const acts = [];
   if (t.status === 'review') {
-    acts.push(`<button class="small ghost" data-diff="${t.id}">Ver cambios</button>`);
+    acts.push(`<button class="small ghost" data-diff="${t.id}">Ver diff</button>`);
     if (updateBtn(t)) acts.push(updateBtn(t));
     acts.push(`<button class="small ok" data-approve="${t.id}">✓ Aprobar${t.branch ? ' y fusionar' : ''}</button>`);
     acts.push(`<button class="small ghost" data-reject="${t.id}">↩ Devolver</button>`);
@@ -1193,6 +1216,7 @@ function card(t) {
     ${t.status === 'todo' && t.quotaBlocked && t.activity ? `<div class="quota-hold">${esc(t.activity)}</div>` : ''}
     ${['todo', 'backlog'].includes(t.status) && S.costEstimates?.[t.role] != null ? `<div class="meta"><span class="cost-est" title="Estimación: mediana del coste de las últimas tareas hechas por el rol ${esc(t.role)}. Tope por intento: ${S.settings.maxTaskUsd || 3} $">≈ ${S.costEstimates[t.role].toFixed(2)} $</span></div>` : ''}
     ${t.quotaPaused && t.status === 'todo' ? `<div class="quota-hold">${esc(t.activity || '⏸ sin cuota')}${t.quotaPaused.resetsAt > Date.now() ? ` (en ${fmtLeft(t.quotaPaused.resetsAt)})` : ''} <button class="small ghost" data-resume-now="${t.id}" title="Ignorar la espera y relanzarla en el siguiente reparto">▶ Reanudar ya</button></div>` : ''}
+    ${reviewStrip(t)}
     ${t.stuck && t.status === 'review' ? `<div class="quota-hold">⚠️ atascado: ${esc(t.stuck)}</div>` : ''}
     ${t.budgetHit && t.status === 'review' ? '<div class="quota-hold">⚠️ cortada por el tope de gasto: revisa y decide</div>' : ''}
     ${t.summary && t.status !== 'doing' ? `<div class="sum">${esc(t.summary)}</div>` : ''}
@@ -1856,7 +1880,7 @@ function renderSummary() {
     <div class="summary-kpis">
       ${kpi(S.projects.filter((p) => p.running).length + '/' + S.projects.length, 'proyectos en marcha', 'on')}
       ${kpi(`${working}${paused ? ' +' + paused + '⏸' : ''}/${agents.length}`, 'agentes trabajando', working ? 'on' : '')}
-      ${kpi(n('doing'), 'tareas en curso')}${kpi(n('review'), 'por revisar', n('review') ? 'warn' : '')}${kpi(n('todo'), 'por hacer')}${kpi(n('backlog'), 'en backlog')}
+      ${kpi(n('doing'), 'tareas en curso')}<div class="kpi ${n('review') ? 'warn' : ''}"${n('review') ? ` title="${esc(all.filter((t) => t.status === 'review').map((t) => `${t.code || t.id}: desde hace ${waitTxt(t.reviewSince)}`).join('\n'))}"` : ''}><b>${n('review')}</b><span>por revisar</span></div>${kpi(n('todo'), 'por hacer')}${kpi(n('backlog'), 'en backlog')}
       ${n('failed') ? `<button class="kpi bad kpi-btn" data-sum-failed="all" title="Ver por qué fallaron"><b>${n('failed')}</b><span>fallidas · ver por qué</span></button>` : kpi(0, 'fallidas')}${kpi(qs.length, 'preguntas pendientes', qs.length ? 'warn' : '')}
       ${kpi((all.reduce((s, t) => s + (t.costUsd || 0), 0)).toFixed(2) + ' $', 'coste acumulado')}
     </div>
@@ -1867,7 +1891,7 @@ function renderSummary() {
         <tr data-sum-project="${p.id}" class="${p.id === projectId ? 'sel' : ''}">
           <td><b>${esc(p.name)}</b>${p.folder && p.folder !== p.name ? ` <span class="muted">(${esc(p.folder)})</span>` : ''} <span class="muted">${esc(p.prefixDefault || '')}</span>${open ? ` <span title="preguntas pendientes">❓${open}</span>` : ''}</td>
           <td><button class="small ${p.running ? 'on' : 'ghost'}" data-sum-run="${p.id}" title="${p.running ? 'Parar el equipo' : 'Poner a trabajar'}">${p.running ? '🟢 En marcha' : '⏸ Parado'}</button></td>
-          ${SUM_COLS.map(([st]) => { const c = ts.filter((t) => t.status === st).length; return st === 'failed' && c ? `<td class="num st-failed"><button class="linklike" data-sum-failed="${p.id}" title="Ver por qué fallaron">${c}</button></td>` : `<td class="num ${c ? 'st-' + st : 'zero'}">${c || '·'}</td>`; }).join('')}
+          ${SUM_COLS.map(([st]) => { const c = ts.filter((t) => t.status === st).length; if (st === 'review' && c) { const old = Math.min(...ts.filter((t) => t.status === 'review').map((t) => t.reviewSince)); return `<td class="num st-review" title="Esperando revisión desde hace ${waitTxt(old)}">${c}</td>`; } return st === 'failed' && c ? `<td class="num st-failed"><button class="linklike" data-sum-failed="${p.id}" title="Ver por qué fallaron">${c}</button></td>` : `<td class="num ${c ? 'st-' + st : 'zero'}">${c || '·'}</td>`; }).join('')}
           <td>${teamCell(p, team)}</td>
           <td>${busyCell(busy)}</td>
           <td>${free.length ? `<span title="${esc(free.map((a) => a.name).join(', '))}">${free.length} libre${free.length === 1 ? '' : 's'}</span>` : '<span class="muted">—</span>'}</td>
@@ -2412,6 +2436,7 @@ function publishContext() {
     fetch(BASE + 'api/context', { method: 'POST', keepalive: true, headers: { 'content-type': 'application/json', 'x-ao-client': CLIENT_ID }, body: JSON.stringify({ ...JSON.parse(key), at: Date.now() }) }).catch(() => { ctxSent = ''; });
   }, 300);
 }
+$('#review-chip').addEventListener('click', () => { const t = S.tasks.filter((x) => x.status === 'review').sort((a, b) => a.reviewSince - b.reviewSince)[0]; if (t) { goProject(t.projectId); showTab('tasks'); } }); // FT-56
 $('#dialog').addEventListener('close', () => { openTaskId = null; publishContext(); });
 $('#project').addEventListener('change', publishContext);
 window.addEventListener('message', (e) => {

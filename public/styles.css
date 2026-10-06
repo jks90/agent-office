@@ -525,3 +525,12 @@ tr[data-cost-task] { cursor: pointer; }
 .more-menu { display: none; position: fixed; z-index: 50; min-width: 150px; flex-direction: column; gap: 2px; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md); box-shadow: 0 8px 24px rgba(0,0,0,.45); }
 .more-menu.open { display: flex; }
 .more-menu button { text-align: left; font-size: 12px; width: 100%; }
+/* FT-56 · revisión visible */
+.review-wait { margin-top: 6px; padding: 6px 8px; border-radius: 6px; background: rgba(251,191,36,.12); border: 1px solid rgba(251,191,36,.45); color: #fbbf24; font-size: 12px; }
+.review-wait .rw-blocks, .review-wait .rw-note { margin-top: 3px; color: #fde68a; }
+.review-ok { margin-top: 6px; font-size: 12px; color: var(--ok); }
+.rw-dep { margin-top: 6px; font-size: 12px; color: #fbbf24; }
+.tab-count.review-badge { background: #fbbf24; color: #1a1a1a; }
+.tab-count.review-badge:empty { display: none; }
+.review-chip { color: #fbbf24; border-color: rgba(251,191,36,.5); }
+.toast.review { border-left: 3px solid #fbbf24; }
