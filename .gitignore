@@ -1,3 +1,6 @@
 node_modules
 data/
 *.log
+
+# capturas de los e2e (building-e2e, preview.mjs)
+resumen/
