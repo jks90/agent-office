@@ -252,7 +252,7 @@ bin/stt-whisper.py  STT local con faster-whisper (FT-9)
 server/desktop/     DesktopProvider: ventana activa/lista/captura, linux X11+Wayland GNOME, fake (FT-20); capture.js guarda capturas (FT-21)
 server/git.js       worktrees, commit, diff, merge, estado frente a la base y actualizar con ella (FT-19)
 server/engines/     demo · claude · codex (+ describe.js: herramienta → frase del bocadillo)
-public/office.js    la oficina: pixel art en canvas, rutas por pasillos, bocadillos
+public/office3d.js  la oficina 3D (three.js + Kenney): sala con personajes y, desde FT-46, el edificio con una planta por proyecto
 public/app.js       tablero, equipo, panel del agente, diálogos
 data/state.json     estado (gitignored)
 ```
@@ -268,7 +268,15 @@ data/state.json     estado (gitignored)
 
 Oficina **3D isométrica** (`public/office3d.js`: three.js + modelos glTF de Kenney, personajes animados, etiquetas HTML proyectadas).
 
-Para verla sin navegador (y para que un agente pueda ver lo que pinta): `node scripts/preview.mjs out.png --wait 15000` levanta un servidor temporal con un equipo demo, captura la oficina con Chrome headless (WebGL por SwiftShader) e imprime los errores de consola y los fps. `--full` captura la página entera, `--query r=2d` fuerza el 2D.
+Para verla sin navegador (y para que un agente pueda ver lo que pinta): `node scripts/preview.mjs out.png --wait 15000` levanta un servidor temporal con un equipo demo (si el workspace de flow-test aún no ha dado proyectos, crea el demo), captura la oficina con Chrome headless (WebGL por SwiftShader) e imprime los errores de consola y los fps. `--full` captura la página entera, `--building` el edificio (3 proyectos con equipo y 1 sin él).
+
+### El edificio (FT-46)
+
+La misma clase `Office3D` tiene dos modos: **`floor`** (la sala de siempre: el proyecto activo con sus personajes) y **`building`**: el **edificio** de la empresa, **una planta por proyecto con equipo** (≥ 1 agente fichado en `project.team`; los proyectos sin trabajadores no se dibujan). Planta baja = proyecto más antiguo (`createdAt`), arriba los nuevos; tope visual de 12 plantas (con más, las restantes se agrupan en una planta «+N proyectos» que no se abre). Sin personajes: cada planta es losa + fachada con los mismos muros `wall`/`wallWindow` de la sala (caras que ve la cámara), interior oscuro y azotea con terraza en la última; las **ventanas se encienden** (emissive, como las pantallas) según el nº de agentes trabajando, la fachada se apaga a gris si el proyecto está parado y cada planta lleva una etiqueta HTML «nombre · N trabajando · M en cola · ✋ K en revisión» con ⏸ delante si `running=false`. Pasar el ratón resalta la planta (emissive suave + cursor pointer) y el clic llama a `onFloorClick(projectId)` (gancho para la navegación de FT-47; hoy app.js no lo usa).
+
+- **API**: `office.setMode('building'|'floor')`; `office.update({agents, tasks, roles, title, selected, projects, allAgents, allTasks})` (`app.js` pasa `S.projects`, `S.agents`, `S.tasks`; el modo `floor` sigue usando solo `agents`/`tasks` del proyecto activo). La cámara isométrica encuadra la caja que toque (`frameCamera(aspect, [x, y, z])`): la sala o `[RX, nPlantas·FLOOR_H, RZ]`; `resize()` vale en ambos modos.
+- **Rendimiento**: las plantas se reconstruyen solo cuando cambia su firma (proyectos con equipo + contadores), nunca por frame; en el edificio no se instancian personajes ni sombras.
+- **QA**: `canvas.dataset.officeMode` (`building`|`floor`), `window.aoOffice.debugState()` → `{mode, floors:[{projectId, name, working, queued, review, running}]}`, y `?view=building` abre la Oficina ya en ese modo (temporal hasta FT-47, que añadirá la navegación entre edificio y planta). Prueba: `node scripts/building-e2e.mjs [captura.png]` (17 checks con Chrome headless: plantas y orden, sin equipo no sale, etiquetas y ⏸, hover/clic, «+N» con 15 proyectos, vuelta a `floor`, sin errores de consola).
 
 ## Créditos
 
