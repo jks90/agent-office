@@ -505,6 +505,29 @@ Prueba medida de si las reglas «construir lo mínimo» abaratan las tareas sin 
 
 Prueba: `node scripts/ponytail-e2e.mjs` (motores falsos Claude y Codex).
 
+
+### Medición A/B (FT-87)
+
+**Estado:** ⏳ **Pendiente cuota real.** Procedimiento y herramientas listos; requiere ≥5 tareas aprobadas por variante.
+
+La decisión de activarla de serie depende de ejecutar la medición A/B en un rol real. Criterio: activar si ahorra ≥15 % por tarea aprobada **SIN más devoluciones** (`ponytail.returns ≤ base.returns`).
+
+**Herramientas y documentación:**
+- **Script de medición:** `scripts/ponytail-measure-e2e.mjs` — muestra procedimiento, estado de costes e APIs.
+- **Flow de test:** `flowtest/medicion-ponytail-costos.flow.json` en el workspace de flow-test — verifica `/api/costs` (byVariant), filtro ?variant= y exportación CSV.
+- **Documentación:** `flowtest/ponytail-medicion-FT-87.md` en el workspace de flow-test — tabla de criterios de decisión, APIs, próximos pasos.
+
+**Procedimiento cuando haya cuota:**
+1. Elegir un rol con volumen (p. ej. `back`, `office-flowtest`).
+2. Lanzar ≥5 tareas aprobadas SIN Ponytail (desactivada por defecto, `variant="base"` en telemetría).
+3. Activar Ponytail en el rol: `POST /api/settings {ponytailRoles:{role: true}}`.
+4. Lanzar ≥5 tareas aprobadas CON Ponytail (`variant="ponytail"`).
+5. Consultar tabla en «💸 Costes» → «🧪 Ponytail vs base» con medias por variante.
+6. Aplicar criterio: si `(base.cost - ponytail.cost) / base.cost ≥ 15%` y `returns_ponytail ≤ returns_base`, activar en el rol y documentar aquí.
+
+**APIs de telemetría:** `GET /api/costs` (byVariant), `GET /api/costs?variant=base|ponytail` (filtrado), `GET /api/costs/export?format=csv` (export).
+
+
 ## 🖥️ IA local (LM Studio / Ollama) (FT-54)
 
 Cuarto motor, `local`: trabaja con un modelo que corre en tu máquina, sin cuota ni nube. **Quien ejecuta es el CLI de Codex** (`server/engines/local.js` envuelve `codex.js`): mismo worktree, stream JSON, mensajes en caliente y sandbox; solo cambia el proveedor, que se pasa por línea de comandos (`-c model_provider=aolocal -c model_providers.aolocal.base_url=… -c …wire_api="responses"`) sin tocar tu `~/.codex/config.toml`. Si el servidor pide clave, va por `env_key` (`AO_LOCAL_API_KEY`).
