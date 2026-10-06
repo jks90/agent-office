@@ -498,6 +498,33 @@ tr[data-cost-task] { cursor: pointer; }
 .failed-item { border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 12px; margin: 8px 0; display: flex; flex-direction: column; gap: 4px; }
 .failed-why { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow: auto; background: var(--panel3); border-radius: var(--r-sm); padding: 8px; margin: 2px 0; font-size: 12px; }
 
+/* FT-74: tablero compacto (por defecto) — tarjetas de 2–3 líneas, acciones al pasar el ratón / foco */
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; flex: none; }
+.seg button { border: 0; border-radius: 0; background: transparent; color: var(--muted); padding: 5px 10px; font-size: 12px; }
+.seg button.on { background: var(--panel2); color: var(--text); font-weight: 700; }
+.goal .seg + #task-filter { margin-left: 0; }
+#board.compact .cards { gap: 4px; }
+.card.compact { padding: 4px 8px 4px 7px; font-size: 12px; border-left-width: 4px; box-shadow: none; display: block; overflow: visible; cursor: pointer; }
+.card.compact:hover { transform: none; }
+.card.compact:focus-visible { outline: 2px solid var(--c); outline-offset: 1px; }
+.card.compact .card-head { flex-wrap: nowrap; gap: 5px; font-size: 11px; padding-right: 0; min-width: 0; }
+.card.compact .chip { font-size: 10px; padding: 0 6px; flex: none; }
+.card.compact .task-id, .card.compact .repo-chip { flex: none; }
+.card.compact .inds { margin-left: auto; display: flex; gap: 5px; flex: none; }
+.card.compact .ind { font-size: 11px; color: var(--muted); cursor: help; white-space: nowrap; }
+.card.compact .ind.warn { color: #fbbf24; }
+.card.compact .ind.bad { color: var(--err); font-weight: 800; }
+.card.compact .t { font-size: 12.5px; line-height: 1.25; margin: 2px 0 1px; font-weight: 700; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.card.compact .who-line { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card.compact .who-line.live { color: #b8f4d8; margin: 0; }
+.card.compact.failed, .card.compact.conflict { background: color-mix(in srgb, var(--err) 9%, var(--panel2)); border-color: rgba(255,119,119,.45); border-left-color: var(--err); }
+.card.compact.doing::after { top: 7px; right: 7px; }
+.card.compact .bar { position: absolute; right: 4px; bottom: 4px; display: flex; gap: 3px; align-items: center; padding: 2px; border-radius: var(--r-md); background: var(--panel); border: 1px solid var(--line); box-shadow: 0 2px 8px rgba(0,0,0,.35); opacity: 0; pointer-events: none; transition: opacity .12s; z-index: 2; }
+.card.compact:hover .bar, .card.compact:focus-within .bar { opacity: 1; pointer-events: auto; }
+.card.compact .bar button { font-size: 11px; padding: 2px 7px; }
+.more-menu { display: none; position: fixed; z-index: 50; min-width: 150px; flex-direction: column; gap: 2px; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md); box-shadow: 0 8px 24px rgba(0,0,0,.45); }
+.more-menu.open { display: flex; }
+.more-menu button { text-align: left; font-size: 12px; width: 100%; }
 /* FT-56 · revisión visible */
 .review-wait { margin-top: 6px; padding: 6px 8px; border-radius: 6px; background: rgba(251,191,36,.12); border: 1px solid rgba(251,191,36,.45); color: #fbbf24; font-size: 12px; }
 .review-wait .rw-blocks, .review-wait .rw-note { margin-top: 3px; color: #fde68a; }

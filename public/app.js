@@ -1026,6 +1026,7 @@ const COLS = [
 let taskFilter = '';
 $('#task-filter').addEventListener('input', (e) => { taskFilter = e.target.value.trim().toLowerCase(); renderBoard(); publishContext(); });
 function renderBoard() {
+  $('#board').classList.toggle('compact', boardDensity === 'compact'); syncDensityButtons();
   const list = tasks().filter((t) => !taskFilter || `${t.id} ${t.code || ''} ${t.title} ${t.role} ${t.repo || ''} ${t.description}`.toLowerCase().includes(taskFilter));
   $('#board').innerHTML = COLS.map(([st, label, c]) => {
     const items = list.filter((t) => t.status === st || (st === 'todo' && t.status === 'failed'))
@@ -1102,6 +1103,70 @@ function refreshTaskWho() {
   if (el && t && $('#dialog').open) el.innerHTML = whoRow(t);
 }
 
+// FT-74: tarjeta compacta (por defecto). Fila 1: rol abreviado + código + repo + indicadores como iconos con tooltip;
+// fila 2: título a 2 líneas; fila 3: agente (o previsto). Las acciones salen al pasar el ratón / foco: la principal según la
+// columna y un «⋯» con el resto; el clic en la tarjeta abre «Ver la tarea» con todo. «Detallado» conserva `card()` tal cual.
+let boardDensity = safeGet('ao:boardDensity') === 'detailed' ? 'detailed' : 'compact';
+function syncDensityButtons() { document.querySelectorAll('#density [data-density]').forEach((b) => b.classList.toggle('on', b.dataset.density === boardDensity)); }
+$('#density').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-density]'); if (!b || b.dataset.density === boardDensity) return;
+  boardDensity = b.dataset.density; safeSet('ao:boardDensity', boardDensity); syncDensityButtons(); renderBoard();
+});
+$('#board').addEventListener('click', (e) => {
+  if (e.target.closest('button, a, select, .more-menu')) return;
+  const c = e.target.closest('.card.compact[data-task]'); if (c) openTask(c.dataset.task);
+});
+$('#board').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.matches?.('.card.compact')) openTask(e.target.dataset.task);
+});
+function compactCard(t) {
+  const role = S.roles[t.role];
+  const label = role?.label || t.role;
+  const byId = (id) => id && S.agents.find((a) => a.id === id);
+  const fixed = byId(t.agentId) || byId(t.assignedAgentId);
+  const planned = !fixed && byId(t.plannedAgentId);
+  const a = fixed || planned;
+  const depsOpen = t.dependsOn.map((d) => S.tasks.find((x) => x.id === d)).filter((d) => d && d.status !== 'done');
+  const conflict = t.status === 'review' && ((t.conflicts || []).length || (t.outsideWrites || []).length);
+  const ind = [];
+  if (t.status === 'failed' || t.error) ind.push(`<span class="ind bad" title="${esc(t.error || 'Fallida')}">✖</span>`);
+  if (conflict) ind.push(`<span class="ind bad" title="${esc([...(t.conflicts || []).map((c) => 'conflicto en ' + c), ...(t.outsideWrites || []).map((o) => 'escribió fuera de su worktree: ' + o.repo)].join('\n'))}">⚠</span>`);
+  else if (t.stuck && t.status === 'review') ind.push(`<span class="ind warn" title="Atascado: ${esc(t.stuck)}">⚠</span>`);
+  else if (t.budgetHit && t.status === 'review') ind.push('<span class="ind warn" title="Cortada por el tope de gasto: revisa y decide">⚠</span>');
+  if (t.status === 'review' && t.behind) ind.push(`<span class="ind" title="Desfasada ${t.behind} commit${t.behind === 1 ? '' : 's'} respecto a ${esc(baseOf(t))}">⇣${t.behind}</span>`);
+  if (t.quotaPaused || t.quotaBlocked) ind.push(`<span class="ind warn" title="${esc(t.activity || '⏸ sin cuota')}${t.quotaPaused?.resetsAt > Date.now() ? ` (en ${esc(fmtLeft(t.quotaPaused.resetsAt))})` : ''}">⏸</span>`);
+  if (t.status === 'review') ind.push(`<span class="ind warn" title="${t.reviewing ? 'Revisión automática en curso' : `Esperando tu revisión${t.reviewSince ? ' desde hace ' + waitTxt(t.reviewSince) : ''}`}${(t.blocks || []).length ? ' · bloquea: ' + t.blocks.map((b) => b.code).join(', ') : ''}">✋${t.reviewSince ? waitMin(t.reviewSince) + '′' : ''}</span>`); // FT-56 en compacto
+  if (!['review', 'done'].includes(t.status) && t.waitingOn?.length) ind.push(`<span class="ind" title="Espera a ${esc(t.waitingOn.map((w) => w.code + ' (' + (TSTATUS[w.status] || w.status) + ')').join(', '))}">⏳</span>`);
+  if (depsOpen.length && !t.waitingOn?.length) ind.push(`<span class="ind" title="Depende de ${esc(depsOpen.map(tcode).join(', '))}">⏳</span>`);
+  if (t.costUsd) ind.push(`<span class="ind" title="Coste de la tarea: ${t.costUsd.toFixed(3)} $">💲${t.costUsd.toFixed(2)}</span>`);
+  if (['todo', 'backlog'].includes(t.status) && S.costEstimates?.[t.role] != null) ind.push(`<span class="ind" title="Estimación: mediana de las últimas tareas del rol ${esc(t.role)}">≈${S.costEstimates[t.role].toFixed(2)}</span>`);
+  if (t.attempts > 1) ind.push(`<span class="ind" title="Intento ${t.attempts}">↻${t.attempts}</span>`);
+  if (t.source?.flow || t.source?.url) ind.push(`<span class="ind" title="Importada de ${esc(t.source.flow || BOARD_LABELS[t.source.kind] || t.source.kind || 'un tablero')}">🗂</span>`);
+  if ((t.feedbackImages?.length || 0) + (t.files?.length || 0)) ind.push(`<span class="ind" title="Adjuntos">📎</span>`);
+  const btn = (attr, text, cls = 'ghost', title = '') => `<button class="small ${cls}" data-${attr}="${t.id}"${title ? ` title="${esc(title)}"` : ''}>${text}</button>`;
+  const main = [], more = [];
+  if (t.status === 'backlog') main.push(btn('ready', '→ Por hacer', ''));
+  if (t.status === 'failed') main.push(btn('reject', '▶ Reintentar', ''));
+  if (t.status === 'todo' && t.quotaPaused) main.push(btn('resume-now', '▶ Reanudar ya', ''));
+  if (t.status === 'review') {
+    main.push(btn('approve', '✓ Aprobar', 'ok'), btn('reject', '↩ Devolver'), btn('diff', 'Ver cambios'));
+    if (updateBtn(t)) more.push(updateBtn(t));
+  }
+  if (t.status !== 'doing') more.push(btn('edit', '✎ Editar'));
+  if (['todo', 'failed'].includes(t.status)) more.push(btn('park', '← Backlog'));
+  if (['review', 'done'].includes(t.status)) more.push(btn('nomove', '⇄ Mover a…'));
+  if (['todo', 'failed', 'done'].includes(t.status)) more.push(btn('del', 'Borrar', 'danger'));
+  more.push(btn('open', '🔍 Ver la tarea'));
+  const bar = `<div class="bar">${main.join('')}<button class="small ghost" data-more title="Más acciones" aria-label="Más acciones">⋯</button><div class="more-menu">${more.join('')}</div></div>`;
+  const who = a ? `👤 ${planned ? 'previsto: ' : ''}${esc(a.name)} · ${esc(engineTag(a))}` : UNSTARTED.includes(t.status) ? '⚠ sin agente para este rol' : '';
+  const live = t.status === 'doing' && fixed ? `● ${esc(fixed.activity)}` : '';
+  return `<div class="card compact ${t.status}${conflict ? ' conflict' : ''}" tabindex="0" data-task="${t.id}" draggable="${MOVABLE.includes(t.status)}" style="--c:${role?.color}">
+    <div class="card-head"><span class="chip" style="--c:${role?.color}" title="${esc(label)}">${esc(label.length > 5 ? label.slice(0, 4) + '.' : label)}</span><span class="task-id" title="Código de la tarea (rama ao/${t.code || t.id})">${esc(tcode(t))}</span>${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? `<span class="repo-chip" title="Repo">📁 ${esc(t.repo || '?')}</span>` : ''}<span class="inds">${ind.join('')}</span></div>
+    <div class="t" title="${esc(t.title)}">${esc(t.title)}</div>
+    <div class="who-line${live ? ' live' : ''}">${live || who}</div>
+    ${bar}
+  </div>`;
+}
 // FT-56 · revisión visible
 const TSTATUS = { backlog: 'en backlog', todo: 'por hacer', doing: 'en curso', review: 'en revisión', done: 'hecha', failed: 'fallida' };
 const waitMin = (since) => Math.max(0, Math.floor((Date.now() - since) / 60000));
@@ -1120,6 +1185,7 @@ function reviewStrip(t) {
 setInterval(() => document.querySelectorAll('.rw-t[data-since]').forEach((el) => { el.textContent = waitTxt(Number(el.dataset.since)); }), 15000); // tiempo vivo sin repintar
 
 function card(t) {
+  if (boardDensity === 'compact') return compactCard(t);
   const agent = S.agents.find((a) => a.id === t.agentId);
   const deps = t.dependsOn.map((d) => {
     const dt = S.tasks.find((x) => x.id === d);
@@ -2239,6 +2305,14 @@ function parseRepos(text) {
 
 document.addEventListener('click', async (e) => {
   const el = e.target.closest('button, [data-agent]');
+  // FT-74: menú «⋯» de la tarjeta compacta (fixed: la columna recorta con overflow). Cualquier otro clic lo cierra.
+  const menu = el?.dataset.more !== undefined ? el.parentElement.querySelector('.more-menu') : null;
+  document.querySelectorAll('.more-menu.open').forEach((m) => { if (m !== menu) m.classList.remove('open'); });
+  if (menu) {
+    const open = !menu.classList.contains('open'); menu.classList.toggle('open', open);
+    if (open) { const r = el.getBoundingClientRect(); menu.style.top = Math.min(r.bottom + 2, innerHeight - menu.offsetHeight - 6) + 'px'; menu.style.left = Math.max(6, r.right - menu.offsetWidth) + 'px'; }
+    return;
+  }
   if (el?.dataset.agentEdit) { editAgent(el.dataset.agentEdit); return; }
   if (!el) return;
   const d = el.dataset;
