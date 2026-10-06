@@ -102,6 +102,9 @@ function connectEvents() {
 connectEvents();
 
 const project = () => S.projects.find((p) => p.id === projectId);
+// Proyectos que se ven en la UI (Ajustes ▸ Proyectos visibles). Ocultar no para nada: un proyecto oculto en marcha sigue trabajando.
+const isHidden = (p) => (S.settings?.hiddenProjects || []).includes(p.id);
+const visibleProjects = () => S.projects.filter((p) => !isHidden(p));
 const team = () => { const ids = new Set(project()?.team || []); return S.agents.filter((a) => ids.has(a.id)); };
 const bench = () => { const ids = new Set(project()?.team || []); return S.agents.filter((a) => !ids.has(a.id)); };
 const projectsOf = (agentId) => S.projects.filter((p) => (p.team || []).includes(agentId) && p.id !== projectId).map((p) => p.name);
@@ -849,8 +852,9 @@ if (EMBEDDED) {
 }
 
 function render() {
+  if (project() && isHidden(project()) && visibleProjects().length) { projectId = visibleProjects().find((x) => x.folder !== 'default')?.id || visibleProjects()[0].id; safeSet('ao:project', projectId); } // el abierto se ocultó: al primero visible
   const p = project();
-  const sorted = [...S.projects].sort((a, b) => (a.folder === 'default' ? -1 : b.folder === 'default' ? 1 : (a.folder || '~').localeCompare(b.folder || '~')));
+  const sorted = visibleProjects().sort((a, b) => (a.folder === 'default' ? -1 : b.folder === 'default' ? 1 : (a.folder || '~').localeCompare(b.folder || '~')));
   $('#project').innerHTML = sorted.map((x) => `<option value="${x.id}" ${x.id === projectId ? 'selected' : ''}>${x.folder ? '📁 ' : '• '}${esc(x.name)}${x.folder && x.folder !== x.name ? ` (${esc(x.folder)})` : ''}${x.flows != null ? ` · ${x.flows} flows` : ''}${x.orphan ? ' ⚠ sin carpeta' : ''}${!x.folder ? ' · manual' : ''}</option>`).join('');
   const repos = p?.repos || [];
   $('#repo').textContent = p ? (repos.length ? `📁 ${repos.map((r) => `${r.key} (${r.baseBranch})`).join(' · ')}` : 'sin repositorio · solo motor demo') : '';
@@ -860,7 +864,7 @@ function render() {
   run.classList.toggle('on', !!p?.running);
   run.disabled = !p;
 
-  office.update({ agents: team(), tasks: tasks(), questions: S.questions || [], roles: S.roles, title: p?.name || '', selected: drawerAgent, projects: S.projects, allAgents: S.agents, allTasks: S.tasks, projectId }); // projects/allAgents/allTasks: modo edificio (FT-46); projectId: planta resaltada (FT-47)
+  office.update({ agents: team(), tasks: tasks(), questions: S.questions || [], roles: S.roles, title: p?.name || '', selected: drawerAgent, projects: visibleProjects(), allAgents: S.agents, allTasks: S.tasks, projectId }); // projects/allAgents/allTasks: modo edificio (FT-46); projectId: planta resaltada (FT-47)
   renderSuite();
   renderTeam();
   renderRepos();
@@ -1757,6 +1761,10 @@ Pasos, convenciones y ejemplos…</textarea>
     <hr style="border-color:var(--line);margin:16px 0" />
     <div class="section-title">🔗 Tablero online del proyecto «${esc(project()?.name)}»</div>
     <div id="board-cfg" class="board-cfg"><p class="muted">Cargando…</p></div>
+    <div class="section-title">👁 Proyectos visibles</div>
+    <p class="muted" style="margin:0 0 6px">Desmarca los proyectos que no quieres ver en el selector, el Resumen y el edificio. Ocultar no los para ni borra nada: un proyecto oculto en marcha sigue trabajando.</p>
+    <div class="vis-projects">${[...S.projects].sort((a, b) => a.name.localeCompare(b.name)).map((x) => `<label class="vis-row"><input type="checkbox" name="vis_${x.id}" ${isHidden(x) ? '' : 'checked'} /> ${x.folder ? '📁' : '•'} ${esc(x.name)} <span class="muted">${x.flows != null ? `${x.flows} flows` : 'manual'}${(x.team || []).length ? ` · ${x.team.length} agentes` : ''}${x.running ? ' · ▶ en marcha' : ''}</span></label>`).join('')}</div>
+    <div class="row" style="justify-content:flex-start;gap:6px;margin:4px 0 10px"><button type="button" class="small ghost" data-vis-all="1">Mostrar todos</button><button type="button" class="small ghost" data-vis-all="0">Ocultar los vacíos</button></div>
     <div class="section-title">📁 Proyecto</div>
     <label>Prefijo de los códigos de tarea del proyecto «${esc(project()?.name)}» (p. ej. <code>GL</code> → GL-1, GL-2…; las tareas ya numeradas no cambian)</label><input name="prefix" value="${esc(project()?.prefix || "")}" placeholder="${esc(project()?.prefixDefault || "")}" maxlength="5" style="text-transform:uppercase;width:120px" />
     <label>Revisión de las tareas de «${esc(project()?.name)}» (con revisión automática, lo que una tarea desbloquea no espera a que tú la mires)</label>
@@ -1780,6 +1788,7 @@ Pasos, convenciones y ejemplos…</textarea>
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
     if (repos.map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|') !== cur) await api('PATCH', `/api/projects/${projectId}`, { repos });
     if ((f.prefix || '').toUpperCase() !== (project()?.prefix || '')) await api('PATCH', `/api/projects/${projectId}`, { prefix: f.prefix });
+    { const hidden = S.projects.filter((x) => !f['vis_' + x.id]).map((x) => x.id); if (hidden.join() !== (S.settings.hiddenProjects || []).join()) await api('POST', '/api/settings', { hiddenProjects: hidden }); }
     if ((f.reviewPolicyAll || 'manual') !== (S.settings.reviewPolicy || 'manual')) await api('POST', '/api/settings', { reviewPolicy: f.reviewPolicyAll });
     if ((f.reviewPolicy || '') !== (project()?.reviewPolicy || '')) await api('PATCH', `/api/projects/${projectId}`, { reviewPolicy: f.reviewPolicy || '' });
   }),
@@ -2003,7 +2012,7 @@ function renderSummary() {
   if (sumView === 'costs') return renderCosts(el);
   const all = S.tasks, agents = S.agents, qs = S.questions || [];
   const byId = (id) => agents.find((a) => a.id === id);
-  const rows = [...S.projects].map((p) => {
+  const rows = visibleProjects().map((p) => {
     const ts = all.filter((t) => t.projectId === p.id);
     const team = (p.team || []).map(byId).filter(Boolean);
     const busy = team.filter((a) => a.status === 'working' || a.status === 'paused').map((a) => ({ a, t: ts.find((t) => t.id === a.taskId) || all.find((t) => t.id === a.taskId) }));
@@ -2506,6 +2515,10 @@ document.addEventListener('click', async (e) => {
   if (d.skillAdd) return api('POST', '/api/skills/centralize', { dir: d.skillAdd }).then((r) => { toast(`«${r.name}» en el catálogo`); renderSkills(true); });
   if (d.skillDel) return api('DELETE', `/api/skills/${d.skillDel}`).then(() => { toast('Quitada del catálogo'); renderSkills(true); });
   if (d.skillEdit) return editSkill(d.skillEdit);
+  if (d.visAll !== undefined) { // «Mostrar todos» / «Ocultar los vacíos» (sin equipo, tareas ni flows): solo marca las casillas; se aplica al Guardar
+    for (const x of S.projects) { const cb = document.querySelector(`#dialog [name="vis_${x.id}"]`); if (!cb) continue; cb.checked = d.visAll === '1' || !!((x.team || []).length || x.flows || S.tasks.some((t) => t.projectId === x.id) || x.id === projectId); }
+    return;
+  }
   if (d.reviewAgain) return api('POST', `/api/tasks/${d.reviewAgain}/review-again`).then(() => toast('Revisión automática relanzada'));
   if (d.cmemEdit !== undefined) return editClaudeMemory(d.cmemRepo, d.cmemEdit);
   if (d.cmemDel) { if (confirm(`¿Borrar la memoria «${d.cmemDel}»? (también su línea del índice)`)) api('DELETE', cmemUrl(d.cmemRepo, d.cmemDel)).then(() => { toast('Memoria borrada'); renderClaudeMemory(true); }); return; }
