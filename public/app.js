@@ -14,7 +14,7 @@ const activityLoaded = new Set();
 
 import { Office } from './office3d.js';
 import { dictationSupported, createDictation, insertAtCursor } from './dictation.js'; // dictado por voz (FT-43)
-const office = new Office($('#office'), { onAgentClick: (id) => openDrawer(id), onFloorClick: (id) => enterFloor(id) }); // clic en una planta → su oficina (FT-47)
+const office = new Office($('#office'), { onAgentClick: (id) => enterAgent(id), onFloorClick: (id) => enterFloor(id) }); // clic planta/agente → navegación continua (FT-47/FT-71)
 window.aoOffice = office; // para QA: aoOffice.debugState() / setMode() (FT-46)
 
 function safeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
@@ -117,16 +117,42 @@ function projectOfFlow(flow) {
 // La Oficina abre como EDIFICIO (una planta por proyecto con equipo, FT-46); un clic en una planta, el Guide o flow-test
 // entran en la sala de ese proyecto (`floor`), y «🏢 Edificio» / Esc vuelven. El último modo se recuerda en el navegador.
 let officeMode = safeGet('ao:officeMode') === 'floor' ? 'floor' : 'building';
+let officeLevel = officeMode; // FT-71: building → floor → agent, publicado para el Guide.
 let officeInit = false; // el modo por defecto se decide con el primer estado (hace falta saber cuántos proyectos tienen equipo)
 const teamProjects = () => S.projects.filter((p) => (p.team || []).length);
 function setOfficeMode(mode, { remember = true } = {}) {
   officeMode = mode === 'floor' ? 'floor' : 'building';
+  officeLevel = officeMode;
+  if (officeMode === 'building' && drawerAgent) { drawerAgent = null; $('#drawer').hidden = true; }
   if (remember) safeSet('ao:officeMode', officeMode);
   office.setMode(officeMode);
   renderOfficeFoot();
   publishContext();
 }
 function enterFloor(id) { goProject(id); setOfficeMode('floor'); }
+function enterAgent(id) {
+  const a = S.agents.find((x) => x.id === id);
+  const p = S.projects.find((x) => (x.team || []).includes(id));
+  if (p) goProject(p.id);
+  if (!a) return;
+  officeMode = 'floor';
+  officeLevel = 'agent';
+  safeSet('ao:officeMode', 'floor');
+  office.focusAgent(id);
+  openDrawer(id, { skipFocus: true });
+  renderOfficeFoot();
+  publishContext();
+}
+function leaveAgentLevel() {
+  if (officeLevel !== 'agent') return false;
+  officeLevel = 'floor';
+  office.clearAgentFocus?.();
+  closeDrawer({ keepOfficeLevel: true });
+  $('#office').focus({ preventScroll: true });
+  renderOfficeFoot();
+  publishContext();
+  return true;
+}
 // Al abrir la pestaña Oficina: con UN solo proyecto con equipo se entra directo a su planta; si no, el último modo (edificio de serie).
 function applyOfficeDefault() {
   const tp = teamProjects();
@@ -136,11 +162,16 @@ function applyOfficeDefault() {
 // Pie de la vista Oficina: miga «🏢 Edificio › proyecto» (el botón vuelve al edificio) y la línea de actividad.
 function renderOfficeFoot() {
   const p = project();
-  $('#office-crumb').innerHTML = officeMode === 'floor'
+  const a = S.agents.find((x) => x.id === drawerAgent);
+  $('#office-crumb').innerHTML = officeLevel === 'agent'
+    ? `<button class="small ghost" data-action="building" title="Volver al edificio">🏢 Edificio</button><span class="sep">›</span><button class="small ghost" data-action="office-floor" title="Volver a la planta (Esc)">${esc(p?.name || 'Planta')}</button><span class="sep">›</span><b>${esc(a?.name || 'Agente')}</b>`
+    : officeMode === 'floor'
     ? `<button class="small ghost" data-action="building" title="Volver al edificio (Esc con la oficina enfocada)">🏢 Edificio</button><span class="sep">›</span><b>${esc(p?.name || '')}</b>`
     : '<span class="here">🏢 Edificio</span>';
   const live = $('#office-live');
-  if (officeMode === 'floor') {
+  if (officeLevel === 'agent' && a) {
+    live.textContent = `${a.name}: ${a.activity || statusMeta(a).label} · ficha operativa abierta`;
+  } else if (officeMode === 'floor') {
     const working = team().filter((a) => a.status === 'working');
     live.textContent = working.length ? working.map((a) => `${a.name}: ${a.activity}`).join('  ·  ') : 'Nadie está trabajando ahora mismo';
   } else {
@@ -151,7 +182,9 @@ function renderOfficeFoot() {
 }
 // Esc con la oficina enfocada vuelve al edificio (si hay cajón abierto, lo cierra el atajo de siempre).
 $('#office').addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape' || officeMode !== 'floor' || drawerAgent || $('#dialog').open) return;
+  if (e.key !== 'Escape' || $('#dialog').open) return;
+  if (leaveAgentLevel()) { e.stopPropagation(); return; }
+  if (officeMode !== 'floor' || drawerAgent) return;
   e.stopPropagation();
   setOfficeMode('building');
 });
@@ -1081,18 +1114,31 @@ function activeTool(a) {
   const engine = a.activeEngine || a.engine || 'auto';
   return `${engine}${a.model ? ' · ' + a.model : ''}${tool ? ` · ${tool.data?.tool || 'herramienta'}${tool.data?.summary ? ' · ' + tool.data.summary : ''}` : ''}`;
 }
-function openDrawer(id) {
+function openDrawer(id, { skipFocus = false } = {}) {
   drawerAgent = id;
   $('#drawer').hidden = false;
   $('#drawer').setAttribute('role', 'dialog');
   $('#drawer').setAttribute('aria-modal', 'true');
   $('#drawer').tabIndex = -1;
   loadAgentActivity(id);
+  if (!skipFocus && activeTab === 'office') {
+    officeLevel = 'agent';
+    officeMode = 'floor';
+    office.focusAgent?.(id);
+  }
   render();
   renderLog();
   requestAnimationFrame(() => $('#drawer')?.focus({ preventScroll: true }));
 }
-function closeDrawer() { drawerAgent = null; $('#drawer').hidden = true; render(); }
+function closeDrawer({ keepOfficeLevel = false } = {}) {
+  drawerAgent = null;
+  $('#drawer').hidden = true;
+  if (!keepOfficeLevel && officeLevel === 'agent') {
+    officeLevel = 'floor';
+    office.clearAgentFocus?.();
+  }
+  render();
+}
 
 // Control de workers (FT-5): pausar / reanudar / mensaje en caliente.
 const busy = (a) => a.status === 'working' || a.status === 'paused';
@@ -1286,6 +1332,7 @@ Pasos, convenciones y ejemplos…</textarea>
   }),
   quota: () => showTab('summary'), // FT-45: el chip de cuota abre el Resumen
   building: () => setOfficeMode('building'), // FT-47: «🏢 Edificio» en el pie de la Oficina
+  'office-floor': () => leaveAgentLevel(), // FT-71: agente → planta sin saltar al edificio
   'toggle-run': () => api('POST', `/api/projects/${projectId}/run`, { running: !project()?.running }),
   hire: (role) => dialog(`
     <h3>Contratar agente</h3>
@@ -1937,14 +1984,14 @@ $('#goal-form').onsubmit = async (e) => {
   $('#goal').value = ''; $('#goal').style.height = '';
   toast(project()?.running ? 'El PO se pone con ello' : 'Encargado. Pulsa «▶ Poner a trabajar» para empezar');
 };
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && drawerAgent && !$('#dialog').open) closeDrawer(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && drawerAgent && !$('#dialog').open) { if (activeTab === 'office') leaveAgentLevel(); else closeDrawer(); } });
 
 // ── Contexto de la UI para el Guide Agent (FT-2) ────────────────────────────
 // Publica lo que el usuario está viendo (POST /api/context, debounce 300 ms, solo si cambia). Estructurado, sin capturas.
 // Id de pestaña en sessionStorage para distinguir clientes; `host` = contexto que flow-test manda por postMessage (FT-3).
 const CLIENT_ID = (() => { try { return sessionStorage.getItem('ao:client') || (sessionStorage.setItem('ao:client', 'c_' + Math.random().toString(36).slice(2, 10)), sessionStorage.getItem('ao:client')); } catch { return 'c_' + Math.random().toString(36).slice(2, 10); } })();
 
-const ctxKey = () => JSON.stringify({ view: activeTab, projectId, openTaskId, selectedAgentId: drawerAgent, taskFilter, questionOpen: qOpen, officeMode, host: hostCtx }); // officeMode: edificio o planta (FT-47)
+const ctxKey = () => JSON.stringify({ view: activeTab, projectId, openTaskId, selectedAgentId: drawerAgent, taskFilter, questionOpen: qOpen, officeMode, officeLevel, host: hostCtx }); // officeLevel: edificio, planta o agente (FT-71)
 function publishContext() {
   clearTimeout(ctxTimer);
   ctxTimer = setTimeout(() => {

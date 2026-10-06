@@ -5,8 +5,8 @@
 // Dos modos (FT-46): `floor` (la sala del proyecto activo, con personajes) y `building` (el EDIFICIO:
 // plantas abiertas por proyecto, con mini agentes visibles desde fuera y tarjetas de estado).
 // `setMode(mode)` cambia entre ellos; `update()` acepta además {projects, allAgents, allTasks}.
-// FT-47: `setMode` hace una transición corta de cámara (≤ 400 ms, ninguna con prefers-reduced-motion), la planta del
-// proyecto activo (`update({projectId})`) va resaltada en el edificio y el canvas se enfoca al hacer clic (Esc en app.js).
+// FT-47/FT-71: `setMode` hace una transición corta de cámara (≤ 400 ms, ninguna con prefers-reduced-motion), la planta
+// del proyecto activo (`update({projectId})`) va resaltada en el edificio y el canvas se enfoca al hacer clic (Esc en app.js).
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
@@ -166,7 +166,9 @@ export class Office3D {
     this.activeProjectId = null;   // proyecto del desplegable: su planta va resaltada en el edificio (FT-47)
     this.camAnim = null;           // transición de cámara en curso {from, to, t0} (FT-47)
     this.camCenter = floorCenter(this.currentFloorSize);
+    this.officeLevel = 'floor';     // FT-71: building → floor → agent en una sola escena.
     canvas.dataset.officeMode = 'floor';
+    canvas.dataset.officeLevel = 'floor';
     if (canvas.tabIndex < 0) canvas.tabIndex = 0;   // enfocable: Esc con el canvas enfocado vuelve al edificio (FT-47, en app.js)
 
     canvas.style.imageRendering = 'auto';
@@ -194,6 +196,7 @@ export class Office3D {
     this.pointer = new THREE.Vector2();
     canvas.addEventListener('pointerdown', (e) => this.onPointer(e, true));
     canvas.addEventListener('pointermove', (e) => this.onPointer(e, false));
+    canvas.addEventListener('keydown', (e) => this.onKey(e));
 
     this.buildLabels();
     this.resize();
@@ -476,7 +479,10 @@ export class Office3D {
     if (mode === this.mode) return;
     const from = this.captureFrame();
     this.mode = mode;
+    if (mode === 'building') this.selected = null;
+    this.officeLevel = mode;
     this.cv.dataset.officeMode = mode;
+    this.cv.dataset.officeLevel = mode;
     const b = mode === 'building';
     this.room.visible = !b;
     this.building.visible = b;
@@ -489,6 +495,35 @@ export class Office3D {
     this.floorsSig = '';
     this.camAnim = null;
     this.rebuildFloors();
+    this.resize();
+    if (this.running && !reducedMotion()) this.camAnim = { from, to: this.captureFrame(), t0: performance.now() };
+  }
+
+  focusAgent(id) {
+    if (!id) return;
+    const from = this.captureFrame();
+    if (this.mode !== 'floor') {
+      this.mode = 'floor';
+      this.cv.dataset.officeMode = 'floor';
+      this.room.visible = true;
+      this.building.visible = false;
+      this.labelRoot?.classList.toggle('building', false);
+      this.floorsSig = '';
+    }
+    this.selected = id;
+    this.officeLevel = 'agent';
+    this.cv.dataset.officeLevel = 'agent';
+    this.setHover(-1);
+    this.resize();
+    if (this.running && !reducedMotion()) this.camAnim = { from, to: this.captureFrame(), t0: performance.now() };
+  }
+
+  clearAgentFocus() {
+    if (this.officeLevel !== 'agent' && !this.selected) return;
+    const from = this.captureFrame();
+    this.selected = null;
+    this.officeLevel = this.mode;
+    this.cv.dataset.officeLevel = this.officeLevel;
     this.resize();
     if (this.running && !reducedMotion()) this.camAnim = { from, to: this.captureFrame(), t0: performance.now() };
   }
@@ -782,7 +817,8 @@ export class Office3D {
       if (s) slots[v.id] = { zone: s.zone, module: s.module, slot: s.index, x: s.x, z: s.z, status: v.status, key: a?.key || null, moving: !!a?.moving };
     }
     return {
-      mode: this.mode, activeProjectId: this.activeProjectId, hoverFloor: this.hoverFloor, animating: !!this.camAnim,
+      mode: this.mode, officeLevel: this.officeLevel, selectedAgentId: this.selected || null, activeProjectId: this.activeProjectId, hoverFloor: this.hoverFloor, hoverActor: this.hoverActor, animating: !!this.camAnim,
+      camera: { center: { x: +this.camCenter.x.toFixed(3), y: +this.camCenter.y.toFixed(3), z: +this.camCenter.z.toFixed(3) }, span: +(this.camera.top - this.camera.bottom).toFixed(3) },
       actors: this.actors.size,
       zones: Object.fromEntries(Object.entries(this.floorZones || {}).map(([id, z]) => [id, { label: z.label, x: z.x, z: z.z, w: z.w, d: z.d }])),
       slots,
@@ -1107,6 +1143,16 @@ export class Office3D {
       const hit = this.raycaster.intersectObject(a.group, true);
       if (hit.length) return id;
     }
+    // FT-71: los modelos low-poly tienen piezas finas; para teclado/ratón se usa un área visual estable alrededor del avatar.
+    let best = null, bd = 90;
+    for (const [id, a] of this.actors) {
+      if (!a.group.visible) continue;
+      const p = this.project(a.x, 0.65, a.z);
+      if (!p.visible) continue;
+      const d = Math.hypot((e.clientX - r.left) - p.x, (e.clientY - r.top) - p.y);
+      if (d < bd) { bd = d; best = id; }
+    }
+    if (best) return best;
     return null;
   }
 
@@ -1127,13 +1173,53 @@ export class Office3D {
     else this.cv.style.cursor = id ? 'pointer' : 'default';
   }
 
+  onKey(e) {
+    if (e.key !== 'Tab' && e.key !== 'Enter') return;
+    if (this.mode === 'building') {
+      const open = this.floors.map((f, i) => f.projectId ? i : -1).filter((i) => i >= 0);
+      if (!open.length) return;
+      e.preventDefault();
+      const pos = open.indexOf(this.hoverFloor);
+      const next = open[(pos + (e.shiftKey ? open.length - 1 : 1)) % open.length];
+      if (e.key === 'Tab') { this.setHover(next); this.cv.style.cursor = 'pointer'; this.updateFloorLabels(); }
+      else if (this.hoverFloor >= 0) this.onFloorClick?.(this.floors[this.hoverFloor]?.projectId);
+      return;
+    }
+    const ids = this.agents.map((a) => a.id).filter((id) => this.actors.get(id)?.group.visible);
+    if (!ids.length) return;
+    e.preventDefault();
+    const pos = ids.indexOf(this.hoverActor || this.selected);
+    const next = ids[(pos + (e.shiftKey ? ids.length - 1 : 1)) % ids.length];
+    if (e.key === 'Tab') this.hoverActor = next;
+    else if (this.hoverActor || this.selected) this.onAgentClick?.(this.hoverActor || this.selected);
+  }
+
   // ── Encuadre / bucle ──────────────────────────────────────────────────────────
   resize() {
     const w = this.cv.clientWidth || 320, h = this.cv.clientHeight || 208;
     this.renderer.setSize(w, h, false);
-    this.frameCamera(w / h, this.viewBox());
+    if (this.officeLevel === 'agent' && this.selected) this.frameAgentCamera(w / h, this.selected);
+    else this.frameCamera(w / h, this.viewBox());
     if (this.camAnim) this.camAnim.to = this.captureFrame();   // en plena transición: el destino es el nuevo encuadre
     if (!this.running && this.renderer) this.renderer.render(this.scene, this.camera);
+  }
+
+  frameAgentCamera(aspect, id) {
+    const a = this.actors.get(id);
+    const s = this.floorLayout?.slots?.[id];
+    const x = a?.x ?? s?.x ?? this.currentFloorSize.rx / 2;
+    const z = a?.z ?? s?.z ?? this.currentFloorSize.rz / 2;
+    const center = new THREE.Vector3(x, 0.72, z);
+    const dir = new THREE.Vector3(1, 1, 1).normalize();
+    const cam = this.camera;
+    cam.position.copy(center).addScaledVector(dir, 9);
+    cam.up.set(0, 1, 0);
+    cam.lookAt(center);
+    this.camCenter.copy(center);
+    const halfH = 1.85, halfW = halfH * aspect;
+    cam.left = -halfW; cam.right = halfW; cam.top = halfH; cam.bottom = -halfH; cam.near = -20; cam.far = 30;
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld();
   }
 
   // Encuadre actual de la cámara (posición, centro al que mira y frustum), para interpolarlo (FT-47).
