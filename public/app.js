@@ -1222,14 +1222,25 @@ const COLS = [
 
 let taskFilter = '';
 $('#task-filter').addEventListener('input', (e) => { taskFilter = e.target.value.trim().toLowerCase(); renderBoard(); publishContext(); });
+let lastBoardHtml = '';
 function renderBoard() {
   $('#board').classList.toggle('compact', boardDensity === 'compact'); syncDensityButtons();
   const list = tasks().filter((t) => !taskFilter || `${t.id} ${t.code || ''} ${t.title} ${t.role} ${t.repo || ''} ${t.description}`.toLowerCase().includes(taskFilter));
-  $('#board').innerHTML = COLS.map(([st, label, c]) => {
+  const html = COLS.map(([st, label, c]) => {
     const items = list.filter((t) => t.status === st || (st === 'todo' && t.status === 'failed'))
       .sort((a, b) => (st === 'done' || st === 'discarded' ? b.updatedAt - a.updatedAt : a.createdAt - b.createdAt));
     return `<div class="col" data-col="${st}" style="--c:${c}"><h4><span>${label}</span><span class="count">${items.length}</span></h4><div class="cards">${items.map(card).join('') || '<div class="empty">Nada por aquí</div>'}</div></div>`;
   }).join('');
+  // Cada SSE de estado llama aquí: si el tablero no cambió, no se toca (no se pierde el scroll ni se cierra un «Asignar a…»
+  // abierto); si cambió, se repinta conservando el scroll de cada columna y el horizontal del tablero.
+  const board = $('#board');
+  if (html === lastBoardHtml) return;
+  lastBoardHtml = html;
+  const keep = new Map([...board.querySelectorAll('.col[data-col]')].map((col) => [col.dataset.col, [col.scrollTop, col.querySelector('.cards')?.scrollTop || 0]]));
+  const left = board.scrollLeft;
+  board.innerHTML = html;
+  for (const col of board.querySelectorAll('.col[data-col]')) { const k = keep.get(col.dataset.col); if (!k) continue; col.scrollTop = k[0]; const cards = col.querySelector('.cards'); if (cards) cards.scrollTop = k[1]; }
+  board.scrollLeft = left;
 }
 
 // FT-27: arrastrar tarjetas entre columnas (delegación en #board: sobrevive a cada re-render por SSE).
