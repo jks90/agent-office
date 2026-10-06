@@ -135,7 +135,27 @@ try {
   const rects = (await state()).dbg.floors.map((f) => f.screen);
   const overlap = (a, b) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
   check('plantas distinguibles: sus rectángulos de pantalla no se solapan', rects.every((r, i) => rects.every((s, j) => i >= j || overlap(r, s) < Math.min(r.w * r.h, s.w * s.h) * 0.08)), JSON.stringify(rects));
-  await page.screenshot({ path: path.join(shotDir, 'building-1-edificio.png') });
+  const sight3 = (await state()).dbg.floors.filter((f) => f.projectId).flatMap((f) => f.visibleAgents.map((a) => ({ floor: f.name, id: a.id, clearSight: a.clearSight, inRect: a.inRect, blockedBy: a.blockedBy })));
+  check('FT-70: cada mini agente proyecta dentro de su planta y no lo tapa otra losa (3 plantas)', sight3.length === 3 && sight3.every((a) => a.clearSight && a.inRect), JSON.stringify(sight3));
+  await page.screenshot({ path: path.join(shotDir, 'building-1-edificio-3-plantas.png') });
+
+  const five = await page.evaluate(() => {
+    const projects = Array.from({ length: 4 }, (_, i) => ({ id: 'ft70-p' + i, name: 'FT70 P' + (i + 1), team: ['ft70-a' + i, 'ft70-b' + i], running: true, createdAt: 10 + i }));
+    const agents = projects.flatMap((p, i) => p.team.map((id, j) => ({ id, name: `Ag ${i}-${j}`, role: j ? 'qa' : 'back', status: 'working', projectId: p.id })));
+    const tasks = agents.map((a, i) => ({ id: 'ft70-t' + i, projectId: a.projectId, agentId: a.id, status: i % 3 === 0 ? 'review' : 'doing', title: 'FT-70 visible' }));
+    window.aoOffice.update({ projects, allAgents: agents, allTasks: tasks, agents: [], tasks: [], questions: [] });
+    const d = window.aoOffice.debugState();
+    return {
+      floors: d.floors.length,
+      rects: d.floors.map((f) => f.screen),
+      agents: d.floors.filter((f) => f.projectId).flatMap((f) => f.visibleAgents.map((a) => ({ floor: f.name, id: a.id, clearSight: a.clearSight, inRect: a.inRect, blockedBy: a.blockedBy }))),
+    };
+  });
+  check('FT-70: con 5 plantas encuadradas los rectángulos siguen separados', five.floors === 5 && five.rects.every((r, i) => five.rects.every((s, j) => i >= j || overlap(r, s) < Math.min(r.w * r.h, s.w * s.h) * 0.08)), JSON.stringify(five.rects));
+  check('FT-70: con 5 plantas todos los agentes de proyecto siguen visibles desde cámara', five.agents.length === 8 && five.agents.every((a) => a.clearSight && a.inRect), JSON.stringify(five.agents));
+  await page.screenshot({ path: path.join(shotDir, 'building-1-edificio-5-plantas.png') });
+  await page.reload({ waitUntil: 'networkidle2' });
+  await sleep(1200);
   await clickFloor('Beta');
   const anim = await page.evaluate(() => window.aoOffice.debugState().animating);
   await sleep(700);
