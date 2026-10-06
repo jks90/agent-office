@@ -977,10 +977,13 @@ function buildPrompt(p, agent, t) {
     const roles = teamRoles(p);
     const repos = p.repos || [];
     return [
+      // Parte estable primero (briefing y memoria del repo): se lee de caché entre planificaciones del mismo proyecto
+      repos[0]?.path ? '\n' + briefingFor(repos[0].path) + '\n' : '',
+      repos[0]?.path && get().settings.claudeMemory !== false ? memory.claudePromptBlock(repos[0].path) : '',
       `Objetivo del equipo: ${t.goal}`,
       clientBlock(t),
       '',
-      repos.length ? `Repositorios del proyecto (estás en ${repos[0].path}): ${repos.map((r) => `«${r.key}» = ${r.path} (rama ${r.baseBranch})`).join(' · ')}. Lee su documentación y código para entender el contexto.` : 'No hay repositorio: planifica solo a partir del objetivo.',
+      repos.length ? `Repositorios del proyecto (estás en ${repos[0].path}): ${repos.map((r) => `«${r.key}» = ${r.path} (rama ${r.baseBranch})`).join(' · ')}. Arriba tienes su briefing (estructura, ficheros y documentación): parte de él y lee del código solo lo que necesites para decidir, agrupando las lecturas en pocas órdenes (cada paso reenvía todo el contexto).` : 'No hay repositorio: planifica solo a partir del objetivo.',
       `Divide el objetivo en tareas pequeñas para estos roles: ${roles.join(', ')}.`,
       'Cada tarea debe poder hacerla un agente solo, en una rama aparte, y ser verificable.',
       'Las tareas de QA van al final y dependen de lo que verifican.',
@@ -1005,6 +1008,7 @@ function buildPrompt(p, agent, t) {
     'Trabajas en una copia aislada del repo (git worktree), en tu propia rama. No cambies de rama ni hagas push.',
     'Lo que dejes sin confirmar se confirmará solo al terminar.',
     (() => { const r = repoOfTask(p, t); return r?.path ? '\n' + briefingFor(r.path) + (t.codeIndexOn ? '\n' + codeindex.BRIEFING_LINE : '') + '\n' : ''; })(), // FT-58: aviso del índice de código
+    get().settings.claudeMemory !== false ? memory.claudePromptBlock(repoOfTask(p, t)?.path) : '', // índice de la memoria de Claude Code del repo
     get().settings.agentMemory !== false ? memory.promptBlock(p.id, agent.id) : '', // FT-75: lecciones de tareas anteriores
     askRules(),
     economyBlock(t.codeIndexOn),
@@ -1044,6 +1048,7 @@ function economyBlock(codeIndexOn) {
     '- No vuelvas a leer lo que ya leíste; no hagas `cat` de ficheros largos ni de salidas largas: recorta con `| tail -30`, `| head`, `grep`.',
     '- Pruebas: ejecuta el e2e/verificación UNA vez cuando creas que está bien; repite solo si falló. Capturas de pantalla: como mucho 1 (otra solo si la primera muestra un fallo), y solo si la tarea es visual.',
     '- Ve al grano: el briefing del repo ya te da la estructura; no lo explores con ls -R/find/wc.',
+    '- Agrupa: cada paso (cada orden o lectura) reenvía TODO el contexto. Junta en UNA orden las lecturas y búsquedas que ya sabes que necesitas (p. ej. `rg -n -C3 "patrón" src/ && sed -n \'40,120p\' a.java && sed -n \'1,60p\' b.ts`) en vez de una por paso, y lee tramos de ~150 líneas, no de 20 en 20.',
     '- Para explorar más de 3 ficheros (entender un módulo, buscar todos los usos de algo), delega en el subagente «explorador» (herramienta Task/Agent, si tu motor la tiene) y trabaja con su resumen; lee tú solo los tramos que vayas a editar.',
     '- Si te acercas al tope de gasto de la tarea, deja el trabajo en un estado coherente y resume qué falta.',
   ].join('\n');
@@ -1103,6 +1108,8 @@ async function runTask(p, agent, t) {
       }
       for (const r of p.repos || []) outside[r.key] = await git.statusLines(r.path);
       addDirs = taskRepos(p, t).filter((x) => !x.main).map((x) => x.dir);
+      const memDir = get().settings.claudeMemory !== false && memory.claudePromptBlock(repo.path) ? memory.claudeDir(repo.path) : null;
+      if (memDir) addDirs.push(memDir); // el agente puede leer el detalle de la memoria de Claude del repo
       if (wt.reused) {
         log(agent.id, `↺ Sigue sobre su intento anterior en ${wt.branch}`);
         // FT-19: si la base avanzó, se actualiza antes de arrancar; si choca, el conflicto va en el prompt (salvo que ya esté en el feedback de la devolución)
@@ -1137,7 +1144,7 @@ async function runTask(p, agent, t) {
     delete t.stuck;
     // FT-62: detector de atascos. 1.ª señal → aviso en caliente (Claude: stdin; Codex/demo: se reencola la tarea con el aviso);
     // si tras el aviso vuelve a saltar → se corta y va a Revisión. t.stuckWarned sobrevive al reencolado.
-    const stuckLimits = { ...stuck.limits(s.settings), enabled: stuck.limits(s.settings).enabled && t.kind !== 'plan' };
+    const stuckLimits = { ...stuck.limits(s.settings, engineId), enabled: stuck.limits(s.settings).enabled && t.kind !== 'plan' };
     const probe = t.branch ? async () => `${await git.git(cwd, 'status', '--porcelain')}\n${await git.git(cwd, 'diff', '--stat')}` : null;
     const newDetector = () => stuck.createDetector({ limits: stuckLimits, isCode: role.kind === 'dev', probe });
     let detector = newDetector();
@@ -1184,7 +1191,9 @@ async function runTask(p, agent, t) {
       onActivity: (text) => { agent.activity = text; events.emit('AgentProgress', ev, { activity: text }); changed(); },
       onTool: (c) => { events.emit(c.phase === 'started' ? 'AgentToolStarted' : 'AgentToolFinished', ev, c.phase === 'started' ? { callId: c.callId, tool: c.tool, summary: c.summary } : { callId: c.callId, ok: c.ok }); onStuck(detector.feed(c)); },
       onLog: (line) => log(agent.id, line),
-      onUsage: (u) => { agent.usage = { ...u, engine: engineId, taskId: t.id }; t.usage = addUsage(baseUsage, u);
+      onUsage: (u) => {
+        if (engineId === 'codex' && u.costUsd == null) u = { ...u, costUsd: codexCostUsd(u, model), costEstimated: true }; // Codex no informa el coste: estimación con la tabla de precios (con suscripción es cuota, no factura)
+        agent.usage = { ...u, engine: engineId, taskId: t.id }; t.usage = addUsage(baseUsage, u);
         // FT-63: contexto por encima del umbral → pedir las notas en caliente (Claude) o, si el motor no admite mensajes, cortar
         // FT-57 manda sobre FT-63: si el intento ya está cerca de su tope de tokens, se deja que lo corte el tope (va a Revisión) en vez de compactar y relanzar
         const budgetUsd = Number(s.settings.maxTaskUsd) > 0 ? Number(s.settings.maxTaskUsd) : 3, capTok = Number(s.settings.maxTaskTokens) > 0 ? Number(s.settings.maxTaskTokens) : 0;
@@ -1204,6 +1213,7 @@ async function runTask(p, agent, t) {
     Object.assign(entry, { stop: job.stop, engine: engineId, pid: job.pid, pause: job.pause, resume: job.resume, message: job.message });
     res = await job.done;
     rec.finish(); // FT-76
+    if (res.costUsd == null && agent.usage?.costEstimated) { res.costUsd = agent.usage.costUsd; t.costEstimated = true; } // coste ≈ de este segmento (Codex)
     if (!cmp.asked || res.budgetHit || !(res.ok || cmp.cut && res.stopped)) break;
     const notesPath = path.join(cwd, compact.NOTES_FILE);
     const notes = fs.existsSync(notesPath) ? fs.readFileSync(notesPath, 'utf8').trim() : '';

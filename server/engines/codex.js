@@ -2,6 +2,8 @@
 import { spawn, execFileSync } from 'node:child_process';
 import readline from 'node:readline';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import { firstLine, toolSummary, toolKey } from './describe.js';
 import { fileURLToPath } from 'node:url';
 import { codexTracker, codexCostUsd, tokensForUsd } from '../usage.js';
@@ -21,6 +23,25 @@ export function configArgs({ effort, rtk, mode }) {
   }
   return a;
 }
+
+// Ahorro sin tocar el modelo: `codex exec` hereda ~/.codex/config.toml del usuario, con TODOS sus MCP (Unity, Blender,
+// Hostinger…), plugins y memorias. Sus definiciones de herramientas viajan en cada paso del agente (y un agente podría usarlos).
+// Para los agentes se apagan por -c (el fichero del usuario no se toca); flow-test y el índice de código se añaden aparte.
+// Además: salida de cada orden acotada en el contexto (lo que pase se recorta por el medio; se puede releer por tramos) y
+// sin las instrucciones de apps/conectores. AO_CODEX_ISOLATE=off lo desactiva. Función pura (recibe el TOML) para probarla.
+export const TOOL_OUTPUT_TOKENS = 8000;
+export function userMcpNames(toml = '') {
+  const names = new Set();
+  for (const m of String(toml).matchAll(/^\s*\[mcp_servers\.(?:"([^"]+)"|([\w-]+))\]\s*$/gm)) names.add(m[1] || m[2]);
+  return [...names];
+}
+export function isolationArgs(toml = '', keep = []) {
+  if (process.env.AO_CODEX_ISOLATE === 'off') return [];
+  const a = ['-c', 'features.memories=false', '-c', 'features.plugins=false', '-c', 'include_apps_instructions=false', '-c', `tool_output_token_limit=${TOOL_OUTPUT_TOKENS}`];
+  for (const n of userMcpNames(toml)) if (!keep.includes(n)) a.push('-c', `mcp_servers.${/^[\w-]+$/.test(n) ? n : JSON.stringify(n)}.enabled=false`);
+  return a;
+}
+const userCodexToml = () => { try { return fs.readFileSync(path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'config.toml'), 'utf8'); } catch { return ''; } };
 
 // Codex envuelve cada orden en `/usr/bin/zsh -lc "…"`: en el bocadillo solo interesa la orden.
 const unwrap = (cmd) => {
@@ -53,6 +74,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kin
     args.push('-c', `${k}.command=${JSON.stringify(codeIndex.command)}`, '-c', `${k}.args=[]`, '-c', `${k}.env={${Object.entries(codeIndex.env).map(([n, v]) => `${n}=${JSON.stringify(v)}`).join(',')}}`);
   }
   for (const c of codexScope({ kind, mode, images })) args.push('-c', c); // FT-59: sin herramientas que el rol no usa
+  args.push(...isolationArgs(userCodexToml(), ['flow_test', SERVER_NAME.replace(/-/g, '_')])); // sin los MCP/plugins/memorias del usuario (también en el motor «local»: su contexto es aún más corto)
   const useRtk = rtkAvailable() && mode !== 'plan';
   args.push(...configArgs({ effort, rtk: useRtk ? rtkBin() : null, mode }));
   for (const img of images) args.push(`--image=${img}`); // con «=» para que -i (variádico) no se trague el «-»

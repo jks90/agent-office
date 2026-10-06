@@ -107,6 +107,10 @@ const gated = (fn) => async (m, b) => {
   return fn(m, b);
 };
 
+// Proyecto y ruta de uno de sus repos (por clave; sin clave, el primero) — para la memoria de Claude Code.
+const findProject = (id) => store.get().projects.find((p) => p.id === id) || (() => { throw Object.assign(new Error('Proyecto no encontrado'), { status: 404 }); })();
+const repoPath = (id, key) => { const rs = findProject(id).repos || []; const r = rs.find((x) => x.key === key) || (!key && rs[0]); if (!r) throw Object.assign(new Error('Repo no encontrado'), { status: 404 }); return r.path; };
+
 const routes = [
   ['GET', /^\/api\/state$/, () => snapshot()],
   // Cuota restante de las suscripciones de Claude y Codex (FT-45); ?force=1 se salta la caché de 60 s
@@ -203,6 +207,11 @@ const routes = [
   // FT-75 · memoria de los agentes: GET/PUT /api/memory/:projectId[?agent=<id>] {text}
   ['GET', /^\/api\/memory\/(\w+)$/, ([pid], _, q) => ({ text: memory.read(pid, q.agent || null), max: memory.MAX_CHARS })],
   ['PUT', /^\/api\/memory\/(\w+)$/, ([pid], b, q) => ({ text: memory.write(pid, q.agent || null, b.text) })],
+  // Memoria de Claude Code de los repos del proyecto: GET lista · GET/PUT/DELETE …/file?repo=<clave>&name=<x.md>
+  ['GET', /^\/api\/projects\/(\w+)\/claude-memory$/, ([id]) => (findProject(id).repos || []).map((r) => ({ repo: r.key, path: r.path, ...memory.claudeList(r.path) }))],
+  ['GET', /^\/api\/projects\/(\w+)\/claude-memory\/file$/, ([id], _, q) => memory.claudeRead(repoPath(id, q.repo), q.name)],
+  ['PUT', /^\/api\/projects\/(\w+)\/claude-memory\/file$/, ([id], b, q) => memory.claudeWrite(repoPath(id, q.repo), q.name, b.text)],
+  ['DELETE', /^\/api\/projects\/(\w+)\/claude-memory\/file$/, ([id], _, q) => memory.claudeDelete(repoPath(id, q.repo), q.name)],
   ['POST', /^\/api\/tasks\/(\w+)\/resume-now$/, ([id]) => team.resumeNow(id)], // FT-66: «Reanudar ya» una tarea pausada por cuota
   ['POST', /^\/api\/upload$/, (_, b) => {
     const dir = path.join(store.DATA_DIR, 'uploads', crypto2.randomBytes(6).toString('hex'));
@@ -240,6 +249,7 @@ const routes = [
     if (Array.isArray(b.reviewSensitive)) st.reviewSensitive = b.reviewSensitive.map((x) => String(x).trim()).filter(Boolean).slice(0, 40);
     if (typeof b.reviewEngine === 'string' && ['', 'claude', 'codex', 'demo'].includes(b.reviewEngine)) st.reviewEngine = b.reviewEngine;
     if (typeof b.agentMemory === 'boolean') st.agentMemory = b.agentMemory; // FT-75
+    if (typeof b.claudeMemory === 'boolean') st.claudeMemory = b.claudeMemory;
     if (typeof b.codeIndex === 'boolean') st.codeIndex = b.codeIndex; // FT-58
     if (typeof b.cacheAffinity === 'boolean') st.cacheAffinity = b.cacheAffinity; // FT-64
     if (b.maxTaskUsd !== undefined) st.maxTaskUsd = Math.max(0.5, Math.min(50, Number(b.maxTaskUsd) || 3)); // tope de gasto por intento de tarea

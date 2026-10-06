@@ -7,6 +7,7 @@
 // Ficheros: data/memory/<projectId>/project.md y data/memory/<projectId>/agent-<agentId>.md (una lección por línea «- …»).
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { DATA_DIR } from './store.js';
 
 export const MAX_CHARS = 6000;          // ≈1 500 tokens por fichero
@@ -65,3 +66,73 @@ export function promptBlock(projectId, agentId) {
     p ? `Del proyecto:\n${p}` : '', a ? `Tuya:\n${a}` : ''].filter(Boolean).join('\n') + '\n';
 }
 export const PROMPT_ASK = 'Si aprendiste algo NO obvio y reutilizable en este repo (una convención, una trampa, cómo se prueba algo), termina tu resumen con «LECCIONES:» y 1–2 viñetas de ≤160 caracteres; empieza la viñeta con «[proyecto]» si vale para todo el equipo. Si no hay nada nuevo, no pongas el bloque.';
+
+// ── Memoria de Claude Code del repo ─────────────────────────────────────────
+// La auto-memoria que Claude Code guarda por proyecto en ~/.claude/projects/<ruta codificada>/memory/: MEMORY.md (índice,
+// una línea por memoria) + un .md por memoria con frontmatter. Los agentes trabajan en worktrees (otra ruta) y no la cargan
+// solos: aquí se localiza la del repo principal para verla/editarla en la UI y pasar el ÍNDICE en la parte estable del prompt
+// (el detalle lo lee el agente bajo demanda; su carpeta va en --add-dir). Si el repo no tiene, se busca en sus carpetas padre
+// (p. ej. MundoAbierto/servidor → MundoAbierto) sin subir hasta el home.
+export const CLAUDE_INDEX_MAX = 8000; // ≈2 000 tokens de índice en el prompt como mucho
+const claudeRoot = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects');
+const encodeRepo = (p) => path.resolve(p).replace(/[^a-zA-Z0-9]/g, '-');
+const hasIndex = (d) => { try { return fs.readFileSync(path.join(d, 'MEMORY.md'), 'utf8').trim().length > 0; } catch { return false; } };
+
+export function claudeDir(repoPath) {
+  if (!repoPath) return null;
+  const home = os.homedir();
+  for (let d = path.resolve(repoPath); d.startsWith(home + path.sep); d = path.dirname(d)) {
+    const m = path.join(claudeRoot(), encodeRepo(d), 'memory');
+    if (hasIndex(m)) return m;
+  }
+  return path.join(claudeRoot(), encodeRepo(repoPath), 'memory'); // aún sin memoria: aquí la crearía Claude Code
+}
+
+const safeName = (n) => { const b = path.basename(String(n || '')); if (!/^[\w.\-]+\.md$/.test(b)) throw Object.assign(new Error('Nombre de memoria no válido (solo *.md)'), { status: 400 }); return b; };
+function frontmatter(text) {
+  const m = String(text).match(/^---\n([\s\S]*?)\n---/);
+  const get = (k) => m?.[1].match(new RegExp(`^\\s*${k}:\\s*(.*)$`, 'm'))?.[1].replace(/^["']|["']$/g, '').trim() || '';
+  return { name: get('name'), description: get('description'), type: get('type') };
+}
+
+export function claudeList(repoPath) {
+  const dir = claudeDir(repoPath);
+  if (!dir) return null;
+  let names = [];
+  try { names = fs.readdirSync(dir).filter((f) => f.endsWith('.md')); } catch { /* sin carpeta todavía */ }
+  const index = names.includes('MEMORY.md') ? fs.readFileSync(path.join(dir, 'MEMORY.md'), 'utf8') : '';
+  const files = names.filter((f) => f !== 'MEMORY.md').sort().map((f) => {
+    const full = path.join(dir, f), st = fs.statSync(full);
+    return { file: f, size: st.size, mtime: st.mtimeMs, inIndex: index.includes(`](${f})`), ...frontmatter(fs.readFileSync(full, 'utf8')) };
+  });
+  return { dir, inherited: !dir.endsWith(encodeRepo(repoPath) + path.sep + 'memory'), index, indexSize: index.length, files };
+}
+export function claudeRead(repoPath, name) {
+  const dir = claudeDir(repoPath), f = safeName(name);
+  try { return { file: f, text: fs.readFileSync(path.join(dir, f), 'utf8') }; } catch { return { file: f, text: '' }; }
+}
+export function claudeWrite(repoPath, name, text) {
+  const dir = claudeDir(repoPath), f = safeName(name);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, f), String(text ?? '').replace(/\r/g, ''));
+  return claudeRead(repoPath, f);
+}
+// Borra una memoria y su línea del índice.
+export function claudeDelete(repoPath, name) {
+  const dir = claudeDir(repoPath), f = safeName(name);
+  if (f === 'MEMORY.md') throw Object.assign(new Error('El índice no se borra; vacíalo si quieres'), { status: 400 });
+  fs.rmSync(path.join(dir, f), { force: true });
+  const idx = path.join(dir, 'MEMORY.md');
+  try { fs.writeFileSync(idx, fs.readFileSync(idx, 'utf8').split('\n').filter((l) => !l.includes(`](${f})`)).join('\n')); } catch { /* sin índice */ }
+  return { ok: true };
+}
+
+// Bloque para el prompt con el índice (vacío si el repo no tiene memoria).
+export function claudePromptBlock(repoPath) {
+  const dir = claudeDir(repoPath);
+  if (!dir || !hasIndex(dir)) return '';
+  let idx = fs.readFileSync(path.join(dir, 'MEMORY.md'), 'utf8').trim();
+  if (idx.length > CLAUDE_INDEX_MAX) idx = idx.slice(0, CLAUDE_INDEX_MAX).replace(/\n[^\n]*$/, '') + '\n- (índice recortado)';
+  return ['', `## Memoria del proyecto (de las sesiones de Claude Code del usuario en este repo; puede estar desfasada: si choca con el código, manda el código)`,
+    `Cada línea apunta a un fichero de ${dir}/ — léelo con Read SOLO si toca a tu tarea. No edites esa carpeta.`, idx, ''].join('\n');
+}

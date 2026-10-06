@@ -2,17 +2,19 @@
 // Señales: misma orden o misma lectura repetida, errores de herramienta seguidos, turnos sin editar, el mismo e2e fallando igual
 // y gasto de tokens por turno que crece sin cambios en el worktree. `feed()`/`usage()` devuelven la señal (texto) o null.
 export const DEFAULTS = { enabled: true, repeat: 3, errors: 4, noEdit: 25, tokensPerTurn: 80000 };
+// Codex lee con una orden de shell por paso (sed -n/rg…) y cada paso reenvía todo el contexto: su «sin editar» salta antes.
+export const NO_EDIT_CODEX = 15;
 
 const E2E = /\b(e2e|playwright|cypress|vitest|jest|mocha|pytest|node --test|npm (run )?test|yarn test|pnpm test)\b/i;
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 
-export function limits(settings = {}) {
+export function limits(settings = {}, engine = '') {
   const n = (v, def, min, max) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Math.max(min, Math.min(max, Math.round(Number(v)))) : def);
   return {
     enabled: settings.stuckGuard !== false,
     repeat: n(settings.stuckRepeat, DEFAULTS.repeat, 2, 20),
     errors: n(settings.stuckErrors, DEFAULTS.errors, 2, 30),
-    noEdit: n(settings.stuckNoEdit, DEFAULTS.noEdit, 5, 200),
+    noEdit: n(settings.stuckNoEdit, engine === 'codex' ? NO_EDIT_CODEX : DEFAULTS.noEdit, 5, 200),
     tokensPerTurn: n(settings.stuckTokens, DEFAULTS.tokensPerTurn, 5000, 5_000_000),
   };
 }
