@@ -1,6 +1,7 @@
 // El equipo: proyectos (con uno o varios repos), agentes (roles de serie o de fichero .md), tareas y el planificador.
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import * as store from './store.js';
 import * as codes from './codes.js';
 import * as questions from './questions.js';
@@ -23,6 +24,7 @@ import { detectQuotaHit } from './quota-pause.js';
 import * as memory from './memory.js';
 import * as compact from './compact.js';
 import * as stuck from './stuck.js';
+import * as review from './review.js'; // FT-56
 
 const ENGINES = { demo, claude, codex };
 export const ENGINE_IDS = ['auto', 'claude', 'codex', 'demo'];
@@ -364,7 +366,7 @@ export function messageAgent(id, { text, constraint = false, origin = 'user' } =
 }
 
 // ── Tareas ─────────────────────────────────────────────────────────────────
-export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null, context = null, skills = [], priority = 0, sizeChecked = false }) {
+export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null, context = null, skills = [], priority = 0, sizeChecked = false, checks = [], reviewRequired = false }) {
   // attachments (subidos): imágenes → images (las ve el agente), el resto → files (se citan en el prompt)
   for (const a of attachments) { if (/\.(png|jpe?g|webp)$/i.test(a.path)) images = [...images, a.path]; else files = [...files, a.path]; }
   const s = get();
@@ -379,12 +381,15 @@ export function createTask({ projectId, title, description = '', role, repo = nu
     agentId: null, branch: null, summary: '', diffStat: '', error: null, feedback: '', source, files: files.filter((f) => fs.existsSync(f)),
     constraints: [], priority: Math.max(0, Math.min(100, Number(priority) || 0)), context: cleanContext(context), skills: (Array.isArray(skills) ? skills : []).map(String).slice(0, 10), costUsd: null, attempts: 0, createdAt: Date.now(), updatedAt: Date.now(),
   };
+  if (Array.isArray(checks) && checks.length) task.checks = checks.map((c) => String(c).trim()).filter(Boolean).slice(0, 6); // FT-56: verificaciones que declara la tarea
+  if (reviewRequired) task.reviewRequired = true; // FT-56: nunca se aprueba sola
   if (sizeChecked) task.sizeChecked = true; // FT-63: ya troceada por el PO, no se vuelve a evaluar
   codes.assignCode(s.tasks, p, task);
   task.feedbackImages = copyImages(task, images);
   s.tasks.push(task);
   events.emit('TaskCreated', events.ctxOf(task), { title: task.title, role: task.role, kind: task.kind, status: task.status, dependsOn: task.dependsOn, source: task.source?.kind || null });
   changed();
+  if (task.status === 'review') { task.reviewAt = Date.now(); if (!source) setImmediate(() => autoReview(p, task).catch(() => {})); } // FT-56: creada ya en revisión (API/Guía)
   if (!source) boards.createRemote(p, task).catch(() => {});
   tick();
   return task;
@@ -466,7 +471,7 @@ export async function deleteTask(id) {
   changed();
 }
 
-export async function approve(id) {
+export async function approve(id, { by = null, verdict = null } = {}) {
   const t = findOr404(get().tasks, id, 'Tarea');
   if (t.status !== 'review') throw fail(409, 'La tarea no está en revisión');
   const p = projectOf(t);
@@ -481,14 +486,16 @@ export async function approve(id) {
   }
   t.status = 'done';
   t.updatedAt = Date.now();
-  events.emit('TaskReviewed', events.ctxOf(t), { decision: 'approved', merged: !!t.branch });
+  events.emit('TaskReviewed', events.ctxOf(t), { decision: 'approved', merged: !!t.branch, ...(by ? { by, verdict } : {}) });
+  if (by) { t.autoApproved = { by, text: verdict?.text || '', at: Date.now() }; reviewNote(t, by, 'approved', verdict?.text); } else reviewNote(t, 'human', 'approved');
+  delete t.reviewNote; delete t.reviewing;
   changed();
   refreshReviews().catch(() => {}); // FT-19: la base avanzó: las demás ramas en revisión pueden haberse desfasado
   reflect(t, `✅ Aprobada en AgentOffice${t.summary ? `\n\n${t.summary.slice(0, 1500)}` : ''}`);
   tick();
 }
 
-export async function reject(id, feedback = '', images = [], attachments = []) {
+export async function reject(id, feedback = '', images = [], attachments = [], by = null) {
   const t = findOr404(get().tasks, id, 'Tarea');
   for (const a of attachments) { if (/\.(png|jpe?g|webp)$/i.test(a.path)) images = [...images, a.path]; else t.files = [...(t.files || []), a.path]; }
   if (!['review', 'failed'].includes(t.status)) throw fail(409, 'Solo se devuelven tareas en revisión o fallidas');
@@ -497,13 +504,99 @@ export async function reject(id, feedback = '', images = [], attachments = []) {
   // FT-75: cada corrección de una revisión se recuerda (la primera frase) para no repetir el error en otras tareas
   if (feedback.trim() && t.agentId && get().settings.agentMemory !== false) memory.addLesson(t.projectId, t.agentId, `Corrección de revisión: ${feedback.trim().split(/(?<=[.!?])\s|\n/)[0]}`, t.code || t.id);
   t.feedbackImages = copyImages(t, images);
-  events.emit('TaskReviewed', events.ctxOf(t), { decision: 'rejected', feedback: feedback.trim().slice(0, 500) });
+  events.emit('TaskReviewed', events.ctxOf(t), { decision: 'rejected', feedback: feedback.trim().slice(0, 500), ...(by ? { by, verdict: { approve: false } } : {}) });
+  if (by) { t.autoReviews = (t.autoReviews || 0) + 1; reviewNote(t, by, 'rejected', feedback); } else { delete t.autoReviews; reviewNote(t, 'human', 'rejected', feedback); } // FT-56: una devolución humana reinicia el tope de ciclos automáticos
+  delete t.reviewNote; delete t.reviewing; delete t.autoApproved; delete t.reviewAt; delete t.nudged;
   if (feedback.trim()) events.emit('UserInstructionAdded', events.ctxOf(t), { kind: 'feedback', text: feedback.trim().slice(0, 500) });
   Object.assign(t, { status: 'todo', agentId: null, diffStat: '', error: null, behind: 0, conflicts: [], mergeKey: null, updatedAt: Date.now() });
   changed();
   reflect(t, feedback.trim() ? `↩ Devuelta en AgentOffice: ${feedback.trim().slice(0, 1000)}` : undefined);
   tick();
 }
+
+// ── Revisión visible y automática (FT-56) ──────────────────────────────────
+// Historial de la tarea: qué se decidió, quién y por qué (las 20 últimas entradas).
+function reviewNote(t, by, verdict, text) {
+  (t.reviewLog ||= []).push({ at: Date.now(), by, verdict, text: String(text || '').slice(0, 600) });
+  t.reviewLog = t.reviewLog.slice(-20);
+}
+const reviewing = new Set();
+const BASE_FILES = /^diff --git a\/(.+?) b\//gm;
+// Verificaciones declaradas, ejecutadas en el worktree (o en el repo si la tarea no tiene rama, p. ej. motor demo). → { ok, failed? }
+async function runChecks(cwd, checks) {
+  for (const c of checks) {
+    const ok = await new Promise((r) => { const ch = spawn('sh', ['-c', c], { cwd, stdio: 'ignore', timeout: 300_000 }); ch.on('error', () => r(false)); ch.on('close', (code) => r(code === 0)); });
+    if (!ok) return { ok: false, failed: c };
+  }
+  return { ok: true };
+}
+async function runReviewer(p, t, repo, cwd, checks) {
+  const s = get();
+  const agent = s.agents.find((a) => a.id === t.agentId) || teamOf(p)[0];
+  const engineId = ENGINES[s.settings.reviewEngine] && s.settings.reviewEngine !== 'auto' ? s.settings.reviewEngine : (ENGINES[t.lastEngine] ? t.lastEngine : 'demo');
+  const role = Object.values(allRoles()).find((r) => r.kind === 'qa') || roleOf(agent.role) || roleOf('back');
+  const job = await ENGINES[engineId].start({
+    agent, task: t, project: p, cwd, mode: engineId === 'demo' ? 'review' : 'work', goal: null, roles: teamRoles(p),
+    prompt: review.reviewPrompt(t, repo?.baseBranch || 'main', checks), system: role.system, model: modelFor(engineId, agent, role),
+    kind: 'dev', roleTools: null, hasSkills: false, images: [], budgetUsd: Number(s.settings.maxTaskUsd) > 0 ? Number(s.settings.maxTaskUsd) : 3,
+    effort: ['low', 'medium', 'high'].includes(s.settings.agentEffort) ? s.settings.agentEffort : 'medium',
+    env: { ...engineEnv(engineId), AO_URL: `http://127.0.0.1:${process.env.AO_PORT || 7420}`, AO_TASK: t.id, AO_AGENT: 'revisor' },
+    onActivity: () => {}, onLog: (line) => log(agent.id, `🔎 ${line}`), onTool: () => {}, onUsage: () => {},
+  });
+  const timer = setTimeout(() => job.stop?.(), 15 * 60_000);
+  try { const res = await job.done; if (res.costUsd != null) t.costUsd = (t.costUsd || 0) + res.costUsd; return review.parseVerdict(res.summary); } finally { clearTimeout(timer); }
+}
+// Al llegar a «Revisión» (reviewPolicy auto-qa | auto). Nunca toca tareas reviewRequired, con tope/atasco, ni con ficheros sensibles.
+export async function autoReview(p, t) {
+  const s = get(), policy = review.policyOf(s.settings);
+  if (policy === 'manual' || t.status !== 'review' || t.kind === 'plan' || reviewing.has(t.id)) return;
+  const hold = (why) => { t.reviewNote = why; reviewNote(t, 'auto', 'skipped', why); changed(); };
+  reviewing.add(t.id);
+  try {
+    if (t.reviewRequired) return hold('✋ marcada «revisión obligatoria»: la revisa una persona');
+    if (t.budgetHit || t.stuck) return hold('✋ terminó cortada (tope de gasto o atasco): la revisa una persona');
+    if ((t.autoReviews || 0) >= review.MAX_AUTO_CYCLES) return hold('⚠️ dos revisiones automáticas fallidas: la revisa una persona');
+    const repo = repoOfTask(p, t);
+    const checks = review.declaredChecks(t);
+    const dirOk = t.branch && fs.existsSync(git.worktreeDir(p, t));
+    const cwd = dirOk ? git.worktreeDir(p, t) : (repo?.path || store.DATA_DIR);
+    let patch = '';
+    if (t.branch && repo) { try { patch = await git.diff(repo, t); } catch { /* sin diff */ } }
+    const files = patch ? [...patch.matchAll(BASE_FILES)].map((m) => m[1]) : [...String(t.diffStat || '').matchAll(/^\s*(\S+)\s+\|/gm)].map((m) => m[1]);
+    const hits = review.sensitiveHits(files, patch, review.sensitiveList(s.settings));
+    if (hits.length) return hold(`✋ toca ficheros sensibles (${hits.slice(0, 3).join(', ')}): la revisa una persona`);
+    if (policy === 'auto' && !checks.length) return; // sin verificaciones declaradas se comporta como manual
+    t.reviewing = policy; changed();
+    if (policy === 'auto') {
+      const r = await runChecks(cwd, checks);
+      if (t.status !== 'review') return;
+      if (!r.ok) return hold(`✋ la verificación «${r.failed}» falló: no se aprueba sola`);
+      await approve(t.id, { by: 'auto', verdict: { approve: true, text: `pasan las verificaciones declaradas (${checks.join('; ')})` } });
+      return;
+    }
+    const v = await runReviewer(p, t, repo, cwd, checks); // auto-qa
+    if (t.status !== 'review') return; // un humano decidió mientras tanto
+    if (!v) return hold('✋ el revisor no devolvió un veredicto válido: la revisa una persona');
+    if (v.approve) await approve(t.id, { by: 'auto-qa', verdict: { approve: true, text: v.reasons.join('; ') || 'sin objeciones' } });
+    else await reject(t.id, v.feedback || v.reasons.join('\n') || 'El revisor automático pide cambios.', [], [], 'auto-qa');
+  } catch (e) { hold(`✋ la revisión automática falló (${e.message}): la revisa una persona`); }
+  finally { reviewing.delete(t.id); delete t.reviewing; changed(); }
+}
+
+// Aviso proactivo: pasados reviewNudgeMin minutos en revisión, evento ReviewPending (una vez por entrada en revisión).
+export function reviewNudge(now = Date.now()) {
+  const s = get(), min = review.nudgeMin(s.settings);
+  let any = false;
+  for (const t of s.tasks.filter((x) => x.status === 'review' && !x.nudged && !x.reviewing)) {
+    const minutes = Math.floor((now - review.waitingSince(t)) / 60000);
+    if (minutes < min) continue;
+    t.nudged = true; any = true;
+    events.emit('ReviewPending', events.ctxOf(t), { taskCode: t.code || t.id, minutes, blocks: review.blocksOf(s.tasks, t).map((b) => b.code) });
+  }
+  if (any) changed();
+  return any;
+}
+setInterval(reviewNudge, 5000).unref();
 
 // ── Fusión sin conflictos a mano (FT-19) ───────────────────────────────────
 // Comprobación previa: cuántos commits de la base le faltan a la rama en revisión y si la fusión chocaría (solo rutas).
@@ -1051,6 +1144,8 @@ async function runTask(p, agent, t) {
         events.emit('AgentArtifactCreated', ev, { kind: 'diff', diffStat: t.diffStat.slice(-500) });
       }
       t.status = 'review';
+      Object.assign(t, { reviewAt: Date.now(), nudged: false, lastEngine: engineId }); delete t.autoApproved;
+      setImmediate(() => autoReview(p, t).catch((e) => log(agent.id, `⚠ Revisión automática de ${t.code || t.id}: ${e.message}`))); // FT-56
       events.emit('AgentCompleted', ev, { status: 'review', summary: (t.summary || '').slice(0, 500), costUsd: t.costUsd });
       log(agent.id, '✋ Terminado: esperando tu revisión');
       reflect(t, `✋ ${agent.name} terminó; pendiente de revisión en AgentOffice.${t.diffStat ? `\n\n\`\`\`\n${t.diffStat.slice(0, 800)}\n\`\`\`` : ''}`);

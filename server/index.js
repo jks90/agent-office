@@ -8,6 +8,7 @@ import * as store from './store.js';
 import { prefixOf } from './codes.js';
 import * as questions from './questions.js';
 import * as team from './team.js';
+import * as review from './review.js'; // FT-56
 import { allRoles } from './roles.js';
 import { checkSuite, suiteInfo } from './suite.js';
 import * as auth from './engines/auth.js';
@@ -86,7 +87,7 @@ const inputStatus = () => {
   return inputCache.v;
 };
 // FT-50: cada tarea sin empezar lleva `plannedAgentId`/`plannedReason` (calculados en cada snapshot, no persistidos).
-const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), tasks: team.withPlannedAgents(st), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), costEstimates: team.costEstimates(), rtk: claudeEngine.rtkAvailable(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot() }; };
+const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), tasks: review.decorate(team.withPlannedAgents(st)), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), costEstimates: team.costEstimates(), rtk: claudeEngine.rtkAvailable(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot() }; };
 
 async function readBody(req) {
   const limit = req.url.startsWith('/api/upload') ? 40e6 : req.url.startsWith('/api/guide/stt') ? 12e6 : 1e6; // adjuntos y audio del Guide (FT-9) en base64
@@ -212,6 +213,10 @@ const routes = [
     if (typeof b.flowTestUrl === 'string' && b.flowTestUrl.trim()) st.flowTestUrl = b.flowTestUrl.trim().replace(/\/+$/, '').replace(/\/mcp$/, '');
     if (typeof b.workspaceHostDir === 'string') st.workspaceHostDir = b.workspaceHostDir.trim();
     if (typeof b.quotaGuard === 'boolean') st.quotaGuard = b.quotaGuard; // FT-45
+    if (review.POLICIES.includes(b.reviewPolicy)) st.reviewPolicy = b.reviewPolicy; // FT-56: manual | auto-qa | auto
+    if (b.reviewNudgeMin !== undefined && Number(b.reviewNudgeMin) >= 0) st.reviewNudgeMin = Math.min(1440, Math.round(Number(b.reviewNudgeMin)));
+    if (Array.isArray(b.reviewSensitive)) st.reviewSensitive = b.reviewSensitive.map((x) => String(x).trim()).filter(Boolean).slice(0, 40);
+    if (typeof b.reviewEngine === 'string' && ['', 'claude', 'codex', 'demo'].includes(b.reviewEngine)) st.reviewEngine = b.reviewEngine;
     if (typeof b.agentMemory === 'boolean') st.agentMemory = b.agentMemory; // FT-75
     if (b.maxTaskUsd !== undefined) st.maxTaskUsd = Math.max(0.5, Math.min(50, Number(b.maxTaskUsd) || 3)); // tope de gasto por intento de tarea
     if (b.compactAt !== undefined) st.compactAt = Number(b.compactAt) > 0 ? Math.min(90, Math.max(30, Number(b.compactAt))) / 100 : 0; // FT-63: % de contexto que dispara la compactación (0 = apagada)
