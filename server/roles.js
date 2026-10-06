@@ -74,7 +74,7 @@ function loadDir(dir, source, out) {
       if (!id || BUILTIN[id] || !body) continue;
       out[id] = {
         label: labelOf(id), color: PALETTE[hash(id) % PALETTE.length], kind: kindOf(id, meta),
-        description: meta.description || '', model: MODEL_MAP[meta.model] || meta.model || '',
+        description: meta.description || '', model: MODEL_MAP[meta.model] || meta.model || '', minModel: MODEL_MAP[meta.minModel] || meta.minModel || '', // FT-60
         tools: meta.tools ? meta.tools.split(',').map((t) => t.trim()).filter(Boolean) : null,
         handles: meta.handles ? meta.handles.split(',').map((t) => t.trim()).filter(Boolean) : [],
         skills: meta.skills ? meta.skills.split(',').map((t) => t.trim()).filter(Boolean) : [],
@@ -100,7 +100,7 @@ export const roleOf = (id) => allRoles()[id] || null;
 export const ROLES = BUILTIN; // de serie (para quien solo necesite los fijos)
 
 // Guardar un rol en el catálogo (<catálogo>/roles/<id>.md, formato subagente de Claude Code).
-export function saveRole({ id, description = '', kind = 'dev', model = '', handles = [], skills = [], system = '', file = null }) {
+export function saveRole({ id, description = '', kind = 'dev', model = '', minModel = '', handles = [], skills = [], system = '', file = null }) {
   const rid = String(id || '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
   if (!rid) throw Object.assign(new Error('El rol necesita un nombre'), { status: 400 });
   if (BUILTIN[rid]) throw Object.assign(new Error('Ese nombre es de un rol de serie'), { status: 400 });
@@ -109,6 +109,7 @@ export function saveRole({ id, description = '', kind = 'dev', model = '', handl
   const target = file && file.startsWith(rolesDir()) ? file : path.join(rolesDir(), `${rid}.md`);
   const fm = [`name: ${rid}`, `description: ${String(description).replace(/\n/g, ' ').trim()}`, `kind: ${['planner', 'dev', 'qa', 'docs'].includes(kind) ? kind : 'dev'}`];
   if (model) fm.push(`model: ${model}`);
+  if (minModel) fm.push(`minModel: ${minModel}`); // FT-60: peldaño mínimo de la cascada de modelos
   if (handles.length) fm.push(`handles: ${handles.join(', ')}`);
   if (skills.length) fm.push(`skills: ${skills.join(', ')}`);
   fs.writeFileSync(target, `---\n${fm.join('\n')}\n---\n\n${system.trim()}\n`);

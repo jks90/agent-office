@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // e2e del Guide Agent (FT-11): flujos A–D de la especificación, Policy Layer, eventos y contexto. Sin dependencias nuevas.
+// Al final, la UI de la lista de chats (FT-51) con puppeteer-core (devDependency) y Chrome/Chromium (AO_CHROME).
 //
 //   node scripts/guide-e2e.mjs
 //
@@ -374,6 +375,103 @@ try {
   // ── 7. Parada y límites del chat ───────────────────────────────────────────
   section('Chat: parar');
   check('POST /api/guide/stop sin turno en curso responde ok (stopped=false)', (await post('/api/guide/stop', { chatId: fa.chatId })).body.stopped === false);
+
+  // ── 8. UI: lista de chats de la vista Guía (FT-51) ─────────────────────────
+  section('UI · lista de chats: redimensionar, plegar y borrar (FT-51)');
+  const chrome = [process.env.AO_CHROME, '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium', '/usr/bin/chromium-browser', '/snap/bin/chromium'].find((c) => c && fs.existsSync(c));
+  if (!chrome) check('hay Chrome/Chromium para el e2e de la UI (AO_CHROME)', false);
+  else {
+    const { default: puppeteer } = await import('puppeteer-core');
+    const browser = await puppeteer.launch({ executablePath: chrome, headless: 'new', args: ['--no-sandbox', '--disable-gpu'] });
+    try {
+      const c1 = await chat('chat uno para borrar'), c2 = await chat('chat dos para borrar');
+      const page = await browser.newPage();
+      await page.setViewport({ width: 1300, height: 800 });
+      const errors = [];
+      page.on('pageerror', (e) => errors.push(e.message));
+      page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+      const dialogs = [];
+      page.on('dialog', (d) => { dialogs.push(d.message()); d.accept(); });
+      const apiIds = async () => (await get('/api/guide/chats')).body.map((c) => c.id);
+      const width = () => page.$eval('#view-guide .g-list', (e) => Math.round(e.getBoundingClientRect().width));
+      const rows = () => page.$$eval('#view-guide .g-chat', (bs) => bs.map((b) => b.dataset.gchat));
+      const stored = (k) => page.evaluate((key) => localStorage.getItem(key), k);
+      const open = async () => { await page.goto(`${base}/?view=guide`); await page.waitForSelector('#view-guide .g-chat'); };
+      const drag = async (dx) => { const b = await (await page.$('#view-guide .g-grip')).boundingBox(); const x = b.x + b.width / 2, y = b.y + b.height / 2; await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x + dx / 2, y, { steps: 3 }); await page.mouse.move(x + dx, y, { steps: 3 }); await page.mouse.up(); };
+      await open();
+      check('cada chat lleva en el tooltip título · fecha del último mensaje', (await page.$eval('#view-guide .g-chat', (b) => b.title)).includes(' · '));
+      check('ancho por defecto 220 px', (await width()) === 220, String(await width()));
+      await drag(100);
+      check('arrastrar el tirador ensancha la lista (≈320 px) y guarda ao:guideListW', Math.abs((await width()) - 320) <= 2 && (await stored('ao:guideListW')) === '320', String(await width()));
+      await open();
+      check('el ancho se recuerda tras recargar', Math.abs((await width()) - 320) <= 2, String(await width()));
+      await drag(-600);
+      check('mínimo 160 px', (await width()) === 160, String(await width()));
+      await drag(900);
+      check('máximo 480 px', (await width()) === 480, String(await width()));
+      await page.$eval('#view-guide .g-grip', (g) => g.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+      check('doble clic en el tirador = 220 px', (await width()) === 220 && (await stored('ao:guideListW')) === '220');
+
+      await page.click('#view-guide .g-fold');
+      check('◀ pliega la lista a una tira de 36 px (solo ＋ y ▶) y lo guarda', (await width()) === 36 && (await page.$eval('#view-guide .g-fold', (b) => b.textContent)) === '▶' && (await stored('ao:guideListMin')) === '1', String(await width()));
+      await page.reload(); await page.waitForSelector('#view-guide .g-list.min');
+      check('lo plegado se recuerda tras recargar', (await width()) === 36);
+      await page.click('#view-guide .g-fold');
+      check('▶ la vuelve a expandir', (await width()) === 220 && (await rows()).length >= 3);
+
+      // Borrar uno (no el activo): hover → 🗑 → confirm → DELETE
+      const before = await rows();
+      const victim = c1.chatId;
+      await page.hover(`#view-guide [data-gchat="${victim}"]`);
+      await page.click(`#view-guide [data-gdel="${victim}"]`);
+      await until(async () => !(await rows()).includes(victim), 5000, 100);
+      check('borrar un chat: pide «¿Borrar «título»?», desaparece de la lista y de GET /api/guide/chats', /^¿Borrar «.+»\?$/.test(dialogs.at(-1) || '') && !(await rows()).includes(victim) && !(await apiIds()).includes(victim) && (await rows()).length === before.length - 1, dialogs.at(-1));
+      // Borrar el activo → «Nuevo chat»
+      await page.click(`#view-guide [data-gchat="${c2.chatId}"]`);
+      await page.waitForSelector('#view-guide .g-msg.user');
+      await page.hover(`#view-guide [data-gdel="${c2.chatId}"]`);
+      await page.click(`#view-guide [data-gdel="${c2.chatId}"]`);
+      await until(async () => !(await rows()).includes(c2.chatId), 5000, 100);
+      check('borrar el chat abierto deja «Nuevo chat» y sin mensajes', (await page.$eval('#view-guide .g-title', (e) => e.textContent)).includes('Nuevo chat') && !(await page.$('#view-guide .g-msg')) && !(await apiIds()).includes(c2.chatId));
+      // Teclado
+      await page.click('#view-guide .g-chat');
+      await page.waitForSelector('#view-guide .g-chat.sel');
+      await sleep(300);
+      const first = await page.$eval('#view-guide .g-chat.sel', (b) => b.dataset.gchat);
+      await page.keyboard.press('ArrowDown');
+      await until(async () => (await page.$eval('#view-guide .g-chat.sel', (b) => b.dataset.gchat).catch(() => first)) !== first, 4000, 100);
+      check('↓ con el foco en la lista cambia de chat', (await page.$eval('#view-guide .g-chat.sel', (b) => b.dataset.gchat)) === (await rows())[1]);
+      const sel = await page.$eval('#view-guide .g-chat.sel', (b) => b.dataset.gchat);
+      await page.keyboard.press('Delete');
+      await until(async () => !(await apiIds()).includes(sel), 5000, 100);
+      check('Supr borra el chat seleccionado (con confirmación)', !(await apiIds()).includes(sel) && dialogs.length >= 3);
+      await page.focus('#view-guide .g-list');
+      await page.keyboard.down('Control'); await page.keyboard.press('n'); await page.keyboard.up('Control');
+      check('Ctrl+N deja «Nuevo chat»', (await page.$eval('#view-guide .g-title', (e) => e.textContent)).includes('Nuevo chat'));
+
+      // Cajón flotante: selector con 🗑
+      await page.goto(`${base}/?view=tasks`);
+      await page.click('#guide-fab');
+      await page.waitForSelector('#guide-panel .g-pick option[value]:not([value=""])');
+      const pw = await page.$eval('#guide-panel .g-list', (e) => getComputedStyle(e).display);
+      const target = await page.$eval('#guide-panel .g-pick option:nth-child(2)', (o) => o.value);
+      await page.select('#guide-panel .g-pick', target);
+      await page.waitForFunction(() => !document.querySelector('#guide-panel .g-pdel').disabled);
+      const nd = dialogs.length;
+      await page.click('#guide-panel .g-pdel');
+      await sleep(300);
+      await until(async () => !(await apiIds()).includes(target), 5000, 100);
+      check('cajón flotante: sin lista lateral, selector con 🗑 que borra el chat elegido', pw === 'none' && !(await apiIds()).includes(target) && !(await page.$(`#guide-panel .g-pick option[value="${target}"]`)), JSON.stringify({ pw, gone: !(await apiIds()).includes(target), dlg: dialogs.at(-1), opts: await page.$$eval('#guide-panel .g-pick option', (o) => o.map((x) => x.value + (x.selected ? '*' : ''))), target, errors, nd, nd2: dialogs.length, viewRows: await page.$$eval('#view-guide .g-chat', (b) => b.map((x) => x.dataset.gchat)), hidden: await page.$eval('#guide-panel', (e) => e.hidden), btn: await page.$eval('#guide-panel .g-pdel', (b) => b.disabled + '/' + b.title), toast: await page.$$eval('.toast', (t) => t.map((x) => x.textContent)).catch(() => null) }));
+
+      // Borrar todos
+      await open();
+      const n = (await rows()).length;
+      await page.click('#view-guide .g-delall');
+      await until(async () => (await apiIds()).length === 0, 8000, 150);
+      check('«Borrar todos…» confirma y vacía la lista y la API', n > 0 && /todos los chats/.test(dialogs.at(-1) || '') && (await apiIds()).length === 0 && (await rows()).length === 0, dialogs.at(-1));
+      check('sin errores de consola ni excepciones en la UI', errors.length === 0, errors.join(' | '));
+    } finally { await browser.close(); }
+  }
 } catch (e) {
   failed++;
   console.log(`\n✗ Error inesperado: ${e.stack || e}`);
