@@ -1371,6 +1371,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <div class="grid2"><div><label>Tope de gasto por tarea (US$, por intento; al pasarlo se corta)</label><input name="maxTaskUsd" type="number" min="0.5" max="50" step="0.5" value="${S.settings.maxTaskUsd || 3}" /></div>
     <div><label>Esfuerzo de los agentes (más = más tokens)</label><select name="agentEffort">${['low', 'medium', 'high'].map((v) => `<option value="${v}" ${(S.settings.agentEffort || 'medium') === v ? 'selected' : ''}>${({ low: 'bajo', medium: 'medio (recomendado)', high: 'alto' })[v]}</option>`).join('')}</select></div></div>
     <label><input type="checkbox" name="agentMemory" ${S.settings.agentMemory !== false ? 'checked' : ''} /> Memoria de los agentes: lecciones de tareas anteriores en el prompt (FT-75; ≈1 500 tokens máx. por agente y por proyecto)</label>
+    <label title="Codebase-Memory MCP (tree-sitter, local): el agente localiza funciones/clases con una consulta en vez de leer ficheros"><input type="checkbox" name="codeIndex" ${S.settings.codeIndex === true ? 'checked' : ''} ${S.codeIndexInstalled ? '' : 'disabled'} /> Índice de código por símbolos para Claude y Codex (FT-58)${S.codeIndexInstalled ? '' : ' — no instalado: ejecuta scripts/setup-code-index.sh'}</label>
     <label><input type="checkbox" name="quotaGuard" ${S.settings.quotaGuard !== false ? 'checked' : ''} /> Guardarraíl de cuota: no arrancar tareas con un motor cuya sesión de 5 h esté al ${97} % o más (FT-45)</label>
     <div class="section-title">🧭 Guía (FT-6)</div>
     <label>Proveedor del Guía (el LLM con el que conversa; los cuatro flujos funcionan igual con cualquiera) (FT-8)</label>
@@ -1417,7 +1418,7 @@ Pasos, convenciones y ejemplos…</textarea>
     safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0'); (SETTINGS_EMBED ? safeSet('ao:voice-wake', f.voiceWake ? '1' : '0') : wakeSet(!!f.voiceWake)); // en el panel de flow-test no se abre el micro: el iframe principal lo recoge por el evento `storage`
     refreshSttLocal();
     ttsStop();
-    await api('POST', '/api/settings', { ...f, quotaGuard: !!f.quotaGuard, agentMemory: !!f.agentMemory, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
+    await api('POST', '/api/settings', { ...f, quotaGuard: !!f.quotaGuard, agentMemory: !!f.agentMemory, codeIndex: !!f.codeIndex, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
     ttsInfoLoad();
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');

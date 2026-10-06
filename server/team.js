@@ -21,6 +21,7 @@ import * as quota from './quota.js';
 import { briefingFor } from './briefing.js';
 import { detectQuotaHit } from './quota-pause.js';
 import * as memory from './memory.js';
+import * as codeindex from './codeindex.js';
 
 const ENGINES = { demo, claude, codex };
 export const ENGINE_IDS = ['auto', 'claude', 'codex', 'demo'];
@@ -785,13 +786,13 @@ function buildPrompt(p, agent, t) {
     '',
     p.folder ? `Carpeta del proyecto en el workspace de flow-test: «${p.folder}/» (ahí viven sus flows y su documentación; guarda ahí lo que generes con flow-test).` : '',
     `Trabajas en una copia aislada del repo (git worktree) en la rama ${t.branch}. No cambies de rama ni hagas push.`,
-    (() => { const r = repoOfTask(p, t); return r?.path ? '\n' + briefingFor(r.path) + '\n' : ''; })(),
+    (() => { const r = repoOfTask(p, t); return r?.path ? '\n' + briefingFor(r.path) + (t.codeIndexOn ? '\n' + codeindex.BRIEFING_LINE : '') + '\n' : ''; })(),
     get().settings.agentMemory !== false ? memory.promptBlock(p.id, agent.id) : '', // FT-75: lecciones de tareas anteriores (parte estable del prompt)
     t.reused ? 'En esta rama ya está tu intento anterior (mira `git log` y `git diff` contra la rama base): parte de él y corrige lo que pide la revisión, sin rehacer lo que ya estaba bien.' : '',
     'Lo que dejes sin confirmar se confirmará solo al terminar.',
     t.code ? `Cita el código ${t.code} en lo que documentes (changelog, README, flows, tablero) para que la tarea se pueda rastrear.` : '',
     askBlock(t),
-    economyBlock(),
+    economyBlock(t.codeIndexOn),
     get().settings.agentMemory !== false ? memory.PROMPT_ASK : '',
     'Al acabar, responde con un resumen breve: qué cambiaste y cómo lo probaste.',
   ].join('\n');
@@ -799,10 +800,11 @@ function buildPrompt(p, agent, t) {
 
 // Reglas para gastar menos tokens (cada turno reenvía TODO lo leído: un fichero de 140 KB leído entero pesa ~35k tokens
 // en cada paso que queda). Medido el 6 OCT: las tareas de UI rondaban los 6 $ por leer ficheros enteros y repetir capturas/e2e.
-function economyBlock() {
+function economyBlock(codeIndexOn) {
   return [
     '',
     'Gasta pocos tokens (cada fichero que lees se reenvía en todos los pasos siguientes):',
+    codeIndexOn ? codeindex.ECONOMY_RULE : '', // FT-58
     '- Ficheros grandes (más de ~400 líneas, p. ej. public/app.js, public/office3d.js, server/team.js, README.md): NUNCA los leas enteros. Localiza con Grep (-n) y lee solo el tramo con Read offset/limit.',
     '- No vuelvas a leer lo que ya leíste; no hagas `cat` de ficheros largos ni de salidas largas: recorta con `| tail -30`, `| head`, `grep`.',
     '- Pruebas: ejecuta el e2e/verificación UNA vez cuando creas que está bien; repite solo si falló. Capturas de pantalla: como mucho 1 (otra solo si la primera muestra un fallo), y solo si la tarea es visual.',
@@ -861,6 +863,9 @@ async function runTask(p, agent, t) {
     }
     if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true });
 
+    // FT-58: índice de código del repo (se reindexa si cambió HEAD); sin él o si falla, el agente trabaja como siempre
+    const codeIndex = repo?.path && codeindex.enabled(s.settings) ? await codeindex.ensure(repo.key, repo.path, (m) => log(agent.id, m)) : null;
+    t.codeIndexOn = !!codeIndex;
     const prompt = buildPrompt(p, agent, t);
     t.pendingMessages = []; // ya van en el prompt
     const baseUsage = t.usage || null; // FT-26: consumo de intentos anteriores; t.usage es acumulado y se actualiza en vivo
@@ -875,6 +880,7 @@ async function runTask(p, agent, t) {
       resumeSession: engineId === 'claude' && t.reused && t.sessionId && (t.resumeAfterQuota && t.sessionEngine === 'claude' || Date.now() - (t.sessionAt || 0) < 50 * 60_000) ? t.sessionId : null,
       budgetUsd: Number(s.settings.maxTaskUsd) > 0 ? Number(s.settings.maxTaskUsd) : 3, // tope por intento (Ajustes ▸ «Tope de gasto por tarea»)
       effort: ['low', 'medium', 'high'].includes(s.settings.agentEffort) ? s.settings.agentEffort : 'medium',
+      codeIndex,
       mcpUrl: ['qa', 'docs'].includes(role.kind) ? mcpUrl() : null, // QA y documentalista hablan con flow-test por MCP
       env: { ...engineEnv(engineId), AO_URL: `http://127.0.0.1:${process.env.AO_PORT || 7420}`, AO_TASK: t.id, AO_AGENT: agent.name },
       onActivity: (text) => { agent.activity = text; events.emit('AgentProgress', ev, { activity: text }); changed(); },

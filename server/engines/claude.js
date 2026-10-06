@@ -9,6 +9,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 import { describeTool, toolSummary, firstLine } from './describe.js';
 import { RTK_RULES, BASH_TOOLS } from './allowlist.js';
 import { claudeTracker } from '../usage.js';
+import { SERVER_NAME } from '../codeindex.js';
 
 // Lectura/edición + shell de andar por casa (sin rm, sudo, docker, ssh ni git push; lista blanca compartida con terminal.execute del Guide, FT-10).
 const WORK_TOOLS = ['Read', 'Edit', 'MultiEdit', 'Write', 'Glob', 'Grep', 'TodoWrite', ...BASH_TOOLS];
@@ -20,7 +21,7 @@ const PLAN_TOOLS = ['Read', 'Glob', 'Grep', ASK_RULE, 'Bash(ls *)', 'Bash(cat *)
 const RTK_BIN = [process.env.AO_RTK_BIN, path.join(os.homedir(), '.local/bin/rtk'), '/usr/local/bin/rtk'].find((f) => f && fs.existsSync(f)) || null;
 export const rtkAvailable = () => !!RTK_BIN && process.env.AO_RTK !== 'off';
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, effort, resumeSession, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, budgetUsd, effort, resumeSession, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
   const tools = [...(mode === 'plan' ? PLAN_TOOLS : WORK_TOOLS)];
   // FT-5: entrada stream-json con stdin abierto → se pueden inyectar mensajes del cliente en caliente.
   const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--append-system-prompt', system];
@@ -37,6 +38,10 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, eff
   if (mcpUrl && mode !== 'plan') {
     mcpServers['flow-test'] = { type: 'http', url: mcpUrl };
     tools.push('mcp__flow-test');
+  }
+  if (codeIndex) { // FT-58: índice de código local (stdio); solo lectura de símbolos
+    mcpServers[SERVER_NAME] = { type: 'stdio', command: codeIndex.command, args: [], env: codeIndex.env };
+    tools.push(`mcp__${SERVER_NAME}`);
   }
   args.push('--strict-mcp-config', '--mcp-config', JSON.stringify({ mcpServers }));
   args.push('--allowedTools', ...tools);

@@ -3,6 +3,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import readline from 'node:readline';
 import { firstLine, toolSummary } from './describe.js';
 import { codexTracker } from '../usage.js';
+import { SERVER_NAME } from '../codeindex.js';
 
 // Codex envuelve cada orden en `/usr/bin/zsh -lc "…"`: en el bocadillo solo interesa la orden.
 const unwrap = (cmd) => {
@@ -21,13 +22,17 @@ function bwrapWorks() {
   return sandboxOk;
 }
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, images = [], env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, images = [], env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
   const noSandbox = !bwrapWorks();
   const sandbox = mode === 'plan' ? 'read-only' : 'workspace-write';
   const args = ['exec', '--json', '--skip-git-repo-check', '-C', cwd, ...(noSandbox ? ['--dangerously-bypass-approvals-and-sandbox'] : ['-s', sandbox])];
   if (noSandbox) onLog('⚠ Codex sin sandbox (bwrap no disponible bajo el servicio): aislamiento por worktree + revisión');
   if (model) args.push('-m', model);
   if (mcpUrl && mode !== 'plan') args.push('-c', `mcp_servers.flow_test.url="${mcpUrl}"`);
+  if (codeIndex) { // FT-58: servidor MCP stdio por -c (TOML; los guiones del nombre pasan a «_»)
+    const k = `mcp_servers.${SERVER_NAME.replace(/-/g, '_')}`;
+    args.push('-c', `${k}.command=${JSON.stringify(codeIndex.command)}`, '-c', `${k}.args=[]`, '-c', `${k}.env={${Object.entries(codeIndex.env).map(([n, v]) => `${n}=${JSON.stringify(v)}`).join(',')}}`);
+  }
   for (const img of images) args.push(`--image=${img}`); // con «=» para que -i (variádico) no se trague el «-»
   args.push('-'); // el prompt va por stdin
 
