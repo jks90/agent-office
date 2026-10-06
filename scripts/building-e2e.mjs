@@ -169,11 +169,14 @@ try {
       const o = window.aoOffice, cv = document.querySelector('#office').getBoundingClientRect();
       const rs = o.floors.map((_, i) => o.floorFullScreenRect(i));
       const top = Math.min(...rs.map((r) => r.y)), bottom = Math.max(...rs.map((r) => r.y + r.h));
-      return { widths: rs.map((r) => Math.round(r.w)), xs: rs.map((r) => Math.round(r.x)), heightShare: (bottom - top) / cv.height, canvasH: cv.height };
+      const wrap = document.querySelector('#office').parentElement.getBoundingClientRect();
+      return { widths: rs.map((r) => Math.round(r.w)), xs: rs.map((r) => Math.round(r.x)), heightShare: (bottom - top) / cv.height, canvasH: cv.height, wrapH: wrap.height, top: top - cv.top, bottom: bottom - cv.top };
     });
     check('v2: plantas alineadas en un único eje vertical (mismo x en pantalla, ±4 px)', m.xs.every((x) => Math.abs(x - m.xs[0]) <= 4), JSON.stringify(m.xs));
-    check('v2: ancho visual de planta 550–750 px a 1920×1080', m.widths.every((w) => w >= 550 && w <= 750), JSON.stringify(m.widths));
-    check('v2: el edificio ocupa el 65–80 % del alto útil (±5 %)', m.heightShare >= 0.6 && m.heightShare <= 0.85, m.heightShare.toFixed(2));
+    // Decisión del usuario (2026-10-06): el edificio cabe entero, sin scroll (antes: scroll antes que miniatura con plantas ≥ 550 px).
+    check('el edificio cabe sin scroll (lienzo = alto útil, todas las plantas dentro)', m.canvasH <= m.wrapH + 2 && m.top >= -2 && m.bottom <= m.canvasH + 2, JSON.stringify({ canvasH: m.canvasH, wrapH: m.wrapH, top: m.top, bottom: m.bottom }));
+    check('plantas legibles aun con 5 (≥ 400 px de ancho a 1920×1080)', m.widths.every((w) => w >= 400), JSON.stringify(m.widths));
+    check('el edificio aprovecha la altura (≥ 60 % del alto útil)', m.heightShare >= 0.6, m.heightShare.toFixed(2));
     await page.screenshot({ path: path.join(shotDir, 'building-v2-1920.png') });
     await page.setViewport(vp);
     await sleep(500);

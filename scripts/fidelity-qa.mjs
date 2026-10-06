@@ -161,18 +161,19 @@ try {
     check(`[${key}] edificio: 5 plantas (4 proyectos + Dirección/Guía)`, b.floors === 5, JSON.stringify(b.labels));
     check(`[${key}] edificio: un único eje vertical (x ±4 px)`, b.xs.every((x) => Math.abs(x - b.xs[0]) <= 4), JSON.stringify(b.xs));
     if (w === 1920) {
-      check(`[${key}] edificio: ancho de planta 550–750 px`, b.widths.every((v) => inRange(v, CONTRACT.building.floorVisualWidthPxDesktop)), JSON.stringify(b.widths));
-      check(`[${key}] edificio: alto de planta (pared) 170–240 px`, inRange(b.floorWallPx, CONTRACT.building.floorVisualHeightPxDesktop), `${b.floorWallPx} px (paso ${b.pitchPx} px)`);
-      check(`[${key}] edificio: losa vista entre plantas 18–30 px`, inRange(b.gapPx, CONTRACT.building.floorGapPx), `${b.gapPx} px`);
-      // 5 plantas de ≥170 px + losas ya superan el 80 % de 1080 px: el contrato prevé scroll antes que miniatura.
-      check(`[${key}] edificio 5 plantas: no cabe → scroll vertical, sin miniaturizar`, b.scrolls && b.widths.every((v) => v >= 550), JSON.stringify({ share: +b.heightShare.toFixed(2), canvasH: b.canvasH, wrapH: b.wrapH }));
+      // Decisión del usuario (2026-10-06): el edificio cabe SIEMPRE sin scroll; con 5 plantas cada una sale más pequeña que el
+      // contrato (550–750 px), así que las medidas del contrato se comprueban con 3 plantas.
+      check(`[${key}] edificio 5 plantas: cabe sin scroll`, !b.scrolls && b.widths.every((v) => v >= 400), JSON.stringify({ widths: b.widths, share: +b.heightShare.toFixed(2), canvasH: b.canvasH, wrapH: b.wrapH }));
       await buildingScene(2); await sleep(1800);
       const b3 = vp.building3 = await measureBuilding();
       await page.screenshot({ path: path.join(shotDir, `fidelity-${key}-edificio-3-plantas.png`) });
-      check(`[${key}] edificio 3 plantas: ocupa 65–80 % del alto útil (±5 %)`, b3.heightShare >= 0.6 && b3.heightShare <= 0.85, `${b3.heightShare.toFixed(2)} · ${JSON.stringify({ widths: b3.widths, wall: b3.floorWallPx, scrolls: b3.scrolls })}`);
+      check(`[${key}] edificio 3 plantas: ancho de planta 550–750 px`, b3.widths.every((v) => inRange(v, CONTRACT.building.floorVisualWidthPxDesktop)), JSON.stringify(b3.widths));
+      check(`[${key}] edificio 3 plantas: alto de planta (pared) 170–240 px`, inRange(b3.floorWallPx, CONTRACT.building.floorVisualHeightPxDesktop), `${b3.floorWallPx} px (paso ${b3.pitchPx} px)`);
+      check(`[${key}] edificio 3 plantas: losa vista entre plantas 18–30 px`, inRange(b3.gapPx, CONTRACT.building.floorGapPx), `${b3.gapPx} px`);
+      check(`[${key}] edificio 3 plantas: ocupa 65–90 % del alto útil, sin scroll (margen corto a propósito: aprovecha el alto)`, b3.heightShare >= 0.6 && b3.heightShare <= 0.9 && !b3.scrolls, `${b3.heightShare.toFixed(2)} · ${JSON.stringify({ widths: b3.widths, scrolls: b3.scrolls })}`);
       await buildingScene(4); await sleep(1500);
     } else {
-      check(`[${key}] edificio: con poca altura, scroll antes que miniatura (planta ≥ 500 px de ancho)`, b.widths.every((v) => v >= 500) && (b.scrolls || b.heightShare <= 0.9), JSON.stringify({ widths: b.widths, scrolls: b.scrolls, canvasH: b.canvasH, wrapH: b.wrapH }));
+      check(`[${key}] edificio: cabe sin scroll también en pantallas bajas`, !b.scrolls, JSON.stringify({ widths: b.widths, scrolls: b.scrolls, canvasH: b.canvasH, wrapH: b.wrapH }));
     }
     check(`[${key}] edificio: estados visibles (working, failed, reviewing…)`, ['working', 'failed', 'reviewing'].every((s) => b.states.includes(s)), JSON.stringify(b.states));
     check(`[${key}] edificio: ningún agente tapado por otra losa`, b.allClear, `${b.agentsVisible} agentes`);

@@ -1340,16 +1340,10 @@ export class Office3D {
     if (this.mode !== 'building' || this.officeLevel === 'agent' || !wrap || !this.floorGroups.length) { reset(); return this.cv.clientHeight || 208; }
     const avail = wrap.clientHeight || this.cv.clientHeight || 208;
     this.frameCamera(w / avail, this.viewBox());
-    const fw = this.floorPxWidth(0, w);
-    let h = avail;
-    // FT-81: crece solo hasta el mínimo legible (575 px); con 620 un edificio de 3 plantas ya pedía scroll y pasaba del 80 % del alto
-    if (fw && fw < 560) h = Math.min(avail * 4, Math.round(avail * (575 / fw)));
-    if (h > avail + 2) {
-      this.cv.style.height = h + 'px';
-      if (this.labelRoot) { this.labelRoot.style.height = h + 'px'; this.labelRoot.style.bottom = 'auto'; }
-      wrap.style.overflowY = 'auto';
-    } else { reset(); h = avail; }
-    return h;
+    // Decisión del usuario (2026-10-06): el edificio cabe SIEMPRE en la vista, sin scroll; con muchas plantas cada una sale más
+    // pequeña. (Antes, FT-77/81: si la planta bajaba de 560 px el lienzo crecía y aparecía scroll vertical.)
+    reset();
+    return avail;
   }
   // Ancho en px de la planta i para un lienzo de ancho w (proyección de su caja; no depende del tamaño CSS del lienzo).
   floorPxWidth(i, w) {
@@ -1444,7 +1438,7 @@ export class Office3D {
       minZ = Math.min(minZ, v.z); maxZ = Math.max(maxZ, v.z);
     }
     if (this.mode === 'building') maxX += 6.5;   // sitio a la derecha para las tarjetas de las plantas (secundarias a la escena)
-    const margin = this.mode === 'building' ? 1.16 : 1.08; // edificio ≈ 65–80 % del alto útil (contrato visual)
+    const margin = this.mode === 'building' ? 1.04 : 1.08; // edificio: margen corto, cabe sin scroll y aprovecha el alto (2026-10-06)
     let halfW = (maxX - minX) / 2 * margin, halfH = (maxY - minY) / 2 * margin;
     if (halfW / halfH < aspect) halfW = halfH * aspect; else halfH = halfW / aspect;
     const midX = (minX + maxX) / 2, midY = (minY + maxY) / 2;
