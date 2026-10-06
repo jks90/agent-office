@@ -182,6 +182,8 @@ Variables: `AO_PORT` (7420), `AO_HOST` (127.0.0.1), `AO_DATA_DIR`, `AO_CLAUDE_BI
 
 ## Consumo de tokens (FT-26)
 
+**Resumen limpio (FT-53):** la tabla del 📊 Resumen queda en una línea por proyecto — «Tokens por sesión» = solo el total (`23,9M tok`) con un punto ámbar/rojo si algún agente pasa del 80 % de su contexto y botón «Ver» (`data-sum-tokens`); «Equipo» = «6 agentes» con hasta 3 avatares + «+3» (`data-sum-team`); «Trabajando en» = «2 en curso» (+ código si es una); «Libres» = «4 libres». El detalle vive en modales (`dialog()`, clase `summary-modal`, a pantalla completa en ≤760 px): **Tokens por sesión · proyecto** (una fila por agente: rol, motor/modelo, total, ↓↑⚡, barra con «quedan…», coste; totales al pie; orden por total; «Copiar como texto») y **Equipo · proyecto** (💤 libre / ⚙ trabajando en FT-xx / ⏸ pausado / ❓ esperando respuesta, actividad, «Abrir» el cajón y «Ir a la tarea»). Se repintan en vivo con cada `state` del SSE sin cerrarse; Esc cierra. Con varios proyectos, la fila «Total» trae «Ver todos» (tokens agrupados por proyecto). Solo UI, sin cambios de API; prueba: `node scripts/summary-e2e.mjs`.
+
 El Resumen muestra, por agente y sesión, los tokens gastados (↓ entrada · ↑ salida · ⚡ caché · total) y un total por proyecto, en vivo por el mismo SSE `state` (`agent.usage`, y `task.usage` acumulado entre intentos). Solo se guardan cifras, nunca prompts ni transcripts. Lógica en `server/usage.js`; prueba: `node scripts/usage-e2e.mjs`.
 
 ### Cuota de las suscripciones (FT-45)

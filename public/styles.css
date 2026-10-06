@@ -378,6 +378,21 @@ table.summary .busy { display: flex; align-items: center; gap: 6px; white-space:
 .tokrow .tok { color: var(--ok); font-weight: 600; }
 .tokbar { display: inline-block; width: 60px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
 .tokbar i { display: block; height: 100%; background: var(--ok); } .tokbar.warn i { background: #fbbf24; } .tokbar.bad i { background: #f87171; }
+/* Resumen limpio (FT-53): celdas de una línea y modales «Ver» */
+.avatar.xs { width: 20px; height: 20px; font-size: 11px; }
+.avatars { display: inline-flex; margin-right: 4px; } .avatars .avatar + .avatar { margin-left: -6px; }
+.sum-view { margin-left: 4px; }
+.tokdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-left: 4px; background: #fbbf24; } .tokdot.bad { background: #f87171; }
+table.summary td { white-space: nowrap; }
+tr.sum-total td { border-top: 2px solid var(--line); }
+dialog.summary-modal { width: min(1040px, 96vw); max-height: 90vh; overflow: auto; }
+.sum-detail td.num, .sum-detail th.num { text-align: right; } .sum-detail td { vertical-align: middle; }
+.sum-detail tr.sum-group td { background: var(--panel3); font-weight: 600; }
+.sum-detail .ctx { white-space: nowrap; font-size: 11px; } .sum-detail tr.old { opacity: .65; }
+.sum-detail .sum-acts { white-space: nowrap; text-align: right; } .sum-detail .small { font-size: 11px; }
+.sum-state.working { color: var(--ok); } .sum-state.paused { color: #fbbf24; } .sum-state.asking { color: #93c5fd; }
+.sum-note { margin: 8px 2px; font-size: 12px; }
+@media (max-width: 760px) { dialog.summary-modal { width: 100vw; max-width: 100vw; height: 100vh; max-height: 100vh; margin: 0; border-radius: 0; } }
 table.summary button.small.on { background: color-mix(in srgb, var(--ok) 20%, transparent); border-color: var(--ok); color: #b8f4d8; }
 
 /* FT-27: arrastrar tarjetas entre columnas */
