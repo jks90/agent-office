@@ -532,7 +532,9 @@ export class Office3D {
       if (!el) continue;
       // Esquina derecha (x=RX, z=0): con la cámara en (1,1,1) es el punto más a la derecha en pantalla.
       const p = this.project(RX, g.position.y + SLAB_H + WALL_H / 2, 0);
-      el.style.left = p.x + 'px';
+      // Si la etiqueta no cabe a la derecha del edificio (lienzo estrecho, texto largo), se pega al borde del lienzo (FT-48).
+      const w = el.offsetWidth || 0, cw = this.cv.clientWidth || 0;
+      el.style.left = (cw && p.x + w + 8 > cw ? Math.max(8, cw - 8 - w) : p.x) + 'px';
       el.style.top = p.y + 'px';
       el.style.opacity = p.visible ? '1' : '0';
       el.classList.toggle('hover', g.userData.index === this.hoverFloor);
