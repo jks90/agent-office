@@ -151,9 +151,10 @@ const FURN_DIR = 'assets/3d/furniture/';
 const CHAR_DIR = 'assets/3d/characters/';
 
 export class Office3D {
-  constructor(canvas, { onAgentClick, onFloorClick } = {}) {
+  constructor(canvas, { onAgentClick, onFloorClick, onGuideClick } = {}) {
     this.cv = canvas;
     this.onAgentClick = onAgentClick;
+    this.onGuideClick = onGuideClick;   // clic en la planta Dirección / Guía → app.js abre la pestaña del Guía
     this.onFloorClick = onFloorClick;   // clic en una planta del edificio → (projectId); app.js entra en esa planta (FT-47)
     this.agents = [];
     this.tasks = [];
@@ -1283,14 +1284,16 @@ export class Office3D {
     return null;
   }
 
+  openFloor(f) { if (f?.guide) this.onGuideClick?.(); else if (f?.projectId) this.onFloorClick?.(f.projectId); }
+
   onPointer(e, click) {
     if (click) this.cv.focus({ preventScroll: true });   // para que Esc vuelva al edificio (FT-47)
     if (this.mode === 'building') {
       const i = this.pickFloor(e);
       const f = this.floors[i];
-      const openable = !!f?.projectId;             // la planta «+N» no se abre
+      const openable = !!f?.projectId || !!f?.guide; // la planta «+N» no se abre; la de Dirección abre el Guía
       this.setHover(openable ? i : -1);
-      if (click) { if (openable) this.onFloorClick?.(f.projectId); }
+      if (click && openable) this.openFloor(f);
       else this.cv.style.cursor = openable ? 'pointer' : 'default';
       return;
     }
@@ -1303,13 +1306,13 @@ export class Office3D {
   onKey(e) {
     if (e.key !== 'Tab' && e.key !== 'Enter') return;
     if (this.mode === 'building') {
-      const open = this.floors.map((f, i) => f.projectId ? i : -1).filter((i) => i >= 0);
+      const open = this.floors.map((f, i) => f.projectId || f.guide ? i : -1).filter((i) => i >= 0);
       if (!open.length) return;
       e.preventDefault();
       const pos = open.indexOf(this.hoverFloor);
       const next = open[(pos + (e.shiftKey ? open.length - 1 : 1)) % open.length];
       if (e.key === 'Tab') { this.setHover(next); this.cv.style.cursor = 'pointer'; this.updateFloorLabels(); }
-      else if (this.hoverFloor >= 0) this.onFloorClick?.(this.floors[this.hoverFloor]?.projectId);
+      else if (this.hoverFloor >= 0) this.openFloor(this.floors[this.hoverFloor]);
       return;
     }
     const ids = this.agents.map((a) => a.id).filter((id) => this.actors.get(id)?.group.visible);

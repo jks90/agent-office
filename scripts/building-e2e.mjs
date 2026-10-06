@@ -110,6 +110,11 @@ try {
   check('etiquetas HTML por planta con fallidos', st.labels.length === 3 && /Beta · 0 trabajando · 2 en cola · 1 en revisión · 0 fallidos/.test(st.labels[1]), st.labels.join(' | '));
   check('⏸ en proyectos parados, pero no en Dirección/Guía', st.labels.slice(0, 2).every((l) => l.startsWith('⏸')) && !st.labels[2].startsWith('⏸'), st.labels.join(' | '));
   check('planta superior reservada a Dirección/Guía con estado del Guía', st.dbg.floors[2]?.guide?.status === 'escuchando' && /Dirección \/ Guía · escuchando/.test(st.labels[2]), JSON.stringify(st.dbg.floors[2]));
+  // La planta Dirección / Guía se abre: lleva a la pestaña del Guía (antes no hacía nada al pulsarla)
+  const toGuide = await page.evaluate(() => { const o = window.aoOffice; const f = o.floors.find((x) => x.guide); o.openFloor(f); return !document.querySelector('#view-guide').hidden; });
+  check('pulsar la planta Dirección / Guía abre el Guía', toGuide);
+  await page.evaluate(() => document.querySelector('.nav-item[data-tab=office]').click());
+  await new Promise((r) => setTimeout(r, 400));
   check('debugState expone agentes visibles por planta', st.dbg.floors[0].visibleAgents.length === 1 && st.dbg.floors[1].visibleAgents.length === 2, JSON.stringify(st.dbg.floors.map((f) => f.visibleAgents)));
   const withFailed = await page.evaluate((pid) => {
     const d = window.aoOffice.debugState();
