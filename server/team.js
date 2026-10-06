@@ -332,7 +332,7 @@ export function messageAgent(id, { text, constraint = false, origin = 'user' } =
 }
 
 // ── Tareas ─────────────────────────────────────────────────────────────────
-export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null, context = null, skills = [] }) {
+export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null, context = null, skills = [], priority = 0 }) {
   // attachments (subidos): imágenes → images (las ve el agente), el resto → files (se citan en el prompt)
   for (const a of attachments) { if (/\.(png|jpe?g|webp)$/i.test(a.path)) images = [...images, a.path]; else files = [...files, a.path]; }
   const s = get();
@@ -345,7 +345,7 @@ export function createTask({ projectId, title, description = '', role, repo = nu
     dependsOn: (Array.isArray(dependsOn) ? dependsOn : []).filter((d) => s.tasks.some((t) => t.id === d)),
     status: ['backlog', 'todo', 'review', 'done'].includes(status) ? status : 'todo',
     agentId: null, branch: null, summary: '', diffStat: '', error: null, feedback: '', source, files: files.filter((f) => fs.existsSync(f)),
-    constraints: [], context: cleanContext(context), skills: (Array.isArray(skills) ? skills : []).map(String).slice(0, 10), costUsd: null, attempts: 0, createdAt: Date.now(), updatedAt: Date.now(),
+    constraints: [], priority: Math.max(0, Math.min(100, Number(priority) || 0)), context: cleanContext(context), skills: (Array.isArray(skills) ? skills : []).map(String).slice(0, 10), costUsd: null, attempts: 0, createdAt: Date.now(), updatedAt: Date.now(),
   };
   codes.assignCode(s.tasks, p, task);
   task.feedbackImages = copyImages(task, images);
@@ -649,7 +649,7 @@ export function tick() {
     if (!p.running) continue;
     const team = teamOf(p);
     let slots = (s.settings.maxParallel || 4) - team.filter((a) => jobs.has(a.id)).length;
-    const todo = s.tasks.filter((t) => t.projectId === p.id && t.status === 'todo').sort((a, b) => a.createdAt - b.createdAt);
+    const todo = s.tasks.filter((t) => t.projectId === p.id && t.status === 'todo').sort((a, b) => (b.priority || 0) - (a.priority || 0) || a.createdAt - b.createdAt); // prioridad alta primero; a igualdad, la más antigua
     for (const t of todo) {
       if (slots <= 0) break;
       if (!depsDone(t)) continue;
