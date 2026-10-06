@@ -381,3 +381,11 @@ table.summary button.small.on { background: color-mix(in srgb, var(--ok) 20%, tr
 .merge-chip { font-size: 11px; padding: 1px 7px; border-radius: 12px; overflow-wrap: anywhere; }
 .merge-chip.behind { background: #fbbf2422; color: #fbbf24; border: 1px solid #fbbf2455; }
 .merge-chip.conflict { background: #ef444422; color: #f87171; border: 1px solid #ef444455; }
+
+/* Ajustes embebidos en el panel tipo Cmd de flow-test (FT-42): solo el diálogo, a marco completo */
+body.settings-embed > *:not(dialog):not(#toasts) { display: none !important; }
+body.settings-embed dialog { position: fixed; inset: 0; margin: 0; width: 100%; max-width: none; height: 100%; max-height: none; border: 0; border-radius: 0; overflow: auto; box-shadow: none; }
+body.settings-embed dialog::backdrop { background: transparent; }
+body.settings-embed dialog .row .ghost { display: none; }
+body.settings-embed .set-sec[hidden] { display: none; }
+body.settings-embed .set-sec > .section-title:first-child { display: none; } /* el título ya sale en el menú lateral */

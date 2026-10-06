@@ -5,7 +5,8 @@ let S = { projects: [], agents: [], tasks: [], settings: {}, roles: {}, engines:
 let projectId = safeGet('ao:project');
 let drawerAgent = null;
 let openTaskId = null; // tarea abierta en el modal «Ver la tarea» (FT-2)
-let hostCtx = null, ctxTimer = null, ctxSent = ""; // publicación del contexto (FT-2)
+let hostCtx = null, ctxTimer = null, ctxSent = ""; // hostFeatures: lo que el flow-test que nos embebe sabe hacer (p. ej. 'settingsPanel', FT-42)
+let hostFeatures = []; // publicación del contexto (FT-2)
 const logs = new Map();
 
 import { Office } from './office3d.js';
@@ -40,6 +41,7 @@ function toast(text, kind = '') {
 // el servidor se reinicia) lo cierra para siempre: aquí se vuelve a abrir con espera creciente para que la vista no se
 // quede congelada. Al reconectar llegan `state` y `logs` completos, así que no se pierde nada.
 let esRetry = 1000;
+let settingsEmbedOpened = false;
 function connectEvents() {
   const es = new EventSource(BASE + 'events');
   es.addEventListener('open', () => { esRetry = 1000; });
@@ -48,6 +50,7 @@ function connectEvents() {
     if (!S.projects.some((p) => p.id === projectId)) projectId = S.projects[0]?.id ?? null;
     render();
     renderQuestions();
+    if (SETTINGS_EMBED && !settingsEmbedOpened) { settingsEmbedOpened = true; openSettingsEmbed(); }
   });
   es.addEventListener('logs', (e) => {
     for (const [id, arr] of Object.entries(JSON.parse(e.data))) logs.set(id, arr);
@@ -111,6 +114,7 @@ const roleChip = (role) => `<span class="chip" style="--c:${S.roles[role]?.color
 // y un cajón flotante disponible en cualquier vista (Ctrl+G). La conversación va por POST /api/guide/chat (SSE); las
 // confirmaciones de las tools salen por el modal de preguntas de siempre (snapshot SSE), no por aquí.
 const EMBEDDED = window.self !== window.top; // antes que el Guía: guideRender → wakeSync → wakeNotify lo lee al arrancar (FT-38)
+const SETTINGS_EMBED = EMBEDDED && new URLSearchParams(location.search).get('embed') === 'settings'; // FT-42: la vista «Ajustes» sola, para el panel tipo Cmd de flow-test
 const G = { chats: [], chatId: null, messages: [], busy: false, panelOpen: false, loaded: false };
 const guideRoots = []; // contenedores montados: { el, panel }
 const GUIDE_HINTS = ['Créame una tarea para solucionar esto', '¿Cómo va?', '¿Qué está haciendo ahora mismo?', 'Enséñame lo que ha cambiado'];
@@ -989,7 +993,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <hr style="border-color:var(--line);margin:16px 0" />
     <button type="button" class="danger small" data-delete-project>Borrar el proyecto «${esc(project()?.name)}»</button>
     ${buttons()}`, async (f) => {
-    safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0'); wakeSet(!!f.voiceWake);
+    safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0'); (SETTINGS_EMBED ? safeSet('ao:voice-wake', f.voiceWake ? '1' : '0') : wakeSet(!!f.voiceWake)); // en el panel de flow-test no se abre el micro: el iframe principal lo recoge por el evento `storage`
     await api('POST', '/api/settings', { ...f, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
@@ -1542,6 +1546,7 @@ window.addEventListener('message', (e) => {
   // Forma real que manda AgentsPanel.tsx (FT-3): {activeTab{id,name,filePath,dirty}, focusedNode{id,name,kind,status}|null, selection[], consoleTail[], runStatus, sidePanel}.
   // Se aplana al `host` que leen context.js / task-context.js (FT-12 detectó que antes se leían campos que flow-test no manda).
   const d = e.data, tab = d.activeTab || null, fn = d.focusedNode || null;
+  hostFeatures = Array.isArray(d.features) ? d.features.map(String) : [];
   hostCtx = {
     flow: d.flow ?? tab?.name ?? null, filePath: d.filePath ?? tab?.filePath ?? null, dirty: d.dirty ?? tab?.dirty ?? false,
     node: d.node ?? fn?.name ?? null, nodeId: fn?.id ?? null, nodeLabel: fn?.name ?? null, nodeKind: fn?.kind ?? null, nodeStatus: fn?.status ?? null,
@@ -1551,5 +1556,42 @@ window.addEventListener('message', (e) => {
   publishContext();
 });
 publishContext();
-if (voicePref.wake()) wakeSet(true); // escucha continua recordada en este navegador (FT-36); con la casilla sin tocar nunca se pide el micro
-if (EMBEDDED) { try { window.parent.postMessage({ type: 'agentoffice:ready' }, location.origin); } catch { /* padre de otro origen */ } } // flow-test responde con su contexto (FT-3)
+if (voicePref.wake() && !SETTINGS_EMBED) wakeSet(true); // escucha continua recordada en este navegador (FT-36); con la casilla sin tocar nunca se pide el micro
+if (EMBEDDED && !SETTINGS_EMBED) { try { window.parent.postMessage({ type: 'agentoffice:ready' }, location.origin); } catch { /* padre de otro origen */ } } // flow-test responde con su contexto (FT-3)
+
+// ── Ajustes en el panel tipo Cmd de flow-test (FT-42) ───────────────────────
+// Un único formulario (el de siempre, `actions.settings`): flow-test pinta el menú lateral con las secciones que publicamos
+// aquí y nos dice cuál enseñar; los campos de las demás siguen en el formulario, así «Guardar» guarda todo a la vez.
+const postParent = (msg) => { try { window.parent.postMessage(msg, location.origin); } catch { /* padre de otro origen */ } };
+function openSettingsEmbed() {
+  document.body.classList.add('settings-embed');
+  document.querySelector('[data-action="settings"]').click(); // abre el diálogo y lanza los refrescos de motores/tablero/STT de siempre
+  const form = $('#dialog form');
+  const secs = [];
+  let cur = null;
+  for (const el of [...form.children]) {
+    if (el.matches('h3')) { el.remove(); continue; }
+    if (el.matches('.row')) break; // Guardar/Cancelar quedan fuera de las secciones
+    if (el.matches('.section-title')) { cur = document.createElement('section'); cur.className = 'set-sec'; cur.dataset.sec = String(secs.length); secs.push(el.textContent.trim()); el.before(cur); }
+    if (cur) cur.append(el);
+  }
+  const show = (i) => document.querySelectorAll('.set-sec').forEach((x) => { x.hidden = x.dataset.sec !== String(i); });
+  show(0);
+  window.addEventListener('message', (e) => {
+    if (e.origin !== location.origin || e.source !== window.parent || e.data?.type !== 'flowtest:settingsSection') return;
+    show(Number(e.data.id) || 0);
+  });
+  document.addEventListener('keydown', (e) => { if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); postParent({ type: 'agentoffice:settingsNav', dir: e.key === 'ArrowUp' ? -1 : 1 }); } });
+  $('#dialog').addEventListener('close', () => postParent({ type: 'agentoffice:settingsClosed' }));
+  postParent({ type: 'agentoffice:settingsSections', sections: secs.map((title, id) => ({ id, title })) });
+}
+// Dentro de flow-test el botón «Ajustes» abre el panel de flow-test, no el diálogo de aquí — SOLO si ese flow-test lo
+// anuncia en su contexto (`features: ['settingsPanel']`, 5.19.3+); con uno más antiguo el diálogo propio sigue funcionando.
+if (EMBEDDED && !SETTINGS_EMBED) {
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('[data-action="settings"]') || !hostFeatures.includes('settingsPanel')) return;
+    e.stopImmediatePropagation(); e.preventDefault();
+    postParent({ type: 'agentoffice:openSettings' });
+  }, true);
+  window.addEventListener('storage', (e) => { if (e.key === 'ao:voice-wake') wakeSet(e.newValue === '1'); });
+}
