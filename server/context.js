@@ -19,6 +19,7 @@ function clean(b = {}) {
     projectId: str(b.projectId), openTaskId: str(b.openTaskId), selectedAgentId: str(b.selectedAgentId),
     taskFilter: str(b.taskFilter) || '', questionOpen: str(b.questionOpen),
     officeMode: ['building', 'floor'].includes(b.officeMode) ? b.officeMode : null, // la Oficina enseña el edificio o una planta (FT-47)
+    officeLevel: ['building', 'floor', 'agent'].includes(b.officeLevel) ? b.officeLevel : null, // FT-71: empresa → planta → agente
     host, at: Number(b.at) || Date.now(),
   };
 }
@@ -35,7 +36,7 @@ export function publish(clientId, body) {
 export function get(clientId) {
   const pick = clientId && clients.has(clientId) ? [clientId, clients.get(clientId)] : [...clients.entries()].at(-1);
   const recentEvents = activity.list({ limit: 20 });
-  if (!pick) return { client: null, view: null, projectId: null, openTaskId: null, selectedAgentId: null, taskFilter: '', questionOpen: null, officeMode: null, project: null, task: null, agent: null, recentEvents, host: null, at: null };
+  if (!pick) return { client: null, view: null, projectId: null, openTaskId: null, selectedAgentId: null, taskFilter: '', questionOpen: null, officeMode: null, officeLevel: null, project: null, task: null, agent: null, recentEvents, host: null, at: null };
   const [client, ctx] = pick;
   const st = store.get();
   const p = st.projects.find((x) => x.id === ctx.projectId);

@@ -8,6 +8,7 @@
 //   node scripts/preview.mjs out.png --query "x=1"   # parámetros extra en la URL
 //   node scripts/preview.mjs out.png --building      # el EDIFICIO (FT-46): 3 proyectos con equipo y 1 sin él (con varios equipos la Oficina abre en modo edificio, FT-47)
 //   node scripts/preview.mjs out.png --building --floor <nombre>   # entra en la planta de ese proyecto haciendo clic en ella (FT-47)
+//   node scripts/preview.mjs out.png --agent-panel   # FT-68: abre la ficha lateral de un agente antes de capturar
 //
 // Imprime también los errores de consola de la página. Pensado para que un agente pueda VER lo que
 // pinta: captura → mirar el PNG → corregir → repetir. Necesita `npm install` (puppeteer-core) y Chrome/Chromium.
@@ -26,6 +27,7 @@ const wait = Number(opt('wait', 12000));
 const query = opt('query', '');
 const full = args.includes('--full');
 const building = args.includes('--building');
+const agentPanel = args.includes('--agent-panel');
 const floorOf = opt('floor', '');   // FT-47: nombre del proyecto cuya planta se abre (clic en su etiqueta)
 const port = 7490 + Math.floor(Math.random() * 100);
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-preview-'));
@@ -102,6 +104,23 @@ try {
       return document.querySelector('#office').dataset.officeMode + ' · ' + document.querySelector('#office-crumb').textContent;
     }, floorOf);
     console.log('🚪 ' + entered);
+  }
+  if (agentPanel) {
+    const opened = await page.evaluate(async () => {
+      const o = window.aoOffice, agent = o?.agents?.find((a) => a.status === 'working') || o?.agents?.[0];
+      if (!o || !agent) return 'sin agente';
+      if (document.querySelector('#office')?.dataset.officeMode !== 'floor') o.setMode?.('floor');
+      const r = o.cv.getBoundingClientRect(); let hit = null;
+      for (let fy = 0.1; fy < 0.95 && !hit; fy += 0.025) for (let fx = 0.1; fx < 0.95; fx += 0.025) {
+        const e = { clientX: r.left + r.width * fx, clientY: r.top + r.height * fy };
+        if (o.pickActor(e) === agent.id) { hit = e; break; }
+      }
+      if (!hit) return 'no encuentro el personaje';
+      o.cv.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: hit.clientX, clientY: hit.clientY }));
+      await new Promise((res) => setTimeout(res, 1200));
+      return document.querySelector('#drawer')?.hidden ? 'cerrado' : 'abierto · ' + document.querySelector('#drawer h2')?.textContent;
+    });
+    console.log('👤 ' + opened);
   }
   const fps = await page.evaluate(() => new Promise((res) => { let n = 0; const t0 = performance.now(); const f = () => { n++; if (performance.now() - t0 < 1000) requestAnimationFrame(f); else res(n); }; requestAnimationFrame(f); }));
   const target = full ? page : (await page.$('.office-wrap')) || page;

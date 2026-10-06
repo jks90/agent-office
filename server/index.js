@@ -8,6 +8,7 @@ import * as store from './store.js';
 import { prefixOf } from './codes.js';
 import * as questions from './questions.js';
 import * as team from './team.js';
+import * as costs from './costs.js'; // FT-76
 import { allRoles } from './roles.js';
 import { checkSuite, suiteInfo } from './suite.js';
 import * as auth from './engines/auth.js';
@@ -24,7 +25,11 @@ import * as guide from './guide/index.js';
 import { getProvider as desktopProvider } from './desktop/index.js';
 import * as stt from './guide/stt/index.js';
 import * as wake from './guide/stt/wake.js';
+import * as tts from './guide/tts/index.js'; // FT-52
 import * as quota from './quota.js';
+import * as memory from './memory.js';
+import * as codeindex from './codeindex.js'; // FT-58
+import * as claudeEngine from './engines/claude.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
 const PORT = Number(process.env.AO_PORT || 7420);
@@ -82,7 +87,8 @@ const inputStatus = () => {
   if (Date.now() - inputCache.t > 30_000) { let v; try { const a = desktopProvider().inputAvailable(); v = { ok: !!a.ok, missing: a.missing || [] }; } catch (e) { v = { ok: false, missing: [] }; } inputCache = { t: Date.now(), v }; }
   return inputCache.v;
 };
-const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot() }; };
+// FT-50: cada tarea sin empezar lleva `plannedAgentId`/`plannedReason` (calculados en cada snapshot, no persistidos).
+const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), tasks: team.withPlannedAgents(st), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), costEstimates: team.costEstimates(), rtk: claudeEngine.rtkAvailable(), codeIndexInstalled: codeindex.available(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot() }; };
 
 async function readBody(req) {
   const limit = req.url.startsWith('/api/upload') ? 40e6 : req.url.startsWith('/api/guide/stt') ? 12e6 : 1e6; // adjuntos y audio del Guide (FT-9) en base64
@@ -120,6 +126,8 @@ const routes = [
     if (typeof b.audio !== 'string' || !b.audio) throw fail(400, 'Falta el audio (base64)');
     return stt.transcribe(Buffer.from(b.audio, 'base64'), b.mime, b.lang);
   }],
+  // Voz de salida (FT-52): GET = proveedor TTS, voz y estado; POST {text, voice?} → audio (se atiende en `guideTts`, respuesta binaria)
+  ['GET', /^\/api\/guide\/tts$/, (_, __, q) => tts.status(q.provider)],
   // Palabra de activación (FT-35): {audio: base64, mime, durationMs?} → {wake, rest, ms}. Solo STT local (nunca OpenAI); audio ≤200 KB / 3 s
   ['POST', /^\/api\/guide\/wake$/, (_, b) => {
     if (typeof b.audio !== 'string' || !b.audio) throw fail(400, 'Falta el audio (base64)');
@@ -137,6 +145,12 @@ const routes = [
   ['POST', /^\/api\/projects$/, (_, b) => team.createProject(b)],
   ['DELETE', /^\/api\/projects\/(\w+)$/, ([id]) => team.deleteProject(id)],
   ['PATCH', /^\/api\/projects\/(\w+)$/, ([id], b) => team.updateProject(id, b)],
+  // Costes de los agentes (FT-76): KPI, desglose y línea base interactiva. Para seguirlo desde flows de flow-test.
+  ['GET', /^\/api\/costs$/, () => costs.overview(store.get())],
+  ['GET', /^\/api\/costs\/export$/, (_, __, q) => { const rows = costs.exportRows(store.get()); return q.format === 'csv' ? { csv: costs.toCsv(rows) } : rows; }],
+  ['GET', /^\/api\/costs\/baseline$/, () => costs.readBaseline()],
+  ['POST', /^\/api\/costs\/baseline$/, (_, b) => costs.addBaseline(b, fail)],
+  ['GET', /^\/api\/costs\/(\w+)\/([\w-]+)$/, ([pid, tid]) => { const t = store.get().tasks.find((x) => x.projectId === pid && (x.id === tid || x.code === tid)); if (!t) throw fail(404, 'Tarea no encontrada'); return costs.taskDetail(t); }],
   // Resumen compacto de las tareas de un proyecto (para seguimiento desde flows de flow-test)
   ['GET', /^\/api\/projects\/(\w+)\/tasks$/, ([id]) => { const s = store.get(); return s.tasks.filter((t) => t.projectId === id).map((t) => ({ id: t.id, code: t.code, status: t.status, kind: t.kind, role: t.role, repo: t.repo, agent: s.agents.find((a) => a.id === t.agentId)?.name || null, title: t.title, dependsOn: t.dependsOn, costUsd: t.costUsd, summary: (t.summary || '').slice(0, 300), updatedAt: t.updatedAt })); }],
   ['POST', /^\/api\/projects\/(\w+)\/import-flow$/, ([id], b) => team.importFlow(id, b.path)],
@@ -171,6 +185,10 @@ const routes = [
   ['POST', /^\/api\/projects\/(\w+)\/run$/, gated(([id], b) => team.setRunning(id, b.running))],
   ['POST', /^\/api\/projects\/(\w+)\/goal$/, gated(([id], b) => team.planGoal(id, b.goal, { attachments: b.attachments, title: b.title }))],
   ['POST', /^\/api\/tasks$/, gated((_, b) => team.createTask(b))],
+  // FT-75 · memoria de los agentes: GET/PUT /api/memory/:projectId[?agent=<id>] {text}
+  ['GET', /^\/api\/memory\/(\w+)$/, ([pid], _, q) => ({ text: memory.read(pid, q.agent || null), max: memory.MAX_CHARS })],
+  ['PUT', /^\/api\/memory\/(\w+)$/, ([pid], b, q) => ({ text: memory.write(pid, q.agent || null, b.text) })],
+  ['POST', /^\/api\/tasks\/(\w+)\/resume-now$/, ([id]) => team.resumeNow(id)], // FT-66: «Reanudar ya» una tarea pausada por cuota
   ['POST', /^\/api\/upload$/, (_, b) => {
     const dir = path.join(store.DATA_DIR, 'uploads', crypto2.randomBytes(6).toString('hex'));
     fs.mkdirSync(dir, { recursive: true });
@@ -185,6 +203,7 @@ const routes = [
   ['DELETE', /^\/api\/tasks\/([\w-]+)$/, ([id]) => team.deleteTask(id)],
   ['POST', /^\/api\/tasks\/([\w-]+)\/approve$/, ([id]) => team.approve(id)],
   ['POST', /^\/api\/tasks\/([\w-]+)\/update-from-base$/, ([id]) => team.updateFromBase(id)], // FT-19
+  ['POST', /^\/api\/tasks\/([\w-]+)\/assign$/, ([id], b) => team.assignTask(id, b.agentId || null)], // FT-50: «Asignar a…» desde la tarjeta (agentId vacío = volver a elegir por rol)
   ['POST', /^\/api\/tasks\/([\w-]+)\/reject$/, gated(([id], b) => team.reject(id, b.feedback, b.images, b.attachments))],
   ['GET', /^\/api\/tasks\/([\w-]+)\/diff$/, async ([id]) => ({ diff: await team.taskDiff(id) })],
   ['POST', /^\/api\/agents$/, (_, b) => team.hire(b)],
@@ -201,10 +220,23 @@ const routes = [
     if (typeof b.flowTestUrl === 'string' && b.flowTestUrl.trim()) st.flowTestUrl = b.flowTestUrl.trim().replace(/\/+$/, '').replace(/\/mcp$/, '');
     if (typeof b.workspaceHostDir === 'string') st.workspaceHostDir = b.workspaceHostDir.trim();
     if (typeof b.quotaGuard === 'boolean') st.quotaGuard = b.quotaGuard; // FT-45
+    if (typeof b.agentMemory === 'boolean') st.agentMemory = b.agentMemory; // FT-75
+    if (typeof b.codeIndex === 'boolean') st.codeIndex = b.codeIndex; // FT-58
+    if (typeof b.cacheAffinity === 'boolean') st.cacheAffinity = b.cacheAffinity; // FT-64
+    if (b.maxTaskUsd !== undefined) st.maxTaskUsd = Math.max(0.5, Math.min(50, Number(b.maxTaskUsd) || 3)); // tope de gasto por intento de tarea
+    if (b.compactAt !== undefined) st.compactAt = Number(b.compactAt) > 0 ? Math.min(90, Math.max(30, Number(b.compactAt))) / 100 : 0; // FT-63: % de contexto que dispara la compactación (0 = apagada)
+    if (['plan', 'suggest', 'off'].includes(b.bigTasks)) st.bigTasks = b.bigTasks; // FT-63: qué hacer con las tareas grandes
+    if (typeof b.stuckGuard === 'boolean') st.stuckGuard = b.stuckGuard; // FT-62: umbrales del detector de atascos
+    for (const [k, lo, hi] of [['stuckRepeat', 2, 20], ['stuckErrors', 2, 30], ['stuckNoEdit', 5, 200], ['stuckTokens', 5000, 5_000_000]]) if (b[k] !== undefined && Number(b[k]) > 0) st[k] = Math.max(lo, Math.min(hi, Math.round(Number(b[k]))));
+    if (b.maxTaskTokens !== undefined) st.maxTaskTokens = Math.max(0, Math.min(50_000_000, Math.round(Number(b.maxTaskTokens) || 0))); // FT-57: tope en tokens por intento (0 = el equivalente al de US$)
+    if (['low', 'medium', 'high'].includes(b.agentEffort)) st.agentEffort = b.agentEffort;
+    if (b.costTargetPct !== undefined) st.costTargetPct = Math.max(10, Math.min(500, Number(b.costTargetPct) || 100)); // FT-76: objetivo «coste por tarea aprobada ≤ X % del interactivo»
     if (b.maxParallel) st.maxParallel = Math.max(1, Math.min(8, Number(b.maxParallel) || 4));
     if (typeof b.guideModel === 'string') st.guideModel = b.guideModel.trim();
     if (guide.providerNames().includes(b.guideProvider)) st.guideProvider = b.guideProvider;
     if (stt.providerNames().includes(b.sttProvider)) st.sttProvider = b.sttProvider; // FT-9
+    if (tts.providerNames().includes(b.ttsProvider)) st.ttsProvider = b.ttsProvider; // FT-52
+    if (typeof b.ttsVoice === 'string' && b.ttsVoice.length < 80) st.ttsVoice = b.ttsVoice;
     if (typeof b.sttLang === 'string' && /^(auto|[a-z]{2})$/.test(b.sttLang.trim())) st.sttLang = b.sttLang.trim();
     if (b.guideModels && typeof b.guideModels === 'object') { // modelo por proveedor del Guide (FT-8)
       st.guideModels = { ...st.guideModels };
@@ -273,6 +305,15 @@ async function guideChat(req, res) {
   res.end();
 }
 
+// POST /api/guide/tts {text, voice?} → audio/wav (o audio/mpeg). 503 si el proveedor no está disponible.
+async function guideTts(req, res) {
+  try {
+    const b = await readBody(req);
+    const { audio, mime } = await tts.synthesize(b.text, typeof b.voice === 'string' ? b.voice : undefined, typeof b.provider === 'string' ? b.provider : undefined);
+    res.writeHead(200, { 'content-type': mime, 'content-length': audio.length, 'cache-control': 'no-store' }).end(audio);
+  } catch (e) { res.writeHead(e.status || 500, { 'content-type': 'application/json' }).end(JSON.stringify({ error: e.message })); }
+}
+
 http.createServer(async (req, res) => {
   const { pathname } = new URL(req.url, 'http://x');
   if (TOKEN && !isLoopback(req) && req.headers['x-ao-token'] !== TOKEN) {
@@ -282,6 +323,7 @@ http.createServer(async (req, res) => {
   if (pathname === '/api/file') return serveUpload(req, res);
   if (!pathname.startsWith('/api/')) return serveStatic(req, res);
   if (pathname === '/api/guide/chat' && req.method === 'POST') return guideChat(req, res);
+  if (pathname === '/api/guide/tts' && req.method === 'POST') return guideTts(req, res);
   const route = routes.find(([m, re]) => m === req.method && re.test(pathname));
   if (!route) return res.writeHead(404, { 'content-type': 'application/json' }).end('{"error":"Ruta desconocida"}');
   try {

@@ -21,10 +21,12 @@ export async function repoInfo(dir) {
 // `repo` = { key, path, baseBranch } (uno de project.repos).
 // Tareas anteriores a los códigos: su worktree/rama llevan el id y se siguen usando tal cual.
 export const worktreeDir = (project, task) => { const legacy = path.join(DATA_DIR, 'worktrees', project.id, task.id); return (task.code && !fs.existsSync(legacy)) ? path.join(DATA_DIR, 'worktrees', project.id, task.code) : legacy; };
+// FT-44: worktree de una tarea en un repo que NO es el principal: hermano del principal (`<código>.<repoKey>`; anidarlo dentro
+// del principal lo ensuciaría con un directorio sin versionar que el autocommit recogería).
+export const extraWorktreeDir = (project, task, repo) => path.join(DATA_DIR, 'worktrees', project.id, `${task.code || task.id}.${repo.key}`);
 export const branchOf = (task) => task.branch || `ao/${task.code || task.id}`;
 
-export async function createWorktree(project, repo, task) {
-  const dir = worktreeDir(project, task);
+export async function createWorktree(project, repo, task, dir = worktreeDir(project, task)) {
   const branch = branchOf(task);
   await git(repo.path, 'worktree', 'prune');
   // Tarea devuelta: se sigue sobre su intento anterior en vez de empezar de cero.
@@ -127,8 +129,11 @@ export async function merge(repo, task) {
   }
 }
 
-export async function cleanup(project, repo, task) {
+export async function cleanup(project, repo, task, dir = worktreeDir(project, task)) {
   if (!repo?.path || !task.branch) return;
-  try { await git(repo.path, 'worktree', 'remove', '--force', worktreeDir(project, task)); } catch { /* ya no está */ }
+  try { await git(repo.path, 'worktree', 'remove', '--force', dir); } catch { /* ya no está */ }
   try { await git(repo.path, 'branch', '-D', task.branch); } catch { /* ya no está */ }
 }
+
+// FT-44: líneas de `git status --porcelain` del checkout principal (guardarraíl «escribió fuera de su worktree»).
+export const statusLines = async (dir) => { try { return (await git(dir, 'status', '--porcelain')).split('\n').map((l) => l.trim()).filter(Boolean); } catch { return []; } };

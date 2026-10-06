@@ -54,10 +54,26 @@ export function codexTracker() {
       if (ev.type !== 'turn.completed' || !ev.usage) return null;
       const cached = num(ev.usage.cached_input_tokens);
       acc = { input: acc.input + Math.max(0, num(ev.usage.input_tokens) - cached), output: acc.output + num(ev.usage.output_tokens), cache: acc.cache + cached };
-      return finish({ ...acc, limit: null, used: null, costUsd: null, source: 'codex turn.completed' });
+      return finish({ ...acc, limit: null, used: null, ctx: num(ev.usage.input_tokens), costUsd: null, source: 'codex turn.completed' }); // ctx (FT-63): entrada del último turno, aprox. del contexto
     },
   };
 }
+
+// FT-57: precios US$ por millón de tokens {input, cache (leído de caché), output}. ESTIMACIÓN para el tope por intento de Codex
+// (con suscripción no hay factura real; sirve para convertir el tope en $ a tokens). Modelo desconocido → el de `default`.
+export const CODEX_PRICES = {
+  'gpt-5.5': { input: 1.25, cache: 0.125, output: 10 },
+  default: { input: 1.25, cache: 0.125, output: 10 },
+};
+export const codexCostUsd = (u, model) => {
+  const p = CODEX_PRICES[model] || CODEX_PRICES.default;
+  return ((u.input || 0) * p.input + (u.cache || 0) * p.cache + (u.output || 0) * p.output) / 1e6;
+};
+// Tope en tokens equivalente a un tope en $ para un reparto típico de agente (~90 % del total en caché, ~2 % salida).
+export const tokensForUsd = (usd, model) => {
+  const per = codexCostUsd({ input: 0.08e6, cache: 0.9e6, output: 0.02e6 }, model); // coste de 1 M de tokens con ese reparto
+  return Math.round((usd / per) * 1e6);
+};
 
 // Suma de sesiones (intentos de una tarea). limit/used son de la sesión en curso, no se suman.
 export function addUsage(a, b) {

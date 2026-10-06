@@ -34,6 +34,13 @@ export function toolSummary(name, input = {}) {
   return describeTool(name, input);
 }
 
+// FT-62: clave de repetición (orden completa / ruta completa). Solo para el detector de atascos: nunca se publica.
+export function toolKey(name, input = {}) {
+  if (name === 'Bash') return String(input.command ?? '').trim().slice(0, 300) || null;
+  if (name === 'Read') return input.file_path ? String(input.file_path) : null;
+  return null;
+}
+
 export const firstLine = (s, n = 70) => short(String(s ?? '').split('\n').find((l) => l.trim()) || '', n);
 
 // El PO devuelve las tareas como JSON; lo sacamos aunque venga envuelto en texto o en ```json.
