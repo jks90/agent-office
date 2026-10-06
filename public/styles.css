@@ -177,7 +177,7 @@ dialog select[multiple].tall { height: 160px; }
 .goal #task-filter { width: 180px; flex: none; margin-left: auto; }
 .goal .board-chip:empty { display: none; }
 
-#board { flex: 1; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--s-2); min-height: 0; }
+#board { flex: 1; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(0, 0.75fr); /* 6.ª: Descartada, más estrecha */ gap: var(--s-2); min-height: 0; }
 .col { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .col h4 { margin: 0; padding: 10px var(--s-3); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; border-bottom: 2px solid var(--c); display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 1; background: var(--surface); }
 .count { min-width: 24px; padding: 2px 8px; border-radius: 99px; background: color-mix(in srgb, var(--c) 22%, transparent); color: var(--text); text-align: center; border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); }
@@ -549,3 +549,7 @@ tr[data-cost-task] { cursor: pointer; }
 .tab-count.review-badge:empty { display: none; }
 .review-chip { color: #fbbf24; border-color: rgba(251,191,36,.5); }
 .toast.review { border-left: 3px solid #fbbf24; }
+
+/* Descartada: tarjetas atenuadas, no se van a hacer (se pueden recuperar al Backlog) */
+.card.discarded { opacity: .6; }
+.card.discarded:hover { opacity: 1; }

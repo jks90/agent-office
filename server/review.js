@@ -11,11 +11,11 @@ export const sensitiveList = (settings) => (Array.isArray(settings?.reviewSensit
 export const waitingSince = (t) => t.reviewAt || t.updatedAt || Date.now();
 
 // Tareas que esperan a `t` (dependsOn) y aún no están hechas.
-export const blocksOf = (tasks, t) => tasks.filter((x) => x.id !== t.id && (x.dependsOn || []).includes(t.id) && x.status !== 'done').map((x) => ({ id: x.id, code: x.code || x.id }));
+export const blocksOf = (tasks, t) => tasks.filter((x) => x.id !== t.id && (x.dependsOn || []).includes(t.id) && !['done', 'discarded'].includes(x.status)).map((x) => ({ id: x.id, code: x.code || x.id }));
 
 // De qué dependencia espera `t` (la primera sin terminar), con su estado: para «⏳ espera a FT-46 (en revisión)».
 export const waitingOn = (tasks, t) => (t.status === 'todo' || t.status === 'backlog'
-  ? (t.dependsOn || []).map((d) => tasks.find((x) => x.id === d)).filter((x) => x && x.status !== 'done').map((x) => ({ id: x.id, code: x.code || x.id, status: x.status }))
+  ? (t.dependsOn || []).map((d) => tasks.find((x) => x.id === d)).filter((x) => x && !['done', 'discarded'].includes(x.status)).map((x) => ({ id: x.id, code: x.code || x.id, status: x.status }))
   : []);
 
 // Campos derivados que viajan en cada tarea del snapshot (no se persisten).

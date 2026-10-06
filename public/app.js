@@ -1053,6 +1053,7 @@ const COLS = [
   ['doing', 'En curso', '#60a5fa'],
   ['review', 'Revisión', '#fb923c'],
   ['done', 'Hecho', '#4ade80'],
+  ['discarded', 'Descartada', '#64748b'], // no se va a hacer: duplicada, absorbida o ya no aplica
 ];
 
 let taskFilter = '';
@@ -1062,21 +1063,21 @@ function renderBoard() {
   const list = tasks().filter((t) => !taskFilter || `${t.id} ${t.code || ''} ${t.title} ${t.role} ${t.repo || ''} ${t.description}`.toLowerCase().includes(taskFilter));
   $('#board').innerHTML = COLS.map(([st, label, c]) => {
     const items = list.filter((t) => t.status === st || (st === 'todo' && t.status === 'failed'))
-      .sort((a, b) => (st === 'done' ? b.updatedAt - a.updatedAt : a.createdAt - b.createdAt));
+      .sort((a, b) => (st === 'done' || st === 'discarded' ? b.updatedAt - a.updatedAt : a.createdAt - b.createdAt));
     return `<div class="col" data-col="${st}" style="--c:${c}"><h4><span>${label}</span><span class="count">${items.length}</span></h4><div class="cards">${items.map(card).join('') || '<div class="empty">Nada por aquí</div>'}</div></div>`;
   }).join('');
 }
 
 // FT-27: arrastrar tarjetas entre columnas (delegación en #board: sobrevive a cada re-render por SSE).
 // Solo Backlog ↔ Por hacer; cualquier otro destino muestra un aviso en vez de fallar callado.
-const MOVABLE = ['backlog', 'todo', 'failed'];
+const MOVABLE = ['backlog', 'todo', 'failed', 'discarded'];
 const COL_NAME = Object.fromEntries(COLS.map(([st, label]) => [st, label]));
 async function moveTask(id, status) {
   const t = S.tasks.find((x) => x.id === id);
   if (!t) return;
   if (t.status === status) return;
   if (!MOVABLE.includes(t.status)) return toast(`${tcode(t)} ${t.status === 'doing' ? 'está en curso: para al agente antes de moverla' : 'está en «' + (COL_NAME[t.status] || t.status) + '»: usa Aprobar / Devolver en la tarjeta'}`, 'error');
-  if (!['backlog', 'todo'].includes(status)) return toast(`No se puede mover a «${COL_NAME[status]}» a mano: esa columna la gestiona el agente al ejecutar la tarea`, 'error');
+  if (!['backlog', 'todo', 'discarded'].includes(status)) return toast(`No se puede mover a «${COL_NAME[status]}» a mano: esa columna la gestiona el agente al ejecutar la tarea`, 'error');
   try { await api('PATCH', `/api/tasks/${id}`, { status }); toast(`${tcode(t)} → ${COL_NAME[status]}`); } catch { /* api() ya mostró el aviso */ }
 }
 let dragId = null;
@@ -1178,6 +1179,7 @@ function compactCard(t) {
   const btn = (attr, text, cls = 'ghost', title = '') => `<button class="small ${cls}" data-${attr}="${t.id}"${title ? ` title="${esc(title)}"` : ''}>${text}</button>`;
   const main = [], more = [];
   if (t.status === 'backlog') main.push(btn('ready', '→ Por hacer', ''));
+  if (t.status === 'discarded') main.push(btn('park', '↩ Recuperar', 'ghost', 'Volver al Backlog'));
   if (t.status === 'failed') main.push(btn('reject', '▶ Reintentar', ''));
   if (t.status === 'todo' && t.quotaPaused) main.push(btn('resume-now', '▶ Reanudar ya', ''));
   if (t.status === 'review') {
@@ -1235,9 +1237,11 @@ function card(t) {
   if (t.status === 'backlog') acts.push(`<button class="small" data-ready="${t.id}">→ Por hacer</button>`);
   if (t.status === 'todo') acts.push(`<button class="small ghost" data-park="${t.id}">← Backlog</button>`);
   if (t.status === 'failed') acts.push(`<button class="small ghost" data-park="${t.id}" title="Devolver al Backlog">← Backlog</button>`);
+  if (['backlog', 'todo', 'failed'].includes(t.status)) acts.push(`<button class="small ghost" data-discard="${t.id}" title="No se va a hacer: pasa a Descartada (se puede recuperar)">✕ Descartar</button>`);
+  if (t.status === 'discarded') acts.push(`<button class="small ghost" data-park="${t.id}" title="Volver al Backlog">↩ Recuperar</button>`);
   if (['review', 'done'].includes(t.status)) acts.push(`<button class="small ghost" data-nomove="${t.id}" title="Mover a otra columna">⇄ Mover a…</button>`);
   if (['todo', 'failed', 'done'].includes(t.status)) acts.push(`<button class="small danger" data-del="${t.id}">Borrar</button>`);
-  return `<div class="card ${t.status}" data-task="${t.id}" draggable="${['backlog', 'todo', 'failed'].includes(t.status)}" style="--c:${S.roles[t.role]?.color}">
+  return `<div class="card ${t.status}" data-task="${t.id}" draggable="${['backlog', 'todo', 'failed', 'discarded'].includes(t.status)}" style="--c:${S.roles[t.role]?.color}">
     <div class="card-head">${roleChip(t.role)} <span class="task-id" title="Código de la tarea (rama ao/${t.code || t.id}; cítalo en commits y docs)">${esc(tcode(t))}</span>${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? ` <span class="repo-chip">📁 ${esc(t.repo || '?')}</span>` : ''}${t.source?.flow ? ` <span title="Importada del tablero «${esc(t.source.flow)}» · columna ${esc(t.source.column)}">🗂</span>` : ''}${(t.feedbackImages?.length || t.files?.length) ? ` <span title="${esc([...(t.feedbackImages || []), ...(t.files || [])].map((f) => f.split('/').pop()).join(', '))}">📎${(t.feedbackImages?.length || 0) + (t.files?.length || 0)}</span>` : ''}${t.source?.url ? ` <a class="ext" href="${esc(t.source.url)}" target="_blank" rel="noopener" title="${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} · ${esc(t.source.id)}${t.source.remoteStatus ? ' · fuera: ' + esc(t.source.remoteStatus) : ''}">🔗 ${esc(t.source.id)}</a>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}</div>
     <div class="t">${esc(t.title)}</div>
     ${whoRow(t)}
@@ -1836,7 +1840,7 @@ function busyCell(busy) {
   const one = busy.length === 1 && busy[0].t ? ` <b>${esc(tcode(busy[0].t))}</b>` : '';
   return `<span class="dot ${busy[0].a.status}"></span>${busy.length} en curso${one}`;
 }
-const SUM_COLS = [['backlog', 'Backlog'], ['todo', 'Por hacer'], ['doing', 'En curso'], ['review', 'Revisión'], ['done', 'Hecho'], ['failed', 'Fallidas']];
+const SUM_COLS = [['backlog', 'Backlog'], ['todo', 'Por hacer'], ['doing', 'En curso'], ['review', 'Revisión'], ['done', 'Hecho'], ['failed', 'Fallidas'], ['discarded', 'Descartadas']];
 // ── 💸 Costes (FT-76) ──────────────────────────────────────────────────────
 // Datos de GET /api/costs; se piden al abrir la pestaña y cuando cambia el coste acumulado (llega por el SSE), sin polling.
 let sumView = 'general', costsData = null, costsSig = '';
@@ -2269,12 +2273,14 @@ function openTask(id) {
     if (!/\.(png|jpe?g|webp|gif)$/i.test(f)) return `<a href="${fileUrl(f)}" target="_blank" rel="noopener">📄 ${name}</a>`;
     return `<a class="thumb" href="${fileUrl(f)}" target="_blank" rel="noopener" title="${name}"><img src="${fileUrl(f)}" alt="${name}" onerror="this.parentNode.classList.add('broken');this.replaceWith('🖼 '+this.alt)" /></a>`;
   };
-  const STATUS = { backlog: 'Backlog', todo: 'Por hacer', doing: 'En curso', review: 'En revisión', done: 'Hecha', failed: 'Fallida' };
+  const STATUS = { backlog: 'Backlog', todo: 'Por hacer', doing: 'En curso', review: 'En revisión', done: 'Hecha', failed: 'Fallida', discarded: 'Descartada' };
   const acts = [];
   if (t.status === 'doing' && agent) acts.push(controls(agent));
   if (t.status !== 'doing') acts.push(`<button class="small ghost" data-edit="${t.id}">✎ Editar</button>`);
   if (t.status === 'backlog') acts.push(`<button class="small" data-ready="${t.id}">→ Por hacer</button>`);
   if (t.status === 'todo') acts.push(`<button class="small ghost" data-park="${t.id}">← Backlog</button>`);
+  if (['backlog', 'todo', 'failed'].includes(t.status)) acts.push(`<button class="small ghost" data-discard="${t.id}">✕ Descartar</button>`);
+  if (t.status === 'discarded') acts.push(`<button class="small ghost" data-park="${t.id}">↩ Recuperar</button>`);
   if (t.status === 'review') acts.push(`<button class="small ghost" data-diff="${t.id}">Ver cambios</button>${updateBtn(t)}<button class="small ok" data-approve="${t.id}">✓ Aprobar${t.branch ? ' y fusionar' : ''}</button><button class="small ghost" data-reject="${t.id}">↩ Devolver</button>`);
   if (t.status === 'failed') acts.push(`<button class="small" data-reject="${t.id}">↻ Reintentar</button>`);
   dialog(`
@@ -2394,6 +2400,7 @@ document.addEventListener('click', async (e) => {
   if (d.agentEdit) return editAgent(d.agentEdit);
   if (d.nomove) return moveTask(d.nomove, 'backlog');
   if (d.park) return api('PATCH', `/api/tasks/${d.park}`, { status: 'backlog' });
+  if (d.discard) return api('PATCH', `/api/tasks/${d.discard}`, { status: 'discarded' });
   if (d.del) { if (confirm('¿Borrar la tarea?')) api('DELETE', `/api/tasks/${d.del}`); return; }
   if (d.reject) {
     pendingAttachments = [];
