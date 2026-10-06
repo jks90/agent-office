@@ -110,6 +110,7 @@ const roleChip = (role) => `<span class="chip" style="--c:${S.roles[role]?.color
 // Chat con el Guide Agent (server/guide). Un solo estado `G` pintado en dos sitios: la vista «Guía» (con lista de chats)
 // y un cajón flotante disponible en cualquier vista (Ctrl+G). La conversación va por POST /api/guide/chat (SSE); las
 // confirmaciones de las tools salen por el modal de preguntas de siempre (snapshot SSE), no por aquí.
+const EMBEDDED = window.self !== window.top; // antes que el Guía: guideRender → wakeSync → wakeNotify lo lee al arrancar (FT-38)
 const G = { chats: [], chatId: null, messages: [], busy: false, panelOpen: false, loaded: false };
 const guideRoots = []; // contenedores montados: { el, panel }
 const GUIDE_HINTS = ['Créame una tarea para solucionar esto', '¿Cómo va?', '¿Qué está haciendo ahora mismo?', 'Enséñame lo que ha cambiado'];
@@ -493,7 +494,6 @@ const setCollapsed = (c) => { $('#sidebar').classList.toggle('collapsed', c); sa
 setCollapsed(safeGet('ao:sidebar') === 'collapsed');
 $('#collapse').addEventListener('click', () => setCollapsed(!$('#sidebar').classList.contains('collapsed')));
 // Embebido en el modal de flow-test: nuestra cabecera hace de cabecera del modal (título «Agentes», abrir en pestaña, cerrar).
-const EMBEDDED = window.self !== window.top;
 if (EMBEDDED) {
   document.body.classList.add('embedded');
   $('#brand-name').textContent = 'Agentes · AgentOffice';
