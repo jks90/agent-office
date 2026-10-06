@@ -94,6 +94,10 @@ main { flex: 1; display: flex; flex-direction: column; padding: var(--s-3) 18px 
 #office-live { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #office:focus { outline: none; }
 #office:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.office-mobile-list { display: none; }
+.office-floor-row { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; text-align: left; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 12px; }
+.office-floor-row.active { border-color: var(--ok); box-shadow: inset 3px 0 0 var(--ok); }
+.office-floor-row span { color: var(--muted); font-size: 12px; white-space: nowrap; }
 #task-filter { width: 220px; padding: 7px 10px; }
 #roles { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--s-2); }
 table.repos { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; }
@@ -153,9 +157,13 @@ dialog select[multiple].tall { height: 160px; }
 .state { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); white-space: nowrap; }
 .state.working { color: #b8f4d8; }
 .state.paused { color: #fde68a; }
+.state.blocked, .state.reviewing { color: #fcd48a; }
+.state.failed { color: #ffb3b3; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: #64748b; flex: none; }
 .dot.working { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
 .dot.paused { background: #fbbf24; box-shadow: 0 0 8px #fbbf24; }
+.dot.blocked, .dot.reviewing { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
+.dot.failed { background: var(--err); box-shadow: 0 0 8px var(--err); }
 .constraints ul { margin: 0; padding-left: 18px; }
 .constraints li { margin: 2px 0; }
 .constraints small { color: var(--muted); }
@@ -328,6 +336,13 @@ dialog.wide { width: min(1000px, 94vw); }
   #team, #board { grid-template-columns: 1fr; }
   #drawer { padding: var(--s-4); }
   .card .meta { flex-wrap: wrap; white-space: normal; }
+  #view-office .office-wrap { display: block; overflow: auto; }
+  #view-office #office[data-office-mode="building"] { display: none; }
+  #view-office #office[data-office-mode="building"] + .office-mobile-list { display: flex; flex-direction: column; gap: 8px; padding: var(--s-2); }
+  .office-floor-row { align-items: flex-start; flex-direction: column; }
+  .office-floor-row span { white-space: normal; }
+  .office-foot { align-items: flex-start; flex-direction: column; }
+  #office-live { white-space: normal; }
 }
 
 /* Preguntas de los agentes */

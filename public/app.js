@@ -129,6 +129,7 @@ function setOfficeMode(mode, { remember = true } = {}) {
   if (remember) safeSet('ao:officeMode', officeMode);
   office.setMode(officeMode);
   renderOfficeFoot();
+  renderOfficeList();
   publishContext();
 }
 function enterFloor(id) { goProject(id); setOfficeMode('floor'); }
@@ -143,6 +144,7 @@ function enterAgent(id) {
   office.focusAgent(id);
   openDrawer(id, { skipFocus: true });
   renderOfficeFoot();
+  renderOfficeList();
   publishContext();
 }
 function leaveAgentLevel() {
@@ -152,6 +154,7 @@ function leaveAgentLevel() {
   closeDrawer({ keepOfficeLevel: true });
   $('#office').focus({ preventScroll: true });
   renderOfficeFoot();
+  renderOfficeList();
   publishContext();
   return true;
 }
@@ -182,6 +185,32 @@ function renderOfficeFoot() {
     live.textContent = tp.length ? `${tp.length} proyecto${tp.length === 1 ? '' : 's'} con equipo · ${working} trabajando · clic en una planta para entrar` : 'Ningún proyecto tiene equipo todavía: ficha agentes en 👥 Agentes';
   }
 }
+function floorCountersFor(p) {
+  const ids = new Set(p.team || []);
+  const team = S.agents.filter((a) => ids.has(a.id));
+  const ts = S.tasks.filter((t) => t.projectId === p.id);
+  return {
+    team: team.length,
+    working: team.filter((a) => a.status === 'working').length,
+    queued: ts.filter((t) => t.status === 'todo').length,
+    review: ts.filter((t) => t.status === 'review').length,
+    failed: ts.filter((t) => t.status === 'failed').length,
+    running: !!p.running,
+  };
+}
+function renderOfficeList() {
+  const el = $('#office-mobile-list');
+  if (!el) return;
+  const floors = teamProjects();
+  el.hidden = officeMode !== 'building';
+  el.innerHTML = floors.length ? floors.map((p) => {
+    const c = floorCountersFor(p);
+    return `<button class="office-floor-row ${p.id === projectId ? 'active' : ''}" data-floor-row="${esc(p.id)}" aria-label="Abrir planta ${esc(p.name)}">
+      <b>${c.running ? '' : '⏸ '}${esc(p.name)}</b>
+      <span>${c.working} trabajando · ${c.queued} en cola · ${c.review} revisión · ${c.failed} fallidos</span>
+    </button>`;
+  }).join('') : '<p class="empty">Ningún proyecto tiene equipo todavía.</p>';
+}
 // Esc con la oficina enfocada vuelve al edificio (si hay cajón abierto, lo cierra el atajo de siempre).
 $('#office').addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || $('#dialog').open) return;
@@ -203,6 +232,8 @@ const bornFrom = (t) => {
   return what ? `<span class="born" title="Contexto de AgentOffice al crearla">Nació de: ${esc(what)}</span>` : '';
 };
 document.addEventListener('click', (e) => {
+  const floorRow = e.target.closest('[data-floor-row]');
+  if (floorRow) { enterFloor(floorRow.dataset.floorRow); return; }
   const a = e.target.closest('[data-born]');
   if (!a) return;
   e.preventDefault();
@@ -834,6 +865,7 @@ function render() {
   $('#tab-agents-count').textContent = team().length || '';
   $('#tab-summary').innerHTML = `${ts.filter((t) => t.status === 'doing').length} en curso<br>${ts.filter((t) => t.status === 'review').length} por revisar<br>${working.length}/${team().length} agentes trabajando${paused ? ` · ${paused} en pausa` : ''}`;
   renderOfficeFoot();
+  renderOfficeList();
   const b = p?.board;
   const pending = b ? ts.filter((t) => t.source?.kind !== b.kind && t.kind !== 'plan').length : 0;
   const job = b?.job;
@@ -1286,7 +1318,7 @@ function durationSince(ts) {
 function eventText(ev) {
   const d = ev.data || {};
   if (ev.type === 'AgentToolStarted') return `usando ${d.tool || 'herramienta'}${d.summary ? ': ' + d.summary : ''}`;
-  if (ev.type === 'AgentToolFinished') return d.ok === false ? 'herramienta con error' : 'herramienta completada';
+  if (ev.type === 'AgentToolFinished') return d.ok === false ? `⚠ falló: ${d.error || d.summary || d.tool || 'herramienta'}` : '';
   if (ev.type === 'AgentProgress') return d.activity || 'actualizando progreso';
   if (ev.type === 'AgentFileModified') return `modificando ${d.path || 'fichero'}`;
   if (ev.type === 'AgentArtifactCreated') return d.kind === 'commit' ? `commit${d.sha ? ' ' + String(d.sha).slice(0, 7) : ''}${d.branch ? ' en ' + d.branch : ''}` : `creando ${d.kind || 'artefacto'}`;
@@ -1311,6 +1343,7 @@ function openDrawer(id, { skipFocus = false } = {}) {
   $('#drawer').hidden = false;
   $('#drawer').setAttribute('role', 'dialog');
   $('#drawer').setAttribute('aria-modal', 'true');
+  $('#drawer').setAttribute('aria-label', 'Ficha del agente');
   $('#drawer').tabIndex = -1;
   loadAgentActivity(id);
   if (!skipFocus && activeTab === 'office') {
@@ -1354,7 +1387,7 @@ function renderDrawer() {
   const d = $('#drawer');
   const role = S.roles[a.role];
   const meta = statusMeta(a);
-  const recent = (activityByAgent.get(a.id) || []).slice(-8).reverse();
+  const recent = (activityByAgent.get(a.id) || []).filter((ev) => ev.type !== 'AgentToolFinished' || ev.data?.ok === false).slice(-8).reverse();
   const controlsHtml = busy(a) ? controls(a) : `<button class="small ghost" data-msg="${a.id}" title="Mandarle una instrucción">✉ Mensaje</button>`;
   const taskHtml = task ? `<button class="linklike" data-open="${task.id}"><b>${esc(tcode(task))}</b> ${esc(task.title)}</button>` : '<span class="muted">Sin tarea activa</span>';
   const activityHtml = recent.length ? recent.map((ev) => `<li class="${ev.type === 'AgentFailed' ? 'bad' : ''}"><span>${esc(eventText(ev))}</span><time>${ago(ev.ts)}</time></li>`).join('') : '<li><span class="muted">Sin actividad reciente en el stream.</span></li>';
