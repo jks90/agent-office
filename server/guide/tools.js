@@ -14,7 +14,8 @@ import { cleanContext } from '../task-context.js';
 import * as integ from './integrations.js';
 import { getProvider } from '../desktop/index.js';
 import * as vision from './vision.js';
-import { gate, audit, summarize, POLICIES } from './policy.js';
+import { gate, audit, summarize, getPolicy, POLICIES } from './policy.js';
+import { parseKeys } from '../desktop/input.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
 const VIEWS = ['office', 'summary', 'tasks', 'agents', 'guide', 'settings'];
@@ -103,6 +104,20 @@ const uiPrecheck = async (args) => (await outsideOnly()) || insideTarget(args);
 const uiTarget = { pid: { type: 'integer', description: 'pid de la app (por defecto, la de la ventana activa)' }, windowId: str('Id de ventana (alternativa a pid)') };
 const a11y = () => { const d = getProvider(), av = d.a11yAvailable(); if (!av.ok) throw Object.assign(fail(503, `AT-SPI no disponible: falta ${av.missing.join(', ')}`), { missing: av.missing }); return d; };
 const clip = (w) => ({ ...w, title: String(w.title || '').slice(0, 200) });
+
+// FT-30 · Fallback de entrada (ratón/teclado ciegos). Apagado de serie: `settings.guideInputFallback` (Ajustes ▸ Guide Agent).
+// Atajos que keyboard.keyPress trata como `irreversible` (confirmación SIEMPRE). «enter» a secas: no se sabe si hay un diálogo delante.
+export const IRREVERSIBLE_KEYS = ['enter', 'ctrl+w', 'ctrl+q', 'alt+f4', 'shift+delete', 'delete', 'ctrl+enter'];
+export const isIrreversibleKeys = (keys) => { try { return IRREVERSIBLE_KEYS.includes(parseKeys(keys).canon); } catch { return false; } };
+// precheck: 403 con el ajuste apagado; después, regla «solo fuera» (ventana activa = flow-test/AgentOffice → {inside:true})
+const inputPrecheck = async () => {
+  if (!getPolicy().guideInputFallback) throw fail(403, 'fallback de ratón/teclado desactivado en Ajustes');
+  return outsideOnly();
+};
+const inputProvider = () => { const d = getProvider(), av = d.inputAvailable(); if (!av.ok) throw Object.assign(fail(503, `entrada no disponible: falta ${av.missing.join(', ')}`), { missing: av.missing }); return d; };
+const LAST = 'ÚLTIMO RECURSO: antes ui.find/ui.act. Entrada «ciega» sin ver el resultado; ';
+const OUTSIDE = 'Si la ventana activa es flow-test/AgentOffice responde {inside:true} sin tocar nada. Desactivada de serie (Ajustes ▸ Guide Agent): con el ajuste apagado responde 403.';
+const xy = { x: { type: 'integer', description: 'Coordenada X en píxeles de pantalla' }, y: { type: 'integer', description: 'Coordenada Y en píxeles de pantalla' } };
 
 // ── Registro ────────────────────────────────────────────────────────────────
 const T = (name, description, input, policy, handler, extra = {}) => ({ name, description, input, policy, handler, ...extra });
@@ -245,6 +260,25 @@ export const tools = [
       },
     }),
 
+  // — Fallback de entrada (FT-30): xdotool (X11) / ydotool (Wayland) —
+  T('mouse.click', `${LAST}hace clic en unas coordenadas de pantalla (left|right|middle, doble opcional). ${OUTSIDE}`,
+    obj({ ...xy, button: { type: 'string', enum: ['left', 'right', 'middle'], description: 'left por defecto' }, double: { type: 'boolean', description: 'Doble clic' } }, ['x', 'y']), 'execute',
+    async (a) => { await inputProvider().click(a); return { ok: true, x: a.x, y: a.y, button: a.button || 'left', double: !!a.double }; }, { precheck: inputPrecheck }),
+  T('mouse.scroll', `${LAST}desplaza la rueda (dy>0 baja, dx>0 a la derecha; en «clics» de rueda), opcionalmente tras mover el ratón a x,y. ${OUTSIDE}`,
+    obj({ ...xy, dx: { type: 'integer', description: 'Horizontal (clics de rueda)' }, dy: { type: 'integer', description: 'Vertical (clics de rueda)' } }), 'execute',
+    async (a) => { await inputProvider().scroll(a); return { ok: true, dx: a.dx || 0, dy: a.dy || 0 }; }, { precheck: inputPrecheck }),
+  T('keyboard.type', `${LAST}teclea texto en la ventana con foco. El texto NUNCA se guarda en el audit (solo el nº de caracteres). ${OUTSIDE}`,
+    obj({ text: str('Texto a teclear') }, ['text']), 'execute',
+    async ({ text }) => { await inputProvider().type({ text }); return { ok: true, chars: [...text].length }; },
+    { precheck: inputPrecheck, auditArgs: ({ text }) => ({ chars: [...String(text ?? '')].length }) }),
+  T('keyboard.keyPress', `${LAST}pulsa un atajo (p. ej. «ctrl+s», «enter»). Enter, ctrl+w, ctrl+q, alt+f4, shift+delete, delete y ctrl+enter se tratan como irreversibles: confirmación SIEMPRE. ${OUTSIDE}`,
+    obj({ keys: str('Atajo con «+», p. ej. «ctrl+s»') }, ['keys']), 'execute',
+    async ({ keys }) => { await inputProvider().keyPress({ keys }); return { ok: true, keys }; },
+    {
+      precheck: inputPrecheck,
+      dynamic: async ({ keys }) => (isIrreversibleKeys(keys) ? { policy: 'irreversible', context: `⚠ Atajo potencialmente destructivo: ${keys}` } : null),
+    }),
+
   // — Ejecución y borrado —
   T('project.run', 'Pone a trabajar (running=true) o pausa (false) al equipo del proyecto.', obj({ projectId: str('Id o nombre del proyecto'), running: { type: 'boolean' } }, ['projectId', 'running']), 'execute',
     ({ projectId, running }) => { const p = findProject(projectId); team.setRunning(p.id, running); return { projectId: p.id, running: !!p.running }; }),
@@ -278,7 +312,7 @@ export async function run(name, args = {}, ctx = {}) {
   const tool = byName.get(name);
   if (!tool) throw fail(404, `Tool desconocida: ${name}`);
   const t0 = Date.now();
-  const entry = { ts: t0, tool: name, args: summarize(args), policy: tool.policy, mode: null, confirmed: null, via: ctx.via || 'api', client: ctx.client || null, ...(ctx.chatId ? { chatId: ctx.chatId } : {}) };
+  const entry = { ts: t0, tool: name, args: tool.auditArgs && args && typeof args === 'object' ? tool.auditArgs(args) : summarize(args), policy: tool.policy, mode: null, confirmed: null, via: ctx.via || 'api', client: ctx.client || null, ...(ctx.chatId ? { chatId: ctx.chatId } : {}) };
   const done = (result, extra = {}) => audit({ ...entry, result, ms: Date.now() - t0, ...extra });
   try {
     if (!args || typeof args !== 'object' || Array.isArray(args)) throw fail(400, 'args debe ser un objeto');

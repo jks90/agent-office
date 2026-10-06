@@ -12,6 +12,9 @@
 //     a11yAvailable(): { ok, missing[] }
 //     uiTree({pid|windowId, depth≤6, maxNodes≤500}) / uiFind({pid|windowId, role?, name?}) → [{ref, role, name, states[], actions[], bounds}]
 //     uiNode(ref) → nodo + {pid, app} · uiAct({ref, action:'click'|'press'|'focus'|'setText', text?}) → {ok, node}
+//     // FT-30 · fallback de entrada (xdotool en X11, ydotool en Wayland; 503 con `missing` si falta el binario):
+//     inputAvailable(): { ok, missing[] }
+//     click({x,y,button:'left'|'right'|'middle',double}) · scroll({x,y,dx,dy}) · type({text}) · keyPress({keys:'ctrl+s'})
 //   }
 // Los errores llevan `.status` (501 no soportado, 503 faltan herramientas) para que index.js los enrute.
 // FT-24: AO_DESKTOP_PLATFORM=darwin|win32 simula otra plataforma (pruebas del 501).
@@ -33,6 +36,11 @@ export function createUnsupportedProvider(os = process.platform) {
     uiFind: async () => { throw err(); },
     uiNode: async () => { throw err(); },
     uiAct: async () => { throw err(); },
+    inputAvailable: () => ({ ok: false, missing: [`soporte para ${os}`] }),
+    click: async () => { throw err(); },
+    scroll: async () => { throw err(); },
+    type: async () => { throw err(); },
+    keyPress: async () => { throw err(); },
   };
 }
 

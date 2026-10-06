@@ -192,6 +192,7 @@ const routes = [
       for (const n of guide.providerNames()) if (typeof b.guideModels[n] === 'string') { const v = b.guideModels[n].trim(); if (v) st.guideModels[n] = v; else delete st.guideModels[n]; }
     }
     if (b.guidePolicy && typeof b.guidePolicy === 'object') guidePolicy.setPolicy(b.guidePolicy);
+    if (typeof b.guideInputFallback === 'boolean') guidePolicy.setPolicy({ guideInputFallback: b.guideInputFallback }); // FT-30
     store.changed();
     return st;
   }],

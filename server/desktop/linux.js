@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { saveCapture } from './capture.js';
 import * as atspi from './atspi.js';
+import * as input from './input.js';
 
 const TIMEOUT = 3000;
 const fail503 = msg => Object.assign(new Error(msg), { status: 503 });
@@ -154,6 +155,17 @@ export function createLinuxProvider(env = process.env) {
     if (!w?.pid) throw Object.assign(new Error(windowId ? `ventana no encontrada: ${windowId}` : 'la ventana activa no tiene pid'), { status: 404 });
     return w.pid;
   };
+  const inputAvailable = () => {
+    if (!be) return { ok: false, missing: [session === 'none' ? 'sesión gráfica' : 'soporte para este compositor Wayland'] };
+    const bin = session === 'x11' ? 'xdotool' : 'ydotool';
+    return has(bin) ? { ok: true, missing: [], tool: bin } : { ok: false, missing: [bin] };
+  };
+  const sendInput = async (kind, o = {}) => {
+    const av = inputAvailable();
+    if (!av.ok) throw Object.assign(fail503(`entrada no disponible: falta ${av.missing.join(', ')}`), { missing: av.missing });
+    for (const args of input.plan(av.tool, kind, o)) await run(av.tool, args);
+    return { ok: true, tool: av.tool };
+  };
   return {
     id: 'linux',
     session,
@@ -173,6 +185,12 @@ export function createLinuxProvider(env = process.env) {
     uiFind: async (o = {}) => atspi.filterNodes(await atspi.tree({ pid: await pidFor(o), depth: atspi.MAX_DEPTH, maxNodes: atspi.MAX_NODES }), o),
     uiNode: async (ref) => atspi.nodeInfo(ref),
     uiAct: async (o) => atspi.act(o),
+    // FT-30 · fallback de entrada: xdotool en X11, ydotool en Wayland. Si falta el binario, 503 con `missing`.
+    inputAvailable,
+    click: (o) => sendInput('click', o),
+    scroll: (o) => sendInput('scroll', o),
+    type: (o) => sendInput('type', o).then((r) => ({ ...r, chars: [...String(o.text)].length })),
+    keyPress: (o) => sendInput('keyPress', o),
     // FT-21 · capture({target:'screen'|'window', windowId?}) → { path, width, height, bytes, tool, ts }
     capture: async ({ target = 'screen', windowId } = {}) => {
       if (!be) throw nope();
