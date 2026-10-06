@@ -513,3 +513,15 @@ Objetivo visual: `~/JksDocs/Proyects/12-flowtest/task/diseno-edificio-referencia
 - **Tarjetas de planta** P1…Pn (nombre y métricas con punto de color; el texto completo en `title`), secundarias a la escena.
 - **Scroll antes que miniaturizar** (`fitBuildingHeight`): si las plantas quedarían por debajo de ~560 px de ancho, el lienzo crece en alto y la vista hace scroll hasta ~620 px.
 - **Pruebas**: `scripts/building-e2e.mjs` mide el contrato a 1920×1080 (plantas alineadas ±4 px, ancho 550–750 px, alto 65–80 %); la visibilidad de agentes usa rayos paralelos a la vista (cámara ortográfica). Capturas: `node scripts/preview.mjs out.png --building --width 1920 --height 1080`.
+
+### Planta v2, fiel a la referencia (FT-78)
+
+La vista de planta sigue el panel 2 de `diseno-edificio-referencia.png`:
+
+- Personajes un 30 % más pequeños (`CHAR_H` 0,66), en proporción con mesas y sillas; el edificio conserva su escala.
+- Zonas como alfombras suaves (13 % de opacidad) con un borde fino de su color, no bloques saturados.
+- Etiquetas de zona como píldoras de color DENTRO de su zona; la de QA a la derecha y la del Kanban bajo la pizarra.
+- Kanban más grande (3,5 × 1,25) y el título del proyecto encima del marco, sin tapar columnas.
+- Más densidad: doble monitor por puesto, estanterías en la pared izquierda, plantas grandes en las esquinas y mesita auxiliar.
+
+Captura: `node scripts/preview.mjs out.png --width 1920 --height 1080`.
