@@ -54,7 +54,7 @@ export function codexTracker() {
       if (ev.type !== 'turn.completed' || !ev.usage) return null;
       const cached = num(ev.usage.cached_input_tokens);
       acc = { input: acc.input + Math.max(0, num(ev.usage.input_tokens) - cached), output: acc.output + num(ev.usage.output_tokens), cache: acc.cache + cached };
-      return finish({ ...acc, limit: null, used: null, costUsd: null, source: 'codex turn.completed' });
+      return finish({ ...acc, limit: null, used: null, ctx: num(ev.usage.input_tokens), costUsd: null, source: 'codex turn.completed' }); // ctx (FT-63): entrada del último turno, aprox. del contexto
     },
   };
 }
