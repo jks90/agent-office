@@ -20,7 +20,7 @@ const floorCenter = (size = DEFAULT_FLOOR_SIZE) => new THREE.Vector3(size.rx / 2
 const doorFor = (size = DEFAULT_FLOOR_SIZE) => ({ x: Math.min(size.rx - 0.9, Math.max(0.8, size.rx * 0.58)), z: 0.5 });
 const spineXFor = (size = DEFAULT_FLOOR_SIZE) => Math.min(size.rx - 1.0, Math.max(3.5, size.rx * 0.58));
 const SPEED = 1.7;                    // unidades/s
-const CHAR_H = 0.95;                  // altura objetivo del personaje
+const CHAR_H = 0.66;                  // altura objetivo del personaje (FT-78 v2: ~30 % menor que antes, proporción de la referencia)
 
 // 8 mesas en 2 filas de 4, a la izquierda. El agente se sienta en el lado +z mirando al monitor (-z).
 const DESK_COLS = [1.2, 2.8, 4.4, 6.0];
@@ -30,7 +30,7 @@ for (const z of DESK_ROWS) for (const x of DESK_COLS) DESKS.push({ x, z });
 const seatOf = (d) => ({ x: d.x, z: d.z + 0.5, corr: d.z + 0.5 });
 
 const BOARD_SPOTS = [{ x: 3.0, z: 1.1, corr: null }, { x: 4.2, z: 1.1, corr: null }];
-const BOARD = { x: 4.15, y: 0.78, z: 0.09, w: 2.9, h: 0.98 };
+const BOARD = { x: 4.15, y: 0.92, z: 0.09, w: 3.5, h: 1.25 }; // FT-78 v2: Kanban grande, foco funcional
 
 const BASE_ZONE_STYLE = {
   development: { label: 'Desarrollo', color: 0xd6c3ff, x: 1.9, z: 2.35, w: 3.2, d: 3.25, labelX: 0.75, labelZ: 0.75 },
@@ -120,6 +120,16 @@ const FURNITURE = [
   { model: 'plantSmall3', x: 7.95, z: 2.95, ry: 0 },
   { model: 'trashcan', x: 3.35, z: 3.05, ry: 0 },
   { model: 'coatRackStanding', x: 5.95, z: 0.6, ry: 0 },
+  // FT-78 v2: densidad de la referencia — estanterías contra la pared izquierda, plantas grandes en las esquinas de zona
+  { model: 'bookcaseClosedWide', x: 0.3, z: 1.6, ry: Math.PI / 2 },
+  { model: 'bookcaseClosed', x: 0.3, z: 2.75, ry: Math.PI / 2 },
+  { model: 'bookcaseClosedWide', x: 0.3, z: 4.55, ry: Math.PI / 2 },
+  { model: 'pottedPlant', x: 0.45, z: 0.45, ry: 0 },
+  { model: 'pottedPlant', x: 3.3, z: 0.55, ry: 0 },
+  { model: 'pottedPlant', x: 8.3, z: 0.6, ry: 0 },
+  { model: 'pottedPlant', x: 0.45, z: 3.6, ry: 0 },
+  { model: 'pottedPlant', x: 6.15, z: 3.65, ry: 0 },
+  { model: 'sideTableDrawers', x: 4.35, z: 4.5, ry: 0, tint: WOOD },
 ];
 // La cafetera va encima del primer armario (altura real se ajusta al cargar).
 const ON_TOP = [{ model: 'kitchenCoffeeMachine', x: 6.55, z: 0.55, onModel: 'kitchenCabinet' }];
@@ -133,6 +143,7 @@ const MEETING_CHAIRS = [
 const FURNITURE_NEEDED = new Set([
   'desk', 'chairDesk', 'computerScreen', 'computerKeyboard', 'computerMouse',
   'wall', 'wallWindow', 'wallDoorway',
+  'bookcaseClosedWide', 'bookcaseClosed', 'plantSmall2', 'laptop', 'sideTableDrawers', 'lampSquareFloor', // FT-78 v2: densidad
   ...FURNITURE.map((f) => f.model), ...ON_TOP.map((f) => f.model), ...MEETING_CHAIRS.map((f) => f.model),
 ]);
 
@@ -247,13 +258,16 @@ export class Office3D {
 
   buildZones() {
     this.zoneLabels = [];
-    const rugMat = (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.94, metalness: 0 });
+    // FT-78 v2: casi alfombras (opacidad 13 %) con un borde fino del color de la zona, como en la referencia
+    const rugMat = (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.94, metalness: 0, transparent: true, opacity: 0.13, depthWrite: false });
     for (const [zone, z] of Object.entries(this.floorZones || zonesFor(this.currentFloorSize))) {
       const rug = new THREE.Mesh(new THREE.PlaneGeometry(z.w, z.d), rugMat(z.color));
       rug.rotation.x = -Math.PI / 2;
       rug.position.set(z.x, 0.012, z.z);
       rug.receiveShadow = true;
       this.room.add(rug);
+      const edge = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(z.w, z.d)), new THREE.LineBasicMaterial({ color: z.color, transparent: true, opacity: 0.85 }));
+      edge.rotation.x = -Math.PI / 2; edge.position.set(z.x, 0.016, z.z); this.room.add(edge);
       if (zone === 'development' || zone === 'qa' || zone === 'review') {
         const rail = new THREE.Mesh(new THREE.BoxGeometry(z.w, 0.18, 0.06),
           new THREE.MeshStandardMaterial({ color: 0xc9d2cc, roughness: 0.9 }));
@@ -420,7 +434,9 @@ export class Office3D {
       const desk = this.place('desk', d.x, d.z, { ry: 0 });
       if (!desk) return;
       const top = this.topOf(desk);
-      const screen = this.place('computerScreen', d.x, d.z - 0.11, { ry: 0 });
+      const screen = this.place('computerScreen', d.x - 0.16, d.z - 0.11, { ry: 0.22 });
+      const screen2 = this.place('computerScreen', d.x + 0.2, d.z - 0.1, { ry: -0.28 }); // FT-78 v2: doble monitor
+      if (screen2) screen2.position.y = top;
       const kb = this.place('computerKeyboard', d.x, d.z + 0.04, { ry: 0 });
       const mouse = this.place('computerMouse', d.x + 0.22, d.z + 0.05, { ry: 0 });
       for (const o of [screen, kb, mouse]) if (o) o.position.y = top;
@@ -701,7 +717,7 @@ export class Office3D {
     if (!gltf) return this.addMiniAgent(g, visual, x, z, own, 0.9);
     const model = skeletonClone(gltf.scene);
     const box = new THREE.Box3().setFromObject(model);
-    const sc = (CHAR_H * 0.92) / (box.getSize(new THREE.Vector3()).y || 1);
+    const sc = (CHAR_H * 1.32) / (box.getSize(new THREE.Vector3()).y || 1); // en el edificio se mantiene la escala de FT-77 v2
     model.scale.setScalar(sc);
     model.position.set(x, SLAB_H - box.min.y * sc + (sit ? 0.05 : 0), z);
     model.rotation.y = ry;
@@ -713,7 +729,7 @@ export class Office3D {
     // Indicador de estado sobre la cabeza (verde trabajando, amarillo esperando, violeta revisión, rojo fallo…)
     const col = STATE_COLOR[visual.status] || 0x94a3b8;
     const dot = own(new THREE.SphereGeometry(0.075, 10, 8), new THREE.MeshBasicMaterial({ color: col }));
-    dot.position.set(x, SLAB_H + CHAR_H * 0.92 + 0.18, z); g.add(dot);
+    dot.position.set(x, SLAB_H + CHAR_H * 1.32 + 0.18, z); g.add(dot);
     if (visual.status === 'failed') { const ring = own(new THREE.TorusGeometry(0.13, 0.025, 6, 16), new THREE.MeshBasicMaterial({ color: 0xff3030 })); ring.rotation.x = Math.PI / 2; ring.position.copy(dot.position); g.add(ring); }
   }
 
@@ -1125,8 +1141,7 @@ export class Office3D {
       .o3d-bubble.error{background:#fef2f2;color:#991b1b;border-color:#fca5a5}
       .o3d-board{font-size:12px;font-weight:700;color:#334155;background:rgba(255,255,255,.92);border:1px solid rgba(0,0,0,.1);
         border-radius:8px;padding:3px 10px;box-shadow:0 2px 6px rgba(0,0,0,.18)}
-      .o3d-zone{font-size:11px;font-weight:800;color:#1f2937;background:rgba(255,255,255,.86);border:1px solid rgba(0,0,0,.08);
-        border-radius:6px;padding:3px 9px;box-shadow:0 1px 4px rgba(0,0,0,.14);transform:translate(-50%,-50%)}
+      .o3d-zone{font-size:12px;font-weight:800;color:#1f2937;border:1px solid transparent;border-radius:999px;padding:4px 12px;box-shadow:0 2px 6px rgba(0,0,0,.18);transform:translate(-50%,-50%);white-space:nowrap}
       .o3d-floor{display:flex;align-items:center;gap:8px;font-size:12px;color:#e5e7eb;background:rgba(17,24,39,.88);border:1px solid rgba(148,163,184,.25);border-radius:10px;padding:7px 11px;transform:translate(0,-50%);white-space:nowrap;box-shadow:0 2px 10px rgba(0,0,0,.25);min-width:190px}
       .o3d-floor .pn{font-size:11px;color:#94a3b8;font-weight:700;min-width:20px}
       .o3d-floor .body{display:flex;flex-direction:column;gap:2px}
@@ -1184,18 +1199,22 @@ export class Office3D {
     for (const { id, el } of this.zoneLabelEls || []) {
       const z = this.floorZones[id];
       if (!z) { el.style.opacity = '0'; continue; }
-      const p = this.project(z.labelX ?? z.x, 0.035, z.labelZ ?? (z.z - z.d / 2 + 0.1));
-      const close = actorMarks.some((a) => Math.hypot(a.x - p.x, a.y - p.y) < 64);
+      // FT-78 v2: anclada DENTRO de su zona (esquina del fondo-izquierda), por encima del suelo; píldora del color de la zona
+      // QA queda delante del Kanban: su píldora va a la esquina del fondo-derecha; la del Kanban, bajo la pizarra.
+      const ax = id === 'qa' ? z.x + z.w / 2 - Math.min(0.75, z.w * 0.3) : z.x - z.w / 2 + Math.min(0.9, z.w * 0.3);
+      const p = id === 'board' ? this.project(BOARD.x - BOARD.w / 2 + 0.55, BOARD.y - BOARD.h / 2 - 0.12, BOARD.z + 0.12)
+        : this.project(ax, 0.5, z.z - z.d / 2 + 0.3);
+      if (!el.dataset.c) { const c = '#' + z.color.toString(16).padStart(6, '0'); el.style.background = c; el.style.borderColor = c; el.dataset.c = c; }
       el.style.left = p.x + 'px';
-      el.style.top = (p.y - (close ? 22 : 0)) + 'px';
+      el.style.top = p.y + 'px';
       el.style.opacity = p.visible ? '1' : '0';
     }
     // Pizarra: título + pendientes.
     const pend = this.tasks.filter((t) => t.status === 'todo' || t.status === 'failed').length;
-    const bp = this.project(BOARD.x, BOARD.y + BOARD.h / 2 + 0.25, BOARD.z);
+    const bp = this.project(BOARD.x, BOARD.y + BOARD.h / 2 + 0.09, BOARD.z); // borde superior del marco
     this.boardLabel.textContent = `${this.title || 'Proyecto'} · ${pend} pendientes`;
     this.boardLabel.style.left = bp.x + 'px';
-    this.boardLabel.style.top = bp.y + 'px';
+    this.boardLabel.style.top = (bp.y - 76) + 'px'; // FT-78 v2: encima de la pizarra, sin tapar «Por hacer»
     this.boardLabel.style.opacity = bp.visible ? '1' : '0';
 
     const seen = new Set();
