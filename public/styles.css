@@ -553,3 +553,5 @@ tr[data-cost-task] { cursor: pointer; }
 /* Descartada: tarjetas atenuadas, no se van a hacer (se pueden recuperar al Backlog) */
 .card.discarded { opacity: .6; }
 .card.discarded:hover { opacity: 1; }
+/* El proyecto activo no tiene revisiones pendientes: el chip avisa de las de otros proyectos, más discreto */
+.review-chip.others { opacity: .65; font-weight: 500; }

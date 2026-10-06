@@ -860,8 +860,11 @@ function render() {
   $('#tab-tasks-count').textContent = ts.filter((t) => ['todo', 'doing', 'review'].includes(t.status)).length || '';
   const nRev = ts.filter((t) => t.status === 'review').length, allRev = S.tasks.filter((t) => t.status === 'review'); // FT-56
   $('#tab-tasks-review').textContent = nRev ? `✋${nRev}` : '';
-  const rc = $('#review-chip'); rc.hidden = !allRev.length; rc.textContent = `✋ ${allRev.length} por revisar`;
-  rc.title = allRev.map((t) => `${t.code || t.id}: desde hace ${waitTxt(t.reviewSince)}`).join('\n');
+  // El chip cuenta las revisiones del proyecto ACTIVO; si este no tiene y otros sí, lo dice explícitamente («en otros proyectos»).
+  const rc = $('#review-chip'), revOthers = allRev.length - nRev, revList = nRev ? ts.filter((t) => t.status === 'review') : allRev;
+  rc.hidden = !allRev.length; rc.classList.toggle('others', !nRev);
+  rc.textContent = nRev ? `✋ ${nRev} por revisar` : `✋ ${revOthers} por revisar en otros proyectos`;
+  rc.title = revList.map((t) => `${t.code || t.id}: desde hace ${waitTxt(t.reviewSince)}`).join('\n') + (nRev && revOthers ? `\n(+${revOthers} en otros proyectos)` : '');
   $('#tab-agents-count').textContent = team().length || '';
   $('#tab-summary').innerHTML = `${ts.filter((t) => t.status === 'doing').length} en curso<br>${ts.filter((t) => t.status === 'review').length} por revisar<br>${working.length}/${team().length} agentes trabajando${paused ? ` · ${paused} en pausa` : ''}`;
   renderOfficeFoot();
@@ -2476,7 +2479,7 @@ function publishContext() {
     fetch(BASE + 'api/context', { method: 'POST', keepalive: true, headers: { 'content-type': 'application/json', 'x-ao-client': CLIENT_ID }, body: JSON.stringify({ ...JSON.parse(key), at: Date.now() }) }).catch(() => { ctxSent = ''; });
   }, 300);
 }
-$('#review-chip').addEventListener('click', () => { const t = S.tasks.filter((x) => x.status === 'review').sort((a, b) => a.reviewSince - b.reviewSince)[0]; if (t) { goProject(t.projectId); showTab('tasks'); } }); // FT-56
+$('#review-chip').addEventListener('click', () => { const mine = tasks().filter((x) => x.status === 'review'); const t = (mine.length ? mine : S.tasks.filter((x) => x.status === 'review')).sort((a, b) => a.reviewSince - b.reviewSince)[0]; if (t) { goProject(t.projectId); showTab('tasks'); } }); // FT-56
 $('#dialog').addEventListener('close', () => { openTaskId = null; publishContext(); });
 $('#project').addEventListener('change', publishContext);
 window.addEventListener('message', (e) => {
