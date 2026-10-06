@@ -1564,14 +1564,109 @@ let sumShowEmpty = false;
 // Consumo de tokens (FT-26): «48,2k tok»; la barra solo existe si el CLI informó la ventana de contexto (Claude); Codex no la da → «n/d».
 const fmtTok = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) : n >= 1e3 ? (n / 1e3).toFixed(1) : String(n)).replace('.', ',') + (n >= 1e6 ? 'M' : n >= 1e3 ? 'k' : '') + ' tok';
 const fmtN = (n) => fmtTok(n).replace(' tok', '');
-function usageHtml(a) {
-  const u = a.usage;
-  if (!u || !Number.isFinite(u.total)) return `<div class="tokrow"><b>${esc(a.name)}</b> <span class="muted" title="Aún sin cifras de esta sesión (o el motor no las informa)">n/d</span></div>`;
-  const pct = u.limit && u.used != null ? Math.min(100, Math.round((u.used / u.limit) * 100)) : null;
-  const tip = `${a.name} (${u.engine || a.activeEngine || '?'}) · entrada ${u.input} · salida ${u.output} · caché ${u.cache} · total ${u.total}${u.limit ? ` · contexto ${u.used}/${u.limit}` : ' · límite: n/d (el CLI no lo informa)'}${u.costUsd != null ? ` · ${u.costUsd.toFixed(3)} $` : ''}`;
-  const bar = pct == null ? '<span class="muted">límite n/d</span>' : `<span class="tokbar ${pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : ''}"><i style="width:${pct}%"></i></span><span class="muted">${pct}% · quedan ${fmtN(Math.max(0, u.limit - u.used))}</span>`;
-  return `<div class="tokrow ${a.status === 'idle' ? 'old' : ''}" title="${esc(tip)}"><b>${esc(a.name)}</b> <span class="tok">${fmtTok(u.total)}</span> <span class="muted">↓${fmtN(u.input)} ↑${fmtN(u.output)} ⚡${fmtN(u.cache)}</span>${bar}</div>`;
+// % de la ventana de contexto que lleva usada la sesión del agente (null si el motor no informa el límite).
+const usagePct = (u) => (u?.limit && u.used != null ? Math.min(100, Math.round((u.used / u.limit) * 100)) : null);
+const pctSev = (pct) => (pct == null ? '' : pct >= 90 ? 'bad' : pct >= 80 ? 'warn' : '');
+const engineModel = (a) => `${a.usage?.engine || a.activeEngine || a.engine || '?'}${a.model ? ` · ${a.model}` : ''}`;
+
+// ── Modales del Resumen (FT-53): «Tokens por sesión» y «Equipo» ──────────────
+// La tabla del Resumen queda en una línea por proyecto y el detalle vive aquí. Mientras un modal está abierto, cada
+// `state` del SSE repinta solo su cuerpo (`[data-sum-body]`) sin cerrarlo ni perder el foco del botón pulsado.
+let sumModal = null; // { kind: 'tokens' | 'team', projectId: id | '*' (todos los proyectos) }
+// Datos de un proyecto para los modales: su equipo y sus tareas (y el coste acumulado por agente, sumando sus tareas).
+function sumProjectData(p) {
+  const team = (p.team || []).map((id) => S.agents.find((a) => a.id === id)).filter(Boolean);
+  const ts = S.tasks.filter((t) => t.projectId === p.id);
+  return { p, team, ts, costOf: (a) => ts.filter((t) => t.agentId === a.id).reduce((n, t) => n + (t.costUsd || 0), 0) };
 }
+const sumProjects = (pid) => (pid === '*' ? S.projects.filter((p) => (p.team || []).length) : S.projects.filter((p) => p.id === pid)).map(sumProjectData);
+const byTotalDesc = (x, y) => (y.usage?.total ?? -1) - (x.usage?.total ?? -1);
+// Fila de un agente en el modal de tokens: nombre, rol, motor/modelo, total, ↓↑⚡, barra con «quedan…», coste.
+function tokensRow(a, costOf) {
+  const u = a.usage, pct = usagePct(u);
+  const cell = (v) => (u && Number.isFinite(u.total) ? `<td class="num">${fmtN(v)}</td>` : '<td class="num muted">n/d</td>');
+  const bar = !u ? '<span class="muted" title="Aún sin cifras de esta sesión (o el motor no las informa)">sin sesión</span>'
+    : pct == null ? '<span class="muted" title="El CLI no informa la ventana de contexto">límite n/d</span>'
+      : `<span class="tokbar ${pctSev(pct)}"><i style="width:${pct}%"></i></span> <span class="muted">${pct} % · quedan ${fmtN(Math.max(0, u.limit - u.used))}</span>`;
+  const cost = costOf(a) || u?.costUsd || 0;
+  return `<tr class="${a.status === 'idle' ? 'old' : ''}" data-sum-agent="${a.id}">
+    <td><b>${esc(a.name)}</b></td><td>${roleChip(a.role)}</td><td class="muted">${esc(engineModel(a))}</td>
+    <td class="num tok">${u && Number.isFinite(u.total) ? fmtN(u.total) : '<span class="muted">n/d</span>'}</td>${cell(u?.input)}${cell(u?.output)}${cell(u?.cache)}
+    <td class="ctx">${bar}</td><td class="num">${cost ? cost.toFixed(2) + ' $' : '·'}</td></tr>`;
+}
+const sumOf = (list, k) => list.reduce((n, a) => n + (a.usage?.[k] || 0), 0);
+function tokensModalBody(pid) {
+  const groups = sumProjects(pid);
+  const agents = groups.flatMap((g) => g.team);
+  const cost = groups.reduce((n, g) => n + g.team.reduce((m, a) => m + (g.costOf(a) || a.usage?.costUsd || 0), 0), 0);
+  const accumulated = groups.reduce((n, g) => n + g.ts.reduce((m, t) => m + (t.usage?.total || 0), 0), 0);
+  const rows = groups.map((g) => `${groups.length > 1 ? `<tr class="sum-group"><td colspan="9">${esc(g.p.name)} <span class="muted">· ${g.team.length} agente${g.team.length === 1 ? "" : "s"} · ${fmtTok(sumOf(g.team, 'total'))}</span></td></tr>` : ''}${[...g.team].sort(byTotalDesc).map((a) => tokensRow(a, g.costOf)).join('')}`).join('');
+  return `<table class="repos sum-detail">
+    <thead><tr><th>Agente</th><th>Rol</th><th>Motor · modelo</th><th class="num">Total</th><th class="num">↓ Entrada</th><th class="num">↑ Salida</th><th class="num">⚡ Caché</th><th>Contexto</th><th class="num">Coste</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="9" class="muted">Sin equipo</td></tr>'}</tbody>
+    <tfoot><tr data-sum-totals><td colspan="3"><b>Total</b> <span class="muted">· ${agents.length} agentes</span></td><td class="num tok">${fmtN(sumOf(agents, 'total'))}</td><td class="num">${fmtN(sumOf(agents, 'input'))}</td><td class="num">${fmtN(sumOf(agents, 'output'))}</td><td class="num">${fmtN(sumOf(agents, 'cache'))}</td><td></td><td class="num">${cost ? cost.toFixed(2) + ' $' : '·'}</td></tr></tfoot>
+  </table>
+  <p class="muted sum-note">Cifras de la sesión actual de cada agente (se reinician con cada tarea). Acumulado de todas las tareas${pid === '*' ? '' : ' del proyecto'}, intentos incluidos: <b>${fmtTok(accumulated)}</b>.</p>`;
+}
+// El mismo contenido en texto plano, para pegarlo en un chat o un informe.
+function tokensModalText(pid) {
+  const groups = sumProjects(pid);
+  const line = (a, g) => { const u = a.usage; return `  ${a.name} (${S.roles[a.role]?.label || a.role}, ${engineModel(a)}): ${u ? `${fmtTok(u.total)} · ↓${fmtN(u.input)} ↑${fmtN(u.output)} ⚡${fmtN(u.cache)}${usagePct(u) != null ? ` · contexto ${usagePct(u)} % (quedan ${fmtN(Math.max(0, u.limit - u.used))})` : ''}` : 'sin sesión'}${(g.costOf(a) || u?.costUsd) ? ` · ${(g.costOf(a) || u.costUsd).toFixed(2)} $` : ''}`; };
+  const agents = groups.flatMap((g) => g.team);
+  return [`Tokens por sesión · ${pid === '*' ? 'todos los proyectos' : groups[0]?.p.name || ''}`, ...groups.flatMap((g) => [`${g.p.name}:`, ...[...g.team].sort(byTotalDesc).map((a) => line(a, g))]),
+    `Total: ${fmtTok(sumOf(agents, 'total'))} · ↓${fmtN(sumOf(agents, 'input'))} ↑${fmtN(sumOf(agents, 'output'))} ⚡${fmtN(sumOf(agents, 'cache'))}`].join('\n');
+}
+// Estado de un agente para el modal de equipo: 💤 libre / ⚙ trabajando en FT-xx / ⏸ pausado / ❓ esperando respuesta.
+function agentState(a) {
+  const t = S.tasks.find((x) => x.id === a.taskId);
+  const asking = (S.questions || []).some((q) => q.agentId === a.id);
+  const code = t ? esc(tcode(t)) : '';
+  if (a.status === 'paused') return { icon: '⏸', label: `pausado${code ? ` en ${code}` : ''}`, cls: 'paused', t };
+  if (asking) return { icon: '❓', label: `esperando respuesta${code ? ` (${code})` : ''}`, cls: 'asking', t };
+  if (a.status === 'working') return { icon: '⚙', label: `trabajando en ${code || 'una tarea'}`, cls: 'working', t };
+  return { icon: '💤', label: 'libre', cls: 'idle', t };
+}
+function teamModalBody(pid) {
+  const groups = sumProjects(pid);
+  const order = { asking: 0, working: 1, paused: 2, idle: 3 };
+  const rows = groups.map((g) => `${groups.length > 1 ? `<tr class="sum-group"><td colspan="5">${esc(g.p.name)}</td></tr>` : ''}${g.team.map((a) => ({ a, s: agentState(a) })).sort((x, y) => order[x.s.cls] - order[y.s.cls] || x.a.name.localeCompare(y.a.name)).map(({ a, s }) => `
+    <tr data-sum-agent="${a.id}"><td><span class="avatar xs" style="--c:${S.roles[a.role]?.color}">${esc(a.name).charAt(0).toUpperCase()}</span> <b>${esc(a.name)}</b> ${roleChip(a.role)}</td>
+    <td class="sum-state ${s.cls}">${s.icon} ${s.label}</td><td class="muted sum-act" title="${esc(s.t?.title || '')}">${esc(a.status === 'idle' ? '' : a.activity || '')}${s.t ? `<div class="muted small">${esc(s.t.title.slice(0, 60))}${s.t.title.length > 60 ? '…' : ''}</div>` : ''}</td>
+    <td class="muted">${esc(engineModel(a))}</td>
+    <td class="sum-acts"><button type="button" class="small ghost" data-sum-open="${a.id}" title="Abrir el panel del agente (registro en vivo, motor, pausar…)">Abrir</button>${s.t ? `<button type="button" class="small ghost" data-sum-task="${s.t.id}" title="Abrir la tarea ${esc(tcode(s.t))}">Ir a la tarea</button>` : ''}</td></tr>`).join('')}`).join('');
+  const all = groups.flatMap((g) => g.team), n = (cls) => all.filter((a) => agentState(a).cls === cls).length;
+  return `<table class="repos sum-detail"><thead><tr><th>Agente</th><th>Estado</th><th>Actividad</th><th>Motor · modelo</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="5" class="muted">Sin equipo</td></tr>'}</tbody>
+    <tfoot><tr data-sum-totals><td colspan="5"><b>${all.length} agentes</b> <span class="muted">· ${n('working')} trabajando · ${n('idle')} libres${n('paused') ? ` · ${n('paused')} en pausa` : ''}${n('asking') ? ` · ${n('asking')} esperando respuesta` : ''}</span></td></tr></tfoot></table>`;
+}
+const sumModalTitle = (kind, pid) => `${kind === 'tokens' ? 'Tokens por sesión' : 'Equipo'} · ${pid === '*' ? 'todos los proyectos' : esc(S.projects.find((p) => p.id === pid)?.name || '')}`;
+const sumModalBody = ({ kind, projectId: pid }) => (kind === 'tokens' ? tokensModalBody(pid) : teamModalBody(pid));
+function openSumModal(kind, pid) {
+  sumModal = { kind, projectId: pid };
+  dialog(`<h3>${sumModalTitle(kind, pid)}</h3><div data-sum-body>${sumModalBody(sumModal)}</div>
+    <div class="row">${kind === 'tokens' ? '<button type="button" class="ghost" data-sum-copy title="Copiar la tabla como texto">📋 Copiar como texto</button>' : ''}<div class="spacer"></div><button class="ghost" value="cancel" autofocus>Cerrar</button></div>`, null, 'summary-modal');
+}
+// Repinta el modal abierto con el estado nuevo (lo llama renderSummary en cada `state`). Conserva el foco por data-*.
+function refreshSumModal() {
+  const dlg = $('#dialog');
+  if (!sumModal || !dlg.open || dlg.className !== 'summary-modal') return;
+  const body = dlg.querySelector('[data-sum-body]');
+  if (!body) return;
+  const f = document.activeElement, key = f && body.contains(f) ? [...f.attributes].find((at) => at.name.startsWith('data-sum-')) : null;
+  dlg.querySelector('h3').innerHTML = sumModalTitle(sumModal.kind, sumModal.projectId);
+  body.innerHTML = sumModalBody(sumModal);
+  if (key) body.querySelector(`[${key.name}="${key.value}"]`)?.focus();
+}
+$('#dialog').addEventListener('close', () => { sumModal = null; });
+document.addEventListener('click', (e) => {
+  const open = e.target.closest('[data-sum-open]'), task = e.target.closest('[data-sum-task]'), copy = e.target.closest('[data-sum-copy]');
+  if (!open && !task && !copy) return;
+  if (copy) { navigator.clipboard?.writeText(tokensModalText(sumModal?.projectId ?? '*')).then(() => toast('Tabla copiada'), () => toast('No se pudo copiar', 'error')); return; }
+  sumModal = null;
+  $('#dialog').close();
+  if (open) { showTab('agents'); openDrawer(open.dataset.sumOpen); }
+  else { const t = S.tasks.find((x) => x.id === task.dataset.sumTask); if (t) { goProject(t.projectId); showTab('tasks'); openTask(t.id); } }
+});
 // ── Cuota de las suscripciones (FT-45) ──────────────────────────────────────
 // Llega en S.quota por el SSE (el servidor la refresca cada 60 s). Barras como las del /usage de Claude Code.
 const QUOTA_NAME = { claude: 'Claude', codex: 'Codex' };
@@ -1596,6 +1691,26 @@ function renderQuotaChip() {
   el.className = `ghost quota-chip ${top >= 95 ? 'bad' : top >= 80 ? 'warn' : ''}`;
   el.textContent = parts.map((x) => `${QUOTA_NAME[x.e]} ${x.w.percent} %`).join(' · ');
   el.title = 'Cuota restante de las suscripciones (peor ventana de cada motor). Clic: abre el Resumen';
+}
+// Celdas de una línea del Resumen (FT-53); el detalle va en los modales «Ver» / «Ver equipo».
+const sumBtn = (attr, id, label, tip) => `<button type="button" class="small ghost sum-view" ${attr}="${id}" title="${esc(tip)}">${label}</button>`;
+function tokensCell(p, team, tokens) {
+  const withUsage = team.filter((a) => a.usage && Number.isFinite(a.usage.total));
+  if (!withUsage.length && !tokens) return '<span class="muted" title="Las cifras aparecen en cuanto alguien del equipo ejecute una tarea">sin sesiones aún</span>';
+  const worst = Math.max(-1, ...withUsage.map((a) => usagePct(a.usage) ?? -1));
+  const dot = worst >= 80 ? `<span class="tokdot ${worst >= 90 ? 'bad' : 'warn'}" title="Algún agente supera el 80 % de su ventana de contexto (${worst} %)" aria-label="contexto casi lleno"></span>` : '';
+  const total = tokens || withUsage.reduce((n, a) => n + a.usage.total, 0);
+  return `<span class="tok">${fmtTok(total)}</span>${dot} ${sumBtn('data-sum-tokens', p.id, 'Ver', 'Detalle de tokens por agente')}`;
+}
+function teamCell(p, team) {
+  if (!team.length) return '<span class="muted">sin equipo</span>';
+  const ini = team.slice(0, 3).map((a) => `<span class="avatar xs" style="--c:${S.roles[a.role]?.color}" title="${esc(a.name)}">${esc(a.name).charAt(0).toUpperCase()}</span>`).join('');
+  return `<span class="avatars">${ini}</span>${team.length > 3 ? `<span class="muted">+${team.length - 3}</span> ` : ' '}${sumBtn('data-sum-team', p.id, `${team.length} agente${team.length === 1 ? '' : 's'}`, 'Ver equipo')}`;
+}
+function busyCell(busy) {
+  if (!busy.length) return '<span class="muted">—</span>';
+  const one = busy.length === 1 && busy[0].t ? ` <b>${esc(tcode(busy[0].t))}</b>` : '';
+  return `<span class="dot ${busy[0].a.status}"></span>${busy.length} en curso${one}`;
 }
 const SUM_COLS = [['backlog', 'Backlog'], ['todo', 'Por hacer'], ['doing', 'En curso'], ['review', 'Revisión'], ['done', 'Hecho'], ['failed', 'Fallidas']];
 // ── 💸 Costes (FT-76) ──────────────────────────────────────────────────────
@@ -1686,15 +1801,16 @@ function renderSummary() {
           <td><b>${esc(p.name)}</b>${p.folder && p.folder !== p.name ? ` <span class="muted">(${esc(p.folder)})</span>` : ''} <span class="muted">${esc(p.prefixDefault || '')}</span>${open ? ` <span title="preguntas pendientes">❓${open}</span>` : ''}</td>
           <td><button class="small ${p.running ? 'on' : 'ghost'}" data-sum-run="${p.id}" title="${p.running ? 'Parar el equipo' : 'Poner a trabajar'}">${p.running ? '🟢 En marcha' : '⏸ Parado'}</button></td>
           ${SUM_COLS.map(([st]) => { const c = ts.filter((t) => t.status === st).length; return st === 'failed' && c ? `<td class="num st-failed"><button class="linklike" data-sum-failed="${p.id}" title="Ver por qué fallaron">${c}</button></td>` : `<td class="num ${c ? 'st-' + st : 'zero'}">${c || '·'}</td>`; }).join('')}
-          <td>${team.length ? `${team.length} <span class="muted">${esc(team.map((a) => a.name).join(', '))}</span>` : '<span class="muted">sin equipo</span>'}</td>
-          <td>${busy.length ? busy.map(({ a, t }) => `<div class="busy"><span class="dot ${a.status}"></span>${esc(a.name)}${t ? ` → <b>${esc(tcode(t))}</b> <span class="muted" title="${esc(t.title)}">${esc(t.title.slice(0, 40))}${t.title.length > 40 ? '…' : ''}</span>` : ''}${a.status === 'paused' ? ' <span class="muted">(en pausa)</span>' : ''}</div>`).join('') : '<span class="muted">—</span>'}</td>
-          <td>${free.length ? esc(free.map((a) => a.name).join(', ')) : '<span class="muted">—</span>'}</td>
-          <td>${team.some((a) => a.usage) || tokens ? `${tokens ? `<div class="tokrow"><b>Total</b> <span class="tok">${fmtTok(tokens)}</span></div>` : ''}${team.filter((a) => a.usage || a.status !== 'idle').map(usageHtml).join('')}` : '<span class="muted" title="Las cifras se toman de la sesión de cada agente mientras trabaja: aparecen en cuanto alguien del equipo ejecute una tarea (las tareas anteriores a esta función no las guardaron)">sin sesiones aún</span>'}</td>
+          <td>${teamCell(p, team)}</td>
+          <td>${busyCell(busy)}</td>
+          <td>${free.length ? `<span title="${esc(free.map((a) => a.name).join(', '))}">${free.length} libre${free.length === 1 ? '' : 's'}</span>` : '<span class="muted">—</span>'}</td>
+          <td>${tokensCell(p, team, tokens)}</td>
           <td class="num">${cost ? cost.toFixed(2) + ' $' : '·'}</td>
           <td class="muted">${last ? 'hace ' + ago(last) : '—'}</td>
-        </tr>`).join('')}${idle.length ? `<tr class="idle-row"><td colspan="${SUM_COLS.length + 8}"><button class="small ghost" data-sum-empty>${sumShowEmpty ? '▾ Ocultar' : '▸ Mostrar'} ${idle.length} proyectos sin equipo ni tareas (${esc(idle.map((r) => r.p.name).join(', '))})</button></td></tr>` : ''}</tbody>
+        </tr>`).join('')}${idle.length ? `<tr class="idle-row"><td colspan="${SUM_COLS.length + 8}"><button class="small ghost" data-sum-empty>${sumShowEmpty ? '▾ Ocultar' : '▸ Mostrar'} ${idle.length} proyectos sin equipo ni tareas (${esc(idle.map((r) => r.p.name).join(', '))})</button></td></tr>` : ''}</tbody>${shown.length > 1 ? `<tfoot><tr class="sum-total"><td><b>Total</b></td><td></td><td colspan="${SUM_COLS.length + 3}"></td><td><span class="tok">${fmtTok(shown.reduce((n, r) => n + r.tokens, 0))}</span> ${sumBtn('data-sum-all', '*', 'Ver todos', 'Tokens de todos los agentes, agrupados por proyecto')}</td><td class="num">${shown.reduce((n, r) => n + r.cost, 0).toFixed(2)} $</td><td></td></tr></tfoot>` : ''}
     </table>
     <p class="muted" style="margin:8px 2px">Clic en una fila: abre sus tareas. Los datos llegan por SSE: la tabla se actualiza sola.</p>`;
+  refreshSumModal();
   const sc = $('#tab-summary-count'); if (sc) sc.textContent = (all.filter((t) => t.status === 'review' && S.projects.find((p) => p.id === t.projectId)?.running).length + qs.length) || ''; // solo lo que pide acción: revisiones de proyectos en marcha + preguntas
 }
 document.addEventListener('click', async (e) => {
@@ -1703,6 +1819,8 @@ document.addEventListener('click', async (e) => {
   const ct = e.target.closest('[data-cost-task]');
   if (ct) { openTask(ct.dataset.costTask); return; }
   if (e.target.closest('[data-sum-empty]')) { sumShowEmpty = !sumShowEmpty; renderSummary(); return; }
+  const vt = e.target.closest('[data-sum-tokens],[data-sum-team],[data-sum-all]');
+  if (vt) { e.stopPropagation(); openSumModal(vt.dataset.sumTeam ? 'team' : 'tokens', vt.dataset.sumTokens || vt.dataset.sumTeam || vt.dataset.sumAll); return; }
   const fb = e.target.closest('[data-sum-failed]');
   if (fb) { e.stopPropagation(); failedDialog(fb.dataset.sumFailed === 'all' ? null : fb.dataset.sumFailed); return; }
   const run = e.target.closest('[data-sum-run]');
