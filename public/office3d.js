@@ -33,13 +33,13 @@ const BOARD_SPOTS = [{ x: 3.0, z: 1.1, corr: null }, { x: 4.2, z: 1.1, corr: nul
 const BOARD = { x: 4.15, y: 0.78, z: 0.09, w: 2.9, h: 0.98 };
 
 const BASE_ZONE_STYLE = {
-  development: { label: 'Desarrollo', color: 0xd6c3ff, x: 1.9, z: 2.35, w: 3.2, d: 3.25, labelX: 2.8, labelZ: 0.85 },
-  qa: { label: 'QA', color: 0xb8f0c4, x: 5.15, z: 2.35, w: 3.0, d: 3.25, labelX: 6.35, labelZ: 0.95 },
-  docs: { label: 'Documentación', color: 0xb9ddff, x: 2.65, z: 4.85, w: 4.3, d: 1.25, labelX: 1.15, labelZ: 4.35 },
-  review: { label: 'Revisión', color: 0xffd36b, x: 7.1, z: 4.25, w: 2.1, d: 2.4, labelX: 7.85, labelZ: 3.25 },
-  meeting: { label: 'Reuniones', color: 0xffbbc1, x: 5.45, z: 5.1, w: 2.2, d: 1.0, labelX: 4.55, labelZ: 4.75 },
-  idle: { label: 'Descanso', color: 0x9fd8c3, x: 7.45, z: 5.05, w: 1.25, d: 0.95, labelX: 7.95, labelZ: 4.25 },
-  board: { label: 'Kanban', color: 0xc9d6df, x: 4.15, z: 1.0, w: 2.8, d: 1.25, labelX: 5.25, labelZ: 0.8 },
+  development: { label: 'Desarrollo', color: 0xd6c3ff, x: 1.9, z: 2.35, w: 3.2, d: 3.25, labelX: 0.75, labelZ: 0.75 },
+  qa: { label: 'QA', color: 0xb8f0c4, x: 5.15, z: 2.35, w: 3.0, d: 3.25, labelX: 7.85, labelZ: 0.75 },
+  docs: { label: 'Documentación', color: 0xb9ddff, x: 2.65, z: 4.85, w: 4.3, d: 1.25, labelX: 0.85, labelZ: 5.75 },
+  review: { label: 'Revisión', color: 0xffd36b, x: 7.1, z: 4.25, w: 2.1, d: 2.4, labelX: 8.75, labelZ: 3.05 },
+  meeting: { label: 'Reuniones', color: 0xffbbc1, x: 5.45, z: 5.1, w: 2.2, d: 1.0, labelX: 4.15, labelZ: 6.05 },
+  idle: { label: 'Descanso', color: 0x9fd8c3, x: 7.45, z: 5.05, w: 1.25, d: 0.95, labelX: 8.85, labelZ: 5.95 },
+  board: { label: 'Kanban', color: 0xc9d6df, x: 4.15, z: 1.0, w: 2.8, d: 1.25, labelX: 3.25, labelZ: 0.35 },
 };
 
 function zonesFor(size = DEFAULT_FLOOR_SIZE) {
@@ -167,13 +167,14 @@ export class Office3D {
     this.camAnim = null;           // transición de cámara en curso {from, to, t0} (FT-47)
     this.camCenter = floorCenter(this.currentFloorSize);
     this.officeLevel = 'floor';     // FT-71: building → floor → agent en una sola escena.
+    this.metrics = { frames: 0, fps: 0, fpsT0: performance.now(), lastRebuildMs: 0, lastFloorCount: 0 };
     canvas.dataset.officeMode = 'floor';
     canvas.dataset.officeLevel = 'floor';
     if (canvas.tabIndex < 0) canvas.tabIndex = 0;   // enfocable: Esc con el canvas enfocado vuelve al edificio (FT-47, en app.js)
 
     canvas.style.imageRendering = 'auto';
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    this.renderer.setPixelRatio(Math.min(1.5, window.devicePixelRatio || 1));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -218,7 +219,7 @@ export class Office3D {
     dir.position.set(RX * 0.62, 9, RZ * 0.72);
     dir.target.position.copy(CENTER);
     dir.castShadow = true;
-    dir.shadow.mapSize.set(2048, 2048);
+    dir.shadow.mapSize.set(1024, 1024);
     const s = Math.max(RX, RZ) * 0.7;
     const sc = dir.shadow.camera;
     sc.left = -s; sc.right = s; sc.top = s; sc.bottom = -s;
@@ -572,6 +573,7 @@ export class Office3D {
   // Reconstruye las plantas solo si cambia su firma (lista de proyectos con equipo + contadores), nunca por frame.
   rebuildFloors() {
     if (this.mode !== 'building' || !this.ready) return;
+    const t0 = performance.now();
     const floors = this.computeFloors();
     const sig = JSON.stringify(floors);
     if (sig === this.floorsSig) return;
@@ -580,6 +582,8 @@ export class Office3D {
     this.floors = floors;
     this.clearBuilding();
     floors.forEach((f, i) => this.buildFloorBlock(f, i));
+    this.metrics.lastRebuildMs = +(performance.now() - t0).toFixed(1);
+    this.metrics.lastFloorCount = floors.length;
     if (floors.length !== before) this.resize();   // la caja a encuadrar cambia de altura
     this.refreshFloorTint();
     this.updateFloorLabels();
@@ -820,6 +824,7 @@ export class Office3D {
       mode: this.mode, officeLevel: this.officeLevel, selectedAgentId: this.selected || null, activeProjectId: this.activeProjectId, hoverFloor: this.hoverFloor, hoverActor: this.hoverActor, animating: !!this.camAnim,
       camera: { center: { x: +this.camCenter.x.toFixed(3), y: +this.camCenter.y.toFixed(3), z: +this.camCenter.z.toFixed(3) }, span: +(this.camera.top - this.camera.bottom).toFixed(3) },
       actors: this.actors.size,
+      metrics: { fps: this.metrics.fps, lastRebuildMs: this.metrics.lastRebuildMs, lastFloorCount: this.metrics.lastFloorCount },
       zones: Object.fromEntries(Object.entries(this.floorZones || {}).map(([id, z]) => [id, { label: z.label, x: z.x, z: z.z, w: z.w, d: z.d }])),
       slots,
       floorSize: this.floorLayout?.size || null,
@@ -1023,7 +1028,7 @@ export class Office3D {
       .o3d-board{font-size:12px;font-weight:700;color:#334155;background:rgba(255,255,255,.92);border:1px solid rgba(0,0,0,.1);
         border-radius:8px;padding:3px 10px;box-shadow:0 2px 6px rgba(0,0,0,.18)}
       .o3d-zone{font-size:11px;font-weight:800;color:#1f2937;background:rgba(255,255,255,.86);border:1px solid rgba(0,0,0,.08);
-        border-radius:999px;padding:3px 9px;box-shadow:0 1px 4px rgba(0,0,0,.14)}
+        border-radius:6px;padding:3px 9px;box-shadow:0 1px 4px rgba(0,0,0,.14);transform:translate(-50%,-50%)}
       .o3d-floor{font-size:12px;font-weight:600;color:#1f2937;background:rgba(255,255,255,.92);border:1px solid rgba(0,0,0,.1);
         border-radius:8px;padding:3px 10px;box-shadow:0 2px 6px rgba(0,0,0,.18);transform:translate(10px,-50%)}
       .o3d-floor.hover{outline:2px solid #3ad0a0;outline-offset:1px}
@@ -1076,10 +1081,10 @@ export class Office3D {
     for (const { id, el } of this.zoneLabelEls || []) {
       const z = this.floorZones[id];
       if (!z) { el.style.opacity = '0'; continue; }
-      const p = this.project(z.labelX ?? z.x, 0.08, z.labelZ ?? (z.z - z.d / 2 + 0.1));
+      const p = this.project(z.labelX ?? z.x, 0.035, z.labelZ ?? (z.z - z.d / 2 + 0.1));
       const close = actorMarks.some((a) => Math.hypot(a.x - p.x, a.y - p.y) < 64);
       el.style.left = p.x + 'px';
-      el.style.top = (p.y - (close ? 30 : 0)) + 'px';
+      el.style.top = (p.y - (close ? 22 : 0)) + 'px';
       el.style.opacity = p.visible ? '1' : '0';
     }
     // Pizarra: título + pendientes.
@@ -1216,8 +1221,10 @@ export class Office3D {
     cam.up.set(0, 1, 0);
     cam.lookAt(center);
     this.camCenter.copy(center);
-    const halfH = 1.85, halfW = halfH * aspect;
-    cam.left = -halfW; cam.right = halfW; cam.top = halfH; cam.bottom = -halfH; cam.near = -20; cam.far = 30;
+    const halfH = 2.35, halfW = halfH * aspect;
+    const drawerPx = Math.min(440, (this.cv.clientWidth || 0) * 0.42);
+    const panelShift = drawerPx > 0 ? halfW * (drawerPx / (this.cv.clientWidth || 1)) * 0.9 : 0;
+    cam.left = -halfW + panelShift; cam.right = halfW + panelShift; cam.top = halfH; cam.bottom = -halfH; cam.near = -20; cam.far = 30;
     cam.updateProjectionMatrix();
     cam.updateMatrixWorld();
   }
@@ -1307,6 +1314,12 @@ export class Office3D {
       else { this.step(dt, now); this.updateLabels(now); }
     } catch (err) { /* nunca romper el bucle de render */ }
     this.renderer.render(this.scene, this.camera);
+    this.metrics.frames++;
+    if (t - this.metrics.fpsT0 >= 1000) {
+      this.metrics.fps = Math.round(this.metrics.frames * 1000 / (t - this.metrics.fpsT0));
+      this.metrics.frames = 0;
+      this.metrics.fpsT0 = t;
+    }
   }
 }
 

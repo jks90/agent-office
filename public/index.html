@@ -41,7 +41,10 @@
   <main>
     <div id="questions-bar" hidden></div>
     <section class="view" id="view-office">
-      <div class="office-wrap"><canvas id="office"></canvas></div>
+      <div class="office-wrap">
+        <canvas id="office" role="img" aria-label="Oficina 3D de AgentOffice: edificio, planta o agente enfocado según la navegación"></canvas>
+        <div id="office-mobile-list" class="office-mobile-list" aria-label="Plantas de la oficina"></div>
+      </div>
       <div class="office-foot">
         <span id="office-crumb" class="office-crumb"></span>
         <span id="office-live" class="muted"></span>

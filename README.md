@@ -285,13 +285,15 @@ Oficina **3D isométrica** (`public/office3d.js`: three.js + modelos glTF de Ken
 
 Para verla sin navegador (y para que un agente pueda ver lo que pinta): `node scripts/preview.mjs out.png --wait 15000` levanta un servidor temporal con un equipo demo (si el workspace de flow-test aún no ha dado proyectos, crea el demo), captura la oficina con Chrome headless (WebGL por SwiftShader) e imprime los errores de consola y los fps. `--full` captura la página entera, `--building` el edificio (3 proyectos con equipo y 1 sin él; con varios equipos la Oficina abre ya como edificio) y `--building --floor Facturación` entra en esa planta con un clic antes de capturar (FT-47).
 
+FT-72 remata la Oficina para tamaños reales y embebidos: de 1024 px a pantallas anchas el canvas mantiene el encuadre con `ResizeObserver`; en móvil el modo `building` degrada a una lista accesible de plantas con contadores. El canvas lleva etiqueta ARIA, foco visible y navegación por teclado (`Tab`/`Enter` entre plantas o agentes, `Esc` para subir de agente → planta → edificio). La ficha del agente es un diálogo con etiqueta ARIA y su actividad reciente filtra los cierres ruidosos de herramientas: solo se ven inicios y fallos (`⚠ falló: …`). `debugState().metrics` expone `fps`, `lastRebuildMs` y `lastFloorCount` para medir el coste con 12 plantas y 12 agentes.
+
 ### El edificio (FT-46)
 
 La misma clase `Office3D` tiene dos modos: **`floor`** (la sala de siempre: el proyecto activo con sus personajes) y **`building`**: el **edificio** de la empresa, **una planta por proyecto con equipo** (≥ 1 agente fichado en `project.team`; los proyectos sin trabajadores no se dibujan). Planta baja = proyecto más antiguo (`createdAt`), arriba los nuevos; tope visual de 12 plantas (con más, las restantes se agrupan en una planta «+N proyectos» que no se abre). Sin personajes: cada planta es losa + fachada con los mismos muros `wall`/`wallWindow` de la sala (caras que ve la cámara), interior oscuro y azotea con terraza en la última; las **ventanas se encienden** (emissive, como las pantallas) según el nº de agentes trabajando, la fachada se apaga a gris si el proyecto está parado y cada planta lleva una etiqueta HTML «nombre · N trabajando · M en cola · ✋ K en revisión» con ⏸ delante si `running=false`. Pasar el ratón resalta la planta (emissive suave + cursor pointer) y el clic llama a `onFloorClick(projectId)`, con el que `app.js` entra en esa planta (FT-47).
 
 - **API**: `office.setMode('building'|'floor')`; `office.update({agents, tasks, roles, title, selected, projects, allAgents, allTasks, projectId})` (`app.js` pasa `S.projects`, `S.agents`, `S.tasks` y el proyecto activo; el modo `floor` sigue usando solo `agents`/`tasks` del proyecto activo). La cámara isométrica encuadra la caja que toque (`frameCamera(aspect, [x, y, z])`): la sala o `[RX, nPlantas·FLOOR_H, RZ]`; `resize()` vale en ambos modos.
 - **Rendimiento**: las plantas se reconstruyen solo cuando cambia su firma (proyectos con equipo + contadores), nunca por frame; en el edificio no se instancian personajes ni sombras.
-- **QA**: `canvas.dataset.officeMode` (`building`|`floor`) y `window.aoOffice.debugState()` → `{mode, activeProjectId, hoverFloor, animating, actors, floors:[{projectId, name, working, queued, review, running, screen:{x,y,w,h}}]}` (`screen` = rectángulo de la planta en px del viewport en modo edificio, para hacer clic en ella; FT-48). Prueba: `node scripts/building-e2e.mjs [captura.png]` (51 checks con Chrome headless: el edificio de FT-46, la navegación de FT-47 y el QA de FT-48 con repos git temporales, contadores contra `/api/state`, altas/bajas de equipo en vivo por SSE y capturas `resumen/building-*.png`; detalle abajo).
+- **QA**: `canvas.dataset.officeMode` (`building`|`floor`), `canvas.dataset.officeLevel` (`building`|`floor`|`agent`) y `window.aoOffice.debugState()` → `{mode, officeLevel, activeProjectId, hoverFloor, animating, actors, metrics, zones, slots, floors:[{projectId, name, working, queued, review, failed, running, screen:{x,y,w,h}}]}` (`screen` = rectángulo de la planta en px del viewport en modo edificio, para hacer clic en ella; FT-48/FT-72). Prueba: `node scripts/building-e2e.mjs [captura.png]` (Chrome headless: edificio, navegación, agente, contadores, métricas y cero errores de consola).
 
 ### Edificio ↔ planta (FT-47)
 
@@ -307,11 +309,13 @@ La Oficina **abre como edificio** y se entra y se sale de cada planta:
 
 Todo vive en `public/office3d.js` (constantes arriba del fichero):
 
-- `RX`, `RZ` (13 × 9): dimensiones de la sala y, por tanto, de cada planta; `WALL_H` la altura del muro. Mover mesas/mobiliario toca `DESK_COLS`/`DESK_ROWS`, `FURNITURE`, `BOARD`…
+- `RX`, `RZ` (13 × 9): dimensiones base de la sala; `recommendedFloorSize()` y `layoutFloor()` (`public/office-layout.js`) escalan a oficina compacta/media según nº de agentes. Mover mesas/mobiliario toca `DESK_COLS`/`DESK_ROWS`, `FURNITURE`, `BOARD`…
+- `BASE_ZONE_STYLE`: zonas funcionales, color de alfombra y posición de placa en suelo (`labelX`/`labelZ`). Estados → posición: `working` usa zona por rol; `waiting` va a cola/Kanban; `reviewing` a Revisión; `failed` conserva el puesto visible con etiqueta roja; `idle` a Descanso.
 - `SLAB_H` (losa) y `FLOOR_H = WALL_H + SLAB_H`: altura de una planta; la planta *i* se coloca a `i · FLOOR_H`.
 - `MAX_FLOORS` (12): tope visual antes de agrupar en la planta «+N proyectos».
 - `FLOOR_BOX = [RX, WALL_H, RZ]` y `frameCamera(aspect, [x, y, z])`: caja que encuadra la cámara (la sala en `floor`, `[RX, nPlantas·FLOOR_H, RZ]` en `building`). `CAM_MS` (380) es la duración de la transición.
 - `WINDOW_ON`, `WALL_PAUSED`, `SLAB_COLOR`, `INTERIOR`, `HOVER`, `HOVER_K`, `ACTIVE_K`: colores e intensidades de ventanas encendidas, fachada parada, resalte bajo el ratón y planta activa.
+- `frameAgentCamera()`: encuadre del nivel agente. Desde FT-72 desplaza el objetivo para descontar la ficha lateral (~440 px) y usa un zoom menos cerrado para ver el puesto y su zona.
 
 Tras cambiar la geometría: `node scripts/building-e2e.mjs` y mirar `scripts/preview.mjs --building`. La documentación con diagrama y capturas está en el flow `flowtest/arquitectura-guide.flow.json` (nota «🏢 Edificio 3D», FT-49).
 
