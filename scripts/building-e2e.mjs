@@ -71,7 +71,20 @@ try {
     for (let fy = 0.05; fy < 1; fy += 0.02) for (let fx = 0.2; fx < 0.8; fx += 0.02) { const e = { clientX: r.left + r.width * fx, clientY: r.top + r.height * fy }; if (o.pickFloor(e) === i) return { x: e.clientX, y: e.clientY }; }
     return null;
   }, name);
-  const clickFloor = async (name) => { const p = await floorPoint(name); if (!p) throw new Error('no encuentro la planta ' + name + ' en pantalla'); await page.mouse.move(p.x, p.y); await sleep(100); await page.mouse.click(p.x, p.y); };
+  // Clic en una planta con reintentos: el edificio se repinta por SSE y un clic puede caer en plena reconstrucción.
+  const clickFloor = async (name) => {
+    for (let n = 0; n < 4; n++) {
+      const p = await floorPoint(name); if (!p) throw new Error('no encuentro la planta ' + name + ' en pantalla');
+      await page.mouse.move(p.x, p.y); await sleep(120); await page.mouse.click(p.x, p.y);
+      for (let w = 0; w < 20; w++) { await sleep(150); if ((await state()).ds === 'floor') return; }
+    }
+    throw new Error('el clic en la planta ' + name + ' no entra en modo floor');
+  };
+  // El pie se repinta en cada estado SSE: el botón «Edificio» se pulsa dentro de la página, no por un handle que puede quedar obsoleto.
+  const clickCrumb = async () => {
+    await page.waitForFunction(() => !!document.querySelector('#office-crumb button'), { timeout: 8000 });
+    await page.evaluate(() => document.querySelector('#office-crumb button').click());
+  };
 
   await page.goto(base + '/', { waitUntil: 'networkidle2' });
   await sleep(4000);
@@ -113,7 +126,7 @@ try {
   check('el centro del rect de pantalla de Beta cae sobre la planta Beta', hitIdx === 1, String(hitIdx));
   await page.mouse.move(sr.x + sr.w / 2, sr.y + sr.h / 2);
   await sleep(100);
-  await page.mouse.click(sr.x + sr.w / 2, sr.y + sr.h / 2);
+  for (let n = 0; n < 4 && (await state()).ds !== 'floor'; n++) { await page.mouse.click(sr.x + sr.w / 2, sr.y + sr.h / 2); for (let w = 0; w < 20 && (await state()).ds !== 'floor'; w++) await sleep(150); }
   const anim = await page.evaluate(() => window.aoOffice.debugState().animating);
   await sleep(700);
   st = await state();
@@ -126,7 +139,7 @@ try {
   check('modo recordado en localStorage ao:officeMode=floor', st.stored === 'floor', String(st.stored));
   check('el canvas queda enfocado tras el clic', st.focused);
   if (shot) await page.screenshot({ path: shot });
-  await page.click('#office-crumb button');
+  await clickCrumb();
   await sleep(600);
   st = await state();
   check('«🏢 Edificio» vuelve al edificio y lo recuerda', st.ds === 'building' && st.stored === 'building' && st.crumb === '🏢 Edificio', `${st.ds} ${st.stored}`);
@@ -150,7 +163,7 @@ try {
   await sleep(300);
   st = await state();
   check('en una planta, cambiar el proyecto cambia de planta', st.ds === 'floor' && st.title === 'Alfa' && st.dbg.activeProjectId === a.id, `${st.ds} ${st.title} ${st.dbg.activeProjectId}`);
-  await page.click('#office-crumb button');
+  await clickCrumb();
   await sleep(500);
   await api('POST', '/api/guide/tool', { name: 'app.navigate', args: { view: 'office', projectId: 'Beta' } });
   await sleep(700);
@@ -164,7 +177,7 @@ try {
   await sleep(700);
   st = await state();
   check('app.navigate {view:office} sin proyecto respeta el modo recordado (floor)', st.ds === 'floor', st.ds);
-  await page.click('#office-crumb button');
+  await clickCrumb();
   await sleep(500);
   check('/api/context pasa a officeMode=building', (await api('GET', '/api/context')).officeMode === 'building');
 
@@ -175,7 +188,7 @@ try {
   await sleep(3500);
   st = await state();
   check('al recargar se recuerda el modo (floor) y el proyecto', st.ds === 'floor' && st.title === 'Alfa', `${st.ds} ${st.title}`);
-  await page.click('#office-crumb button');
+  await clickCrumb();
   await sleep(500);
   await page.reload({ waitUntil: 'networkidle2' });
   await sleep(3500);
@@ -234,7 +247,7 @@ try {
   st = await state();
   check('con un solo proyecto con equipo se entra directo a su planta (aunque se recordara el edificio)', st.ds === 'floor' && st.title === 'Alfa' && st.stored === 'building', `${st.ds} ${st.title} ${st.stored}`);
   check('…y el botón Edificio sigue disponible', /Edificio/.test(st.crumb) && (await page.$('#office-crumb button')) !== null, st.crumb);
-  await page.click('#office-crumb button');
+  await clickCrumb();
   await sleep(500);
   check('…y lleva al edificio de una planta', (await state()).ds === 'building' && (await state()).dbg.floors.length === 1);
   await page.screenshot({ path: path.join(shotDir, 'building-5-una-planta.png') });
