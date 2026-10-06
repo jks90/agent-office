@@ -52,6 +52,7 @@ const mockSrv = http.createServer((req, res) => {
   const which = req.url.startsWith('/claude') ? 'claude' : req.url.startsWith('/codex') ? 'codex' : null;
   if (!which) return res.writeHead(404).end('{}');
   mock.hits[which]++; mock.seen[which] = req.headers;
+  if (mock.fail?.[which]) return res.writeHead(mock.fail[which], { 'content-type': 'application/json', 'retry-after': '1' }).end('{}');
   res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(mock[which]));
 }).listen(mockPort, '127.0.0.1');
 const CLAUDE_URL = `http://127.0.0.1:${mockPort}/claude`, CODEX_URL = `http://127.0.0.1:${mockPort}/codex`;
@@ -97,6 +98,24 @@ check('Sin fichero de login: {ok:false, reason:"sin login"} en ambos', !nl.ok &&
 check('Ninguna respuesta contiene los tokens', !JSON.stringify([c, x, exp]).includes('SECRETO'));
 Object.assign(process.env, { CLAUDE_CONFIG_DIR: claudeDir, CODEX_HOME: codexDir });
 writeClaudeLogin(Date.now() + 3600_000);
+// 429 del proveedor: espera creciente y última lectura buena marcada como antigua (no «sin dato»)
+q.resetCache();
+const good = await q.readClaudeQuota();
+mock.fail = { claude: 429 };
+const st1 = await q.readClaudeQuota({ force: true });
+check('429 con dato bueno previo: se enseña el último dato marcado stale (con motivo y hora de reintento)', st1.ok && st1.stale && /429/.test(st1.staleReason) && st1.windows.length === good.windows.length && st1.retryAt > Date.now(), JSON.stringify(st1).slice(0, 200));
+const h429 = mock.hits.claude;
+await q.readClaudeQuota({ force: true });
+check('En espera tras el 429 ni el «forzar» vuelve a preguntar', mock.hits.claude === h429);
+q.resetCache();
+const st2 = await q.readClaudeQuota();
+check('429 sin dato previo: sin dato con el motivo «limita las consultas (429)»', !st2.ok && /limita las consultas \(429\)/.test(st2.reason), st2.reason);
+mock.fail = null; q.resetCache();
+// Instancia de pruebas (AO_DATA_DIR propio) sin endpoint propio: no usa la cuota real del usuario
+const savedUrl = process.env.AO_CLAUDE_USAGE_URL; delete process.env.AO_CLAUDE_USAGE_URL; process.env.AO_DATA_DIR = tmp;
+const hT = mock.hits.claude, ti = await q.readClaudeQuota();
+check('Instancia de pruebas sin endpoint propio: no consulta la cuota real', !ti.ok && /instancia de pruebas/.test(ti.reason) && mock.hits.claude === hT, ti.reason);
+process.env.AO_CLAUDE_USAGE_URL = savedUrl; delete process.env.AO_DATA_DIR; q.resetCache();
 
 // ── 2. Servidor temporal ──────────────────────────────────────────────────
 const stubPort = await freePort();
