@@ -1300,7 +1300,8 @@ function reviewStrip(t) {
   if (t.status === 'review') {
     const blocks = (t.blocks || []).length ? `<div class="rw-blocks">bloquea: ${t.blocks.map(taskLink).join(', ')}</div>` : '';
     const head = t.reviewing ? `🔎 Revisión automática en curso (${t.reviewing === 'auto' ? 'tests' : 'QA'})…` : `✋ Esperando tu revisión desde hace <span class="rw-t" data-since="${t.reviewSince}">${waitTxt(t.reviewSince)}</span>`;
-    return `<div class="review-wait">${head}${blocks}${t.reviewNote ? `<div class="rw-note">${esc(t.reviewNote)}</div>` : ''}</div>`;
+    const again = t.reviewNote && !t.reviewing && /falló|veredicto válido/.test(t.reviewNote) ? ` <button class="small ghost" data-review-again="${t.id}" title="Relanzar la revisión automática (falló por un problema técnico)">🔎 Revisar otra vez</button>` : '';
+    return `<div class="review-wait">${head}${blocks}${t.reviewNote ? `<div class="rw-note">${esc(t.reviewNote)}${again}</div>` : ''}</div>`;
   }
   if (t.autoApproved) return `<div class="review-ok">✅ aprobada por revisión automática (${t.autoApproved.by === 'auto' ? 'tests' : 'QA'})${t.autoApproved.text ? ': ' + esc(t.autoApproved.text) : ''}</div>`;
   if (t.waitingOn?.length) return `<div class="rw-dep">⏳ espera a ${t.waitingOn.map((w) => `${taskLink(w)} (${TSTATUS[w.status] || w.status})`).join(', ')}</div>`;
@@ -2505,6 +2506,7 @@ document.addEventListener('click', async (e) => {
   if (d.skillAdd) return api('POST', '/api/skills/centralize', { dir: d.skillAdd }).then((r) => { toast(`«${r.name}» en el catálogo`); renderSkills(true); });
   if (d.skillDel) return api('DELETE', `/api/skills/${d.skillDel}`).then(() => { toast('Quitada del catálogo'); renderSkills(true); });
   if (d.skillEdit) return editSkill(d.skillEdit);
+  if (d.reviewAgain) return api('POST', `/api/tasks/${d.reviewAgain}/review-again`).then(() => toast('Revisión automática relanzada'));
   if (d.cmemEdit !== undefined) return editClaudeMemory(d.cmemRepo, d.cmemEdit);
   if (d.cmemDel) { if (confirm(`¿Borrar la memoria «${d.cmemDel}»? (también su línea del índice)`)) api('DELETE', cmemUrl(d.cmemRepo, d.cmemDel)).then(() => { toast('Memoria borrada'); renderClaudeMemory(true); }); return; }
   if (d.agentEdit) return editAgent(d.agentEdit);
