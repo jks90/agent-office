@@ -117,9 +117,10 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, eff
     pause() { signal('SIGSTOP'); },
     resume() { signal('SIGCONT'); },
     // Mensaje en caliente (FT-5): nuevo mensaje de usuario por stdin. false si el CLI ya no admite entrada.
-    message(text) {
+    message(text, { raw = false } = {}) { // raw (FT-63): instrucción del propio orquestador, sin el envoltorio «el cliente añade…»
       if (child.stdin.destroyed || child.stdin.writableEnded) return false;
       cancelClose();
+      if (raw) { child.stdin.write(userMsg(text)); return true; }
       // Redacción neutra a propósito: un encabezado en mayúsculas tipo «INSTRUCCIÓN… prioritaria… confírmala literalmente» hace que
       // el modelo lo trate como inyección y lo rechace (probado con el CLI real).
       child.stdin.write(userMsg(`El cliente (quien revisa tu trabajo) añade esta indicación para lo que queda de la tarea: «${text}». Aplícala a partir de ahora y menciónala en tu resumen final.`));

@@ -21,6 +21,7 @@ import * as quota from './quota.js';
 import { briefingFor } from './briefing.js';
 import { detectQuotaHit } from './quota-pause.js';
 import * as memory from './memory.js';
+import * as compact from './compact.js';
 
 const ENGINES = { demo, claude, codex };
 export const ENGINE_IDS = ['auto', 'claude', 'codex', 'demo'];
@@ -362,7 +363,7 @@ export function messageAgent(id, { text, constraint = false, origin = 'user' } =
 }
 
 // ── Tareas ─────────────────────────────────────────────────────────────────
-export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null, context = null, skills = [], priority = 0 }) {
+export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null, context = null, skills = [], priority = 0, sizeChecked = false }) {
   // attachments (subidos): imágenes → images (las ve el agente), el resto → files (se citan en el prompt)
   for (const a of attachments) { if (/\.(png|jpe?g|webp)$/i.test(a.path)) images = [...images, a.path]; else files = [...files, a.path]; }
   const s = get();
@@ -377,6 +378,7 @@ export function createTask({ projectId, title, description = '', role, repo = nu
     agentId: null, branch: null, summary: '', diffStat: '', error: null, feedback: '', source, files: files.filter((f) => fs.existsSync(f)),
     constraints: [], priority: Math.max(0, Math.min(100, Number(priority) || 0)), context: cleanContext(context), skills: (Array.isArray(skills) ? skills : []).map(String).slice(0, 10), costUsd: null, attempts: 0, createdAt: Date.now(), updatedAt: Date.now(),
   };
+  if (sizeChecked) task.sizeChecked = true; // FT-63: ya troceada por el PO, no se vuelve a evaluar
   codes.assignCode(s.tasks, p, task);
   task.feedbackImages = copyImages(task, images);
   s.tasks.push(task);
@@ -714,6 +716,7 @@ export function tick() {
       const agent = pref || plannedAgentFor(p, t, team, { roles, isBusy: (a) => jobs.has(a.id) });
       if (!agent || jobs.has(agent.id)) continue;
       if (t.quotaPaused && !quotaReady(t, agent)) continue; // FT-66: sin cuota → espera a su hora (o sigue con el otro motor si es `auto`)
+      if (splitIfBig(p, t)) continue; // FT-63: tarea grande → al PO en vez de lanzarla entera
       const q = quotaCheck(agent);
       if (q.wait) continue;
       if (!q.ok) { quotaHold(p, agent, t, q); continue; }
@@ -724,6 +727,31 @@ export function tick() {
   }
 }
 setInterval(tick, 1500).unref();
+
+// FT-63: una tarea nueva que parece grande (muchas piezas, «y además…», estimación cercana al tope) no se lanza entera: se manda al PO
+// como «Planificar:» para que la trocee, y la original queda en Backlog enlazada (`splitInto`). Se evalúa una sola vez por tarea.
+// Ajustes ▸ bigTasks: 'plan' (por defecto) · 'suggest' (solo avisa y la lanza) · 'off'. Sin PO en el equipo, solo avisa.
+function splitIfBig(p, t) {
+  if (t.kind !== 'work' || t.sizeChecked || t.attempts || t.reused || t.quotaPaused) return false;
+  t.sizeChecked = true;
+  const mode = get().settings.bigTasks || 'plan';
+  if (mode === 'off') return false;
+  const capUsd = Number(get().settings.maxTaskUsd) > 0 ? Number(get().settings.maxTaskUsd) : 3;
+  const reason = compact.bigTaskReason(t, { estimate: costEstimates()[t.role], capUsd });
+  if (!reason) return false;
+  t.sizeHint = reason;
+  const planner = mode === 'plan' && teamOf(p).find((a) => roleOf(a.role)?.kind === 'planner');
+  if (!planner) { log(null, `⚠ ${t.code || t.id} parece grande (${reason}): conviene trocearla`); changed(); return false; }
+  t.status = 'backlog'; // antes de crear el plan: createTask() vuelve a llamar a tick()
+  try {
+    const plan = planGoal(p.id, `Esta tarea es grande (${reason}) y no debe lanzarse entera a un solo agente: trocéala en tareas pequeñas, verificables y con su rol.\n\nTarea ${t.code || '#' + t.id}: ${t.title}\n\n${t.description}`, { title: t.title });
+    t.splitInto = plan.id;
+    log(null, `✂ ${t.code || t.id} parece grande (${reason}): enviada al PO para trocearla (${plan.code || plan.id})`);
+    events.emit('TaskSplitRequested', events.ctxOf(t), { reason, planTaskId: plan.id });
+  } catch (e) { t.status = 'todo'; delete t.splitInto; log(null, `⚠ No pude enviar ${t.code || t.id} al PO: ${e.message}`); changed(); return false; }
+  changed();
+  return true;
+}
 
 const teamRoles = (p) => [...new Set(teamOf(p).filter((a) => roleOf(a.role)?.kind !== 'planner').map((a) => a.role))];
 
@@ -780,6 +808,7 @@ function buildPrompt(p, agent, t) {
     done.length ? `\nTrabajo previo del equipo (ya fusionado):\n${done.map((d) => `- ${d.title}: ${d.summary}`).join('\n')}` : '',
     t.feedback ? `\nComentarios de la revisión anterior (corrígelos):\n${t.feedback}` : '',
     t.baseConflict ? `\nOJO: ${t.baseConflict}` : '',
+    t.compactNotes !== undefined ? compact.notesBlock(t.compactNotes) : '', // FT-63
     t.feedbackImages?.length ? `\nImágenes adjuntas (míralas con atención antes de cambiar nada; también están en ${t.feedbackImages.join(', ')}).` : '',
     t.files?.length ? `\nFicheros adjuntos (léelos antes de empezar): ${t.files.join(', ')}` : '',
     '',
@@ -861,18 +890,25 @@ async function runTask(p, agent, t) {
     }
     if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true });
 
+    // FT-63: la ejecución se repite por «segmentos». Si el contexto pasa del umbral se pide el estado (NOTAS.md), se corta y se
+    // relanza con un contexto limpio y las notas en el prompt. Sin umbral alcanzado hay un solo segmento, como siempre.
+    const at = t.kind === 'plan' ? 0 : compact.threshold(s.settings.compactAt);
+    const model = modelFor(engineId, agent, role);
+    let res;
+    for (let seg = 0; ; seg++) {
     const prompt = buildPrompt(p, agent, t);
     t.pendingMessages = []; // ya van en el prompt
     const baseUsage = t.usage || null; // FT-26: consumo de intentos anteriores; t.usage es acumulado y se actualiza en vivo
     agent.usage = null; // sesión nueva
+    const cmp = { asked: false, cut: false };
     const job = engine.start({
       agent, task: t, project: p, cwd, mode: t.kind === 'plan' ? 'plan' : 'work', goal: t.goal, roles,
       prompt,
       images: (t.feedbackImages || []).filter((f) => fs.existsSync(f)),
       system: role.system,
-      model: modelFor(engineId, agent, role),
+      model,
       // Reintento de la MISMA tarea en su worktree hace <50 min (la caché de contexto aún vale): se reanuda su sesión.
-      resumeSession: engineId === 'claude' && t.reused && t.sessionId && (t.resumeAfterQuota && t.sessionEngine === 'claude' || Date.now() - (t.sessionAt || 0) < 50 * 60_000) ? t.sessionId : null,
+      resumeSession: seg === 0 && engineId === 'claude' && t.reused && t.sessionId && (t.resumeAfterQuota && t.sessionEngine === 'claude' || Date.now() - (t.sessionAt || 0) < 50 * 60_000) ? t.sessionId : null,
       budgetUsd: Number(s.settings.maxTaskUsd) > 0 ? Number(s.settings.maxTaskUsd) : 3, // tope por intento (Ajustes ▸ «Tope de gasto por tarea»)
       effort: ['low', 'medium', 'high'].includes(s.settings.agentEffort) ? s.settings.agentEffort : 'medium',
       mcpUrl: ['qa', 'docs'].includes(role.kind) ? mcpUrl() : null, // QA y documentalista hablan con flow-test por MCP
@@ -880,11 +916,34 @@ async function runTask(p, agent, t) {
       onActivity: (text) => { agent.activity = text; events.emit('AgentProgress', ev, { activity: text }); changed(); },
       onTool: (c) => events.emit(c.phase === 'started' ? 'AgentToolStarted' : 'AgentToolFinished', ev, c.phase === 'started' ? { callId: c.callId, tool: c.tool, summary: c.summary } : { callId: c.callId, ok: c.ok }),
       onLog: (line) => log(agent.id, line),
-      onUsage: (u) => { agent.usage = { ...u, engine: engineId, taskId: t.id }; t.usage = addUsage(baseUsage, u); changed(); }, // FT-26
+      onUsage: (u) => { agent.usage = { ...u, engine: engineId, taskId: t.id }; t.usage = addUsage(baseUsage, u);
+        // FT-63: contexto por encima del umbral → pedir las notas en caliente (Claude) o, si el motor no admite mensajes, cortar
+        if (at && !cmp.asked && seg < compact.MAX_COMPACTIONS && compact.reached(u, model, at)) {
+          cmp.asked = true;
+          const pct = Math.round(compact.contextShare(u, model) * 100);
+          if (job.message) { job.message(compact.COMPACT_INSTRUCTION, { raw: true }); log(agent.id, `🗜 Contexto al ${pct} %: pido las notas (${compact.NOTES_FILE}) para relanzar con contexto limpio`); }
+          else { cmp.cut = true; log(agent.id, `🗜 Contexto al ${pct} %: corto la sesión y la relanzo desde su rama`); job.stop(); }
+          events.emit('AgentProgress', ev, { activity: `Contexto al ${pct} %: compactando`, engine: engineId });
+        }
+        changed();
+      }, // FT-26
     });
     const entry = jobs.get(agent.id);
     Object.assign(entry, { stop: job.stop, engine: engineId, pid: job.pid, pause: job.pause, resume: job.resume, message: job.message });
-    const res = await job.done;
+    res = await job.done;
+    if (!cmp.asked || res.budgetHit || !(res.ok || cmp.cut && res.stopped)) break;
+    const notesPath = path.join(cwd, compact.NOTES_FILE);
+    const notes = fs.existsSync(notesPath) ? fs.readFileSync(notesPath, 'utf8').trim() : '';
+    if (!notes && !cmp.cut) break; // pidió las notas y no las escribió: había terminado → resumen final normal
+    try { fs.unlinkSync(notesPath); } catch { /* sin fichero */ }
+    if (res.costUsd != null) t.costUsd = (t.costUsd || 0) + res.costUsd;
+    if (t.branch) { try { await git.commitAll(cwd, `${t.code || t.id}: avance antes de compactar el contexto`, `${agent.name} (${role.label})`); } catch { /* sin cambios */ } }
+    t.compactNotes = notes;
+    t.compactions = (t.compactions || 0) + 1;
+    log(agent.id, `↻ Relanzo ${t.code || '#' + t.id} con ${notes ? 'sus notas' : 'su rama'} (compactación ${t.compactions})`);
+    events.emit('AgentResumed', ev, { reason: 'compact', attempt: t.attempts, compactions: t.compactions });
+    }
+    delete t.compactNotes;
 
     if (res.costUsd != null) t.costUsd = (t.costUsd || 0) + res.costUsd;
     if (res.sessionId) Object.assign(t, { sessionId: res.sessionId, sessionAt: Date.now(), sessionEngine: engineId });
@@ -929,7 +988,7 @@ async function runTask(p, agent, t) {
         const r = roles.includes(item.role) ? item.role : (roles[0] || 'back');
         const deps = (item.dependsOn || []).map((i) => ids[i]).filter(Boolean);
         const rk = (p.repos || []).some((x) => x.key === item.repo) ? item.repo : null;
-        ids.push(createTask({ projectId: p.id, title: item.title, description: item.description, role: r, repo: rk, dependsOn: deps }).id);
+        ids.push(createTask({ projectId: p.id, title: item.title, description: item.description, role: r, repo: rk, dependsOn: deps, sizeChecked: true }).id);
       }
       t.summary = `${ids.length} tareas creadas para el equipo.`;
       t.status = 'done';
@@ -966,6 +1025,7 @@ async function runTask(p, agent, t) {
     reflect(t, `❌ Falló en AgentOffice: ${String(e.message).slice(0, 500)}`);
   } finally {
     questions.cancelForTask(t.id);
+    delete t.compactNotes; // FT-63
     jobs.delete(agent.id);
     t.updatedAt = Date.now();
     Object.assign(agent, { status: 'idle', taskId: null, activity: '', activeEngine: null });
