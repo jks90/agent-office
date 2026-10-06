@@ -572,3 +572,19 @@ tr[data-cost-task] { cursor: pointer; }
 .vis-projects { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 2px 12px; max-height: 260px; overflow: auto; padding: 4px 2px; }
 .vis-row { display: flex; align-items: center; gap: 6px; font-size: 13px; margin: 0; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .vis-row input { width: auto; margin: 0; }
+
+/* 🔔 Para ti */
+#view-inbox { overflow: auto; }
+.inbox { max-width: 1100px; padding: 18px 22px; }
+.inbox-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+.inbox-head h2 { margin: 0; font-size: 20px; }
+.inbox-group { margin: 16px 0; }
+.inbox-group h3 { margin: 0 0 2px; font-size: 15px; }
+.inbox-group > p { margin: 0 0 6px; font-size: 12px; }
+.inbox-proj { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); margin: 6px 0; padding: 4px 10px; }
+.inbox-proj > summary { cursor: pointer; padding: 6px 0; font-weight: 600; font-size: 13px; }
+.inbox-row { display: flex; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line-soft, var(--line)); }
+.inbox-main { flex: 1; min-width: 0; }
+.inbox-what { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inbox-why { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inbox-acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }

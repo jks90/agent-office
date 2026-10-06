@@ -819,6 +819,7 @@ function showTab(tab) {
     if (prev !== 'office' && officeInit) applyOfficeDefault(); // al entrar en la pestaña: edificio, planta recordada o la única (FT-47)
   }
   if (tab === 'agents') { renderSkills(); renderClaudeMemory(); }
+  if (tab === 'inbox') renderInbox();
   if (tab === 'guide') guideShow(); else guideRender();
   publishContext();
 }
@@ -872,6 +873,7 @@ function render() {
   renderRoles();
   renderBoard();
   renderSummary();
+  renderInbox();
   renderQuotaChip();
   const ts = tasks();
   const working = team().filter((a) => a.status === 'working');
@@ -1295,6 +1297,78 @@ function compactCard(t) {
     ${bar}
   </div>`;
 }
+// ── 🔔 Para ti: todo lo que espera al usuario, de todos los proyectos visibles ─────────────────────────────────────
+// Derivado del estado (no se guarda): cada aviso desaparece al resolverse. Revisiones = las de proyectos en manual o las que la
+// revisión automática dejó a la persona (con reviewNote). Las importadas de un tablero en revisión se agrupan plegadas.
+const policyFor = (p) => p?.reviewPolicy || S.settings?.reviewPolicy || 'manual';
+const isManualTask = (t) => /^\s*👤|\bMANUAL\b/.test(t.title || '');
+let inboxOpen = (() => { try { return JSON.parse(localStorage.getItem('ao:inboxOpen') || '{}'); } catch { return {}; } })();
+function inboxItems() {
+  const vis = new Map(visibleProjects().map((p) => [p.id, p]));
+  const items = [];
+  for (const q of S.questions || []) {
+    const t = S.tasks.find((x) => x.id === q.taskId);
+    if (t && !vis.has(t.projectId)) continue;
+    items.push({ kind: 'question', p: t && vis.get(t.projectId), t, q, sort: 0 });
+  }
+  for (const t of S.tasks) {
+    const p = vis.get(t.projectId);
+    if (!p) continue;
+    if (t.status === 'review' && !t.reviewing && (policyFor(p) === 'manual' || t.reviewNote)) items.push({ kind: t.stuck || t.budgetHit ? 'cut' : 'review', p, t, sort: 1, imported: !!t.source && !t.agentId });
+    else if (t.status === 'failed') items.push({ kind: 'failed', p, t, sort: 2 });
+    else if (['backlog', 'todo'].includes(t.status) && isManualTask(t)) items.push({ kind: 'manual', p, t, sort: 3 });
+    else if (t.status === 'todo' && (t.quotaPaused || t.quotaBlocked)) items.push({ kind: 'quota', p, t, sort: 4 });
+  }
+  return items;
+}
+const INBOX_KIND = {
+  question: ['❓', 'Preguntas de los agentes', 'Un agente está parado esperando tu respuesta'],
+  review: ['✋', 'Por revisar', 'Esperan que las apruebes o las devuelvas'],
+  cut: ['⚠️', 'Cortadas (tope o atasco)', 'Se pararon a medias: decide si siguen o se aprueban'],
+  failed: ['❌', 'Fallidas', 'No terminaron bien'],
+  manual: ['👤', 'Tareas manuales tuyas', 'Tareas que no hace ningún agente'],
+  quota: ['⏸', 'Pausadas por cuota', 'Siguen solas al reiniciarse la cuota (solo aviso)'],
+};
+function renderInbox() {
+  const items = inboxItems();
+  const urgent = items.filter((i) => i.kind !== 'quota' && !i.imported).length;
+  const badge = $('#tab-inbox-count'); if (badge) badge.textContent = urgent || '';
+  const el = $('#inbox');
+  if (!el || $('#view-inbox').hidden) return;
+  const act = (i) => {
+    const t = i.t, b = (attr, txt, cls = 'ghost', id = t?.id) => `<button class="small ${cls}" data-${attr}="${id}">${txt}</button>`;
+    if (i.kind === 'question') return b('q-answer', 'Contestar', '', i.q.id) + (t ? b('open', 'Ver la tarea') : '');
+    if (i.kind === 'review' || i.kind === 'cut') return b('open', 'Abrir') + b('diff', 'Ver diff') + b('approve', '✓ Aprobar', 'ok') + b('reject', '↩ Devolver') + (t.reviewNote && /falló|veredicto válido/.test(t.reviewNote) ? b('review-again', '🔎 Revisar otra vez') : '');
+    if (i.kind === 'failed') return b('open', 'Abrir') + b('reject', '↻ Reintentar', '');
+    if (i.kind === 'quota') return b('open', 'Abrir') + b('resume-now', '▶ Reanudar ya');
+    return b('open', 'Abrir');
+  };
+  const row = (i) => {
+    const t = i.t;
+    const what = i.kind === 'question' ? esc(i.q.question || i.q.text || '') : esc(t.title);
+    const why = i.kind === 'question' ? `${esc(S.agents.find((a) => a.id === i.q.agentId)?.name || 'Un agente')}${t ? ` · ${esc(tcode(t))}` : ''}`
+      : i.kind === 'failed' ? esc((t.error || '').split('\n')[0].slice(0, 160))
+      : i.kind === 'quota' ? esc(t.activity || 'sin cuota')
+      : esc(t.reviewNote || t.stuck || (t.reviewSince ? `esperando desde hace ${waitTxt(t.reviewSince)}` : ''));
+    const blocks = (t?.blocks || []).length ? ` · <b>bloquea ${t.blocks.map((x) => esc(x.code)).join(', ')}</b>` : '';
+    return `<div class="inbox-row"><div class="inbox-main"><div class="inbox-what">${t && i.kind !== 'question' ? `<span class="task-id">${esc(tcode(t))}</span> ` : ''}${what}</div><div class="muted inbox-why">${i.p ? `${esc(i.p.name)} · ` : ''}${why}${blocks}</div></div><div class="inbox-acts">${act(i)}</div></div>`;
+  };
+  const groups = Object.keys(INBOX_KIND).map((k) => [k, items.filter((i) => i.kind === k)]).filter(([, l]) => l.length);
+  el.innerHTML = `<div class="inbox"><div class="inbox-head"><h2>🔔 Para ti</h2><span class="muted">${urgent ? `${urgent} cosas te esperan` : 'Nada urgente: los agentes no te necesitan ahora mismo.'}</span></div>
+    ${groups.map(([k, list]) => {
+      const [ico, title, hint] = INBOX_KIND[k];
+      // dentro de cada tipo, por proyecto; las importadas de un tablero (muchas, sin agente) en un grupo plegado aparte
+      const own = list.filter((i) => !i.imported), imp = list.filter((i) => i.imported);
+      const key = (g) => `${k}:${g}`, isOpen = (g, def) => (key(g) in inboxOpen ? inboxOpen[key(g)] : def);
+      const byProj = {};
+      for (const i of own) (byProj[i.p?.name || '—'] ||= []).push(i);
+      const blocks = Object.entries(byProj).map(([pn, l]) => `<details class="inbox-proj" data-inbox-key="${esc(key(pn))}" ${isOpen(pn, l.length <= 8) ? 'open' : ''}><summary>${esc(pn)} <span class="muted">(${l.length})</span></summary>${l.map(row).join('')}</details>`).join('')
+        + (imp.length ? `<details class="inbox-proj" data-inbox-key="${esc(key('__imp'))}" ${isOpen('__imp', false) ? 'open' : ''}><summary>Importadas de un tablero <span class="muted">(${imp.length}, sin agente: revísalas cuando quieras)</span></summary>${imp.map(row).join('')}</details>` : '');
+      return `<section class="inbox-group"><h3>${ico} ${title} <span class="muted">(${list.length})</span></h3><p class="muted">${hint}</p>${blocks}</section>`;
+    }).join('') || '<p class="empty">Todo al día 🎉</p>'}</div>`;
+}
+document.addEventListener('toggle', (e) => { const d = e.target.closest?.('[data-inbox-key]'); if (!d || e.target !== d) return; inboxOpen[d.dataset.inboxKey] = d.open; try { localStorage.setItem('ao:inboxOpen', JSON.stringify(inboxOpen)); } catch { /* sin almacenamiento */ } }, true);
+
 // FT-56 · revisión visible
 const TSTATUS = { backlog: 'en backlog', todo: 'por hacer', doing: 'en curso', review: 'en revisión', done: 'hecha', failed: 'fallida' };
 const waitMin = (since) => Math.max(0, Math.floor((Date.now() - since) / 60000));
@@ -2519,6 +2593,7 @@ document.addEventListener('click', async (e) => {
     for (const x of S.projects) { const cb = document.querySelector(`#dialog [name="vis_${x.id}"]`); if (!cb) continue; cb.checked = d.visAll === '1' || !!((x.team || []).length || x.flows || S.tasks.some((t) => t.projectId === x.id) || x.id === projectId); }
     return;
   }
+  if (d.qAnswer) return openQuestion(d.qAnswer);
   if (d.reviewAgain) return api('POST', `/api/tasks/${d.reviewAgain}/review-again`).then(() => toast('Revisión automática relanzada'));
   if (d.cmemEdit !== undefined) return editClaudeMemory(d.cmemRepo, d.cmemEdit);
   if (d.cmemDel) { if (confirm(`¿Borrar la memoria «${d.cmemDel}»? (también su línea del índice)`)) api('DELETE', cmemUrl(d.cmemRepo, d.cmemDel)).then(() => { toast('Memoria borrada'); renderClaudeMemory(true); }); return; }
