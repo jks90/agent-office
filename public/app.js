@@ -1029,6 +1029,13 @@ function renderDrawer() {
       <h3>Actividad reciente</h3>
       <ul class="agent-activity" data-f="activity"></ul>
     </section>
+    <details class="agent-panel-card agent-memory" data-memory>
+      <summary><h3 style="display:inline">🧠 Memoria</h3> <span class="muted" data-mem-size></span></summary>
+      <p class="muted">Lecciones que se le pasan en sus próximas tareas (las añade él al terminar y las correcciones de «Devolver»). Una por línea; bórrale lo que no valga. Tope ≈1 500 tokens por bloque.</p>
+      <label>Suya</label><textarea rows="5" data-mem="agent" placeholder="(vacía)"></textarea>
+      <label>De todo el proyecto</label><textarea rows="4" data-mem="project" placeholder="(vacía)"></textarea>
+      <div class="row"><button class="small" data-mem-save>Guardar memoria</button></div>
+    </details>
     <div class="agent-actions" data-f="controls"></div>
     <div class="agent-actions">
       ${task ? `<button class="small" data-open="${task.id}">Abrir tarea</button>` : ''}
@@ -1038,6 +1045,20 @@ function renderDrawer() {
     </div>
     <div class="muted">Registro en vivo</div>
     <div id="log"></div>`;
+  // FT-75: memoria del agente y del proyecto (se carga al desplegar la sección)
+  const memBox = d.querySelector('[data-memory]');
+  const pid = S.projects.find((x) => (x.team || []).includes(a.id))?.id || projectId;
+  const memLoad = async () => {
+    const [ag, pr] = await Promise.all([api('GET', `/api/memory/${pid}?agent=${a.id}`), api('GET', `/api/memory/${pid}`)]);
+    memBox.querySelector('[data-mem=agent]').value = ag.text; memBox.querySelector('[data-mem=project]').value = pr.text;
+    memBox.querySelector('[data-mem-size]').textContent = `${Math.round((ag.text.length + pr.text.length) / 4)} tokens`;
+  };
+  memBox.addEventListener('toggle', () => { if (memBox.open) memLoad().catch(() => {}); });
+  memBox.querySelector('[data-mem-save]').onclick = async () => {
+    await api('PUT', `/api/memory/${pid}?agent=${a.id}`, { text: memBox.querySelector('[data-mem=agent]').value });
+    await api('PUT', `/api/memory/${pid}`, { text: memBox.querySelector('[data-mem=project]').value });
+    toast('Memoria guardada'); memLoad().catch(() => {});
+  };
   d.querySelector('[data-f=engine]').onchange = (e) => api('PATCH', `/api/agents/${a.id}`, { engine: e.target.value }).then(() => toast(`${a.name} usa ahora ${e.target.value}`));
   d.querySelector('[data-f=model]').onchange = (e) => api('PATCH', `/api/agents/${a.id}`, { model: e.target.value });
   renderDrawer();
@@ -1175,6 +1196,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <label>Agentes trabajando a la vez (máx.)</label><input name="maxParallel" type="number" min="1" max="8" value="${S.settings.maxParallel}" />
     <div class="grid2"><div><label>Tope de gasto por tarea (US$, por intento; al pasarlo se corta)</label><input name="maxTaskUsd" type="number" min="0.5" max="50" step="0.5" value="${S.settings.maxTaskUsd || 3}" /></div>
     <div><label>Esfuerzo de los agentes (más = más tokens)</label><select name="agentEffort">${['low', 'medium', 'high'].map((v) => `<option value="${v}" ${(S.settings.agentEffort || 'medium') === v ? 'selected' : ''}>${({ low: 'bajo', medium: 'medio (recomendado)', high: 'alto' })[v]}</option>`).join('')}</select></div></div>
+    <label><input type="checkbox" name="agentMemory" ${S.settings.agentMemory !== false ? 'checked' : ''} /> Memoria de los agentes: lecciones de tareas anteriores en el prompt (FT-75; ≈1 500 tokens máx. por agente y por proyecto)</label>
     <label><input type="checkbox" name="quotaGuard" ${S.settings.quotaGuard !== false ? 'checked' : ''} /> Guardarraíl de cuota: no arrancar tareas con un motor cuya sesión de 5 h esté al ${97} % o más (FT-45)</label>
     <div class="section-title">🧭 Guía (FT-6)</div>
     <label>Proveedor del Guía (el LLM con el que conversa; los cuatro flujos funcionan igual con cualquiera) (FT-8)</label>
@@ -1214,7 +1236,7 @@ Pasos, convenciones y ejemplos…</textarea>
     ${buttons()}`, async (f) => {
     safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0'); (SETTINGS_EMBED ? safeSet('ao:voice-wake', f.voiceWake ? '1' : '0') : wakeSet(!!f.voiceWake)); // en el panel de flow-test no se abre el micro: el iframe principal lo recoge por el evento `storage`
     refreshSttLocal();
-    await api('POST', '/api/settings', { ...f, quotaGuard: !!f.quotaGuard, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
+    await api('POST', '/api/settings', { ...f, quotaGuard: !!f.quotaGuard, agentMemory: !!f.agentMemory, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
     if (repos.map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|') !== cur) await api('PATCH', `/api/projects/${projectId}`, { repos });

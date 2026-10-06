@@ -20,6 +20,7 @@ import { cleanContext, describeContext } from './task-context.js';
 import * as quota from './quota.js';
 import { briefingFor } from './briefing.js';
 import { detectQuotaHit } from './quota-pause.js';
+import * as memory from './memory.js';
 
 const ENGINES = { demo, claude, codex };
 export const ENGINE_IDS = ['auto', 'claude', 'codex', 'demo'];
@@ -490,6 +491,8 @@ export async function reject(id, feedback = '', images = [], attachments = []) {
   if (!['review', 'failed'].includes(t.status)) throw fail(409, 'Solo se devuelven tareas en revisión o fallidas');
   // La rama y el worktree se conservan: el agente corrige sobre su intento anterior.
   if (feedback.trim()) t.feedback = [t.feedback, feedback.trim()].filter(Boolean).join('\n');
+  // FT-75: cada corrección de una revisión se recuerda (la primera frase) para no repetir el error en otras tareas
+  if (feedback.trim() && t.agentId && get().settings.agentMemory !== false) memory.addLesson(t.projectId, t.agentId, `Corrección de revisión: ${feedback.trim().split(/(?<=[.!?])\s|\n/)[0]}`, t.code || t.id);
   t.feedbackImages = copyImages(t, images);
   events.emit('TaskReviewed', events.ctxOf(t), { decision: 'rejected', feedback: feedback.trim().slice(0, 500) });
   if (feedback.trim()) events.emit('UserInstructionAdded', events.ctxOf(t), { kind: 'feedback', text: feedback.trim().slice(0, 500) });
@@ -758,11 +761,13 @@ function buildPrompt(p, agent, t) {
     p.folder ? `Carpeta del proyecto en el workspace de flow-test: «${p.folder}/» (ahí viven sus flows y su documentación; guarda ahí lo que generes con flow-test).` : '',
     `Trabajas en una copia aislada del repo (git worktree) en la rama ${t.branch}. No cambies de rama ni hagas push.`,
     (() => { const r = repoOfTask(p, t); return r?.path ? '\n' + briefingFor(r.path) + '\n' : ''; })(),
+    get().settings.agentMemory !== false ? memory.promptBlock(p.id, agent.id) : '', // FT-75: lecciones de tareas anteriores (parte estable del prompt)
     t.reused ? 'En esta rama ya está tu intento anterior (mira `git log` y `git diff` contra la rama base): parte de él y corrige lo que pide la revisión, sin rehacer lo que ya estaba bien.' : '',
     'Lo que dejes sin confirmar se confirmará solo al terminar.',
     t.code ? `Cita el código ${t.code} en lo que documentes (changelog, README, flows, tablero) para que la tarea se pueda rastrear.` : '',
     askBlock(t),
     economyBlock(),
+    get().settings.agentMemory !== false ? memory.PROMPT_ASK : '',
     'Al acabar, responde con un resumen breve: qué cambiaste y cómo lo probaste.',
   ].join('\n');
 }
@@ -886,6 +891,11 @@ async function runTask(p, agent, t) {
     }
     if (!res.ok) throw new Error(res.error || 'El agente no terminó bien');
     t.summary = res.summary || '';
+    if (t.kind !== 'plan' && s.settings.agentMemory !== false) { // FT-75: el bloque «LECCIONES:» del resumen pasa a la memoria
+      const h = memory.harvest(p.id, agent.id, t.summary, t.code || t.id);
+      t.summary = h.summary;
+      if (h.added) log(agent.id, `🧠 ${h.added} lección(es) a la memoria`);
+    }
 
     if (t.kind === 'plan') {
       const list = res.tasks || parseTasks(res.summary);
