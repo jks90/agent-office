@@ -883,6 +883,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <label>Acciones que crean o editan datos (escribir)</label>
     <select name="guideWrite"><option value="auto" ${S.guidePolicy?.write === 'auto' ? 'selected' : ''}>Automático</option><option value="confirm" ${S.guidePolicy?.write !== 'auto' ? 'selected' : ''}>Pedir confirmación</option></select>
     <p class="muted">Leer y navegar son siempre automáticos; las acciones irreversibles (borrar) siempre piden confirmación.</p>
+    <label><input type="checkbox" name="guideInputFallback" ${S.guidePolicy?.guideInputFallback ? 'checked' : ''} /> Permitir al Guide mover el ratón y teclear (último recurso, entrada «ciega» con xdotool/ydotool; desactivado de serie) (FT-30)</label>
     <hr style="border-color:var(--line);margin:16px 0" />
     <div class="section-title">🔗 Tablero online del proyecto «${esc(project()?.name)}»</div>
     <div id="board-cfg" class="board-cfg"><p class="muted">Cargando…</p></div>
@@ -896,7 +897,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <button type="button" class="danger small" data-delete-project>Borrar el proyecto «${esc(project()?.name)}»</button>
     ${buttons()}`, async (f) => {
     safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0');
-    await api('POST', '/api/settings', { ...f, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite } });
+    await api('POST', '/api/settings', { ...f, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
     if (repos.map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|') !== cur) await api('PATCH', `/api/projects/${projectId}`, { repos });

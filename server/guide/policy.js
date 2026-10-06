@@ -13,15 +13,18 @@ const MAX_AUDIT = 5 * 1024 * 1024;
 
 export function getPolicy() {
   const g = store.get().settings.guidePolicy || {};
-  return { execute: ['auto', 'confirm'].includes(g.execute) ? g.execute : DEFAULTS.execute, write: ['auto', 'confirm'].includes(g.write) ? g.write : DEFAULTS.write };
+  // FT-30 · guideInputFallback: interruptor del fallback de ratón/teclado (false de serie)
+  return { execute: ['auto', 'confirm'].includes(g.execute) ? g.execute : DEFAULTS.execute, write: ['auto', 'confirm'].includes(g.write) ? g.write : DEFAULTS.write, guideInputFallback: store.get().settings.guideInputFallback === true };
 }
 
 export function setPolicy(patch = {}) {
   const cur = getPolicy();
   for (const k of ['execute', 'write']) if (['auto', 'confirm'].includes(patch[k])) cur[k] = patch[k];
-  store.get().settings.guidePolicy = cur;
+  const { guideInputFallback, ...modes } = cur;
+  store.get().settings.guidePolicy = modes;
+  if (typeof patch.guideInputFallback === 'boolean') store.get().settings.guideInputFallback = patch.guideInputFallback;
   store.changed();
-  return cur;
+  return getPolicy();
 }
 
 // 'auto' | 'confirm' para una política de tool.

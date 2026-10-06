@@ -33,6 +33,7 @@ const FAKE_APPS = [
   { id: 'flowtest', name: 'flow-test', exec: 'flowtest' },
 ];
 const launched = [];
+const inputs = []; // FT-30 · entrada simulada (click/scroll/type/keyPress), en memoria
 const bad = (status, msg) => Object.assign(new Error(msg), { status });
 const depthOf = (n) => (n.ref.split(':')[1] ? n.ref.split(':')[1].split('.').length : 0);
 
@@ -69,5 +70,12 @@ export function createFakeProvider() {
     openApp: async ({ id } = {}) => { const a = resolveApp(FAKE_APPS, id); launched.push({ ts: Date.now(), id: a.id }); return { ok: true, id: a.id, launcher: 'fake' }; },
     launchedApps: () => launched.slice(),
     uiActions: () => uiActions.slice(),
+    // FT-30 · fallback de entrada: solo se registra
+    inputAvailable: () => ({ ok: true, missing: [] }),
+    click: async (o) => { inputs.push({ ts: Date.now(), kind: 'click', ...o }); return { ok: true }; },
+    scroll: async (o) => { inputs.push({ ts: Date.now(), kind: 'scroll', ...o }); return { ok: true }; },
+    type: async (o) => { inputs.push({ ts: Date.now(), kind: 'type', ...o }); return { ok: true, chars: [...String(o.text)].length }; },
+    keyPress: async (o) => { inputs.push({ ts: Date.now(), kind: 'keyPress', ...o }); return { ok: true }; },
+    inputs: () => inputs.slice(),
   };
 }
