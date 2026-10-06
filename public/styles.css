@@ -343,6 +343,11 @@ dialog.question .q-context { color: var(--muted); font-size: 13px; margin-bottom
 .g-vlevel { --lv: 0; display: inline-block; flex: none; width: 70px; height: 6px; border-radius: 3px; background: linear-gradient(90deg, var(--ok) calc(var(--lv) * 100%), var(--line) 0); }
 #guide-fab { position: fixed; right: 18px; bottom: 18px; z-index: 15; width: 48px; height: 48px; border-radius: 50%; font-size: 22px; padding: 0; box-shadow: var(--shadow); }
 #guide-panel { position: fixed; right: 18px; bottom: 76px; z-index: 30; width: min(440px, calc(100vw - 24px)); height: min(620px, calc(100vh - 100px)); display: flex; box-shadow: 0 18px 55px rgba(0,0,0,.55); border-radius: var(--r-lg); }
+#guide-fab .fab-ear { position: absolute; top: -4px; right: -4px; width: 22px; height: 22px; line-height: 22px; font-size: 13px; border-radius: 50%; background: var(--err); color: #fff; animation: g-pulse 1.6s infinite; }
+#guide-fab .fab-ear[hidden] { display: none; }
+#guide-fab .fab-ear.paused, .guide .g-ear.paused { animation: none; opacity: .65; }
+.guide .g-ear { color: var(--err); border-color: var(--err); white-space: nowrap; }
+.guide .g-ear[hidden] { display: none; }
 #guide-panel[hidden], #guide-fab[hidden] { display: none; }
 #guide-panel .guide { width: 100%; }
 #guide-panel .guide .g-list { display: none; }

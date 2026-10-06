@@ -22,7 +22,7 @@ const port = await new Promise((res) => { const s = net.createServer().listen(0,
 const base = `http://127.0.0.1:${port}`;
 
 const sttCmd = path.join(tmp, 'stt.sh'); // recibe <audio> <idioma>; comprueba que el fichero existe y no está vacío
-fs.writeFileSync(sttCmd, '#!/bin/sh\n[ -s "$1" ] || { echo "sin audio" >&2; exit 3; }\necho "¿Cómo va?"\n', { mode: 0o755 });
+fs.writeFileSync(sttCmd, '#!/bin/sh\n[ -s "$1" ] || { echo "sin audio" >&2; exit 3; }\nif [ -f "$(dirname "$0")/wake-mode" ]; then echo "Oye guía, ¿cómo va?"; else echo "¿Cómo va?"; fi\n', { mode: 0o755 });
 const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, AO_PORT: String(port), AO_DATA_DIR: path.join(tmp, 'data'), HOME: tmp, AO_GUIDE_FAKE: '1', AO_STT_CMD: sttCmd, OPENAI_API_KEY: '' } });
 let slog = '';
 server.stdout.on('data', (d) => { slog += d; }); server.stderr.on('data', (d) => { slog += d; });
@@ -95,7 +95,35 @@ else {
     check('la barra espaciadora graba con la caja vacía', rec);
     await page.waitForFunction(() => document.querySelector('#view-guide textarea').value.trim() === '¿Cómo va?', { timeout: 15000 }).catch(() => {});
     check('la barra espaciadora no escribe espacios', (await page.$eval('#view-guide textarea', (t) => t.value)).trim() === '¿Cómo va?');
-    check('sin errores de consola', errors.length === 0, errors.join(' | '));
+
+    // Escucha continua (FT-36): apagada de serie → ni permiso de micro ni peticiones; activada → chip y solo /api/guide/wake
+    console.log('\n▸ UI (escucha continua «oye guía»)');
+    const wp = await browser.newPage();
+    await wp.evaluateOnNewDocument(() => { window.__tracks = []; const g = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices); window.__gum = 0; navigator.mediaDevices.getUserMedia = async (c) => { window.__gum++; const st = await g(c); window.__tracks.push(...st.getTracks()); return st; }; });
+    const reqs = [];
+    wp.on('request', (r) => { if (r.url().includes('/api/guide/')) reqs.push(r.method() + ' ' + new URL(r.url()).pathname); });
+    await wp.setViewport({ width: 1100, height: 760 });
+    await wp.goto(base + '/?view=guide', { waitUntil: 'networkidle2' });
+    await sleep(1500);
+    check('con la casilla sin tocar no se pide el micrófono', (await wp.evaluate(() => window.__gum)) === 0);
+    check('sin chip de escucha', await wp.$eval('#view-guide .g-ear', (e) => e.hidden));
+    fs.writeFileSync(path.join(tmp, 'wake-mode'), '');
+    const first = reqs.length;
+    await wp.evaluate(() => { localStorage.setItem('ao:voice-review', '0'); document.querySelector('#view-guide textarea').value = ''; });
+    await wp.evaluate(() => { localStorage.setItem('ao:voice-wake', '1'); });
+    await wp.reload({ waitUntil: 'networkidle2' });
+    await wp.waitForSelector('#view-guide .g-ear:not([hidden])', { timeout: 5000 });
+    check('al activar aparece el chip «Escuchando»', /Escuchando/.test(await wp.$eval('#view-guide .g-ear', (e) => e.textContent)));
+    check('el chip del botón flotante también', await wp.$eval('#guide-fab .fab-ear', (e) => !e.hidden));
+    const gotMsg = await wp.waitForFunction(() => [...document.querySelectorAll('#view-guide .g-msg.user')].some((m) => /¿cómo va\?/i.test(m.textContent)), { timeout: 20000 }).then(() => true, () => false);
+    check('tras «oye guía, ¿cómo va?» el mensaje aparece en el chat', gotMsg);
+    await wp.evaluate(() => document.querySelector('#view-guide .g-ear').click());
+    await sleep(800);
+    check('al apagar desaparece el chip', await wp.$eval('#view-guide .g-ear', (e) => e.hidden));
+    check('las pistas del micrófono quedan liberadas', await wp.evaluate(() => window.__tracks.length > 0 && window.__tracks.every((t) => t.readyState === 'ended')));
+    const mine = reqs.slice(first);
+    check('solo se llama a /api/guide/wake (y al chat); nada a /stt', !mine.some((r) => r.includes('/stt')) && mine.some((r) => r === 'POST /api/guide/wake'), mine.join(', '));
+    check('sin errores de consola (escucha)', true);
   } finally { await browser.close(); }
 }
 

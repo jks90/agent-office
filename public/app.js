@@ -119,7 +119,7 @@ function guideMount(el, panel) {
   el.innerHTML = `<div class="guide">
     <div class="g-list"><button class="small" data-g="new">＋ Nuevo chat</button><div class="g-chats"></div></div>
     <div class="g-main">
-      <div class="g-head"><b class="g-title">🧭 Guía</b>${panel ? '<select class="g-pick" title="Chats"></select><button class="ghost small" data-g="new">＋</button><button class="ghost small" data-g="close" title="Cerrar (Ctrl+G)">✕</button>' : ''}</div>
+      <div class="g-head"><b class="g-title">🧭 Guía</b><button class="ghost small g-ear" data-g="ear" hidden></button>${panel ? '<select class="g-pick" title="Chats"></select><button class="ghost small" data-g="new">＋</button><button class="ghost small" data-g="close" title="Cerrar (Ctrl+G)">✕</button>' : ''}</div>
       <div class="g-msgs"></div>
       <div class="g-voice" hidden><span class="g-vtxt"></span><i class="g-vlevel"></i></div>
       <form class="g-form"><button type="button" class="ghost g-mic" data-g="mic" title="Mantén pulsado para hablar (o barra espaciadora con la caja vacía)">🎤</button><textarea rows="1" placeholder="Pídeme algo…" title="Intro envía · Mayús+Intro salto de línea · barra espaciadora con la caja vacía = hablar"></textarea><button class="g-send">Enviar</button><button type="button" class="ghost g-stop" data-g="stop" hidden>■ Parar</button></form>
@@ -144,6 +144,7 @@ function guideMount(el, panel) {
     if (b.dataset.g === 'new') guideNew();
     else if (b.dataset.g === 'stop') guideStop();
     else if (b.dataset.g === 'close') guideToggle(false);
+    else if (b.dataset.g === 'ear') wakeSet(false);
     else if (b.dataset.gchat) guideOpen(b.dataset.gchat);
     else if (b.dataset.ghint) { ta.value = b.dataset.ghint; ta.focus(); }
   });
@@ -177,6 +178,7 @@ function guideRender() {
     vbar.hidden = !mine;
     vbar.firstChild.textContent = V.state === 'rec' ? '🔴 Te escucho… suelta para enviar (o corto solo tras un silencio)' : V.state === 'stt' ? '⏳ Transcribiendo… puedes seguir usando la aplicación' : '';
   }
+  wakeSync(); // la escucha continua depende de G.busy y V.state (FT-36)
 }
 
 function guideMsg(m, i) {
@@ -212,7 +214,7 @@ function guideToggle(open = !G.panelOpen) {
   if (open) { guideMount(p, true); guideShow().then(() => p.querySelector('textarea')?.focus()); }
   guideRender();
 }
-$('#guide-fab').addEventListener('click', () => guideToggle(true));
+$('#guide-fab').addEventListener('click', (e) => { if (e.target.closest('.fab-ear')) wakeSet(false); else guideToggle(true); }); // la marca 👂 apaga la escucha (FT-36)
 document.addEventListener('keydown', (e) => { if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'g') { e.preventDefault(); guideToggle(); } });
 
 async function guideSend(text) {
@@ -255,12 +257,15 @@ function guideStop() { if (G.chatId) api('POST', '/api/guide/stop', { chatId: G.
 // La transcripción es una petición normal: la UI no se bloquea. TTS opcional con speechSynthesis (apagado por defecto).
 const V = { state: 'idle', holding: false, wantStop: false, rec: null, root: null }; // state: idle | rec | stt
 const VAD = { threshold: 0.02, silenceMs: 700, maxMs: 30000, minMs: 300 }; // RMS del AnalyserNode; corta tras 700 ms de silencio, tope 30 s
-const voicePref = { review: () => safeGet('ao:voice-review') === '1', tts: () => safeGet('ao:voice-tts') === '1' };
+const voicePref = { review: () => safeGet('ao:voice-review') === '1', tts: () => safeGet('ao:voice-tts') === '1', wake: () => safeGet('ao:voice-wake') === '1' };
 
 // Graba hasta stop() o hasta que el VAD vea silencio tras haber oído voz. → { stop, result: Promise<{blob, mime, spoke, ms}> }
-async function voiceRecord(onLevel) {
+// opts (escucha continua, FT-36): stream = micro ya abierto (no se cierra aquí) · maxMs = tope del segmento · gate = no graba
+// nada hasta oír voz (el silencio no se captura); si se para antes de oírla, resuelve con spoke=false.
+async function voiceRecord(onLevel, opts = {}) {
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) throw new Error('Este navegador no puede grabar audio (¿http sin localhost?)');
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  const stream = opts.stream || await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  const maxMs = opts.maxMs || VAD.maxMs;
   const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'].find((m) => MediaRecorder.isTypeSupported(m));
   const rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
   const chunks = [];
@@ -270,20 +275,22 @@ async function voiceRecord(onLevel) {
   ac.createMediaStreamSource(stream).connect(an);
   const buf = new Float32Array(an.fftSize);
   const t0 = performance.now();
-  let spoke = false, lastVoice = t0, stopped = false, resolve, timer;
+  let spoke = false, lastVoice = t0, stopped = false, started = false, t1 = t0, resolve, timer;
   const result = new Promise((r) => { resolve = r; });
-  const stop = () => { if (stopped) return; stopped = true; clearInterval(timer); if (rec.state !== 'inactive') rec.stop(); };
-  rec.onstop = () => { stream.getTracks().forEach((t) => t.stop()); ac.close().catch(() => {}); resolve({ blob: new Blob(chunks, { type: rec.mimeType || 'audio/webm' }), mime: rec.mimeType || 'audio/webm', spoke, ms: performance.now() - t0 }); };
+  const finish = () => { if (!opts.stream) stream.getTracks().forEach((t) => t.stop()); ac.close().catch(() => {}); resolve({ blob: new Blob(chunks, { type: rec.mimeType || 'audio/webm' }), mime: rec.mimeType || 'audio/webm', spoke, ms: performance.now() - t1 }); };
+  const stop = () => { if (stopped) return; stopped = true; clearInterval(timer); if (rec.state !== 'inactive') rec.stop(); else finish(); };
+  rec.onstop = finish;
   timer = setInterval(() => {
     an.getFloatTimeDomainData(buf);
     let sum = 0;
     for (const x of buf) sum += x * x;
     const rms = Math.sqrt(sum / buf.length), now = performance.now();
     if (rms > VAD.threshold) { spoke = true; lastVoice = now; }
+    if (opts.gate && !started) { if (!spoke) return; started = true; t1 = now; rec.start(); } // primera voz: empieza el segmento
     onLevel?.(rms);
-    if ((spoke && now - lastVoice > VAD.silenceMs) || now - t0 > VAD.maxMs) stop();
+    if ((spoke && now - lastVoice > VAD.silenceMs) || now - t1 > maxMs) stop();
   }, 50);
-  rec.start();
+  if (!opts.gate) rec.start();
   return { stop, result };
 }
 const blobB64 = (blob) => new Promise((ok, ko) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1] || ''); r.onerror = ko; r.readAsDataURL(blob); });
@@ -309,12 +316,95 @@ async function voiceHold(on, el) {
   V.state = 'idle';
   guideRender();
   if (!text) return toast('No te he oído: prueba otra vez');
-  const ta = V.root.querySelector('textarea');
+  voiceDeliver(text, V.root);
+}
+// El texto dictado entra en la caja y sigue el camino del teclado (o espera revisión). Lo comparten el push-to-talk y «oye guía».
+function voiceDeliver(text, root) {
+  const ta = root.querySelector('textarea');
   ta.value = (ta.value.trim() ? ta.value.trim() + ' ' : '') + text;
   ta.dispatchEvent(new Event('input'));
   if (voicePref.review() || G.busy) ta.focus(); // el usuario corrige y pulsa Intro
-  else V.root.querySelector('form').requestSubmit();
+  else root.querySelector('form').requestSubmit();
 }
+
+// ── Escucha continua «oye guía» (FT-36) ──────────────────────────────────────
+// Apagada por defecto (ao:voice-wake). Con ella activa el micro está abierto y el RMS se analiza en local; solo se graba un
+// segmento cuando hay voz (corte por silencio o a 2,5 s) y SOLO ese segmento va a /api/guide/wake. El silencio no sale del navegador.
+// Se pausa (y se sueltan las pistas del micro) con G.busy, V.state≠idle, speechSynthesis hablando o la pestaña oculta.
+const W = { on: false, active: false, stream: null, rec: null, starting: false, timer: null, lastNotified: null };
+const WAKE_MS = 2500;
+const wakeWanted = () => W.on && !document.hidden && !G.busy && V.state === 'idle' && !(window.speechSynthesis && speechSynthesis.speaking);
+
+function wakeRender() {
+  const txt = W.active ? '👂 Escuchando «oye guía»' : '👂 «oye guía» en pausa';
+  const tip = (W.active ? 'El micrófono está abierto. ' : 'Micrófono cerrado mientras tanto. ') + 'Clic para apagar la escucha continua';
+  guideRoots.forEach((r) => { const c = r.el.querySelector('.g-ear'); c.hidden = !W.on; c.textContent = txt; c.title = tip; c.classList.toggle('paused', !W.active); });
+  const ear = $('#guide-fab .fab-ear');
+  ear.hidden = !W.on; ear.classList.toggle('paused', !W.active); ear.title = tip;
+  const box = document.querySelector('input[name=voiceWake]');
+  if (box && !box.disabled) box.checked = W.on;
+}
+function wakeNotify() {
+  if (W.lastNotified === W.active) return;
+  W.lastNotified = W.active;
+  if (EMBEDDED) { try { window.parent.postMessage({ type: 'agentoffice:listening', on: W.active }, location.origin); } catch { /* padre de otro origen */ } }
+}
+function wakeRelease() {
+  W.stream?.getTracks().forEach((t) => t.stop()); // el piloto del navegador se apaga
+  W.stream = null; W.rec?.stop(); W.rec = null; W.active = false;
+}
+function wakeSync() {
+  if (!W.on) { wakeRelease(); clearInterval(W.timer); W.timer = null; }
+  else {
+    if (!W.timer) W.timer = setInterval(wakeSync, 500); // speechSynthesis no avisa de cuándo termina: se vigila
+    if (!wakeWanted()) wakeRelease();
+    else if (!W.stream && !W.starting) wakeStart();
+  }
+  wakeRender(); wakeNotify();
+}
+function wakeSet(on) {
+  safeSet('ao:voice-wake', on ? '1' : '0');
+  W.on = on;
+  wakeSync();
+}
+async function wakeStart() {
+  W.starting = true;
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+  catch (e) { W.starting = false; wakeSet(false); return toast(/Permission|NotAllowed/i.test(e.name + e.message) ? 'Sin permiso de micrófono: la escucha continua queda apagada' : 'No puedo usar el micrófono: ' + e.message, 'error'); }
+  W.starting = false;
+  if (!wakeWanted()) { stream.getTracks().forEach((t) => t.stop()); return wakeSync(); } // cambió el estado mientras el navegador pedía el micro
+  W.stream = stream; W.active = true;
+  wakeRender(); wakeNotify();
+  while (W.stream === stream) {
+    let r;
+    try { W.rec = await voiceRecord(null, { stream, maxMs: WAKE_MS, gate: true }); r = await W.rec.result; } catch { break; }
+    W.rec = null;
+    if (W.stream === stream && r.spoke && r.ms >= VAD.minMs) wakeSend(r); // sin esperar: el siguiente segmento ya se vigila
+  }
+  if (W.stream === stream) wakeRelease(); // salió por un error del grabador
+  wakeSync();
+}
+async function wakeSend(r) {
+  let j;
+  try {
+    const res = await fetch(BASE + 'api/guide/wake', { method: 'POST', headers: { 'content-type': 'application/json', 'x-ao-client': CLIENT_ID }, body: JSON.stringify({ audio: await blobB64(r.blob), mime: r.mime, durationMs: Math.round(r.ms) }) });
+    j = await res.json().catch(() => ({}));
+    if (res.status === 503) { wakeSet(false); return toast('Escucha continua apagada: ' + (j.error || 'STT local no disponible'), 'error'); }
+    if (!res.ok) return;
+  } catch { return; } // un segmento perdido no merece un aviso
+  if (!j.wake || G.busy || V.state !== 'idle') return;
+  const root = guideRootEl();
+  if (!root) return;
+  if (j.rest) voiceDeliver(j.rest, root);
+  else voiceHold(true, root); // «oye guía» a secas: grabación normal, la corta el VAD y va a /api/guide/stt como el push-to-talk
+}
+// Abre el Guía (panel o vista) y devuelve su contenedor.
+function guideRootEl() {
+  if (activeTab !== 'guide') guideToggle(true);
+  return guideRoots.find((r) => r.panel === (activeTab !== 'guide'))?.el;
+}
+document.addEventListener('visibilitychange', wakeSync);
 
 // TTS opcional: solo respuestas cortas y sin código. voiceSpeak(null) calla.
 function voiceSpeak(text) {
@@ -876,6 +966,8 @@ Pasos, convenciones y ejemplos…</textarea>
     <select name="sttLang">${[['es', 'Español'], ['en', 'English'], ['ca', 'Català'], ['fr', 'Français'], ['de', 'Deutsch'], ['pt', 'Português'], ['it', 'Italiano'], ['auto', 'Detectar']].map(([k, n]) => `<option value="${k}" ${(S.settings.sttLang || 'es') === k ? 'selected' : ''}>${n}</option>`).join('')}</select>
     <label><input type="checkbox" name="voiceReview" ${voicePref.review() ? 'checked' : ''} /> Revisar antes de enviar (el texto dictado queda en la caja)</label>
     <label><input type="checkbox" name="voiceTts" ${voicePref.tts() ? 'checked' : ''} /> Leer en voz alta las respuestas cortas del Guía (solo en este navegador)</label>
+    <label><input type="checkbox" name="voiceWake" ${voicePref.wake() ? 'checked' : ''} /> Escucha continua (di «oye guía») <span id="wake-info" class="muted"></span></label>
+    <p class="muted">Apagada de serie. Con ella activa el micrófono queda abierto y se analiza en este navegador; solo los segmentos con voz van al STT local (nunca a OpenAI) para detectar «oye guía», con un indicador 👂 siempre visible (FT-36).</p>
     <div style="display:flex;gap:8px;align-items:center"><button type="button" class="small" data-voice-test>🎤 Probar micrófono</button><span id="voice-test" class="muted"></span></div>
     <div class="section-title">🛡 Guide Agent — qué puede hacer sin preguntarte (FT-4)</div>
     <label>Acciones que ponen a trabajar o pausan al equipo (ejecutar)</label>
@@ -897,7 +989,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <hr style="border-color:var(--line);margin:16px 0" />
     <button type="button" class="danger small" data-delete-project>Borrar el proyecto «${esc(project()?.name)}»</button>
     ${buttons()}`, async (f) => {
-    safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0');
+    safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0'); wakeSet(!!f.voiceWake);
     await api('POST', '/api/settings', { ...f, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
@@ -1159,7 +1251,9 @@ document.addEventListener('click', async (e) => {
 
 document.addEventListener('click', (e) => {
   if (e.target.closest('[data-action="settings"]')) {
-    api('GET', '/api/guide/stt').then((st) => { const el = $('#stt-info'); if (el) el.innerHTML = st.providers.map((p) => `· ${esc(p.name)}: ${p.ok ? '<span class="ok">disponible</span>' : `<span class="bad" title="${esc(p.reason)}">no disponible</span>`}`).join(' '); }).catch(() => {});
+    api('GET', '/api/guide/stt').then((st) => { const el = $('#stt-info'); if (el) el.innerHTML = st.providers.map((p) => `· ${esc(p.name)}: ${p.ok ? '<span class="ok">disponible</span>' : `<span class="bad" title="${esc(p.reason)}">no disponible</span>`}`).join(' ');
+      const box = document.querySelector('input[name=voiceWake]');
+      if (box && st.wake && !st.wake.ok) { box.disabled = true; box.checked = false; $('#wake-info').innerHTML = `<span class="bad">— no disponible: ${esc(st.wake.reason || 'sin STT local')}</span>`; } }).catch(() => {});
     setTimeout(() => { refreshEngines(); clearInterval(enginesTimer); enginesTimer = setInterval(refreshEngines, 2500); renderBoardCfg(); }, 50);
     api('GET', '/api/flows').then((flows) => {
       const sel = $('#import-flow');
@@ -1457,4 +1551,5 @@ window.addEventListener('message', (e) => {
   publishContext();
 });
 publishContext();
+if (voicePref.wake()) wakeSet(true); // escucha continua recordada en este navegador (FT-36); con la casilla sin tocar nunca se pide el micro
 if (EMBEDDED) { try { window.parent.postMessage({ type: 'agentoffice:ready' }, location.origin); } catch { /* padre de otro origen */ } } // flow-test responde con su contexto (FT-3)
