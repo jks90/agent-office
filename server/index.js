@@ -23,6 +23,7 @@ import * as guidePolicy from './guide/policy.js';
 import * as guide from './guide/index.js';
 import { getProvider as desktopProvider } from './desktop/index.js';
 import * as stt from './guide/stt/index.js';
+import * as wake from './guide/stt/wake.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
 const PORT = Number(process.env.AO_PORT || 7420);
@@ -109,10 +110,15 @@ const routes = [
   ['GET', /^\/api\/guide\/chats\/([\w-]+)$/, ([id]) => guide.getChat(id)],
   ['DELETE', /^\/api\/guide\/chats\/([\w-]+)$/, ([id]) => guide.deleteChat(id)],
   // Voz (FT-9): GET = proveedores STT y su estado; POST {audio: base64, mime, lang?} → {text, lang, ms}. El texto lo manda el cliente a /api/guide/chat
-  ['GET', /^\/api\/guide\/stt$/, () => stt.status()],
+  ['GET', /^\/api\/guide\/stt$/, async () => ({ ...(await stt.status()), wake: await wake.status() })], // wake (FT-35): ¿puede la UI ofrecer escucha continua?
   ['POST', /^\/api\/guide\/stt$/, (_, b) => {
     if (typeof b.audio !== 'string' || !b.audio) throw fail(400, 'Falta el audio (base64)');
     return stt.transcribe(Buffer.from(b.audio, 'base64'), b.mime, b.lang);
+  }],
+  // Palabra de activación (FT-35): {audio: base64, mime, durationMs?} → {wake, rest, ms}. Solo STT local (nunca OpenAI); audio ≤200 KB / 3 s
+  ['POST', /^\/api\/guide\/wake$/, (_, b) => {
+    if (typeof b.audio !== 'string' || !b.audio) throw fail(400, 'Falta el audio (base64)');
+    return wake.wake(Buffer.from(b.audio, 'base64'), b.mime, b.durationMs);
   }],
   ['POST', /^\/api\/guide\/stop$/, (_, b) => guide.stop(String(b.chatId || ''))],
   // Cuentas de los motores de IA (login OAuth/clave API, logout)
