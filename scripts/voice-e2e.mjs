@@ -115,7 +115,9 @@ else {
     await wp.waitForSelector('#view-guide .g-ear:not([hidden])', { timeout: 5000 });
     check('al activar aparece el chip «Escuchando»', /Escuchando/.test(await wp.$eval('#view-guide .g-ear', (e) => e.textContent)));
     check('el chip del botón flotante también', await wp.$eval('#guide-fab .fab-ear', (e) => !e.hidden));
-    const gotMsg = await wp.waitForFunction(() => [...document.querySelectorAll('#view-guide .g-msg.user')].some((m) => /¿cómo va\?/i.test(m.textContent)), { timeout: 20000 }).then(() => true, () => false);
+    // el historial del chat ya trae «¿Cómo va?» de la parte del 🎤: solo vale si la escucha ha enviado un mensaje nuevo (FT-38)
+    let gotMsg = false;
+    for (let t0 = Date.now(); Date.now() - t0 < 20000 && !gotMsg; await sleep(200)) gotMsg = reqs.slice(first).includes('POST /api/guide/chat');
     check('tras «oye guía, ¿cómo va?» el mensaje aparece en el chat', gotMsg);
     await wp.evaluate(() => document.querySelector('#view-guide .g-ear').click());
     await sleep(800);
