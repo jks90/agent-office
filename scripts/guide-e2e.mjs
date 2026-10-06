@@ -253,7 +253,9 @@ try {
   const firstAt = (t) => types.indexOf(t);
   const order = ['TaskCreated', 'TaskAssigned', 'AgentStarted', 'AgentToolStarted', 'AgentToolFinished', 'AgentArtifactCreated', 'AgentCompleted'];
   check('aparecen en orden: ' + order.join(' → '), order.every((t) => firstAt(t) >= 0) && order.every((t, i) => i === 0 || firstAt(order[i - 1]) <= firstAt(t)), types.join(','));
-  check('el último evento es AgentCompleted (status review)', evs.at(-1)?.type === 'AgentCompleted' && evs.at(-1).data.status === 'review');
+  // El constraint de la prueba anterior puede quedar registrado (UserInstructionAdded) justo después de que el worker demo termine: no es un evento del agente.
+  const lastAgentEv = evs.filter((e) => e.type !== 'UserInstructionAdded').at(-1);
+  check('el último evento del agente es AgentCompleted (status review)', lastAgentEv?.type === 'AgentCompleted' && lastAgentEv.data.status === 'review', types.slice(-4).join(' → '));
   check('los eventos van en orden cronológico y con ids únicos y ordenables', evs.every((e, i) => i === 0 || e.ts >= evs[i - 1].ts) && new Set(evs.map((e) => e.id)).size === evs.length && evs.every((e, i) => i === 0 || e.id > evs[i - 1].id));
   check('todos traen taskId, taskCode, projectId y agentId correlacionables', evs.every((e) => e.taskId === tEv.id && e.taskCode === tEv.code && e.projectId === A.id) && evs.filter((e) => e.type !== 'TaskCreated' && e.type !== 'UserInstructionAdded').every((e) => e.agentId));
   const started = evs.filter((e) => e.type === 'AgentToolStarted'), finished = new Set(evs.filter((e) => e.type === 'AgentToolFinished').map((e) => e.data.callId));
