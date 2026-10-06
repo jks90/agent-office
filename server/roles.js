@@ -78,6 +78,8 @@ function loadDir(dir, source, out) {
         tools: meta.tools ? meta.tools.split(',').map((t) => t.trim()).filter(Boolean) : null,
         handles: meta.handles ? meta.handles.split(',').map((t) => t.trim()).filter(Boolean) : [],
         skills: meta.skills ? meta.skills.split(',').map((t) => t.trim()).filter(Boolean) : [],
+        mcps: meta.mcps ? meta.mcps.split(',').map((t) => t.trim()).filter(Boolean) : [], // MCP del catálogo que lleva el rol
+        scripts: meta.scripts ? meta.scripts.split(',').map((t) => t.trim()).filter(Boolean) : [], // scripts del catálogo
         system: body.slice(0, 40_000), source, file: full, custom: true,
       };
     } catch { /* fichero ilegible: se ignora */ }
@@ -100,7 +102,7 @@ export const roleOf = (id) => allRoles()[id] || null;
 export const ROLES = BUILTIN; // de serie (para quien solo necesite los fijos)
 
 // Guardar un rol en el catálogo (<catálogo>/roles/<id>.md, formato subagente de Claude Code).
-export function saveRole({ id, description = '', kind = 'dev', model = '', minModel = '', handles = [], skills = [], system = '', file = null }) {
+export function saveRole({ id, description = '', kind = 'dev', model = '', minModel = '', handles = [], skills = [], mcps = [], scripts = [], system = '', file = null }) {
   const rid = String(id || '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
   if (!rid) throw Object.assign(new Error('El rol necesita un nombre'), { status: 400 });
   if (BUILTIN[rid]) throw Object.assign(new Error('Ese nombre es de un rol de serie'), { status: 400 });
@@ -112,6 +114,8 @@ export function saveRole({ id, description = '', kind = 'dev', model = '', minMo
   if (minModel) fm.push(`minModel: ${minModel}`); // FT-60: peldaño mínimo de la cascada de modelos
   if (handles.length) fm.push(`handles: ${handles.join(', ')}`);
   if (skills.length) fm.push(`skills: ${skills.join(', ')}`);
+  if (mcps.length) fm.push(`mcps: ${mcps.join(', ')}`);
+  if (scripts.length) fm.push(`scripts: ${scripts.join(', ')}`);
   fs.writeFileSync(target, `---\n${fm.join('\n')}\n---\n\n${system.trim()}\n`);
   return allRoles()[rid];
 }

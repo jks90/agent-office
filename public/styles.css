@@ -588,3 +588,11 @@ tr[data-cost-task] { cursor: pointer; }
 .inbox-what { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inbox-why { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inbox-acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+/* 🔌 MCP / 📜 Scripts del catálogo */
+.tool-row { flex-wrap: wrap; }
+.tool-users { display: flex; gap: 4px; flex-wrap: wrap; }
+.tool-chip { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; background: var(--panel3, #1a2030); border: 1px solid var(--line); border-radius: 999px; padding: 1px 4px 1px 8px; }
+.tool-chip.role { padding-right: 8px; opacity: .8; }
+.tool-chip .linklike { font-size: 10px; padding: 0 3px; }
+select.tool-assign { width: auto; max-width: 150px; font-size: 11px; padding: 2px 4px; }

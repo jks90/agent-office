@@ -28,7 +28,7 @@ const RTK_BIN = [process.env.AO_RTK_BIN, path.join(os.homedir(), '.local/bin/rtk
 export const rtkBin = () => RTK_BIN;
 export const rtkAvailable = () => !!RTK_BIN && process.env.AO_RTK !== 'off';
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kind, roleTools, hasSkills, budgetUsd, effort, resumeSession, addDirs = [], env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {}, onEvent = () => {} }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kind, roleTools, hasSkills, budgetUsd, effort, resumeSession, addDirs = [], extraMcp = {}, extraBash = [], env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {}, onEvent = () => {} }) {
   // FT-59: --tools limita las herramientas DISPONIBLES (sus definiciones no se envían); --allowedTools, lo que se permite sin preguntar.
   const scope = claudeScope({ kind, mode, roleTools, hasSkills });
   const tools = [...scope.allowed];
@@ -53,7 +53,15 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kin
     mcpServers[SERVER_NAME] = { type: 'stdio', command: codeIndex.command, args: [], env: codeIndex.env };
     tools.push(`mcp__${SERVER_NAME}`);
   }
-  args.push('--strict-mcp-config', '--mcp-config', JSON.stringify({ mcpServers }));
+  for (const [n, d] of Object.entries(extraMcp)) { mcpServers[n] = d; tools.push(`mcp__${n}`); } // MCP del catálogo asignados al agente/rol
+  // Con MCP del usuario la config lleva sus claves (env/cabeceras): va en un fichero 0600 y no en la línea de órdenes (visible en ps)
+  let mcpFile = null;
+  if (Object.keys(extraMcp).length) {
+    mcpFile = path.join(os.tmpdir(), `ao-mcp-${process.pid}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}.json`);
+    fs.writeFileSync(mcpFile, JSON.stringify({ mcpServers }), { mode: 0o600 });
+  }
+  args.push('--strict-mcp-config', '--mcp-config', mcpFile || JSON.stringify({ mcpServers }));
+  for (const b of extraBash) tools.push(`Bash(${b}:*)`); // scripts del catálogo asignados
   // FT-65: subagente «explorador» (solo lectura, haiku): lee en SU contexto y devuelve un resumen; lo leído no se reenvía en cada turno del agente.
   // Su lista de tools es explícita (sin MCP, sin Edit/Write) y --strict-mcp-config sigue vigente; el resto de subagentes integrados se veta.
   // Con las herramientas acotadas por rol (FT-59), Task/Agent se añaden a las DISPONIBLES solo cuando el explorador está activo.
@@ -63,6 +71,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kin
     for (const x of ['Task', 'Agent']) { if (!builtin.includes(x)) builtin.push(x); tools.push(x); }
     args.push('--disallowedTools', 'Task(general-purpose)', 'Task(Explore)', 'Task(Plan)', 'Agent(general-purpose)', 'Agent(Explore)', 'Agent(Plan)');
   }
+  if (extraBash.length && !builtin.includes('Bash')) builtin.push('Bash');
   args.push('--tools', builtin.join(','), '--allowedTools', ...tools);
 
   const env = { ...process.env, ...extraEnv, BROWSER: 'true' };
@@ -122,6 +131,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kin
   const done = new Promise((resolve) => {
     child.on('error', (e) => resolve({ ok: false, error: `No se pudo lanzar claude: ${e.message}` }));
     child.on('close', (code) => {
+      if (mcpFile) { try { fs.unlinkSync(mcpFile); } catch { /* ya no está */ } }
       if (stopped) return resolve({ ok: false, stopped: true, error: 'Parado por el usuario' });
       const ok = code === 0 && result && !result.is_error;
       resolve({

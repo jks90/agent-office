@@ -818,7 +818,7 @@ function showTab(tab) {
     requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
     if (prev !== 'office' && officeInit) applyOfficeDefault(); // al entrar en la pestaña: edificio, planta recordada o la única (FT-47)
   }
-  if (tab === 'agents') { renderSkills(); renderClaudeMemory(); }
+  if (tab === 'agents') { renderSkills(); renderClaudeMemory(); renderTools(); }
   if (tab === 'inbox') renderInbox();
   if (tab === 'guide') guideShow(); else guideRender();
   publishContext();
@@ -835,7 +835,7 @@ document.addEventListener('click', (e) => {
   const box = e.target.closest('.skills-box h4');
   if (box) { box.parentElement.classList.toggle('collapsed'); return; }
   const g = e.target.closest('.skill-group');
-  if (g) { g.classList.toggle('collapsed'); collapsed['skills:' + g.dataset.group] = g.classList.contains('collapsed'); safeSet('ao:collapsed', JSON.stringify(collapsed)); }
+  if (g) { g.classList.toggle('collapsed'); collapsed[(g.dataset.groupKind || 'skills') + ':' + g.dataset.group] = g.classList.contains('collapsed'); safeSet('ao:collapsed', JSON.stringify(collapsed)); }
 });
 showTab(activeTab);
 // Menú lateral plegable (solo iconos), recordado por navegador.
@@ -1054,6 +1054,73 @@ async function editClaudeMemory(repo, name) {
   }, 'wide');
 }
 
+// ── 🔌 MCP y 📜 scripts del catálogo (server/toolcatalog.js) ──────────────────────────────────────────────────
+// Catálogo = lo que se puede dar a los agentes; inventario = lo que hay en el PC. Asignación por agente (aquí o en su ficha)
+// y por rol (frontmatter `mcps:` / `scripts:`, editor de rol). El MCP se lee de tu config al lanzar: nada de claves aquí.
+let toolsData = null;
+const loadTools = async () => { toolsData = await api('GET', '/api/tools'); return toolsData; };
+const RISKY = /hostinger|billing|stripe|paypal|aws|gcp|azure/i;
+function confirmRisky(next, prev = []) {
+  const added = next.filter((n) => RISKY.test(n) && !(prev || []).includes(n));
+  return !added.length || confirm(`⚠ ${added.join(', ')} puede hacer acciones con coste o tocar producción (comprar, renovar, desplegar…). Los agentes lo usarán sin preguntarte.\n\n¿Dárselo de todos modos?`);
+}
+function toolSelects(o, role = null) {
+  const mc = toolsData?.mcp?.catalog || [], sc = toolsData?.scripts?.catalog || [];
+  const viaRole = (k) => (role?.[k] || []).length ? ` <span class="muted">(su rol ya trae: ${role[k].map(esc).join(', ')})</span>` : '';
+  return `<label>🔌 MCP del catálogo (Ctrl+clic)${viaRole('mcps')}</label>
+    <select name="mcps" multiple class="tall">${mc.map((m) => `<option value="${esc(m.name)}" ${(o.mcps || []).includes(m.name) ? 'selected' : ''}>${RISKY.test(m.name) ? '⚠ ' : ''}${esc(m.name)}${m.description ? ' — ' + esc(m.description.slice(0, 70)) : ''}</option>`).join('') || '<option disabled>(catálogo vacío: añade MCP en Agentes ▸ 🔌 MCP)</option>'}</select>
+    <label>📜 Scripts del catálogo (Ctrl+clic)${viaRole('scripts')}</label>
+    <select name="scripts" multiple class="tall">${sc.map((s) => `<option value="${esc(s.name)}" ${(o.scripts || []).includes(s.name) ? 'selected' : ''}>${esc(s.name)}${s.description ? ' — ' + esc(s.description.slice(0, 70)) : ''}</option>`).join('') || '<option disabled>(catálogo vacío: añade scripts en Agentes ▸ 📜 Scripts)</option>'}</select>`;
+}
+// Quién lo usa: agentes que lo tienen asignado + roles que lo declaran.
+const usersOf = (kind, name) => ({ agents: S.agents.filter((a) => (a[kind] || []).includes(name)), roles: Object.entries(S.roles).filter(([, r]) => (r[kind] || []).includes(name)).map(([id, r]) => ({ id, label: r.label })) });
+function usageCell(kind, name) {
+  const u = usersOf(kind, name);
+  const chips = u.agents.map((a) => `<span class="tool-chip">${esc(a.name)}<button class="linklike" data-tool-unassign="${kind}:${esc(name)}:${a.id}" title="Quitárselo a ${esc(a.name)}">✕</button></span>`).join('')
+    + u.roles.map((r) => `<span class="tool-chip role" title="Lo declara el rol (editor de rol)">rol ${esc(r.label)}</span>`).join('');
+  const options = S.agents.filter((a) => !(a[kind] || []).includes(name)).sort((x, y) => x.name.localeCompare(y.name));
+  return `<span class="tool-users">${chips || '<span class="muted">nadie</span>'}</span><select class="tool-assign" data-tool-assign="${kind}:${esc(name)}"><option value="">＋ agente…</option>${options.map((a) => `<option value="${a.id}">${esc(a.name)} · ${esc(S.roles[a.role]?.label || a.role)}</option>`).join('')}</select>`;
+}
+async function renderTools(reload = false) {
+  const em = $('#mcps'), es = $('#scripts');
+  if (!em || !es) return;
+  if (!toolsData || reload) { em.innerHTML = es.innerHTML = '<p class="muted">Inventariando…</p>'; try { await loadTools(); } catch { em.innerHTML = '<p class="bad">No se pudo leer el catálogo</p>'; return; } }
+  const { mcp, scripts } = toolsData;
+  $('#mcps-summary').textContent = `${mcp.catalog.length} en el catálogo · ${mcp.inventory.length} en el PC (Claude Code y Codex)`;
+  em.innerHTML = `<div class="skills-wrap">
+    <div class="skills-box"><h4>Catálogo (lo que puedes dar a los agentes)</h4>${mcp.catalog.map((m) => { const inv = mcp.inventory.find((x) => x.name === m.name); return `<div class="skill tool-row"><span class="nm">${inv?.risky ? '⚠ ' : ''}${esc(m.name)}</span><span class="ds" title="${esc(inv?.summary || '')}">${esc(m.description || inv?.summary || '')}${inv ? '' : ' <b class="bad">(ya no está en tu config)</b>'}</span>${usageCell('mcps', m.name)}<button class="small danger" data-mcp-del="${esc(m.name)}" title="Quitar del catálogo (no toca tu config)">✕</button></div>`; }).join('') || '<p class="muted">Vacío. Añade MCP desde el inventario →</p>'}</div>
+    <div class="skills-box"><h4>En este PC</h4>${mcp.inventory.map((m) => `<div class="skill"><span class="nm">${m.risky ? '⚠ ' : ''}${esc(m.name)}</span><span class="ds" title="${esc(m.summary)}">${esc(m.type)} · ${esc(m.sources.join(' + '))}</span>${m.central ? '<span class="src">✓ en catálogo</span>' : `<button class="small ghost" data-mcp-add="${esc(m.name)}">→ Catálogo</button>`}</div>`).join('') || '<p class="muted">No encuentro MCP en ~/.claude.json ni en ~/.codex/config.toml</p>'}</div>
+  </div>`;
+  $('#scripts-summary').textContent = `${scripts.catalog.length} en el catálogo · ${scripts.inventory.length} en las carpetas scripts/ de tus repos`;
+  const groups = {};
+  for (const s of scripts.inventory) (groups[s.group] ||= []).push(s);
+  es.innerHTML = `<div class="skills-wrap">
+    <div class="skills-box"><h4>Catálogo (lo que puedes dar a los agentes)</h4>${scripts.catalog.map((s) => `<div class="skill tool-row"><span class="nm" title="${esc(s.path)}">${esc(s.name)}</span><span class="ds" title="${esc(s.path)}">${esc(s.description || short(s.path))}</span>${usageCell('scripts', s.name)}<button class="small danger" data-script-del="${esc(s.name)}" title="Quitar del catálogo (no borra el fichero)">✕</button></div>`).join('') || '<p class="muted">Vacío. Añade scripts desde el inventario → o «＋ Añadir por ruta»</p>'}</div>
+    <div class="skills-box"><h4>En tus repos</h4>${Object.entries(groups).map(([g, list]) => `<div class="muted skill-group ${collapsed['scripts:' + g] === false ? '' : 'collapsed'}" data-group="${esc(g)}" data-group-kind="scripts" style="margin:8px 0 4px;font-weight:600">${esc(g)} <span class="muted">(${list.length}${list.filter((s) => s.central).length ? ` · ${list.filter((s) => s.central).length} en catálogo` : ''})</span></div>${list.map((s) => `<div class="skill" data-group="${esc(g)}"><span class="nm" title="${esc(s.path)}">${esc(s.name)}</span><span class="ds" title="${esc(s.description)}">${esc(s.description || '')}</span>${s.central ? '<span class="src">✓ en catálogo</span>' : `<button class="small ghost" data-script-add="${esc(s.path)}">→ Catálogo</button>`}</div>`).join('')}`).join('') || '<p class="muted">Ningún repo de tus proyectos tiene carpeta scripts/</p>'}</div>
+  </div>`;
+}
+function addScriptDialog() {
+  dialog(`<h3>＋ Script al catálogo</h3>
+    <label>Ruta del script (dentro de tu carpeta personal)</label><input name="path" placeholder="~/dev/MundoAbierto/despliegue/subir-casa.sh" required autofocus />
+    <label>Nombre (opcional)</label><input name="name" placeholder="se toma del fichero" />
+    <label>Qué hace (opcional; si no, la primera línea de comentario del script)</label><input name="description" />
+    ${buttons('Añadir')}`, async (f) => { await api('POST', '/api/tools/scripts', { path: f.path, name: f.name || undefined, description: f.description || undefined }); toast('Script añadido al catálogo'); renderTools(true); });
+}
+async function setToolUser(kind, name, agentId, on) {
+  const a = S.agents.find((x) => x.id === agentId);
+  if (!a) return;
+  const next = on ? [...new Set([...(a[kind] || []), name])] : (a[kind] || []).filter((n) => n !== name);
+  if (on && kind === 'mcps' && !confirmRisky(next, a.mcps)) { renderTools(); return; }
+  await api('PATCH', `/api/agents/${agentId}`, { [kind]: next });
+  toast(on ? `${name} → ${a.name}` : `${name} ya no es de ${a.name}`);
+}
+document.addEventListener('change', (e) => {
+  const s = e.target.closest?.('[data-tool-assign]');
+  if (!s || !s.value) return;
+  const [kind, ...rest] = s.dataset.toolAssign.split(':');
+  setToolUser(kind, rest.join(':'), s.value, true).catch(() => {});
+});
+
 async function editSkill(dir) {
   const r = await api('POST', '/api/skills/read', { dir });
   dialog(`
@@ -1088,6 +1155,7 @@ function editRepo(key) {
 }
 
 function editRole(id, duplicate = false) {
+  if (!toolsData) { loadTools().then(() => editRole(id, duplicate), () => { toolsData = { mcp: { catalog: [] }, scripts: { catalog: [] } }; editRole(id, duplicate); }); return; } // los selectores de MCP/scripts necesitan el catálogo
   const r = S.roles[id] || {};
   const rid = duplicate ? '' : id;
   const catalog = skillsData?.catalog || [];
@@ -1104,13 +1172,14 @@ function editRole(id, duplicate = false) {
     <label>Descripción (una línea)</label><input name="description" value="${esc(r.description || '')}" />
     <label>Skills del catálogo que lleva (Ctrl+clic)</label>
     <select name="skills" multiple class="tall">${catalog.map((s) => `<option value="${esc(s.name)}" ${mine.includes(s.name) ? 'selected' : ''}>${esc(s.name)} — ${esc(s.description.slice(0, 80))}</option>`).join('') || '<option disabled>(catálogo vacío: añade skills abajo)</option>'}</select>
+    ${toolSelects(r)}
     <label title="FT-86: reglas de «construir lo mínimo» en el prompt de los agentes de este rol"><input type="checkbox" name="ponytail" ${S.settings.ponytailRoles?.[rid] ? 'checked' : ''} /> Ponytail (prueba): construir lo mínimo</label>
     <label>Prompt de sistema</label><textarea name="system" rows="12">${esc(r.system || '')}</textarea>
     <p class="muted">Se guarda como fichero .md en el catálogo central (${esc(short(skillsData?.catalogDir || '~/JksDocs/workspace/_agentes'))}/roles/).</p>
     ${buttons('Guardar')}`, async (f) => {
     const form = $('#dialog form');
     const pick = (n) => [...form.querySelector(`[name=${n}]`).selectedOptions].map((o) => o.value);
-    await api('POST', '/api/roles', { ...f, model: pickModel(f), id: f.id || rid, handles: pick('handles'), skills: pick('skills'), file: rid ? r.file : null });
+    await api('POST', '/api/roles', { ...f, model: pickModel(f), id: f.id || rid, handles: pick('handles'), skills: pick('skills'), mcps: pick('mcps'), scripts: pick('scripts'), file: rid ? r.file : null });
     await api('POST', '/api/settings', { ponytailRoles: { ...S.settings.ponytailRoles, [f.id || rid]: !!f.ponytail } }); // FT-86
     toast('Rol guardado en el catálogo');
   });
@@ -1722,6 +1791,8 @@ const actions = {
   'add-repo': () => editRepo(''),
   'new-role': () => editRole('', false),
   'reload-skills': () => renderSkills(true),
+  'reload-tools': () => renderTools(true),
+  'add-script': () => addScriptDialog(),
   'reload-cmemory': () => renderClaudeMemory(true),
   'new-skill': () => dialog(`
     <h3>＋ Nueva skill en el catálogo</h3>
@@ -2413,6 +2484,7 @@ document.addEventListener('drop', (e) => { const a = e.target.closest?.('#attach
 function editAgent(id) {
   const a = S.agents.find((x) => x.id === id);
   if (!a) return;
+  if (!toolsData) { loadTools().then(() => editAgent(id), () => { toolsData = { mcp: { catalog: [] }, scripts: { catalog: [] } }; editAgent(id); }); return; }
   dialog(`
     <h3>✎ ${esc(a.name)}</h3>
     <label>Nombre</label><input name="name" value="${esc(a.name)}" required autofocus />
@@ -2422,8 +2494,9 @@ function editAgent(id) {
       <div><label>Modelo</label>${modelSelect('model', a.engine, a.model || '')}</div>
     </div>
     <label title="FT-86: reglas de «construir lo mínimo» en el prompt de este agente"><input type="checkbox" name="ponytail" ${a.ponytail ? 'checked' : ''} /> Ponytail (prueba): construir lo mínimo</label>
+    ${toolSelects(a, S.roles[a.role])}
     ${a.status === 'working' ? '<p class="muted">Está trabajando: los cambios se aplican a partir de su siguiente tarea.</p>' : ''}
-    ${buttons('Guardar')}`, async (f) => { await api('PATCH', `/api/agents/${id}`, { ...f, model: pickModel(f), ponytail: !!f.ponytail }); toast('Agente actualizado'); });
+    ${buttons('Guardar')}`, async (f) => { const form = $('#dialog form'), pick = (n) => [...form.querySelector(`[name=${n}]`).selectedOptions].map((o) => o.value); if (!confirmRisky(pick('mcps'), a.mcps)) throw new Error('cancelado'); await api('PATCH', `/api/agents/${id}`, { ...f, model: pickModel(f), ponytail: !!f.ponytail, mcps: pick('mcps'), scripts: pick('scripts') }); toast('Agente actualizado'); });
 }
 
 // Markdown ligero y seguro para descripciones y resúmenes (escapa primero, luego formatea).
@@ -2589,6 +2662,11 @@ document.addEventListener('click', async (e) => {
   if (d.skillAdd) return api('POST', '/api/skills/centralize', { dir: d.skillAdd }).then((r) => { toast(`«${r.name}» en el catálogo`); renderSkills(true); });
   if (d.skillDel) return api('DELETE', `/api/skills/${d.skillDel}`).then(() => { toast('Quitada del catálogo'); renderSkills(true); });
   if (d.skillEdit) return editSkill(d.skillEdit);
+  if (d.mcpAdd) { const desc = prompt(`Para qué sirve ${d.mcpAdd} (opcional, lo verán en las fichas):`, '') ?? null; if (desc === null) return; return api('POST', '/api/tools/mcp', { name: d.mcpAdd, description: desc }).then(() => { toast(`${d.mcpAdd} en el catálogo`); renderTools(true); }); }
+  if (d.mcpDel) { if (confirm(`¿Quitar ${d.mcpDel} del catálogo? Los agentes que lo tengan asignado dejarán de recibirlo.`)) api('DELETE', `/api/tools/mcp/${d.mcpDel}`).then(() => renderTools(true)); return; }
+  if (d.scriptAdd) return api('POST', '/api/tools/scripts', { path: d.scriptAdd }).then((r) => { toast(`${r.name} en el catálogo`); renderTools(true); });
+  if (d.scriptDel) { if (confirm(`¿Quitar ${d.scriptDel} del catálogo? (no borra el fichero)`)) api('DELETE', `/api/tools/scripts/${d.scriptDel}`).then(() => renderTools(true)); return; }
+  if (d.toolUnassign) { const [kind, ...rest] = d.toolUnassign.split(':'); const agentId = rest.pop(); return setToolUser(kind, rest.join(':'), agentId, false); }
   if (d.visAll !== undefined) { // «Mostrar todos» / «Ocultar los vacíos» (sin equipo, tareas ni flows): solo marca las casillas; se aplica al Guardar
     for (const x of S.projects) { const cb = document.querySelector(`#dialog [name="vis_${x.id}"]`); if (!cb) continue; cb.checked = d.visAll === '1' || !!((x.team || []).length || x.flows || S.tasks.some((t) => t.projectId === x.id) || x.id === projectId); }
     return;

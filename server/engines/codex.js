@@ -60,7 +60,7 @@ function bwrapWorks() {
   return sandboxOk;
 }
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kind, images = [], budgetUsd, maxTokens, effort, resumeSession, addDirs = [], extraArgs = [], env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {}, onEvent = () => {} }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kind, images = [], budgetUsd, maxTokens, effort, resumeSession, addDirs = [], extraArgs = [], codexMcp = null, env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {}, onEvent = () => {} }) {
   const noSandbox = !bwrapWorks();
   const sandbox = mode === 'plan' ? 'read-only' : 'workspace-write';
   const args = ['exec', '--json', '--skip-git-repo-check', '-C', cwd, ...(noSandbox ? ['--dangerously-bypass-approvals-and-sandbox'] : ['-s', sandbox])];
@@ -74,7 +74,8 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kin
     args.push('-c', `${k}.command=${JSON.stringify(codeIndex.command)}`, '-c', `${k}.args=[]`, '-c', `${k}.env={${Object.entries(codeIndex.env).map(([n, v]) => `${n}=${JSON.stringify(v)}`).join(',')}}`);
   }
   for (const c of codexScope({ kind, mode, images })) args.push('-c', c); // FT-59: sin herramientas que el rol no usa
-  args.push(...isolationArgs(userCodexToml(), ['flow_test', SERVER_NAME.replace(/-/g, '_')])); // sin los MCP/plugins/memorias del usuario (también en el motor «local»: su contexto es aún más corto)
+  args.push(...isolationArgs(userCodexToml(), ['flow_test', SERVER_NAME.replace(/-/g, '_'), ...(codexMcp?.codexKeep || [])]));
+  if (codexMcp?.codexArgs?.length) args.push(...codexMcp.codexArgs); // MCP del catálogo que solo define Claude // sin los MCP/plugins/memorias del usuario (también en el motor «local»: su contexto es aún más corto)
   const useRtk = rtkAvailable() && mode !== 'plan';
   args.push(...configArgs({ effort, rtk: useRtk ? rtkBin() : null, mode }));
   for (const img of images) args.push(`--image=${img}`); // con «=» para que -i (variádico) no se trague el «-»

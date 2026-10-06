@@ -30,6 +30,7 @@ import * as codeindex from './codeindex.js';
 import * as compact from './compact.js';
 import * as stuck from './stuck.js';
 import * as review from './review.js'; // FT-56
+import * as toolcat from './toolcatalog.js';
 import * as ladder from './model-ladder.js';
 
 const ENGINES = { demo, claude, codex, local }; // FT-54: local = IA local (LM Studio/Ollama) por el runner de Codex
@@ -313,6 +314,8 @@ export function updateAgent(id, patch) {
   if (typeof patch.model === 'string') a.model = patch.model.trim();
   if (patch.role && roleOf(patch.role)) a.role = patch.role;
   if (typeof patch.ponytail === 'boolean') a.ponytail = patch.ponytail; // FT-86
+  if (Array.isArray(patch.mcps)) a.mcps = [...new Set(patch.mcps.map(String).filter(Boolean))].slice(0, 30); // MCP del catálogo (toolcatalog.js)
+  if (Array.isArray(patch.scripts)) a.scripts = [...new Set(patch.scripts.map(String).filter(Boolean))].slice(0, 50);
   changed();
   return a;
 }
@@ -641,6 +644,13 @@ export async function reReview(id) {
   delete t.reviewNote; changed();
   setImmediate(() => autoReview(p, t).catch(() => {}));
   return { ok: true };
+}
+
+// MCP y scripts del catálogo que lleva el agente (los suyos + los de su rol), para la parte estable del prompt.
+function toolsPromptBlock(agent) {
+  const role = roleOf(agent.role);
+  const mcps = toolcat.assignedMcps(agent, role), scripts = toolcat.resolveScripts(toolcat.assignedScripts(agent, role));
+  return (mcps.length ? `\nMCP que tienes además de los de serie: ${mcps.join(', ')} (úsalos solo si la tarea los necesita).\n` : '') + toolcat.scriptsPromptBlock(scripts);
 }
 
 // Al pasar a revisión automática, lo que ya esperaba revisión no se queda atascado: se revisa ahora (de una en una).
@@ -1040,6 +1050,7 @@ function buildPrompt(p, agent, t) {
     'Lo que dejes sin confirmar se confirmará solo al terminar.',
     (() => { const r = repoOfTask(p, t); return r?.path ? '\n' + briefingFor(r.path) + (t.codeIndexOn ? '\n' + codeindex.BRIEFING_LINE : '') + '\n' : ''; })(), // FT-58: aviso del índice de código
     get().settings.claudeMemory !== false ? memory.claudePromptBlock(repoOfTask(p, t)?.path) : '', // índice de la memoria de Claude Code del repo
+    toolsPromptBlock(agent), // MCP y scripts del catálogo asignados (agente + rol)
     get().settings.agentMemory !== false ? memory.promptBlock(p.id, agent.id) : '', // FT-75: lecciones de tareas anteriores
     askRules(),
     economyBlock(t.codeIndexOn),
@@ -1205,10 +1216,17 @@ async function runTask(p, agent, t) {
       entry.requeue = true;
       entry.stop();
     };
+    // MCP y scripts del catálogo asignados (agente + rol): definiciones leídas de la config del usuario en este momento
+    const mcpRes = toolcat.resolveMcps(toolcat.assignedMcps(agent, role));
+    if (mcpRes.missing.length) log(agent.id, `⚠ MCP asignados que ya no existen en tu config: ${mcpRes.missing.join(', ')}`);
+    const scriptList = toolcat.resolveScripts(toolcat.assignedScripts(agent, role));
+    const scriptDirs = [...new Set(scriptList.map((x) => path.dirname(x.path)))].filter((d) => !d.startsWith(cwd + path.sep) && !addDirs.includes(d));
+    if (Object.keys(mcpRes.claude).length || mcpRes.codexKeep.length || scriptList.length) log(agent.id, `🔌 ${[...Object.keys(mcpRes.claude), ...mcpRes.codexKeep.filter((n) => !mcpRes.claude[n])].join(', ') || 'sin MCP extra'}${scriptList.length ? ` · 📜 ${scriptList.map((x) => x.name).join(', ')}` : ''}`);
     const job = await engine.start({ // FT-54: el motor local prueba el servidor antes de lanzar
+      extraMcp: mcpRes.claude, codexMcp: mcpRes, extraBash: scriptList.flatMap((x) => [toolcat.runnerOf(x.path), x.path]),
       onEvent: (e) => rec.feed(e),
       agent, task: t, project: p, cwd, mode: t.kind === 'plan' ? 'plan' : 'work', goal: t.goal, roles,
-      prompt, addDirs,
+      prompt, addDirs: [...addDirs, ...scriptDirs],
       images: (t.feedbackImages || []).filter((f) => fs.existsSync(f)),
       system: role.system,
       model,

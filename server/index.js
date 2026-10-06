@@ -9,6 +9,7 @@ import { prefixOf } from './codes.js';
 import * as questions from './questions.js';
 import * as team from './team.js';
 import * as review from './review.js'; // FT-56
+import * as toolcat from './toolcatalog.js';
 import * as costs from './costs.js'; // FT-76
 import * as ponytail from './ponytail.js'; // FT-86
 import { allRoles } from './roles.js';
@@ -182,6 +183,12 @@ const routes = [
   ['POST', /^\/api\/skills\/read$/, (_, b) => skills.readSkillFile(b.dir)],
   ['POST', /^\/api\/skills\/write$/, (_, b) => skills.writeSkillFile(b.dir, b.content)],
   ['POST', /^\/api\/skills\/new$/, (_, b) => skills.createSkill(b)],
+  // Catálogos de MCP y scripts para los agentes (server/toolcatalog.js)
+  ['GET', /^\/api\/tools$/, () => ({ mcp: { catalog: toolcat.mcpCatalog(), inventory: toolcat.mcpInventory() }, scripts: { catalog: toolcat.scriptCatalog(), inventory: toolcat.scriptInventory() } })],
+  ['POST', /^\/api\/tools\/mcp$/, (_, b) => toolcat.addMcp(b)],
+  ['DELETE', /^\/api\/tools\/mcp\/([\w.-]+)$/, ([n]) => toolcat.removeMcp(n)],
+  ['POST', /^\/api\/tools\/scripts$/, (_, b) => toolcat.addScript(b)],
+  ['DELETE', /^\/api\/tools\/scripts\/([\w.-]+)$/, ([n]) => toolcat.removeScript(n)],
   ['DELETE', /^\/api\/skills\/([\w-]+)$/, ([name]) => skills.uncentralize(name)],
   ['POST', /^\/api\/roles$/, (_, b) => { const r = saveRole(b); store.changed(); return r; }],
   ['DELETE', /^\/api\/roles\/([\w-]+)$/, ([id]) => { deleteRole(id); store.changed(); }],
