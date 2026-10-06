@@ -213,6 +213,7 @@ const routes = [
     if (typeof b.workspaceHostDir === 'string') st.workspaceHostDir = b.workspaceHostDir.trim();
     if (typeof b.quotaGuard === 'boolean') st.quotaGuard = b.quotaGuard; // FT-45
     if (typeof b.agentMemory === 'boolean') st.agentMemory = b.agentMemory; // FT-75
+    if (typeof b.cacheAffinity === 'boolean') st.cacheAffinity = b.cacheAffinity; // FT-64
     if (b.maxTaskUsd !== undefined) st.maxTaskUsd = Math.max(0.5, Math.min(50, Number(b.maxTaskUsd) || 3)); // tope de gasto por intento de tarea
     if (['low', 'medium', 'high'].includes(b.agentEffort)) st.agentEffort = b.agentEffort;
     if (b.maxParallel) st.maxParallel = Math.max(1, Math.min(8, Number(b.maxParallel) || 4));
