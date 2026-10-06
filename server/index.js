@@ -21,6 +21,7 @@ import * as context from './context.js';
 import * as guideTools from './guide/tools.js';
 import * as guidePolicy from './guide/policy.js';
 import * as guide from './guide/index.js';
+import { getProvider as desktopProvider } from './desktop/index.js';
 import * as stt from './guide/stt/index.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
@@ -71,7 +72,13 @@ export function extractText(file) {
   } catch { return null; }
 }
 
-const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), questions: questions.list(), guidePolicy: guidePolicy.getPolicy(), guideProviders: guide.providerInfo() }; };
+// FT-32 · estado de las herramientas de entrada (xdotool/ydotool) para la ayuda de Ajustes; en caché 30 s (hace `which`)
+let inputCache = { t: 0, v: null };
+const inputStatus = () => {
+  if (Date.now() - inputCache.t > 30_000) { let v; try { const a = desktopProvider().inputAvailable(); v = { ok: !!a.ok, missing: a.missing || [] }; } catch (e) { v = { ok: false, missing: [] }; } inputCache = { t: Date.now(), v }; }
+  return inputCache.v;
+};
+const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo() }; };
 
 async function readBody(req) {
   const limit = req.url.startsWith('/api/upload') ? 40e6 : req.url.startsWith('/api/guide/stt') ? 12e6 : 1e6; // adjuntos y audio del Guide (FT-9) en base64

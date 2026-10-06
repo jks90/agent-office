@@ -883,7 +883,8 @@ Pasos, convenciones y ejemplos…</textarea>
     <label>Acciones que crean o editan datos (escribir)</label>
     <select name="guideWrite"><option value="auto" ${S.guidePolicy?.write === 'auto' ? 'selected' : ''}>Automático</option><option value="confirm" ${S.guidePolicy?.write !== 'auto' ? 'selected' : ''}>Pedir confirmación</option></select>
     <p class="muted">Leer y navegar son siempre automáticos; las acciones irreversibles (borrar) siempre piden confirmación.</p>
-    <label><input type="checkbox" name="guideInputFallback" ${S.guidePolicy?.guideInputFallback ? 'checked' : ''} /> Permitir al Guide mover el ratón y teclear (último recurso, entrada «ciega» con xdotool/ydotool; desactivado de serie) (FT-30)</label>
+    <label><input type="checkbox" name="guideInputFallback" ${S.guidePolicy?.guideInputFallback ? 'checked' : ''} /> Permitir ratón y teclado (último recurso)</label>
+    <p class="muted">Entrada «ciega» del Guide cuando ni la API interna, ni ui.find/ui.act ni application.open bastan. Apagado de serie; las teclas destructivas siempre piden confirmación (FT-30, FT-32).${S.guidePolicy?.input && !S.guidePolicy.input.ok ? ` <span class="bad">Faltan herramientas: ${esc(S.guidePolicy.input.missing.join(', ') || 'xdotool (X11) / ydotool (Wayland)')}. Instálalas para que funcione.</span>` : ''}</p>
     <hr style="border-color:var(--line);margin:16px 0" />
     <div class="section-title">🔗 Tablero online del proyecto «${esc(project()?.name)}»</div>
     <div id="board-cfg" class="board-cfg"><p class="muted">Cargando…</p></div>
