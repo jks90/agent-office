@@ -288,6 +288,18 @@ La Oficina **abre como edificio** y se entra y se sale de cada planta:
 - **Guide**: `publishContext()` incluye `officeMode` (FT-2), así `app.getContext` sabe si el usuario ve el edificio o una planta. `?view=building` de FT-46 ya no existe (con varios equipos el edificio es el modo de serie).
 - **Sin regresiones**: el clic en un personaje sigue abriendo su cajón en `floor`; las etiquetas de personajes, pizarra y plantas solo se ven en su modo (clase `building` en el contenedor de etiquetas); `resize`/`ResizeObserver` valen en ambos modos y, si llega en plena transición, la cámara acaba en el encuadre nuevo.
 
+### Cambiar la geometría del edificio (FT-49)
+
+Todo vive en `public/office3d.js` (constantes arriba del fichero):
+
+- `RX`, `RZ` (13 × 9): dimensiones de la sala y, por tanto, de cada planta; `WALL_H` la altura del muro. Mover mesas/mobiliario toca `DESK_COLS`/`DESK_ROWS`, `FURNITURE`, `BOARD`…
+- `SLAB_H` (losa) y `FLOOR_H = WALL_H + SLAB_H`: altura de una planta; la planta *i* se coloca a `i · FLOOR_H`.
+- `MAX_FLOORS` (12): tope visual antes de agrupar en la planta «+N proyectos».
+- `FLOOR_BOX = [RX, WALL_H, RZ]` y `frameCamera(aspect, [x, y, z])`: caja que encuadra la cámara (la sala en `floor`, `[RX, nPlantas·FLOOR_H, RZ]` en `building`). `CAM_MS` (380) es la duración de la transición.
+- `WINDOW_ON`, `WALL_PAUSED`, `SLAB_COLOR`, `INTERIOR`, `HOVER`, `HOVER_K`, `ACTIVE_K`: colores e intensidades de ventanas encendidas, fachada parada, resalte bajo el ratón y planta activa.
+
+Tras cambiar la geometría: `node scripts/building-e2e.mjs` y mirar `scripts/preview.mjs --building`. La documentación con diagrama y capturas está en el flow `flowtest/arquitectura-guide.flow.json` (nota «🏢 Edificio 3D», FT-49).
+
 **Probarlo a mano** (3 proyectos, 2 con equipo): `npm start`, crea «Alfa» y «Beta» con un agente cada uno (Agentes ▸ Contratar) y «Vacío» sin equipo; en Oficina se ve el edificio con dos plantas y «Vacío» no sale. Clic en una planta → su sala y miga «🏢 Edificio › Beta»; botón o Esc (tras un clic en la oficina) → edificio. Cambia el desplegable estando en la sala (cambia de planta) y en el edificio (solo se resalta). Pide al Guía «llévame a la oficina de Beta» (`app.navigate`) y recarga la página para ver que recuerda el modo. Automático: `node scripts/building-e2e.mjs [captura.png]` (36 checks: lo anterior más `officeMode` en `/api/context`, el caso de un solo proyecto con equipo y cero errores de consola).
 
 ## Créditos
