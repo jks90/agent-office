@@ -1,7 +1,7 @@
 // Motor Codex: `codex exec --json` en el worktree de la tarea (sandbox workspace-write).
 import { spawn, execFileSync } from 'node:child_process';
 import readline from 'node:readline';
-import { firstLine, toolSummary } from './describe.js';
+import { firstLine, toolSummary, toolKey } from './describe.js';
 import { codexTracker } from '../usage.js';
 
 // Codex envuelve cada orden en `/usr/bin/zsh -lc "…"`: en el bocadillo solo interesa la orden.
@@ -51,7 +51,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, images = [], e
       // Activity Stream (FT-1): herramientas con id, nombre y resumen sin contenido sensible
       const tool = { command_execution: ['Bash', { command: unwrap(it.command) }], file_change: ['Edit', { file_path: it.changes?.[0]?.path }], mcp_tool_call: [`mcp__${it.server}__${it.tool}`, {}], web_search: ['WebSearch', { query: it.query }] }[it.type];
       if (tool) {
-        const call = { callId: it.id, tool: tool[0], summary: toolSummary(...tool) };
+        const call = { callId: it.id, tool: tool[0], summary: toolSummary(...tool), key: toolKey(...tool) };
         if (started) onTool({ phase: 'started', ...call });
         else {
           if (it.type === 'file_change') onTool({ phase: 'started', ...call }); // file_change solo llega completado

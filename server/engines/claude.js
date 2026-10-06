@@ -6,7 +6,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-import { describeTool, toolSummary, firstLine } from './describe.js';
+import { describeTool, toolSummary, toolKey, firstLine } from './describe.js';
 import { RTK_RULES, BASH_TOOLS } from './allowlist.js';
 import { claudeTracker } from '../usage.js';
 
@@ -72,7 +72,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, eff
         if (c.type === 'tool_use') {
           const d = describeTool(c.name, c.input);
           onActivity(d);
-          onTool({ phase: 'started', callId: c.id, tool: c.name, summary: toolSummary(c.name, c.input) });
+          onTool({ phase: 'started', callId: c.id, tool: c.name, summary: toolSummary(c.name, c.input), key: toolKey(c.name, c.input) });
           onLog('🔧 ' + d);
         } else if (c.type === 'text' && c.text.trim()) {
           onActivity('Pensando: ' + firstLine(c.text, 50));
@@ -117,12 +117,13 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, eff
     pause() { signal('SIGSTOP'); },
     resume() { signal('SIGCONT'); },
     // Mensaje en caliente (FT-5): nuevo mensaje de usuario por stdin. false si el CLI ya no admite entrada.
-    message(text) {
+    message(text, raw = false) {
       if (child.stdin.destroyed || child.stdin.writableEnded) return false;
       cancelClose();
       // Redacción neutra a propósito: un encabezado en mayúsculas tipo «INSTRUCCIÓN… prioritaria… confírmala literalmente» hace que
       // el modelo lo trate como inyección y lo rechace (probado con el CLI real).
-      child.stdin.write(userMsg(`El cliente (quien revisa tu trabajo) añade esta indicación para lo que queda de la tarea: «${text}». Aplícala a partir de ahora y menciónala en tu resumen final.`));
+      if (raw) child.stdin.write(userMsg(text)); // FT-62: aviso del sistema (ya redactado), no del cliente
+      else child.stdin.write(userMsg(`El cliente (quien revisa tu trabajo) añade esta indicación para lo que queda de la tarea: «${text}». Aplícala a partir de ahora y menciónala en tu resumen final.`));
       return true;
     },
     stop() { stopped = true; cancelClose(); signal('SIGTERM'); signal('SIGCONT'); setTimeout(() => signal('SIGKILL'), 3000).unref(); }, // SIGCONT: un grupo parado no recibe SIGTERM
