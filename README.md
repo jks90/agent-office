@@ -366,6 +366,14 @@ La compactación automática salta cerca del 93 % de la ventana y relee/resume v
 - **Partir antes de empezar.** En `tick()`, una tarea nueva de trabajo (primer intento, no troceada ya) se evalúa una vez con `bigTaskReason`: ≥6 puntos enumerados, ≥2 «y además…», descripción >2 500 caracteres, o estimación por rol (`costEstimates`, FT-26) ≥70 % del tope de gasto con varias piezas. Si lo es, pasa a Backlog con `sizeHint` y `splitInto`, y se crea una tarea «Planificar:» para el PO con su texto (evento `TaskSplitRequested`); las tareas que crea el PO nacen con `sizeChecked`. `settings.bigTasks`: `plan` (por defecto) · `suggest` (solo avisa en el log y la lanza entera) · `off`. Sin PO en el equipo, solo avisa.
 - Prueba: `node scripts/compact-e2e.mjs` (claude falso con uso creciente que escribe `NOTAS.md` al recibir la instrucción; 26 checks).
 
+### Subagente explorador (FT-65)
+
+Lo leído se reenvía en cada turno; para exploraciones amplias el agente delega en un subagente que lee en **su propio contexto** y devuelve solo un resumen.
+- **Claude (opcional, `AO_EXPLORER=on`; apagado por defecto hasta que el benchmark FT-61 confirme el ahorro y para respetar las herramientas por rol de FT-59):** `server/engines/claude.js` pasa `--agents` con `explorador` (modelo `haiku`, tools solo de lectura: Read/Grep/Glob + shell de lectura de la lista blanca; sin Edit/Write ni MCP, así que respeta la allowlist y `--strict-mcp-config`), permite `Task`/`Agent` al agente principal y veta con `--disallowedTools` los subagentes integrados (`general-purpose`, `Explore`, `Plan`). `AO_EXPLORER=off` lo desactiva.
+- **Prompt:** `economyBlock` añade «para explorar más de 3 ficheros, delega en el explorador y trabaja con su resumen».
+- **Codex: no aplica.** `codex exec` no tiene subagentes/`spawn` que se puedan declarar por flag (no verificable aquí: `codex` pide aprobación en este entorno); ese caso lo cubre el índice de código (FT-58). Con motor `auto` cada agente usa lo de su motor; el texto del prompt dice «si tu motor la tiene».
+- **Medición pendiente:** la comparación con/sin explorador (tarea «enumera dónde se emite cada tipo de evento») requiere consumir cuota real; compárala con `AO_EXPLORER=off` en el benchmark de FT-61.
+
 ## ⏸ Sin cuota a mitad de tarea: pausa y reanudación automática (FT-66)
 
 Si un agente se queda sin cuota de la suscripción mientras trabaja (Claude: «usage limit reached», «5-hour limit», 429…; Codex: «You've hit your usage limit… try again at …»), la tarea **no** va a Fallidas:
