@@ -1411,12 +1411,15 @@ document.addEventListener('click', async (e) => {
 });
 
 $('#project').onchange = (e) => { projectId = e.target.value; safeSet('ao:project', projectId); closeDrawer(); };
+// Campo del objetivo compacto: una línea que crece con el texto; Enter encarga, Shift+Enter salta de línea.
+$('#goal').addEventListener('input', (e) => { e.target.style.height = 'auto'; e.target.style.height = Math.min(160, e.target.scrollHeight) + 'px'; });
+$('#goal').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#goal-form').requestSubmit(); } });
 $('#goal-form').onsubmit = async (e) => {
   e.preventDefault();
   const goal = $('#goal').value.trim();
   if (!goal) return;
   await api('POST', `/api/projects/${projectId}/goal`, { goal });
-  $('#goal').value = '';
+  $('#goal').value = ''; $('#goal').style.height = '';
   toast(project()?.running ? 'El PO se pone con ello' : 'Encargado. Pulsa «▶ Poner a trabajar» para empezar');
 };
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && drawerAgent && !$('#dialog').open) closeDrawer(); });

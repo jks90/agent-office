@@ -155,8 +155,11 @@ dialog select[multiple].tall { height: 160px; }
 .chip { font-size: 11px; padding: 1px 7px; border-radius: 99px; background: color-mix(in srgb, var(--c) 22%, transparent); color: var(--c); border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); white-space: nowrap; }
 .eng { font-size: 10px; padding: 2px 6px; border-radius: var(--r-sm); background: var(--panel2); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
 
-.goal { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--s-3); margin-bottom: var(--s-3); box-shadow: var(--shadow); }
-.goal .row { display: flex; gap: var(--s-2); margin-top: var(--s-2); }
+.goal { display: flex; align-items: flex-start; gap: var(--s-2); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 6px 8px; margin-bottom: var(--s-3); box-shadow: var(--shadow); }
+.goal textarea { flex: 1; min-width: 200px; resize: none; padding: 6px 10px; min-height: 34px; line-height: 1.4; overflow: hidden; }
+.goal .small { white-space: nowrap; align-self: flex-start; }
+.goal #task-filter { width: 180px; flex: none; margin-left: auto; }
+.goal .board-chip:empty { display: none; }
 
 #board { flex: 1; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--s-2); min-height: 0; }
 .col { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
@@ -280,7 +283,7 @@ dialog.wide { width: min(1000px, 94vw); }
 
 @media (max-width: 720px) {
   header { padding: var(--s-3); }
-  .project-bar, .goal .row { flex-wrap: wrap; }
+  .project-bar, .goal { flex-wrap: wrap; }
   #project, .project-bar button, #run { width: 100%; max-width: none; }
   main { padding: var(--s-3); }
   #team, #board { grid-template-columns: 1fr; }

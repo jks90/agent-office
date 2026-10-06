@@ -49,14 +49,11 @@
     <section class="view" id="view-summary" hidden><div id="summary"></div></section>
     <section class="view" id="view-tasks" hidden>
       <form id="goal-form" class="goal">
-        <textarea id="goal" rows="2" placeholder="🎯 Objetivo para el PO: p. ej. «Alta de clientes con email y verificación»"></textarea>
-        <div class="row">
-          <button type="submit">Encargar al PO</button>
-          <button type="button" data-action="new-task" class="ghost">＋ Tarea a mano</button>
-          <div class="spacer"></div>
-          <span id="board-chip" class="board-chip"></span>
-          <input id="task-filter" placeholder="🔍 filtrar tareas…" />
-        </div>
+        <textarea id="goal" rows="1" placeholder="🎯 Objetivo para el PO (Enter = encargar · Shift+Enter = salto de línea)"></textarea>
+        <button type="submit" class="small">Encargar al PO</button>
+        <button type="button" data-action="new-task" class="ghost small">＋ Tarea a mano</button>
+        <span id="board-chip" class="board-chip"></span>
+        <input id="task-filter" class="small" placeholder="🔍 filtrar…" />
       </form>
       <div id="board"></div>
     </section>
