@@ -305,3 +305,15 @@ Tras cambiar la geometría: `node scripts/building-e2e.mjs` y mirar `scripts/pre
 ## Créditos
 
 - 3D: [Kenney](https://kenney.nl) *Furniture Kit* y *Mini Characters* (CC0, `public/assets/3d/`), [three.js](https://threejs.org) (MIT, `public/vendor/three/`).
+
+## 💸 Consumo de tokens de los agentes
+
+Medido el 6 OCT 2026: lo caro no es el arranque (≈31k tokens con `--strict-mcp-config`) sino lo que se lee, porque cada turno reenvía todo lo leído, y el modelo (el alias `opus` del CLI resuelve al modelo más caro). Medidas:
+- **Modelo por rol:** código con `sonnet`; documentación, QA y planificación con `haiku` (roles en `~/JksDocs/workspace/_agentes/roles/`).
+- **Briefing por repo** (`server/briefing.js`): mapa generado con git (carpetas, ficheros grandes a leer por tramos, scripts, e2e, secciones de README/CLAUDE.md, últimos commits), cacheado por commit en `data/briefings/` e inyectado en cada prompt, para que el agente no explore.
+- **Reglas de lectura en el prompt** (`economyBlock` en `team.js`): Grep + Read por tramos en ficheros grandes, sin releer, salidas recortadas, un e2e salvo fallo, una captura.
+- **Tope de gasto por intento** (Ajustes, `maxTaskUsd`, 3 $; `claude --max-budget-usd`): al alcanzarlo la tarea NO falla, va a Revisión con «⚠️ tope de gasto alcanzado»; Devolver le da otro intento desde su rama.
+- **Esfuerzo** (Ajustes, `agentEffort`, medio; `claude --effort`).
+- **Reanudar sesión** en reintentos de la misma tarea en su worktree si el anterior acabó hace <50 min (`claude --resume`, la caché de contexto aún vale).
+- **Estimación** en las tarjetas de Por hacer / Backlog: mediana del coste de las últimas 10 tareas hechas del mismo rol (`costEstimates()`).
+- **RTK** (rtk-ai/rtk, Apache-2.0): si está instalado (`~/.local/bin/rtk` o `AO_RTK_BIN`; `AO_RTK=off` lo apaga), los agentes Claude arrancan con su hook PreToolUse por `--settings` (NO se toca `~/.claude/settings.json`) y se permiten solo los `rtk …` equivalentes a la lista blanca (`RTK_RULES`, nunca `rtk run`). Comprime salidas de git/grep/ls/lint; no las de Read/Grep nativos. `rtk gain` enseña el ahorro.

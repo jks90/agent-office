@@ -412,3 +412,5 @@ body.embedded #quota-chip { display: none; }
 .quota-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 14px; min-width: 340px; display: flex; flex-direction: column; gap: 5px; } .quota-card.off { opacity: .75; }
 .quota-row { display: flex; align-items: center; gap: 8px; font-size: 12px; } .quota-row .ql { width: 120px; } .quota-row .tokbar { width: 120px; height: 8px; } .quota-row b { width: 46px; text-align: right; } .quota-row b.warn { color: #fbbf24; } .quota-row b.bad { color: #f87171; }
 .quota-hold { font-size: 11px; color: #fbbf24; margin-top: 4px; }
+
+.cost-est { font-size: 11px; color: var(--muted); border: 1px dashed var(--line); border-radius: 10px; padding: 0 6px; }

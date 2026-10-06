@@ -13,6 +13,15 @@ export const BASH_RULES = [
 ];
 export const BASH_TOOLS = BASH_RULES.map((r) => `Bash(${r})`);
 
+// RTK (rtk-ai/rtk): su hook PreToolUse reescribe `git status` → `rtk git status`, `cat f` → `rtk read f`… para comprimir
+// la salida. El permiso se comprueba sobre el comando reescrito, así que se permiten SOLO los equivalentes de reglas de
+// arriba (nunca `rtk run`/`rtk err`, que ejecutan cualquier cosa). Solo para el motor Claude cuando RTK está instalado.
+export const RTK_RULES = [
+  'rtk git status*', 'rtk git diff*', 'rtk git log*', 'rtk git show*', 'rtk git add*', 'rtk git commit*', 'rtk git branch*',
+  'rtk grep *', 'rtk rg *', 'rtk ls*', 'rtk tree*', 'rtk find *', 'rtk read *', 'rtk diff *',
+  'rtk lint*', 'rtk tsc*', 'rtk npm *', 'rtk mvn *', 'rtk gradle *', 'rtk gain*',
+];
+
 // ¿Encaja el comando (ya sin metacaracteres de shell) con alguna regla?
 export function bashAllowed(cmd) {
   const c = String(cmd || '').trim();

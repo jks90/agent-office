@@ -18,6 +18,7 @@ import * as boards from './boards/index.js';
 import { linkSkillsInto } from './skills.js';
 import { cleanContext, describeContext } from './task-context.js';
 import * as quota from './quota.js';
+import { briefingFor } from './briefing.js';
 
 const ENGINES = { demo, claude, codex };
 export const ENGINE_IDS = ['auto', 'claude', 'codex', 'demo'];
@@ -724,6 +725,7 @@ function buildPrompt(p, agent, t) {
     '',
     p.folder ? `Carpeta del proyecto en el workspace de flow-test: «${p.folder}/» (ahí viven sus flows y su documentación; guarda ahí lo que generes con flow-test).` : '',
     `Trabajas en una copia aislada del repo (git worktree) en la rama ${t.branch}. No cambies de rama ni hagas push.`,
+    (() => { const r = repoOfTask(p, t); return r?.path ? '\n' + briefingFor(r.path) + '\n' : ''; })(),
     t.reused ? 'En esta rama ya está tu intento anterior (mira `git log` y `git diff` contra la rama base): parte de él y corrige lo que pide la revisión, sin rehacer lo que ya estaba bien.' : '',
     'Lo que dejes sin confirmar se confirmará solo al terminar.',
     t.code ? `Cita el código ${t.code} en lo que documentes (changelog, README, flows, tablero) para que la tarea se pueda rastrear.` : '',
@@ -741,8 +743,9 @@ function economyBlock() {
     'Gasta pocos tokens (cada fichero que lees se reenvía en todos los pasos siguientes):',
     '- Ficheros grandes (más de ~400 líneas, p. ej. public/app.js, public/office3d.js, server/team.js, README.md): NUNCA los leas enteros. Localiza con Grep (-n) y lee solo el tramo con Read offset/limit.',
     '- No vuelvas a leer lo que ya leíste; no hagas `cat` de ficheros largos ni de salidas largas: recorta con `| tail -30`, `| head`, `grep`.',
-    '- Pruebas: ejecuta el e2e/verificación UNA vez cuando creas que está bien; repite solo si falló. Capturas de pantalla: como mucho 2, y solo si la tarea es visual.',
-    '- Ve al grano: sin exploraciones generales del repo (ls -R, find de todo) si la tarea ya dice qué ficheros tocar.',
+    '- Pruebas: ejecuta el e2e/verificación UNA vez cuando creas que está bien; repite solo si falló. Capturas de pantalla: como mucho 1 (otra solo si la primera muestra un fallo), y solo si la tarea es visual.',
+    '- Ve al grano: el briefing del repo ya te da la estructura; no lo explores con ls -R/find/wc.',
+    '- Si te acercas al tope de gasto de la tarea, deja el trabajo en un estado coherente y resume qué falta.',
   ].join('\n');
 }
 
@@ -803,6 +806,8 @@ async function runTask(p, agent, t) {
       images: (t.feedbackImages || []).filter((f) => fs.existsSync(f)),
       system: role.system,
       model: modelFor(engineId, agent, role),
+      // Reintento de la MISMA tarea en su worktree hace <50 min (la caché de contexto aún vale): se reanuda su sesión.
+      resumeSession: engineId === 'claude' && t.reused && t.sessionId && Date.now() - (t.sessionAt || 0) < 50 * 60_000 ? t.sessionId : null,
       budgetUsd: Number(s.settings.maxTaskUsd) > 0 ? Number(s.settings.maxTaskUsd) : 3, // tope por intento (Ajustes ▸ «Tope de gasto por tarea»)
       effort: ['low', 'medium', 'high'].includes(s.settings.agentEffort) ? s.settings.agentEffort : 'medium',
       mcpUrl: ['qa', 'docs'].includes(role.kind) ? mcpUrl() : null, // QA y documentalista hablan con flow-test por MCP
@@ -817,6 +822,17 @@ async function runTask(p, agent, t) {
     const res = await job.done;
 
     if (res.costUsd != null) t.costUsd = (t.costUsd || 0) + res.costUsd;
+    if (res.sessionId) Object.assign(t, { sessionId: res.sessionId, sessionAt: Date.now() });
+    // Tope de gasto alcanzado: NO es un fallo. Lo hecho se confirma y la tarea va a Revisión con el aviso; «Devolver» le da
+    // otro intento (con su tope) partiendo de su rama, «Aprobar» si ya vale. Así se para y se pregunta, sin seguir gastando.
+    if (res.budgetHit && t.kind !== 'plan') {
+      const cap = Number(s.settings.maxTaskUsd) > 0 ? Number(s.settings.maxTaskUsd) : 3;
+      res.ok = true;
+      res.summary = `⚠️ TOPE DE GASTO ALCANZADO (${cap} $ por intento): ${agent.name} se cortó a medias y lo hecho queda en la rama. Revisa: «Devolver» le da otro intento partiendo de aquí; «Aprobar» solo si ya vale.${res.summary ? '\n\n' + res.summary : ''}`;
+      t.budgetHit = true;
+      log(agent.id, `⚠️ ${t.code || t.id}: tope de gasto de ${cap} $ alcanzado → a revisión`);
+      events.emit('AgentBlocked', ev, { reason: 'budget', capUsd: cap, costUsd: t.costUsd });
+    }
     if (!res.ok) throw new Error(res.error || 'El agente no terminó bien');
     t.summary = res.summary || '';
 
@@ -870,4 +886,15 @@ async function runTask(p, agent, t) {
     changed();
     tick();
   }
+}
+
+// Estimación de coste de una tarea antes de arrancarla: mediana del coste de las últimas 10 tareas hechas del mismo rol
+// (de todos los proyectos). Sin historial suficiente (<3), null. La usa la tarjeta («≈ 0,8 $»).
+export function costEstimates() {
+  const byRole = {};
+  const done = get().tasks.filter((t) => t.status === 'done' && t.costUsd > 0 && t.kind !== 'plan').sort((a, b) => b.updatedAt - a.updatedAt);
+  for (const t of done) (byRole[t.role] ||= []).length < 10 && byRole[t.role].push(t.costUsd);
+  const out = {};
+  for (const [r, v] of Object.entries(byRole)) if (v.length >= 3) { const x = [...v].sort((a, b) => a - b); out[r] = +x[Math.floor(x.length / 2)].toFixed(2); }
+  return out;
 }
