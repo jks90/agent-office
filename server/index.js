@@ -28,6 +28,7 @@ import * as wake from './guide/stt/wake.js';
 import * as tts from './guide/tts/index.js'; // FT-52
 import * as quota from './quota.js';
 import * as memory from './memory.js';
+import * as codeindex from './codeindex.js'; // FT-58
 import * as claudeEngine from './engines/claude.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
@@ -87,7 +88,7 @@ const inputStatus = () => {
   return inputCache.v;
 };
 // FT-50: cada tarea sin empezar lleva `plannedAgentId`/`plannedReason` (calculados en cada snapshot, no persistidos).
-const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), tasks: team.withPlannedAgents(st), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), costEstimates: team.costEstimates(), rtk: claudeEngine.rtkAvailable(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot() }; };
+const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), tasks: team.withPlannedAgents(st), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), costEstimates: team.costEstimates(), rtk: claudeEngine.rtkAvailable(), codeIndexInstalled: codeindex.available(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot() }; };
 
 async function readBody(req) {
   const limit = req.url.startsWith('/api/upload') ? 40e6 : req.url.startsWith('/api/guide/stt') ? 12e6 : 1e6; // adjuntos y audio del Guide (FT-9) en base64
@@ -220,7 +221,14 @@ const routes = [
     if (typeof b.workspaceHostDir === 'string') st.workspaceHostDir = b.workspaceHostDir.trim();
     if (typeof b.quotaGuard === 'boolean') st.quotaGuard = b.quotaGuard; // FT-45
     if (typeof b.agentMemory === 'boolean') st.agentMemory = b.agentMemory; // FT-75
+    if (typeof b.codeIndex === 'boolean') st.codeIndex = b.codeIndex; // FT-58
+    if (typeof b.cacheAffinity === 'boolean') st.cacheAffinity = b.cacheAffinity; // FT-64
     if (b.maxTaskUsd !== undefined) st.maxTaskUsd = Math.max(0.5, Math.min(50, Number(b.maxTaskUsd) || 3)); // tope de gasto por intento de tarea
+    if (b.compactAt !== undefined) st.compactAt = Number(b.compactAt) > 0 ? Math.min(90, Math.max(30, Number(b.compactAt))) / 100 : 0; // FT-63: % de contexto que dispara la compactación (0 = apagada)
+    if (['plan', 'suggest', 'off'].includes(b.bigTasks)) st.bigTasks = b.bigTasks; // FT-63: qué hacer con las tareas grandes
+    if (typeof b.stuckGuard === 'boolean') st.stuckGuard = b.stuckGuard; // FT-62: umbrales del detector de atascos
+    for (const [k, lo, hi] of [['stuckRepeat', 2, 20], ['stuckErrors', 2, 30], ['stuckNoEdit', 5, 200], ['stuckTokens', 5000, 5_000_000]]) if (b[k] !== undefined && Number(b[k]) > 0) st[k] = Math.max(lo, Math.min(hi, Math.round(Number(b[k]))));
+    if (b.maxTaskTokens !== undefined) st.maxTaskTokens = Math.max(0, Math.min(50_000_000, Math.round(Number(b.maxTaskTokens) || 0))); // FT-57: tope en tokens por intento (0 = el equivalente al de US$)
     if (['low', 'medium', 'high'].includes(b.agentEffort)) st.agentEffort = b.agentEffort;
     if (b.costTargetPct !== undefined) st.costTargetPct = Math.max(10, Math.min(500, Number(b.costTargetPct) || 100)); // FT-76: objetivo «coste por tarea aprobada ≤ X % del interactivo»
     if (b.maxParallel) st.maxParallel = Math.max(1, Math.min(8, Number(b.maxParallel) || 4));
