@@ -218,6 +218,8 @@ Tools del Guide (`tools.js`): `ui.getTree` y `ui.find` (política `read`) y `ui.
 
 **Interruptor, prompt y modal (FT-32)**: Ajustes ▸ 🛡 Guide Agent muestra «Permitir ratón y teclado (último recurso)» (apagado de serie; persiste vía `POST /api/settings {guideInputFallback}`) y, si `inputAvailable()` indica que faltan `xdotool`/`ydotool`, una línea de ayuda (snapshot `guidePolicy.input = {ok, missing}`, en caché 30 s). `server/guide/prompt.js` documenta el orden de preferencia (API interna → integraciones FT-10 → `ui.find`→`ui.act` → `application.open` → `mouse.*`/`keyboard.*`) y que lo irreversible siempre pide confirmación. El modal `confirm` reutiliza `context` y muestra App/Control/Acción en `ui.act`, `keyboard.keyPress` y `application.open`.
 
+**e2e de computer use (FT-33) y documentación (FT-34)**: `node scripts/computer-use-e2e.mjs` levanta servidores temporales (`AO_DATA_DIR`/`HOME` desechables, `AO_DESKTOP=fake`, Guide fake; ventana activa normal, «AgentOffice» y «flow-test») y comprueba las 9 tools (`ui.getTree`, `ui.find`, `ui.act`, `application.list`, `application.open`, `mouse.click`, `mouse.scroll`, `keyboard.type`, `keyboard.keyPress`), sus políticas, el interruptor apagado de serie (403), las confirmaciones irreversibles, el `{inside:true}` y que `guide-audit.jsonl` no guarda el texto tecleado (65 checks). La guía completa (orden de preferencia, dependencias y códigos 501/503/403) está en el flow `flowtest/arquitectura-guide` y en `flowtest/guide-escritorio.md`, sección «Computer use (Fase 6)».
+
 Prueba: `node -e "import('./server/desktop/index.js').then(async m=>{const p=m.getProvider();console.log(p.session,p.available(),await p.getActive(),(await p.list()).length)})"`.
 
 ## Estructura
