@@ -728,7 +728,21 @@ function buildPrompt(p, agent, t) {
     'Lo que dejes sin confirmar se confirmará solo al terminar.',
     t.code ? `Cita el código ${t.code} en lo que documentes (changelog, README, flows, tablero) para que la tarea se pueda rastrear.` : '',
     askBlock(t),
+    economyBlock(),
     'Al acabar, responde con un resumen breve: qué cambiaste y cómo lo probaste.',
+  ].join('\n');
+}
+
+// Reglas para gastar menos tokens (cada turno reenvía TODO lo leído: un fichero de 140 KB leído entero pesa ~35k tokens
+// en cada paso que queda). Medido el 6 OCT: las tareas de UI rondaban los 6 $ por leer ficheros enteros y repetir capturas/e2e.
+function economyBlock() {
+  return [
+    '',
+    'Gasta pocos tokens (cada fichero que lees se reenvía en todos los pasos siguientes):',
+    '- Ficheros grandes (más de ~400 líneas, p. ej. public/app.js, public/office3d.js, server/team.js, README.md): NUNCA los leas enteros. Localiza con Grep (-n) y lee solo el tramo con Read offset/limit.',
+    '- No vuelvas a leer lo que ya leíste; no hagas `cat` de ficheros largos ni de salidas largas: recorta con `| tail -30`, `| head`, `grep`.',
+    '- Pruebas: ejecuta el e2e/verificación UNA vez cuando creas que está bien; repite solo si falló. Capturas de pantalla: como mucho 2, y solo si la tarea es visual.',
+    '- Ve al grano: sin exploraciones generales del repo (ls -R, find de todo) si la tarea ya dice qué ficheros tocar.',
   ].join('\n');
 }
 
@@ -789,6 +803,8 @@ async function runTask(p, agent, t) {
       images: (t.feedbackImages || []).filter((f) => fs.existsSync(f)),
       system: role.system,
       model: modelFor(engineId, agent, role),
+      budgetUsd: Number(s.settings.maxTaskUsd) > 0 ? Number(s.settings.maxTaskUsd) : 3, // tope por intento (Ajustes ▸ «Tope de gasto por tarea»)
+      effort: ['low', 'medium', 'high'].includes(s.settings.agentEffort) ? s.settings.agentEffort : 'medium',
       mcpUrl: ['qa', 'docs'].includes(role.kind) ? mcpUrl() : null, // QA y documentalista hablan con flow-test por MCP
       env: { ...engineEnv(engineId), AO_URL: `http://127.0.0.1:${process.env.AO_PORT || 7420}`, AO_TASK: t.id, AO_AGENT: agent.name },
       onActivity: (text) => { agent.activity = text; events.emit('AgentProgress', ev, { activity: text }); changed(); },
