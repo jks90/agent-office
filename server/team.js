@@ -1,6 +1,8 @@
 // El equipo: proyectos (con uno o varios repos), agentes (roles de serie o de fichero .md), tareas y el planificador.
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import * as store from './store.js';
 import { orderTodo, CACHE_WINDOW_MS } from './affinity.js';
@@ -271,6 +273,15 @@ export function setRunning(id, running) {
   p.running = !!running;
   changed();
   tick();
+}
+
+// Proyecto SIN repo (solo documentación y flows, p. ej. «empresa»): sus agentes trabajan directamente en la carpeta del
+// proyecto en el workspace de flow-test (sin worktree ni rama; de una en una para no pisarse; aprobar = hecha).
+export function projectDir(p) {
+  if (!p?.folder) return null;
+  const base = String(get().settings.workspaceHostDir || path.join(os.homedir(), 'JksDocs', 'workspace')).replace(/^~(?=\/|$)/, os.homedir());
+  const dir = path.join(base, p.folder);
+  return fs.existsSync(dir) ? dir : null;
 }
 
 // El repo de una tarea: el que diga la tarea; si no, el que declare su rol; si no, el primero.
@@ -920,6 +931,7 @@ export function tick() {
     if (!p.running) continue;
     const team = teamOf(p);
     let slots = (s.settings.maxParallel || 4) - team.filter((a) => jobs.has(a.id)).length;
+    if (!(p.repos || []).length && team.some((a) => jobs.has(a.id))) slots = 0; // sin repo: una tarea a la vez sobre la misma carpeta
     const todoAll = s.tasks.filter((t) => t.projectId === p.id && t.status === 'todo');
     // Entradas calientes: lo que corre ahora (motor del agente si no es `auto`) y lo terminado hace <5 min
     const hot = new Set();
@@ -958,8 +970,86 @@ export function tick() {
     }
     coordinate(p);
   }
+  runSchedules();
 }
 setInterval(tick, 1500).unref();
+
+// ── ⏰ Tareas programadas y 🪝 webhook entrante ─────────────────────────────────────────────────────────────────────
+// p.schedules = [{ id, title, description, role, every (min) | at ('HH:MM', cada día) | null (solo webhook), hookToken?,
+//                  reviewRequired, enabled, lastRunAt, lastTaskId }]. Solo se crean en proyectos en marcha (las de webhook,
+// siempre). Sin acumular: si la tarea anterior de esa programación sigue pendiente, esta vuelta se salta.
+const SCHED_EVERY = 30_000;
+let schedAt = 0;
+const pendingStatus = ['backlog', 'todo', 'doing', 'review'];
+function scheduleDue(sch, now) {
+  if (!sch.enabled) return false;
+  if (sch.every > 0) return now - (sch.lastRunAt || 0) >= sch.every * 60_000;
+  if (/^\d{1,2}:\d{2}$/.test(sch.at || '')) {
+    const [h, m] = sch.at.split(':').map(Number);
+    const today = new Date(now); today.setHours(h, m, 0, 0);
+    return now >= today.getTime() && (sch.lastRunAt || 0) < today.getTime();
+  }
+  return false;
+}
+const fmtFecha = (ms) => new Date(ms).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+function fireSchedule(p, sch, { origin = 'programada', extra = '' } = {}) {
+  const prev = sch.lastTaskId && get().tasks.find((t) => t.id === sch.lastTaskId);
+  if (prev && pendingStatus.includes(prev.status)) { sch.lastRunAt = Date.now(); return { skipped: `${prev.code || prev.id} sigue pendiente` }; }
+  const t = createTask({ projectId: p.id, title: `${sch.title} · ${fmtFecha(Date.now())}`, role: sch.role, reviewRequired: !!sch.reviewRequired, sizeChecked: true,
+    description: `${sch.description || ''}\n\n_(Tarea ${origin} «${sch.title}»${sch.every ? `, cada ${sch.every} min` : sch.at ? `, cada día a las ${sch.at}` : ''}.)_${extra ? `\n\nDatos del aviso que la lanzó:\n\`\`\`\n${extra}\n\`\`\`` : ''}` });
+  Object.assign(sch, { lastRunAt: Date.now(), lastTaskId: t.id });
+  log(null, `⏰ ${p.name}: ${origin} «${sch.title}» → ${t.code || t.id}`);
+  changed();
+  return { task: t.code || t.id };
+}
+function runSchedules() {
+  const now = Date.now();
+  if (now - schedAt < SCHED_EVERY) return;
+  schedAt = now;
+  for (const p of get().projects) if (p.running) for (const sch of p.schedules || []) if (scheduleDue(sch, now)) { try { fireSchedule(p, sch); } catch (e) { log(null, `⚠ Programada «${sch.title}»: ${e.message}`); } }
+}
+const cleanSchedule = (b, prev = {}) => {
+  const every = Number(b.every) > 0 ? Math.max(5, Math.min(60 * 24 * 31, Math.round(Number(b.every)))) : null;
+  const at = /^\d{1,2}:\d{2}$/.test(String(b.at || '')) ? String(b.at) : null;
+  return { ...prev, title: String(b.title ?? prev.title ?? '').trim().slice(0, 120), description: String(b.description ?? prev.description ?? '').slice(0, 8000),
+    role: b.role ?? prev.role, every: b.every !== undefined || b.at !== undefined ? every : prev.every ?? null, at: b.every !== undefined || b.at !== undefined ? (every ? null : at) : prev.at ?? null,
+    reviewRequired: b.reviewRequired !== undefined ? !!b.reviewRequired : !!prev.reviewRequired, enabled: b.enabled !== undefined ? !!b.enabled : prev.enabled ?? true };
+};
+export function listSchedules(projectId) { return findOr404(get().projects, projectId, 'Proyecto').schedules || []; }
+export function saveSchedule(projectId, b, sid = null) {
+  const p = findOr404(get().projects, projectId, 'Proyecto');
+  p.schedules ||= [];
+  const prev = sid ? p.schedules.find((x) => x.id === sid) : null;
+  if (sid && !prev) throw fail(404, 'Programación no encontrada');
+  const sch = cleanSchedule(b, prev || { id: newId(), createdAt: Date.now() });
+  if (!sch.title) throw fail(400, 'Falta el título');
+  if (!roleOf(sch.role)) throw fail(400, 'Rol desconocido');
+  if (b.webhook === true && !sch.hookToken) sch.hookToken = crypto.randomBytes(18).toString('base64url');
+  if (b.webhook === false) delete sch.hookToken;
+  if (!sch.every && !sch.at && !sch.hookToken) throw fail(400, 'Elige una frecuencia (cada N minutos o a una hora) o activa el webhook');
+  if (prev) Object.assign(prev, sch); else p.schedules.push(sch);
+  changed();
+  return prev || sch;
+}
+export function deleteSchedule(projectId, sid) { const p = findOr404(get().projects, projectId, 'Proyecto'); p.schedules = (p.schedules || []).filter((x) => x.id !== sid); changed(); return { ok: true }; }
+export function runScheduleNow(projectId, sid) {
+  const p = findOr404(get().projects, projectId, 'Proyecto');
+  const sch = (p.schedules || []).find((x) => x.id === sid);
+  if (!sch) throw fail(404, 'Programación no encontrada');
+  const r = fireSchedule(p, sch, { origin: 'lanzada a mano' }); tick(); return r;
+}
+// POST /api/hooks/<token> (sin x-ao-token: el token de la URL es la credencial). El cuerpo (p. ej. el aviso de un monitor de
+// flow-test con sus reglas y variables) va en la descripción de la tarea.
+export function fireHook(token, body) {
+  if (!token || token.length < 16) throw fail(404, 'Webhook desconocido');
+  for (const p of get().projects) for (const sch of p.schedules || []) {
+    if (!sch.hookToken || sch.hookToken.length !== token.length || !crypto.timingSafeEqual(Buffer.from(sch.hookToken), Buffer.from(token))) continue;
+    if (!sch.enabled) return { skipped: 'programación desactivada' };
+    const extra = typeof body === 'string' ? body : JSON.stringify(body ?? {}, null, 2);
+    const r = fireSchedule(p, sch, { origin: 'lanzada por webhook', extra: extra.slice(0, 4000) }); tick(); return r;
+  }
+  throw fail(404, 'Webhook desconocido');
+}
 
 // ── 🧑‍✈️ Coordinador del equipo (server/coordinator.js decide; aquí se aplica o se sugiere) ──────────────────────────────
 const COORD_EVERY = 2 * 60_000, COORD_COOLDOWN = 10 * 60_000;
@@ -1073,6 +1163,7 @@ const clientBlock = (t) => [
 // FT-44: rutas de trabajo del agente. Una copia aislada (git worktree, rama ao/<código>) por CADA repo del proyecto; escribir en
 // los checkouts principales se prohíbe (no tienen rama ni revisión y AgentOffice puede servirlos en caliente).
 function worktreesBlock(p, t) {
+  if (!t.branch && !repoOfTask(p, t)) return ''; // proyecto sin repo: lo explica la parte estable del prompt
   const xs = taskRepos(p, t);
   if (xs.length < 2) return `Trabajas en una copia aislada del repo (git worktree) en la rama ${t.branch}. No cambies de rama ni hagas push.`;
   return [
@@ -1115,7 +1206,7 @@ function buildPrompt(p, agent, t) {
   return [
     // ── estable ──
     p.folder ? `Carpeta del proyecto en el workspace de flow-test: «${p.folder}/» (ahí viven sus flows y su documentación; guarda ahí lo que generes con flow-test).` : '',
-    'Trabajas en una copia aislada del repo (git worktree), en tu propia rama. No cambies de rama ni hagas push.',
+    repoOfTask(p, t) ? 'Trabajas en una copia aislada del repo (git worktree), en tu propia rama. No cambies de rama ni hagas push.' : `Este proyecto no tiene repo: trabajas DIRECTAMENTE en su carpeta (${projectDir(p) || p.folder}). Escribe solo dentro de ella, no borres nada que no hayas creado tú y deja todo en un estado coherente al terminar.`,
     'Lo que dejes sin confirmar se confirmará solo al terminar.',
     (() => { const r = repoOfTask(p, t); return r?.path ? '\n' + briefingFor(r.path) + (t.codeIndexOn ? '\n' + codeindex.BRIEFING_LINE : '') + '\n' : ''; })(), // FT-58: aviso del índice de código
     get().settings.claudeMemory !== false ? memory.claudePromptBlock(repoOfTask(p, t)?.path) : '', // índice de la memoria de Claude Code del repo
@@ -1198,13 +1289,18 @@ async function runTask(p, agent, t) {
   const role = roleOf(agent.role) || roleOf('back');
   const roles = teamRoles(p);
   const repo = repoOfTask(p, t);
-  let cwd = repo?.path || store.DATA_DIR;
+  let cwd = repo?.path || projectDir(p) || store.DATA_DIR;
   const outside = {}; // FT-44: `git status` de cada checkout principal antes de empezar (guardarraíl)
   let addDirs = [];
 
   try {
-    if (real && t.kind !== 'plan') {
-      if (!repo) throw new Error('Los motores claude/codex necesitan que el proyecto tenga un repositorio git');
+    if (real && t.kind !== 'plan' && !repo) {
+      const dir = projectDir(p);
+      if (!dir) throw new Error('El proyecto no tiene repositorio git ni carpeta en el workspace de flow-test');
+      Object.assign(t, { repo: null, branch: null, folderMode: true });
+      cwd = dir;
+      log(agent.id, `📁 Sin repo: trabaja directamente en ${dir}`);
+    } else if (real && t.kind !== 'plan') {
       t.repo = repo.key;
       const wt = await git.createWorktree(p, repo, t);
       cwd = wt.path;

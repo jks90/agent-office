@@ -1178,6 +1178,46 @@ document.addEventListener('change', (e) => {
   setToolUser(kind, rest.join(':'), s.value, true).catch(() => {});
 });
 
+// ── ⏰ Tareas programadas y 🪝 webhook (por proyecto) ─────────────────────────────────────────────────────────────
+const schedFreq = (x) => (x.every ? `cada ${x.every >= 60 && x.every % 60 === 0 ? `${x.every / 60} h` : `${x.every} min`}` : x.at ? `cada día a las ${x.at}` : 'solo por webhook');
+const hookUrl = (x, docker = false) => `${docker ? 'http://host.docker.internal:7420' : location.origin}/api/hooks/${x.hookToken}`;
+async function openSchedules() {
+  const list = await api('GET', `/api/projects/${projectId}/schedules`);
+  const last = (x) => { const t = x.lastTaskId && S.tasks.find((y) => y.id === x.lastTaskId); return x.lastRunAt ? `última: hace ${waitTxt(x.lastRunAt)}${t ? ` → ${tcode(t)} (${TSTATUS[t.status] || t.status})` : ''}` : 'aún no se ha lanzado'; };
+  dialog(`<h3>⏰ Tareas programadas de «${esc(project()?.name)}»</h3>
+    <p class="muted">Se crean solas (con el proyecto en marcha) cada X tiempo o a una hora, o cuando llega un aviso al webhook (p. ej. un monitor de flow-test). Si la anterior sigue pendiente, esa vuelta se salta.</p>
+    <div class="sched-list">${list.map((x) => `<div class="sched-row ${x.enabled ? '' : 'off'}">
+      <div class="sched-main"><b>${esc(x.title)}</b> <span class="muted">· ${roleChip(x.role)} · ${schedFreq(x)}${x.hookToken ? ' · 🪝 webhook' : ''}${x.reviewRequired ? ' · ✋ revisión obligatoria' : ''}</span>
+        <div class="muted">${last(x)}</div>
+        ${x.hookToken ? `<div class="sched-hook"><code>${esc(hookUrl(x))}</code> <button type="button" class="small ghost" data-copy="${esc(hookUrl(x))}">Copiar</button> <button type="button" class="small ghost" data-copy="${esc(hookUrl(x, true))}" title="Para el flow-test en Docker (notifyUrl de un monitor)">Copiar (Docker)</button></div>` : ''}</div>
+      <div class="sched-acts"><button type="button" class="small" data-sched-run="${x.id}">▶ Ahora</button><button type="button" class="small ghost" data-sched-toggle="${x.id}">${x.enabled ? '⏸ Pausar' : '▶ Activar'}</button><button type="button" class="small ghost" data-sched-edit="${x.id}">✎</button><button type="button" class="small danger" data-sched-del="${x.id}">✕</button></div>
+    </div>`).join('') || '<p class="empty">Ninguna todavía.</p>'}</div>
+    <div class="row" style="justify-content:space-between"><button type="button" class="small" data-sched-edit="">＋ Nueva programada</button><button class="ghost" value="cancel">Cerrar</button></div>`, null, 'wide');
+}
+async function editSchedule(sid) {
+  const list = await api('GET', `/api/projects/${projectId}/schedules`);
+  const x = list.find((y) => y.id === sid) || { enabled: true, every: 60 };
+  const mode = x.every ? 'every' : x.at ? 'at' : 'hook';
+  const teamRolesOpts = [...new Set(team().map((a) => a.role))].map((r) => `<option value="${esc(r)}" ${x.role === r ? 'selected' : ''}>${esc(S.roles[r]?.label || r)}</option>`).join('');
+  dialog(`<h3>${sid ? '✎ Programada' : '＋ Nueva programada'}</h3>
+    <label>Título</label><input name="title" value="${esc(x.title || '')}" required autofocus placeholder="Revisar la posición de Revert" />
+    <label>Qué tiene que hacer el agente (y cómo saber que está bien)</label><textarea name="description" rows="6">${esc(x.description || '')}</textarea>
+    <div class="grid2">
+      <div><label>Rol (agente que la hará)</label><select name="role">${teamRolesOpts || '<option disabled>(el proyecto no tiene equipo)</option>'}</select></div>
+      <div><label>Cuándo</label><select name="mode"><option value="every" ${mode === 'every' ? 'selected' : ''}>Cada N minutos</option><option value="at" ${mode === 'at' ? 'selected' : ''}>Cada día a una hora</option><option value="hook" ${mode === 'hook' ? 'selected' : ''}>Solo cuando llegue un aviso (webhook)</option></select></div>
+      <div><label>Minutos (si «cada N minutos»; mínimo 5)</label><input name="every" type="number" min="5" value="${esc(String(x.every || 60))}" /></div>
+      <div><label>Hora (si «cada día»)</label><input name="at" type="time" value="${esc(x.at || '09:00')}" /></div>
+    </div>
+    <label><input type="checkbox" name="webhook" ${x.hookToken || mode === 'hook' ? 'checked' : ''} /> 🪝 Además, se puede lanzar por webhook (te doy una URL secreta para un monitor de flow-test u otro sistema)</label>
+    <label><input type="checkbox" name="reviewRequired" ${x.reviewRequired ? 'checked' : ''} /> ✋ Revisión obligatoria (nunca se aprueba sola: para tareas que tocan dinero o producción)</label>
+    <label><input type="checkbox" name="enabled" ${x.enabled !== false ? 'checked' : ''} /> Activa</label>
+    ${buttons('Guardar')}`, async (f) => {
+    const body = { title: f.title, description: f.description, role: f.role, every: f.mode === 'every' ? Number(f.every) : null, at: f.mode === 'at' ? f.at : null, webhook: f.mode === 'hook' || !!f.webhook, reviewRequired: !!f.reviewRequired, enabled: !!f.enabled };
+    await api(sid ? 'PATCH' : 'POST', `/api/projects/${projectId}/schedules${sid ? '/' + sid : ''}`, body);
+    toast('Programada guardada'); setTimeout(openSchedules, 50);
+  }, 'wide');
+}
+
 async function editSkill(dir) {
   const r = await api('POST', '/api/skills/read', { dir });
   dialog(`
@@ -1903,6 +1943,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <label>Motor</label><select name="engine">${engineOptions('auto')}</select>
     <label>Modelo (opcional)</label>${modelSelect('model', 'auto', '')}
     ${buttons('Contratar')}`, (f) => api('POST', '/api/agents', { ...f, model: pickModel(f), projectId })),
+  schedules: () => openSchedules(),
   'new-task': () => { pendingAttachments = []; dialog(`
     <h3>Nueva tarea</h3>
     <label>Título <span class="muted">(con «Redactar con IA» puedes dejarlo vacío)</span></label>${micField('<input name="title" autofocus />')}
@@ -2779,6 +2820,11 @@ document.addEventListener('click', async (e) => {
     return;
   }
   if (d.qAnswer) return openQuestion(d.qAnswer);
+  if (d.schedEdit !== undefined) return editSchedule(d.schedEdit);
+  if (d.schedRun) return api('POST', `/api/projects/${projectId}/schedules/${d.schedRun}/run`).then((r) => { toast(r.skipped ? `Saltada: ${r.skipped}` : `Creada ${r.task}`); openSchedules(); });
+  if (d.schedToggle) { const x = (await api('GET', `/api/projects/${projectId}/schedules`)).find((y) => y.id === d.schedToggle); return api('PATCH', `/api/projects/${projectId}/schedules/${d.schedToggle}`, { enabled: !x.enabled }).then(openSchedules); }
+  if (d.schedDel) { if (confirm('¿Borrar esta programada? (las tareas ya creadas se quedan)')) api('DELETE', `/api/projects/${projectId}/schedules/${d.schedDel}`).then(openSchedules); return; }
+  if (d.copy) { try { await navigator.clipboard.writeText(d.copy); toast('Copiado'); } catch { prompt('Copia la URL:', d.copy); } return; }
   if (d.coordApply) return api('POST', `/api/projects/${d.coordApply}/coordinate`).then((r) => toast(r.applied?.length ? `🧑‍✈️ ${r.applied.join(' · ')}` : 'Nada que cambiar ahora'));
   if (d.reviewAgain) return api('POST', `/api/tasks/${d.reviewAgain}/review-again`).then(() => toast('Revisión automática relanzada'));
   if (d.cmemEdit !== undefined) return editClaudeMemory(d.cmemRepo, d.cmemEdit);
