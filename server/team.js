@@ -21,6 +21,7 @@ import * as quota from './quota.js';
 import { briefingFor } from './briefing.js';
 import { detectQuotaHit } from './quota-pause.js';
 import * as memory from './memory.js';
+import * as stuck from './stuck.js';
 
 const ENGINES = { demo, claude, codex };
 export const ENGINE_IDS = ['auto', 'claude', 'codex', 'demo'];
@@ -870,6 +871,32 @@ async function runTask(p, agent, t) {
     t.pendingMessages = []; // ya van en el prompt
     const baseUsage = t.usage || null; // FT-26: consumo de intentos anteriores; t.usage es acumulado y se actualiza en vivo
     agent.usage = null; // sesión nueva
+    delete t.stuck;
+    // FT-62: detector de atascos. 1.ª señal → aviso en caliente (Claude: stdin; Codex/demo: se reencola la tarea con el aviso);
+    // si tras el aviso vuelve a saltar → se corta y va a Revisión. t.stuckWarned sobrevive al reencolado.
+    const stuckLimits = { ...stuck.limits(s.settings), enabled: stuck.limits(s.settings).enabled && t.kind !== 'plan' };
+    const probe = t.branch ? async () => `${await git.git(cwd, 'status', '--porcelain')}\n${await git.git(cwd, 'diff', '--stat')}` : null;
+    const newDetector = () => stuck.createDetector({ limits: stuckLimits, isCode: role.kind === 'dev', probe });
+    let detector = newDetector();
+    const onStuck = (signal) => {
+      const entry = jobs.get(agent.id);
+      if (!signal || !entry?.stop || entry.stuck || entry.requeue) return;
+      if (t.stuckWarned) { // ya avisado y sigue: se corta (lo hecho queda en la rama)
+        entry.stuck = signal;
+        log(agent.id, `⚠️ ${t.code || t.id}: atascado (${signal}) tras el aviso → se corta y va a revisión`);
+        entry.stop();
+        return;
+      }
+      t.stuckWarned = true;
+      detector = newDetector(); // tras el aviso, la señal tiene que repetirse desde cero
+      const text = stuck.nudgeText(signal);
+      log(agent.id, `⚠️ ${t.code || t.id}: parece atascado (${signal}) → aviso al agente`);
+      events.emit('AgentProgress', ev, { activity: 'Aviso: parece que da vueltas', stuck: true });
+      if (entry.message?.(text, true)) return;
+      (t.pendingMessages ||= []).push({ text, at: Date.now(), origin: 'agentoffice' }); // el motor no admite avisos en caliente: reencolada con el aviso en el prompt
+      entry.requeue = true;
+      entry.stop();
+    };
     const job = engine.start({
       agent, task: t, project: p, cwd, mode: t.kind === 'plan' ? 'plan' : 'work', goal: t.goal, roles,
       prompt,
@@ -886,9 +913,9 @@ async function runTask(p, agent, t) {
       mcpUrl: ['qa', 'docs'].includes(role.kind) ? mcpUrl() : null, // QA y documentalista hablan con flow-test por MCP
       env: { ...engineEnv(engineId), AO_URL: `http://127.0.0.1:${process.env.AO_PORT || 7420}`, AO_TASK: t.id, AO_AGENT: agent.name },
       onActivity: (text) => { agent.activity = text; events.emit('AgentProgress', ev, { activity: text }); changed(); },
-      onTool: (c) => events.emit(c.phase === 'started' ? 'AgentToolStarted' : 'AgentToolFinished', ev, c.phase === 'started' ? { callId: c.callId, tool: c.tool, summary: c.summary } : { callId: c.callId, ok: c.ok }),
+      onTool: (c) => { events.emit(c.phase === 'started' ? 'AgentToolStarted' : 'AgentToolFinished', ev, c.phase === 'started' ? { callId: c.callId, tool: c.tool, summary: c.summary } : { callId: c.callId, ok: c.ok }); onStuck(detector.feed(c)); },
       onLog: (line) => log(agent.id, line),
-      onUsage: (u) => { agent.usage = { ...u, engine: engineId, taskId: t.id }; t.usage = addUsage(baseUsage, u); changed(); }, // FT-26
+      onUsage: (u) => { agent.usage = { ...u, engine: engineId, taskId: t.id }; t.usage = addUsage(baseUsage, u); changed(); detector.usage(u.total).then(onStuck, () => {}); }, // FT-26 · FT-62
     });
     const entry = jobs.get(agent.id);
     Object.assign(entry, { stop: job.stop, engine: engineId, pid: job.pid, pause: job.pause, resume: job.resume, message: job.message });
@@ -897,6 +924,13 @@ async function runTask(p, agent, t) {
     if (res.costUsd != null) t.costUsd = (t.costUsd || 0) + res.costUsd;
     if (res.sessionId) Object.assign(t, { sessionId: res.sessionId, sessionAt: Date.now(), sessionEngine: engineId });
     delete t.resumeAfterQuota;
+    // FT-62: atascado y cortado tras el aviso: como el tope de gasto, NO es un fallo; lo hecho queda en la rama y va a Revisión.
+    if (entry.stuck) {
+      res.ok = true; res.stopped = false;
+      res.summary = `⚠️ atascado: ${entry.stuck}. ${agent.name} no avanzaba (se le avisó y siguió igual), así que se cortó antes de agotar el tope; lo hecho queda en la rama. Revisa: «Devolver» con otra indicación le da otro intento partiendo de aquí.${res.summary ? '\n\n' + res.summary : ''}`;
+      t.stuck = entry.stuck;
+      events.emit('AgentBlocked', ev, { reason: 'stuck', signal: entry.stuck, costUsd: t.costUsd });
+    }
     // Tope de gasto alcanzado: NO es un fallo. Lo hecho se confirma y la tarea va a Revisión con el aviso; «Devolver» le da
     // otro intento (con su tope) partiendo de su rama, «Aprobar» si ya vale. Así se para y se pregunta, sin seguir gastando.
     if (res.budgetHit && t.kind !== 'plan') {
@@ -974,6 +1008,7 @@ async function runTask(p, agent, t) {
     reflect(t, `❌ Falló en AgentOffice: ${String(e.message).slice(0, 500)}`);
   } finally {
     questions.cancelForTask(t.id);
+    if (!jobs.get(agent.id)?.requeue) delete t.stuckWarned; // FT-62: solo sobrevive al reencolado con el aviso
     jobs.delete(agent.id);
     t.updatedAt = Date.now();
     Object.assign(agent, { status: 'idle', taskId: null, activity: '', activeEngine: null });
