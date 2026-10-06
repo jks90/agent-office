@@ -317,3 +317,12 @@ Medido el 6 OCT 2026: lo caro no es el arranque (≈31k tokens con `--strict-mcp
 - **Reanudar sesión** en reintentos de la misma tarea en su worktree si el anterior acabó hace <50 min (`claude --resume`, la caché de contexto aún vale).
 - **Estimación** en las tarjetas de Por hacer / Backlog: mediana del coste de las últimas 10 tareas hechas del mismo rol (`costEstimates()`).
 - **RTK** (rtk-ai/rtk, Apache-2.0): si está instalado (`~/.local/bin/rtk` o `AO_RTK_BIN`; `AO_RTK=off` lo apaga), los agentes Claude arrancan con su hook PreToolUse por `--settings` (NO se toca `~/.claude/settings.json`) y se permiten solo los `rtk …` equivalentes a la lista blanca (`RTK_RULES`, nunca `rtk run`). Comprime salidas de git/grep/ls/lint; no las de Read/Grep nativos. `rtk gain` enseña el ahorro.
+
+## ⏸ Sin cuota a mitad de tarea: pausa y reanudación automática (FT-66)
+
+Si un agente se queda sin cuota de la suscripción mientras trabaja (Claude: «usage limit reached», «5-hour limit», 429…; Codex: «You've hit your usage limit… try again at …»), la tarea **no** va a Fallidas:
+- `server/quota-pause.js` reconoce el error y la hora de reinicio que trae el mensaje (epoch tras `|`, «resets 7pm», «try again at 8:53 PM», «in 2 hours»); sin hora, la de la ventana de sesión de `quota.js`, o +15 min.
+- `team.js` confirma lo hecho en su rama, devuelve la tarea a «Por hacer» con `quotaPaused {engine, since, resetsAt}` y `preferAgentId`, libera al agente y emite `AgentPaused {reason:'quota'}`. La tarjeta dice «⏸ sin cuota de Claude: sigue sola a las 18:59 (en 42 min)» con **▶ Reanudar ya** (`POST /api/tasks/:id/resume-now`).
+- `tick()` reparte primero las pausadas y las relanza solas cuando pasa la hora y `quota.gate()` da margen (si no, mueve la hora), con el mismo agente, en su rama y con `--resume` de su sesión en Claude; el prompt le dice que continúe donde lo dejó. Con motor `auto` y `settings.quotaFailover` (activo por defecto) sigue antes con el otro motor si tiene cuota. `AgentResumed {reason:'quota-reset'}`.
+- El proyecto sigue «en marcha» y el estado sobrevive a reinicios del servicio.
+- Prueba: `node scripts/quota-pause-e2e.mjs` (claude falso que se corta y luego termina, mock de cuota, reinicio del servidor durante la espera, «Reanudar ya»).

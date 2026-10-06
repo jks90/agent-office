@@ -19,6 +19,7 @@ import { linkSkillsInto } from './skills.js';
 import { cleanContext, describeContext } from './task-context.js';
 import * as quota from './quota.js';
 import { briefingFor } from './briefing.js';
+import { detectQuotaHit } from './quota-pause.js';
 
 const ENGINES = { demo, claude, codex };
 export const ENGINE_IDS = ['auto', 'claude', 'codex', 'demo'];
@@ -27,12 +28,12 @@ export const ENGINE_IDS = ['auto', 'claude', 'codex', 'demo'];
 const MODEL_OF = { claude: /^(sonnet|opus|haiku|claude-)/i, codex: /^(gpt-|o[0-9]|codex)/i };
 // FT-45: con el guardarraíl de cuota activo, un motor con la sesión agotada no es candidato; entre los que quedan manda el margen.
 const guardOn = () => get().settings.quotaGuard !== false;
-function pickEngine(agent) {
+function pickEngine(agent, exclude = null) {
   if (agent.engine !== 'auto') return agent.engine;
   const st = cachedEnginesStatus();
   const ok = (e) => st ? !!st[e]?.loggedIn : e === 'claude'; // sin estado aún (arranque): solo Claude
   const load = (e) => [...jobs.values()].filter((j) => j.engine === e).length;
-  const logged = ['claude', 'codex'].filter(ok);
+  const logged = ['claude', 'codex'].filter(ok).filter((e) => e !== exclude || !['claude', 'codex'].filter(ok).some((x) => x !== exclude)); // FT-66: el motor sin cuota solo si no hay otro
   if (!logged.length) throw new Error('Motor automático: ni Claude ni Codex tienen sesión (Ajustes ▸ Motores de IA)');
   const free = guardOn() ? logged.filter((e) => !quota.gate(e).block) : logged;
   const m = (e) => quota.margin(e) ?? 50; // sin dato: margen neutro
@@ -57,6 +58,34 @@ function quotaHold(p, agent, t, g) {
   changed();
 }
 const quotaRelease = (t) => { if (t.quotaBlocked) { delete t.quotaBlocked; t.activity = ''; } };
+
+// FT-66 · ¿Puede seguir ya una tarea pausada por falta de cuota? Pasada la hora de reinicio y con margen según quota.js;
+// o antes, si el agente es `auto` (con `quotaFailover`) y el OTRO motor tiene sesión y margen; o si el usuario pulsó «Reanudar ya».
+function quotaReady(t, agent) {
+  const qp = t.quotaPaused;
+  if (qp.force) return true;
+  const now = Date.now();
+  if (agent.engine === 'auto' && get().settings.quotaFailover !== false) {
+    const st = cachedEnginesStatus();
+    const other = ['claude', 'codex'].find((e) => e !== qp.engine && (st ? !!st[e]?.loggedIn : false));
+    if (other && !quota.gate(other).block) return true;
+  }
+  if (now < (qp.resetsAt || 0)) return false;
+  const g = quota.gate(qp.engine);
+  if (g.block) { qp.resetsAt = g.resetsAt || now + 15 * 60_000; t.activity = pausedLabel(t); changed(); return false; }
+  return true;
+}
+const NAME_OF = { claude: 'Claude', codex: 'Codex' };
+const hhmm = (ms) => new Date(ms).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+const pausedLabel = (t) => `⏸ sin cuota de ${NAME_OF[t.quotaPaused.engine] || t.quotaPaused.engine}: sigue sola a las ${hhmm(t.quotaPaused.resetsAt)}`;
+// «Reanudar ya» (botón de la tarjeta): ignora la hora de reinicio y el guardarraíl en el siguiente reparto.
+export function resumeNow(id) {
+  const t = findOr404(get().tasks, id, 'Tarea');
+  if (!t.quotaPaused) throw fail(409, 'La tarea no está pausada por cuota');
+  t.quotaPaused.force = true;
+  changed(); tick();
+  return { ok: true };
+}
 
 const modelFor = (engineId, agent, role) => {
   const wanted = agent.model || role.model || '';
@@ -649,12 +678,14 @@ export function tick() {
     if (!p.running) continue;
     const team = teamOf(p);
     let slots = (s.settings.maxParallel || 4) - team.filter((a) => jobs.has(a.id)).length;
-    const todo = s.tasks.filter((t) => t.projectId === p.id && t.status === 'todo').sort((a, b) => (b.priority || 0) - (a.priority || 0) || a.createdAt - b.createdAt); // prioridad alta primero; a igualdad, la más antigua
+    const todo = s.tasks.filter((t) => t.projectId === p.id && t.status === 'todo').sort((a, b) => (b.quotaPaused ? 1 : 0) - (a.quotaPaused ? 1 : 0) || (b.priority || 0) - (a.priority || 0) || a.createdAt - b.createdAt); // FT-66: las pausadas por cuota, las primeras // prioridad alta primero; a igualdad, la más antigua
     for (const t of todo) {
       if (slots <= 0) break;
       if (!depsDone(t)) continue;
-      const agent = team.find((a) => !jobs.has(a.id) && (t.assignedAgentId ? a.id === t.assignedAgentId : (a.role === t.role || (roleOf(a.role)?.handles || []).includes(t.role))));
+      const fits = (a) => !jobs.has(a.id) && (t.assignedAgentId ? a.id === t.assignedAgentId : (a.role === t.role || (roleOf(a.role)?.handles || []).includes(t.role)));
+      const agent = (t.preferAgentId && team.find((a) => a.id === t.preferAgentId && fits(a))) || team.find(fits);
       if (!agent) continue;
+      if (t.quotaPaused && !quotaReady(t, agent)) continue; // FT-66: sin cuota → espera a su hora (o sigue con el otro motor si es `auto`)
       const q = quotaCheck(agent);
       if (q.wait) continue;
       if (!q.ok) { quotaHold(p, agent, t, q); continue; }
@@ -716,6 +747,7 @@ function buildPrompt(p, agent, t) {
     '',
     t.description,
     t.context ? `\n${describeContext(t.context, true)}.` : '',
+    t.resumeAfterQuota ? '\nSe cortó por falta de cuota de la suscripción; continúa donde lo dejaste (tu avance está en esta rama: mira `git log` y `git diff` contra la base).' : '',
     clientBlock(t),
     done.length ? `\nTrabajo previo del equipo (ya fusionado):\n${done.map((d) => `- ${d.title}: ${d.summary}`).join('\n')}` : '',
     t.feedback ? `\nComentarios de la revisión anterior (corrígelos):\n${t.feedback}` : '',
@@ -763,7 +795,10 @@ async function runTask(p, agent, t) {
   reflect(t, `▶ ${agent.name} (${roleOf(agent.role)?.label || agent.role}) empieza a trabajar en AgentOffice`);
 
   let engineId;
-  try { engineId = pickEngine(agent); } catch (e) { Object.assign(t, { status: 'failed', error: e.message, agentId: null }); Object.assign(agent, { status: 'idle', taskId: null, activity: '' }); jobs.delete(agent.id); log(agent.id, '❌ ' + e.message); events.emit('AgentFailed', ev, { error: e.message.slice(0, 500) }); changed(); return; }
+  const resumingQuota = !!t.quotaPaused;
+  const excludeEngine = t.quotaPaused && Date.now() < (t.quotaPaused.resetsAt || 0) && !t.quotaPaused.force ? t.quotaPaused.engine : null;
+  if (resumingQuota) { t.resumeAfterQuota = true; events.emit('AgentResumed', events.ctxOf(t, agent), { reason: 'quota-reset', engine: t.quotaPaused.engine }); delete t.quotaPaused; delete t.preferAgentId; t.activity = ''; }
+  try { engineId = pickEngine(agent, excludeEngine); } catch (e) { Object.assign(t, { status: 'failed', error: e.message, agentId: null }); Object.assign(agent, { status: 'idle', taskId: null, activity: '' }); jobs.delete(agent.id); log(agent.id, '❌ ' + e.message); events.emit('AgentFailed', ev, { error: e.message.slice(0, 500) }); changed(); return; }
   const engine = ENGINES[engineId] || demo;
   const real = engineId !== 'demo';
   agent.activeEngine = engineId;
@@ -807,7 +842,7 @@ async function runTask(p, agent, t) {
       system: role.system,
       model: modelFor(engineId, agent, role),
       // Reintento de la MISMA tarea en su worktree hace <50 min (la caché de contexto aún vale): se reanuda su sesión.
-      resumeSession: engineId === 'claude' && t.reused && t.sessionId && Date.now() - (t.sessionAt || 0) < 50 * 60_000 ? t.sessionId : null,
+      resumeSession: engineId === 'claude' && t.reused && t.sessionId && (t.resumeAfterQuota && t.sessionEngine === 'claude' || Date.now() - (t.sessionAt || 0) < 50 * 60_000) ? t.sessionId : null,
       budgetUsd: Number(s.settings.maxTaskUsd) > 0 ? Number(s.settings.maxTaskUsd) : 3, // tope por intento (Ajustes ▸ «Tope de gasto por tarea»)
       effort: ['low', 'medium', 'high'].includes(s.settings.agentEffort) ? s.settings.agentEffort : 'medium',
       mcpUrl: ['qa', 'docs'].includes(role.kind) ? mcpUrl() : null, // QA y documentalista hablan con flow-test por MCP
@@ -822,7 +857,8 @@ async function runTask(p, agent, t) {
     const res = await job.done;
 
     if (res.costUsd != null) t.costUsd = (t.costUsd || 0) + res.costUsd;
-    if (res.sessionId) Object.assign(t, { sessionId: res.sessionId, sessionAt: Date.now() });
+    if (res.sessionId) Object.assign(t, { sessionId: res.sessionId, sessionAt: Date.now(), sessionEngine: engineId });
+    delete t.resumeAfterQuota;
     // Tope de gasto alcanzado: NO es un fallo. Lo hecho se confirma y la tarea va a Revisión con el aviso; «Devolver» le da
     // otro intento (con su tope) partiendo de su rama, «Aprobar» si ya vale. Así se para y se pregunta, sin seguir gastando.
     if (res.budgetHit && t.kind !== 'plan') {
@@ -832,6 +868,21 @@ async function runTask(p, agent, t) {
       t.budgetHit = true;
       log(agent.id, `⚠️ ${t.code || t.id}: tope de gasto de ${cap} $ alcanzado → a revisión`);
       events.emit('AgentBlocked', ev, { reason: 'budget', capUsd: cap, costUsd: t.costUsd });
+    }
+    // FT-66: sin cuota a mitad de tarea → NO es un fallo. Se confirma lo hecho en su rama, la tarea vuelve a «Por hacer»
+    // con la hora a la que sigue y `tick()` la relanza sola (mismo agente, misma rama, misma sesión si el motor lo permite).
+    if (!res.ok && !res.stopped && t.kind !== 'plan') {
+      const q = detectQuotaHit(`${res.error || ''}\n${res.summary || ''}`);
+      if (q.hit) {
+        if (t.branch) { try { await git.commitAll(cwd, `${t.code || t.id}: avance antes de quedarse sin cuota`, `${agent.name} (${role.label})`); } catch { /* sin cambios */ } }
+        const win = (quota.snapshot()[engineId]?.windows || []).find((w) => w.id === 'session');
+        const resetsAt = q.resetsAt || (win?.resetsAt > Date.now() ? win.resetsAt : null) || Date.now() + 15 * 60_000;
+        Object.assign(t, { status: 'todo', agentId: null, error: null, quotaPaused: { engine: engineId, since: Date.now(), resetsAt }, preferAgentId: agent.id });
+        t.activity = pausedLabel(t);
+        log(agent.id, `${t.activity} (${t.code || '#' + t.id}; lo hecho queda en la rama)`);
+        events.emit('AgentPaused', ev, { reason: 'quota', engine: engineId, resetsAt });
+        return; // finally: agente libre y tick()
+      }
     }
     if (!res.ok) throw new Error(res.error || 'El agente no terminó bien');
     t.summary = res.summary || '';
