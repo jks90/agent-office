@@ -1496,7 +1496,7 @@ function renderSummary() {
       ${kpi(S.projects.filter((p) => p.running).length + '/' + S.projects.length, 'proyectos en marcha', 'on')}
       ${kpi(`${working}${paused ? ' +' + paused + '⏸' : ''}/${agents.length}`, 'agentes trabajando', working ? 'on' : '')}
       ${kpi(n('doing'), 'tareas en curso')}${kpi(n('review'), 'por revisar', n('review') ? 'warn' : '')}${kpi(n('todo'), 'por hacer')}${kpi(n('backlog'), 'en backlog')}
-      ${kpi(n('failed'), 'fallidas', n('failed') ? 'bad' : '')}${kpi(qs.length, 'preguntas pendientes', qs.length ? 'warn' : '')}
+      ${n('failed') ? `<button class="kpi bad kpi-btn" data-sum-failed="all" title="Ver por qué fallaron"><b>${n('failed')}</b><span>fallidas · ver por qué</span></button>` : kpi(0, 'fallidas')}${kpi(qs.length, 'preguntas pendientes', qs.length ? 'warn' : '')}
       ${kpi((all.reduce((s, t) => s + (t.costUsd || 0), 0)).toFixed(2) + ' $', 'coste acumulado')}
     </div>
     ${quotaBlockHtml()}
@@ -1506,7 +1506,7 @@ function renderSummary() {
         <tr data-sum-project="${p.id}" class="${p.id === projectId ? 'sel' : ''}">
           <td><b>${esc(p.name)}</b>${p.folder && p.folder !== p.name ? ` <span class="muted">(${esc(p.folder)})</span>` : ''} <span class="muted">${esc(p.prefixDefault || '')}</span>${open ? ` <span title="preguntas pendientes">❓${open}</span>` : ''}</td>
           <td><button class="small ${p.running ? 'on' : 'ghost'}" data-sum-run="${p.id}" title="${p.running ? 'Parar el equipo' : 'Poner a trabajar'}">${p.running ? '🟢 En marcha' : '⏸ Parado'}</button></td>
-          ${SUM_COLS.map(([st]) => { const c = ts.filter((t) => t.status === st).length; return `<td class="num ${c ? 'st-' + st : 'zero'}">${c || '·'}</td>`; }).join('')}
+          ${SUM_COLS.map(([st]) => { const c = ts.filter((t) => t.status === st).length; return st === 'failed' && c ? `<td class="num st-failed"><button class="linklike" data-sum-failed="${p.id}" title="Ver por qué fallaron">${c}</button></td>` : `<td class="num ${c ? 'st-' + st : 'zero'}">${c || '·'}</td>`; }).join('')}
           <td>${team.length ? `${team.length} <span class="muted">${esc(team.map((a) => a.name).join(', '))}</span>` : '<span class="muted">sin equipo</span>'}</td>
           <td>${busy.length ? busy.map(({ a, t }) => `<div class="busy"><span class="dot ${a.status}"></span>${esc(a.name)}${t ? ` → <b>${esc(tcode(t))}</b> <span class="muted" title="${esc(t.title)}">${esc(t.title.slice(0, 40))}${t.title.length > 40 ? '…' : ''}</span>` : ''}${a.status === 'paused' ? ' <span class="muted">(en pausa)</span>' : ''}</div>`).join('') : '<span class="muted">—</span>'}</td>
           <td>${free.length ? esc(free.map((a) => a.name).join(', ')) : '<span class="muted">—</span>'}</td>
@@ -1520,6 +1520,8 @@ function renderSummary() {
 }
 document.addEventListener('click', async (e) => {
   if (e.target.closest('[data-sum-empty]')) { sumShowEmpty = !sumShowEmpty; renderSummary(); return; }
+  const fb = e.target.closest('[data-sum-failed]');
+  if (fb) { e.stopPropagation(); failedDialog(fb.dataset.sumFailed === 'all' ? null : fb.dataset.sumFailed); return; }
   const run = e.target.closest('[data-sum-run]');
   if (run) { e.stopPropagation(); const p = S.projects.find((x) => x.id === run.dataset.sumRun); try { await api('POST', `/api/projects/${p.id}/run`, { running: !p.running }); toast(p.running ? `${p.name}: equipo parado` : `${p.name}: equipo en marcha`); } catch { /* el toast ya avisó */ } return; }
   const row = e.target.closest('tr[data-sum-project]');
@@ -2065,3 +2067,19 @@ document.addEventListener('click', async (e) => {
   e.stopPropagation();
   try { await api('POST', `/api/tasks/${b.dataset.resumeNow}/resume-now`); toast('Se relanza en el siguiente reparto'); } catch { /* api() ya avisa */ }
 });
+
+// Fallidas: lista con el motivo de cada una (clic en «N fallidas» del Resumen, global o por proyecto).
+function failedDialog(pid) {
+  const list = S.tasks.filter((t) => t.status === 'failed' && (!pid || t.projectId === pid)).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  const proj = (id) => S.projects.find((x) => x.id === id)?.name || id;
+  const who = (t) => S.agents.find((a) => a.id === t.agentId)?.name || '';
+  const why = (t) => { const e = String(t.error || '').trim(); if (!e) return 'Sin mensaje de error registrado.'; return /parado por el usuario/i.test(e) ? 'La paró una persona a mano (no es un error del agente). «Reintentar» la vuelve a poner en cola.' : e; };
+  dialog(`<h3>❌ ${list.length} tarea${list.length === 1 ? '' : 's'} fallida${list.length === 1 ? '' : 's'}${pid ? ` · ${esc(proj(pid))}` : ''}</h3>
+    ${list.length ? list.map((t) => `<div class="failed-item">
+      <div><b>${esc(tcode(t))}</b> ${esc(t.title)}</div>
+      <div class="muted">${pid ? '' : `${esc(proj(t.projectId))} · `}${who(t) ? `👤 ${esc(who(t))} · ` : ''}${t.updatedAt ? ago(t.updatedAt) : ''}${t.attempts ? ` · intento ${t.attempts}` : ''}${t.costUsd ? ` · ${t.costUsd.toFixed(2)} $` : ''}</div>
+      <pre class="failed-why">${esc(why(t).slice(0, 1500))}</pre>
+      <div class="row" style="justify-content:flex-start;gap:6px"><button type="button" class="small" data-reject="${t.id}">↻ Reintentar</button><button type="button" class="small ghost" data-open="${t.id}">🔍 Ver la tarea</button></div>
+    </div>`).join('') : '<p class="muted">No hay tareas fallidas.</p>'}
+    ${buttons('')}`, () => {}, 'wide');
+}
