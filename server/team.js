@@ -728,16 +728,14 @@ setInterval(tick, 1500).unref();
 const teamRoles = (p) => [...new Set(teamOf(p).filter((a) => roleOf(a.role)?.kind !== 'planner').map((a) => a.role))];
 
 // Cómo preguntar al cliente desde la tarea (bin/ao-ask.mjs espera la respuesta y la imprime) + lo ya respondido.
-function askBlock(t) {
-  const prev = (t.questions || []).filter((q) => q.answer != null);
-  return [
+const askRules = () => [
     '',
     'PREGUNTAR AL CLIENTE: si una decisión es suya (no se resuelve leyendo el código ni el documento: reglas de negocio, nombres que verá el usuario, qué opción prefiere), pregunta ANTES de implementar con:',
     `  node ${path.join(store.ROOT, 'bin', 'ao-ask.mjs')} "¿Pregunta cerrada?" --opt "Opción A" --opt "Opción B" [--context "qué cambia con cada opción"]`,
     'El comando se queda esperando (puede tardar minutos) e imprime la respuesta elegida o escrita; úsala y sigue. Una pregunta cada vez, máximo 3 por tarea, con opciones concretas. Si imprime «SIN RESPUESTA», decide tú con el criterio más conservador y déjalo bien visible en el resumen final.',
-    prev.length ? `Respuestas del cliente ya dadas en esta tarea (no vuelvas a preguntarlas):\n${prev.map((q) => `- ${q.question} → ${q.answer}`).join('\n')}` : '',
   ].join('\n');
-}
+const askAnswers = (t) => { const prev = (t.questions || []).filter((q) => q.answer != null); return prev.length ? `Respuestas del cliente ya dadas en esta tarea (no vuelvas a preguntarlas):\n${prev.map((q) => `- ${q.question} → ${q.answer}`).join('\n')}` : ''; };
+const askBlock = (t) => [askRules(), askAnswers(t)].join('\n');
 
 // FT-5: restricciones del cliente (siempre) y mensajes recibidos en la ejecución anterior (si se reencoló).
 const clientBlock = (t) => [
@@ -770,8 +768,24 @@ function buildPrompt(p, agent, t) {
     ].join('\n');
   }
   const done = get().tasks.filter((x) => t.dependsOn.includes(x.id));
+  // FT-59: orden pensado para la caché de prompts (prefijo idéntico entre tareas/turnos del mismo agente y repo):
+  // 1) PARTE ESTABLE — nada que cambie por tarea (ni ids, ni fechas, ni rama) — 2) PARTE VARIABLE al final.
   return [
+    // ── estable ──
+    p.folder ? `Carpeta del proyecto en el workspace de flow-test: «${p.folder}/» (ahí viven sus flows y su documentación; guarda ahí lo que generes con flow-test).` : '',
+    'Trabajas en una copia aislada del repo (git worktree), en tu propia rama. No cambies de rama ni hagas push.',
+    'Lo que dejes sin confirmar se confirmará solo al terminar.',
+    (() => { const r = repoOfTask(p, t); return r?.path ? '\n' + briefingFor(r.path) + '\n' : ''; })(),
+    get().settings.agentMemory !== false ? memory.promptBlock(p.id, agent.id) : '', // FT-75: lecciones de tareas anteriores
+    askRules(),
+    economyBlock(),
+    get().settings.agentMemory !== false ? memory.PROMPT_ASK : '',
+    'Al acabar, responde con un resumen breve: qué cambiaste y cómo lo probaste.',
+    '',
+    '════════ TAREA (lo anterior es común a todas las tareas) ════════',
+    // ── variable ──
     `Tarea ${t.code || '#' + t.id}: ${t.title}`,
+    `Rama de esta tarea: ${t.branch}`,
     '',
     t.description,
     t.context ? `\n${describeContext(t.context, true)}.` : '',
@@ -782,18 +796,9 @@ function buildPrompt(p, agent, t) {
     t.baseConflict ? `\nOJO: ${t.baseConflict}` : '',
     t.feedbackImages?.length ? `\nImágenes adjuntas (míralas con atención antes de cambiar nada; también están en ${t.feedbackImages.join(', ')}).` : '',
     t.files?.length ? `\nFicheros adjuntos (léelos antes de empezar): ${t.files.join(', ')}` : '',
-    '',
-    p.folder ? `Carpeta del proyecto en el workspace de flow-test: «${p.folder}/» (ahí viven sus flows y su documentación; guarda ahí lo que generes con flow-test).` : '',
-    `Trabajas en una copia aislada del repo (git worktree) en la rama ${t.branch}. No cambies de rama ni hagas push.`,
-    (() => { const r = repoOfTask(p, t); return r?.path ? '\n' + briefingFor(r.path) + '\n' : ''; })(),
-    get().settings.agentMemory !== false ? memory.promptBlock(p.id, agent.id) : '', // FT-75: lecciones de tareas anteriores (parte estable del prompt)
-    t.reused ? 'En esta rama ya está tu intento anterior (mira `git log` y `git diff` contra la rama base): parte de él y corrige lo que pide la revisión, sin rehacer lo que ya estaba bien.' : '',
-    'Lo que dejes sin confirmar se confirmará solo al terminar.',
+    t.reused ? '\nEn esta rama ya está tu intento anterior (mira `git log` y `git diff` contra la rama base): parte de él y corrige lo que pide la revisión, sin rehacer lo que ya estaba bien.' : '',
     t.code ? `Cita el código ${t.code} en lo que documentes (changelog, README, flows, tablero) para que la tarea se pueda rastrear.` : '',
-    askBlock(t),
-    economyBlock(),
-    get().settings.agentMemory !== false ? memory.PROMPT_ASK : '',
-    'Al acabar, responde con un resumen breve: qué cambiaste y cómo lo probaste.',
+    askAnswers(t),
   ].join('\n');
 }
 
@@ -870,6 +875,7 @@ async function runTask(p, agent, t) {
       prompt,
       images: (t.feedbackImages || []).filter((f) => fs.existsSync(f)),
       system: role.system,
+      kind: role.kind, roleTools: role.tools, hasSkills: !!role.skills?.length, // FT-59: herramientas acotadas por rol
       model: modelFor(engineId, agent, role),
       // Reintento de la MISMA tarea en su worktree hace <50 min (la caché de contexto aún vale): se reanuda su sesión.
       resumeSession: engineId === 'claude' && t.reused && t.sessionId && (t.resumeAfterQuota && t.sessionEngine === 'claude' || Date.now() - (t.sessionAt || 0) < 50 * 60_000) ? t.sessionId : null,

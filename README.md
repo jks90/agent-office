@@ -332,6 +332,18 @@ Medido el 6 OCT 2026: lo caro no es el arranque (≈31k tokens con `--strict-mcp
 - **Reanudar sesión** en reintentos de la misma tarea en su worktree si el anterior acabó hace <50 min (`claude --resume`, la caché de contexto aún vale).
 - **Estimación** en las tarjetas de Por hacer / Backlog: mediana del coste de las últimas 10 tareas hechas del mismo rol (`costEstimates()`).
 - **RTK** (rtk-ai/rtk, Apache-2.0): si está instalado (`~/.local/bin/rtk` o `AO_RTK_BIN`; `AO_RTK=off` lo apaga), los agentes Claude arrancan con su hook PreToolUse por `--settings` (NO se toca `~/.claude/settings.json`) y se permiten solo los `rtk …` equivalentes a la lista blanca (`RTK_RULES`, nunca `rtk run`). Comprime salidas de git/grep/ls/lint; no las de Read/Grep nativos. `rtk gain` enseña el ahorro.
+- **Herramientas por rol** (FT-59, `server/engines/toolscope.js`): cada definición de herramienta viaja en TODOS los turnos, así que cada rol recibe solo las suyas. Por `kind`: **dev** = lo de siempre; **docs** = Read/Grep/Glob/Edit/Write + shell de lectura (+ `git add/commit`) + MCP flow-test; **QA** = Read/Grep/Glob/Write (solo scripts de prueba, sin Edit) + shell de pruebas (npm/node/python3/curl/mvn…) + MCP flow-test; **planificador** = lectura + `ao-ask`. Nadie lleva WebFetch/WebSearch/NotebookEdit/Task. Un rol puede sustituirlas con `tools: Read, Grep, Bash, Bash(make *)` en su frontmatter (nombres de herramientas integradas; `Bash(patrón)` añade regla de shell). **Claude**: `--tools` (herramientas DISPONIBLES, sus definiciones no se envían) + `--allowedTools` (permitidas sin preguntar); la skill del rol añade `Skill`. **Codex**: `-c tools.web_search=false` siempre y `-c tools.view_image=false` en docs/planificador sin imágenes (Codex no permite elegir herramientas por nombre).
+- **Prompt ordenado para la caché** (FT-59, `buildPrompt` en `team.js`): primero lo ESTABLE y siempre igual (system del rol por `--append-system-prompt`/inicio del prompt de Codex, carpeta, reglas, briefing del repo, memoria, cómo preguntar, `economyBlock`), después la marca `════════ TAREA` y lo VARIABLE (código, título, rama, descripción, contexto, restricciones, feedback, adjuntos, respuestas del cliente). Nada de fechas ni ids en la parte estable.
+- **Medido el 6 OCT 2026** (`node scripts/tools-scope-measure.mjs`: primer `assistant` del stream, `input + cache_creation + cache_read`, haiku, prompt mínimo, sin MCP):
+
+  | Rol | Antes (sin `--tools`) | Después | Ahorro |
+  |---|---|---|---|
+  | dev | 22 813 | 13 123 | 42 % |
+  | QA | 22 813 | 12 683 | 44 % |
+  | docs | 22 813 | 13 123 | 42 % |
+  | planificador | 22 813 | 12 406 | 46 % |
+
+  Codex no se midió (el binario real pide aprobación en este entorno): lo que reporte `turn.completed` en `usage` queda en la tarjeta de cada tarea. Prueba: `node scripts/tools-scope-e2e.mjs` (binarios falsos que vuelcan sus argumentos).
 
 ## ⏸ Sin cuota a mitad de tarea: pausa y reanudación automática (FT-66)
 

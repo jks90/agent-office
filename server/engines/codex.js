@@ -3,6 +3,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import readline from 'node:readline';
 import { firstLine, toolSummary } from './describe.js';
 import { codexTracker } from '../usage.js';
+import { codexScope } from './toolscope.js';
 
 // Codex envuelve cada orden en `/usr/bin/zsh -lc "…"`: en el bocadillo solo interesa la orden.
 const unwrap = (cmd) => {
@@ -21,13 +22,14 @@ function bwrapWorks() {
   return sandboxOk;
 }
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, images = [], env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, kind, images = [], env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {} }) {
   const noSandbox = !bwrapWorks();
   const sandbox = mode === 'plan' ? 'read-only' : 'workspace-write';
   const args = ['exec', '--json', '--skip-git-repo-check', '-C', cwd, ...(noSandbox ? ['--dangerously-bypass-approvals-and-sandbox'] : ['-s', sandbox])];
   if (noSandbox) onLog('⚠ Codex sin sandbox (bwrap no disponible bajo el servicio): aislamiento por worktree + revisión');
   if (model) args.push('-m', model);
   if (mcpUrl && mode !== 'plan') args.push('-c', `mcp_servers.flow_test.url="${mcpUrl}"`);
+  for (const c of codexScope({ kind, mode, images })) args.push('-c', c); // FT-59: sin herramientas que el rol no usa
   for (const img of images) args.push(`--image=${img}`); // con «=» para que -i (variádico) no se trague el «-»
   args.push('-'); // el prompt va por stdin
 
