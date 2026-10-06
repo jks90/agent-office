@@ -22,6 +22,7 @@ import * as boards from './boards/index.js';
 import { linkSkillsInto } from './skills.js';
 import { cleanContext, describeContext } from './task-context.js';
 import * as quota from './quota.js';
+import * as ponytail from './ponytail.js'; // FT-86
 import { briefingFor } from './briefing.js';
 import { detectQuotaHit } from './quota-pause.js';
 import * as memory from './memory.js';
@@ -311,6 +312,7 @@ export function updateAgent(id, patch) {
   if (ENGINE_IDS.includes(patch.engine)) a.engine = patch.engine;
   if (typeof patch.model === 'string') a.model = patch.model.trim();
   if (patch.role && roleOf(patch.role)) a.role = patch.role;
+  if (typeof patch.ponytail === 'boolean') a.ponytail = patch.ponytail; // FT-86
   changed();
   return a;
 }
@@ -1029,6 +1031,7 @@ function buildPrompt(p, agent, t) {
     get().settings.agentMemory !== false ? memory.promptBlock(p.id, agent.id) : '', // FT-75: lecciones de tareas anteriores
     askRules(),
     economyBlock(t.codeIndexOn),
+    ...(ponytail.enabled(get().settings, agent, t.role) ? [ponytail.BLOCK] : []), // FT-86: solo con la opción activa (apagada = prompt idéntico)
     get().settings.agentMemory !== false ? memory.PROMPT_ASK : '',
     'Al acabar, responde con un resumen breve: qué cambiaste y cómo lo probaste.',
     '',
@@ -1156,7 +1159,8 @@ async function runTask(p, agent, t) {
     t.pendingMessages = []; // ya van en el prompt
     const baseUsage = t.usage || null; // FT-26: consumo de intentos anteriores; t.usage es acumulado y se actualiza en vivo
     agent.usage = null; // sesión nueva
-    const rec = costRecorder({ projectId: t.projectId, taskId: t.id, attempt: t.attempts, engine: engineId, model: model || '', role: t.role }); // FT-76
+    t.variant = ponytail.variantOf(s.settings, agent, t.role); // FT-86
+    const rec = costRecorder({ projectId: t.projectId, taskId: t.id, attempt: t.attempts, engine: engineId, model: model || '', role: t.role, variant: t.variant }); // FT-76
     const cmp = { asked: false, cut: false };
     delete t.stuck;
     // FT-62: detector de atascos. 1.ª señal → aviso en caliente (Claude: stdin; Codex/demo: se reencola la tarea con el aviso);

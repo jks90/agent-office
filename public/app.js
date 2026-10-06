@@ -720,6 +720,7 @@ async function ttsFillSettings() {
   } catch { sel.innerHTML = '<option value="">—</option>'; }
 }
 document.addEventListener('change', (e) => { if (e.target.matches?.('select[name=ttsProvider]')) ttsFillSettings(); });
+document.addEventListener('change', (e) => { if (e.target.matches?.('[data-cost-variant]')) { costsVariant = e.target.value; costsSig = ''; renderSummary(); } }); // FT-86
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-tts-test]');
   if (!b) return;
@@ -1097,12 +1098,14 @@ function editRole(id, duplicate = false) {
     <label>Descripción (una línea)</label><input name="description" value="${esc(r.description || '')}" />
     <label>Skills del catálogo que lleva (Ctrl+clic)</label>
     <select name="skills" multiple class="tall">${catalog.map((s) => `<option value="${esc(s.name)}" ${mine.includes(s.name) ? 'selected' : ''}>${esc(s.name)} — ${esc(s.description.slice(0, 80))}</option>`).join('') || '<option disabled>(catálogo vacío: añade skills abajo)</option>'}</select>
+    <label title="FT-86: reglas de «construir lo mínimo» en el prompt de los agentes de este rol"><input type="checkbox" name="ponytail" ${S.settings.ponytailRoles?.[rid] ? 'checked' : ''} /> Ponytail (prueba): construir lo mínimo</label>
     <label>Prompt de sistema</label><textarea name="system" rows="12">${esc(r.system || '')}</textarea>
     <p class="muted">Se guarda como fichero .md en el catálogo central (${esc(short(skillsData?.catalogDir || '~/JksDocs/workspace/_agentes'))}/roles/).</p>
     ${buttons('Guardar')}`, async (f) => {
     const form = $('#dialog form');
     const pick = (n) => [...form.querySelector(`[name=${n}]`).selectedOptions].map((o) => o.value);
     await api('POST', '/api/roles', { ...f, model: pickModel(f), id: f.id || rid, handles: pick('handles'), skills: pick('skills'), file: rid ? r.file : null });
+    await api('POST', '/api/settings', { ponytailRoles: { ...S.settings.ponytailRoles, [f.id || rid]: !!f.ponytail } }); // FT-86
     toast('Rol guardado en el catálogo');
   });
 }
@@ -1714,6 +1717,8 @@ Pasos, convenciones y ejemplos…</textarea>
     <div><label>Pasos sin editar (tareas de código)</label><input name="stuckNoEdit" type="number" min="5" max="200" value="${S.settings.stuckNoEdit || 25}" /></div>
     <div><label>Tokens por turno sin cambios en el worktree</label><input name="stuckTokens" type="number" min="5000" step="5000" value="${S.settings.stuckTokens || 80000}" /></div></div>
     <label title="FT-57 · Codex: se corta al llegar a estos tokens (0 = el equivalente al tope en US$)">Tope en tokens por intento (solo Codex; 0 = el equivalente al de US$)</label><input name="maxTaskTokens" type="number" min="0" step="100000" value="${S.settings.maxTaskTokens || 0}" />
+    <label title="Reglas de «construir lo mínimo» en la parte estable del prompt (FT-86). Se etiqueta cada intento en 💸 Costes para comparar con/sin.">Ponytail (prueba, FT-86): roles que construyen lo mínimo</label>
+    <div class="pt-roles">${Object.entries(S.roles).filter(([, r]) => r.kind !== 'planner').map(([id, r]) => `<label><input type="checkbox" name="pt_${esc(id)}" ${S.settings.ponytailRoles?.[id] ? 'checked' : ''} /> ${esc(r.label || id)}</label>`).join(' ')}</div>
     <label><input type="checkbox" name="agentMemory" ${S.settings.agentMemory !== false ? 'checked' : ''} /> Memoria de los agentes: lecciones de tareas anteriores en el prompt (FT-75; ≈1 500 tokens máx. por agente y por proyecto)</label>
     <label><input type="checkbox" name="claudeMemory" ${S.settings.claudeMemory !== false ? 'checked' : ''} /> Memoria de Claude Code del repo: el índice (MEMORY.md) va en el prompt de los agentes y pueden leer cada memoria (se ve y edita en Agentes ▸ 🧠 Memoria del proyecto)</label>
     <label title="Codebase-Memory MCP (tree-sitter, local): el agente localiza funciones/clases con una consulta en vez de leer ficheros"><input type="checkbox" name="codeIndex" ${S.settings.codeIndex === true ? 'checked' : ''} ${S.codeIndexInstalled ? '' : 'disabled'} /> Índice de código por símbolos para Claude y Codex (FT-58)${S.codeIndexInstalled ? '' : ' — no instalado: ejecuta scripts/setup-code-index.sh'}</label>
@@ -1768,7 +1773,7 @@ Pasos, convenciones y ejemplos…</textarea>
     safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0'); (SETTINGS_EMBED ? safeSet('ao:voice-wake', f.voiceWake ? '1' : '0') : wakeSet(!!f.voiceWake)); // en el panel de flow-test no se abre el micro: el iframe principal lo recoge por el evento `storage`
     refreshSttLocal();
     ttsStop();
-    await api('POST', '/api/settings', { ...f, quotaGuard: !!f.quotaGuard, stuckGuard: !!f.stuckGuard, cacheAffinity: !!f.cacheAffinity, agentMemory: !!f.agentMemory, claudeMemory: !!f.claudeMemory, modelLadder: { claude: f.ladder_claude || '', codex: f.ladder_codex || '' }, codeIndex: !!f.codeIndex, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
+    await api('POST', '/api/settings', { ...f, ponytailRoles: Object.fromEntries(Object.keys(S.roles).map((id) => [id, !!f['pt_' + id]])), quotaGuard: !!f.quotaGuard, stuckGuard: !!f.stuckGuard, cacheAffinity: !!f.cacheAffinity, agentMemory: !!f.agentMemory, claudeMemory: !!f.claudeMemory, modelLadder: { claude: f.ladder_claude || '', codex: f.ladder_codex || '' }, codeIndex: !!f.codeIndex, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
     ttsInfoLoad();
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
@@ -1941,7 +1946,7 @@ function busyCell(busy) {
 const SUM_COLS = [['backlog', 'Backlog'], ['todo', 'Por hacer'], ['doing', 'En curso'], ['review', 'Revisión'], ['done', 'Hecho'], ['failed', 'Fallidas'], ['discarded', 'Descartadas']];
 // ── 💸 Costes (FT-76) ──────────────────────────────────────────────────────
 // Datos de GET /api/costs; se piden al abrir la pestaña y cuando cambia el coste acumulado (llega por el SSE), sin polling.
-let sumView = 'general', costsData = null, costsSig = '';
+let sumView = 'general', costsData = null, costsSig = '', costsVariant = '';
 const usd = (n) => (n == null ? 'n/d' : n.toFixed(n < 1 ? 3 : 2) + ' $');
 const CAUSES = [['arranque', 'Arranque', '#64748b'], ['lecturas', 'Lecturas', '#38bdf8'], ['comandos', 'Comandos', '#fbbf24'], ['imagenes', 'Imágenes', '#c084fc'], ['salida', 'Salida', '#34d399'], ['reintentos', 'Reintentos', '#f87171']];
 const stackBar = (b) => !b || !b.total ? '' : `<div class="cost-stack" title="${esc(CAUSES.map(([k, l]) => `${l} ${usd(b[k])}`).join(' · '))}">${CAUSES.filter(([k]) => b[k] > 0).map(([k, l, c]) => `<i style="width:${(100 * b[k] / b.total).toFixed(1)}%;background:${c}" title="${l} ${usd(b[k])}"></i>`).join('')}</div>`;
@@ -1960,6 +1965,8 @@ function costDetailHtml(d) {
     <p class="muted" style="margin:4px 0 0">El reparto por causa es una atribución estimada (README «Observabilidad de costes»).</p>`;
 }
 const groupTable = (title, rows) => `<table class="repos"><thead><tr><th>${title}</th><th class="num">Aprobadas</th><th class="num">Coste</th><th class="num">$/aprobada</th><th class="num">1ª vez</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.key)}</td><td class="num">${r.tasks}</td><td class="num">${usd(r.costUsd)}</td><td class="num">${usd(r.perApprovedUsd)}</td><td class="num">${r.firstTryPct} %</td></tr>`).join('') || '<tr><td colspan="5" class="muted">sin tareas aprobadas</td></tr>'}</tbody></table>`;
+const variantTable = (d) => `<div class="section-title">🧪 Ponytail vs base (FT-86) <select data-cost-variant><option value="">todas las variantes</option><option value="base" ${d.variant === 'base' ? 'selected' : ''}>solo base</option><option value="ponytail" ${d.variant === 'ponytail' ? 'selected' : ''}>solo ponytail</option></select></div>
+  <table class="repos"><thead><tr><th>Variante</th><th class="num">Aprobadas</th><th class="num">$/aprobada</th><th class="num">Tokens</th><th class="num">Salida</th><th class="num">Devoluciones</th><th class="num">Líneas diff</th></tr></thead><tbody>${d.byVariant.map((v) => `<tr><td>${esc(v.key)}</td><td class="num">${v.tasks}</td><td class="num">${v.perApprovedUsd != null ? usd(v.perApprovedUsd) : '—'}</td><td class="num">${v.tokens != null ? fmtN(Math.round(v.tokens)) : '—'}</td><td class="num">${v.outputTokens != null ? fmtN(Math.round(v.outputTokens)) : '—'}</td><td class="num">${v.returns ?? '—'}</td><td class="num">${v.lines != null ? Math.round(v.lines) : '—'}</td></tr>`).join('')}</tbody></table><p class="muted" style="margin:2px">Medias por tarea aprobada. Con pocas tareas por variante no hay conclusión.</p>`;
 function costsHtml(d) {
   if (!d) return '<p class="muted">Leyendo costes…</p>';
   const k = d.kpi, kp = (v, l, cls = '') => `<div class="kpi ${cls}"><b>${v}</b><span>${l}</span></div>`;
@@ -1977,14 +1984,15 @@ function costsHtml(d) {
     <div class="section-title">Objetivo semana a semana</div>
     ${d.weekly.length ? `<div class="cost-weeks">${d.weekly.map((w) => `<span class="chip" style="--c:${w.meetsTarget == null ? '#94a3b8' : w.meetsTarget ? '#34d399' : '#f87171'}" title="${w.approved} aprobadas · ${usd(w.perApprovedUsd)}">${esc(w.week)} · ${w.ratioPct != null ? w.ratioPct + ' %' : 'sin base'}</span>`).join(' ')}</div>` : '<span class="muted">sin tareas aprobadas</span>'}
     <div class="grid2" style="gap:14px"><div>${groupTable('Rol', d.byRole)}</div><div>${groupTable('Modelo', d.byModel)}</div><div>${groupTable('Motor', d.byEngine)}</div><div>${groupTable('Proyecto', d.byProject)}</div></div>
+    ${variantTable(d)}
     <div class="section-title">Por tarea (desglose por causa)</div>${causeLegend()}
     <table class="repos"><thead><tr><th>Tarea</th><th>Estado</th><th class="num">Coste</th><th>Desglose</th><th class="num">Turnos</th><th class="num">Caché</th><th>Contexto</th></tr></thead><tbody>${d.tasks.slice(0, 40).map((t) => `<tr data-cost-task="${esc(t.taskId)}"><td><b>${esc(t.code || t.taskId)}</b> <span class="muted">${esc((t.title || '').slice(0, 40))}</span></td><td>${esc(t.status)}</td><td class="num">${usd(t.costUsd)}</td><td style="min-width:160px">${t.breakdown ? stackBar(t.breakdown) : '<span class="muted">sin telemetría</span>'}</td><td class="num">${t.turns || '·'}</td><td class="num">${t.telemetry ? t.cachePct + ' %' : '·'}</td><td>${t.curve ? spark(t.curve) : ''}</td></tr>`).join('')}</tbody></table>
     <p class="muted" style="margin:8px 2px">Línea base interactiva: ${d.baseline.length ? esc(d.baseline.map((b) => `${b.code} ${usd(b.costUsd)}`).join(' · ')) : 'sin importar (POST /api/costs/baseline con el transcript de Claude Code)'}. Export: <a href="/api/costs/export?format=csv" target="_blank">CSV</a> · <a href="/api/costs/export" target="_blank">JSON</a></p>`;
 }
 const sumTabs = () => `<div class="sum-tabs"><button class="small ${sumView === 'general' ? 'on' : 'ghost'}" data-sum-view="general">📋 General</button><button class="small ${sumView === 'costs' ? 'on' : 'ghost'}" data-sum-view="costs">💸 Costes</button></div>`;
 function renderCosts(el) {
-  const sig = S.tasks.map((t) => `${t.id}:${t.costUsd}:${t.status}`).join('|');
-  if (sig !== costsSig) { costsSig = sig; api('GET', '/api/costs').then((d) => { costsData = d; if (sumView === 'costs') renderSummary(); }).catch(() => {}); }
+  const sig = costsVariant + S.tasks.map((t) => `${t.id}:${t.costUsd}:${t.status}:${t.variant || ''}`).join('|');
+  if (sig !== costsSig) { costsSig = sig; api('GET', '/api/costs' + (costsVariant ? '?variant=' + costsVariant : '')).then((d) => { costsData = d; if (sumView === 'costs') renderSummary(); }).catch(() => {}); }
   el.innerHTML = sumTabs() + costsHtml(costsData);
 }
 
@@ -2040,6 +2048,7 @@ function renderSummary() {
   const sc = $('#tab-summary-count'); if (sc) sc.textContent = (all.filter((t) => t.status === 'review' && S.projects.find((p) => p.id === t.projectId)?.running).length + qs.length) || ''; // solo lo que pide acción: revisiones de proyectos en marcha + preguntas
 }
 document.addEventListener('click', async (e) => {
+  if (e.target.matches?.('[data-cost-variant]')) return;
   const sv = e.target.closest('[data-sum-view]');
   if (sv) { sumView = sv.dataset.sumView; costsSig = ''; renderSummary(); return; }
   const ct = e.target.closest('[data-cost-task]');
@@ -2328,8 +2337,9 @@ function editAgent(id) {
       <div><label>Motor</label><select name="engine">${engineOptions(a.engine)}</select></div>
       <div><label>Modelo</label>${modelSelect('model', a.engine, a.model || '')}</div>
     </div>
+    <label title="FT-86: reglas de «construir lo mínimo» en el prompt de este agente"><input type="checkbox" name="ponytail" ${a.ponytail ? 'checked' : ''} /> Ponytail (prueba): construir lo mínimo</label>
     ${a.status === 'working' ? '<p class="muted">Está trabajando: los cambios se aplican a partir de su siguiente tarea.</p>' : ''}
-    ${buttons('Guardar')}`, async (f) => { await api('PATCH', `/api/agents/${id}`, { ...f, model: pickModel(f) }); toast('Agente actualizado'); });
+    ${buttons('Guardar')}`, async (f) => { await api('PATCH', `/api/agents/${id}`, { ...f, model: pickModel(f), ponytail: !!f.ponytail }); toast('Agente actualizado'); });
 }
 
 // Markdown ligero y seguro para descripciones y resúmenes (escapa primero, luego formatea).

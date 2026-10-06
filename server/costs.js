@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DATA_DIR } from './store.js';
 import { costOf, priceOf, cacheSaving } from './pricing.js';
+import { VARIANTS } from './ponytail.js'; // FT-86
 
 const dir = () => path.join(DATA_DIR, 'costs');
 const fileOf = (projectId, taskId) => path.join(dir(), String(projectId).replace(/[^\w-]/g, '_'), String(taskId).replace(/[^\w-]/g, '_') + '.jsonl');
@@ -17,7 +18,7 @@ const fileArg = (input = {}) => input.file_path || input.path || input.notebook_
 
 // ── Registro de turnos ─────────────────────────────────────────────────────
 // `feed(ev)` recibe los eventos ya parseados del motor (stream-json de Claude o JSONL de Codex); `finish()` vuelca el último turno.
-export function recorder({ projectId, taskId, attempt = 1, engine, model = '', role = '' }) {
+export function recorder({ projectId, taskId, attempt = 1, engine, model = '', role = '', variant = 'base' }) {
   if (!projectId || !taskId) return { feed() {}, finish() {} };
   const file = fileOf(projectId, taskId);
   let n = 0, cur = null, curModel = model;
@@ -26,7 +27,7 @@ export function recorder({ projectId, taskId, attempt = 1, engine, model = '', r
     const t = cur; cur = null;
     const u = t.usage, tools = t.tools.map((x) => ({ name: x.name, file: x.file || undefined, bytes: x.bytes, image: x.image || undefined }));
     const line = {
-      ts: t.ts, attempt, engine, model: t.model || curModel, role, turn: ++n,
+      ts: t.ts, attempt, engine, model: t.model || curModel, role, variant, turn: ++n,
       input: u.input, cacheRead: u.cacheRead, cacheWrite: u.cacheWrite, output: u.output,
       costUsd: round(costOf(t.model || curModel, u)), tool: tools[0]?.name || null, tools,
       bytes: tools.reduce((s, x) => s + (x.bytes || 0), 0), image: tools.some((x) => x.image),
@@ -121,9 +122,9 @@ export function taskSummary(task, turns = readTurns(task.projectId, task.id)) {
   const totalCtx = sum(turns, ctx);
   return {
     taskId: task.id, code: task.code, role: task.role, telemetry: true,
-    model: turns.at(-1).model, engine: turns.at(-1).engine,
+    model: turns.at(-1).model, engine: turns.at(-1).engine, variant: turns.at(-1).variant || 'base', // FT-86
     costUsd: round(sum(turns, (t) => t.costUsd)), acceptedUsd: round(sum(acc, (t) => t.costUsd)), discardedUsd: round(sum(turns.filter((t) => (t.attempt || 1) !== last), (t) => t.costUsd)),
-    attempts: last, returns: task.returns || 0, turns: turns.length, tokens: sum(turns, (t) => ctx(t) + t.output),
+    attempts: last, returns: task.returns || 0, turns: turns.length, outputTokens: sum(turns, (t) => t.output), tokens: sum(turns, (t) => ctx(t) + t.output),
     curve: acc.map((t) => ctx(t)), cachePct: totalCtx ? Math.round((100 * sum(turns, (t) => t.cacheRead)) / totalCtx) : 0,
     cacheSavedUsd: round(sum(turns, (t) => cacheSaving(t.model, t.cacheRead))),
     ms: new Date(turns.at(-1).ts) - new Date(turns[0].ts), imageTurns: turns.filter((t) => t.image).length,
@@ -183,12 +184,21 @@ function group(rows, key) {
   return Object.entries(g).map(([k, a]) => ({ key: k, tasks: a.length, costUsd: round(a.reduce((s, r) => s + r.costUsd, 0), 4), perApprovedUsd: round(mean(a.map((r) => r.costUsd)), 4), firstTryPct: Math.round((100 * a.filter((r) => !r.returns).length) / a.length) })).sort((x, y) => y.costUsd - x.costUsd);
 }
 
-export function overview(state, now = Date.now()) {
+// FT-86: comparación base vs ponytail (solo tareas aprobadas): coste, tokens, salida, devoluciones y líneas del diff, por tarea.
+export function byVariant(rows) {
+  return VARIANTS.map((v) => {
+    const a = rows.filter((r) => r.status === 'done' && (r.variant || 'base') === v), n = a.length, per = (f) => (n ? round(a.reduce((s, r) => s + (f(r) || 0), 0) / n, 4) : null);
+    return { key: v, tasks: n, costUsd: round(a.reduce((s, r) => s + r.costUsd, 0), 4), perApprovedUsd: per((r) => r.costUsd), tokens: per((r) => r.tokens), outputTokens: per((r) => r.outputTokens), returns: per((r) => r.returns), lines: per((r) => r.lines), firstTryPct: n ? Math.round((100 * a.filter((r) => !r.returns).length) / n) : null };
+  });
+}
+
+export function overview(state, now = Date.now(), { variant = '' } = {}) {
   const projName = (id) => state.projects.find((p) => p.id === id)?.name || id;
-  const rows = state.tasks.filter((t) => t.kind !== 'plan' && (t.costUsd > 0 || readTurns(t.projectId, t.id).length)).map((t) => {
+  const allRows = state.tasks.filter((t) => t.kind !== 'plan' && (t.costUsd > 0 || readTurns(t.projectId, t.id).length)).map((t) => {
     const turns = readTurns(t.projectId, t.id), s = taskSummary(t, turns);
     return { ...s, status: t.status, title: t.title, projectId: t.projectId, project: projName(t.projectId), returns: t.returns || 0, costUsd: s.telemetry ? s.costUsd : t.costUsd || 0, updatedAt: t.updatedAt, lines: linesOf(t.diffStat), breakdown: s.telemetry ? breakdown(turns) : null };
   });
+  const rows = VARIANTS.includes(variant) ? allRows.filter((r) => (r.variant || 'base') === variant) : allRows; // FT-86: filtro por variante
   const done = rows.filter((r) => r.status === 'done');
   const total = rows.reduce((s, r) => s + r.costUsd, 0);
   const base = readBaseline(), bAvg = mean(base.map((b) => b.costUsd));
@@ -211,7 +221,7 @@ export function overview(state, now = Date.now()) {
     interactiveUsd: base.length ? round(bAvg, 4) : null, perLine, ratioPct, ratioLinePct, targetPct: target, meetsTarget: cmp == null ? null : cmp <= target,
   };
   const weekly = Object.entries(weeks).sort().map(([week, a]) => { const avg = mean(a); const pct = bAvg ? Math.round((100 * avg) / bAvg) : null; return { week, approved: a.length, perApprovedUsd: round(avg, 4), ratioPct: pct, meetsTarget: pct == null ? null : pct <= target }; });
-  return { kpi, trend7d: days, weekly, byRole: group(done, 'role'), byModel: group(done, 'model'), byEngine: group(done, 'engine'), byProject: group(done, 'project'), baseline: base, tasks: rows.sort((a, b) => b.updatedAt - a.updatedAt).map(({ curve, ...r }) => ({ ...r, curve })), recommendations: recommend(rows, kpi, target, cmp) };
+  return { kpi, trend7d: days, weekly, byRole: group(done, 'role'), byModel: group(done, 'model'), byEngine: group(done, 'engine'), byProject: group(done, 'project'), byVariant: byVariant(allRows), variant: VARIANTS.includes(variant) ? variant : '', baseline: base, tasks: rows.sort((a, b) => b.updatedAt - a.updatedAt).map(({ curve, ...r }) => ({ ...r, curve })), recommendations: recommend(rows, kpi, target, cmp) };
 }
 
 // Recomendaciones automáticas a partir de los datos (FT-76 · fase 4). Reglas simples y explicables; solo con muestra suficiente.
