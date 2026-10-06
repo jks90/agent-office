@@ -503,3 +503,13 @@ Cuarto motor, `local`: trabaja con un modelo que corre en tu máquina, sin cuota
 - **Cuota y coste**: sin cuota (`quota.gate('local')` nunca bloquea) y `costUsd` 0; los tokens por sesión se cuentan igual (`turn.completed`), con «límite n/d».
 - **Limitaciones**: más lento y menos capaz que Claude/Codex en la nube (el prompt añade una nota de brevedad); un modelo pequeño puede no usar las herramientas (se avisa en el log si no ejecutó ninguna).
 - Prueba: `node scripts/local-engine-e2e.mjs` (servidor OpenAI-compatible falso + `codex` real; sin `codex` se salta la tarea).
+
+### Edificio v2, fiel a la referencia (FT-77)
+
+Objetivo visual: `~/JksDocs/Proyects/12-flowtest/task/diseno-edificio-referencia.png` (panel 1) y contrato `…/agentoffice_visual_pack/spec/visual-contract.json`.
+- **Un único edificio** tipo dollhouse: plantas alineadas en un solo eje (`FLOOR_Z_STEP = 0`), anchas y poco profundas (`BUILDING_FLOOR_SIZE` 9,2×3,9), paredes más altas que en la sala (`BWALL_H`) y solo una losa fina entre plantas (`FLOOR_GAP`), para que el interior se vea por el frente abierto con la cámara del edificio (`BUILDING_CAM_DIR`, más baja que la de la sala).
+- **Estructura** (`buildStructure`): núcleo de escalera/ascensor a la derecha, azotea con pretil, sombrilla y terraza, planta baja con zócalo, árboles y aparcamiento.
+- **Interior real**: muebles Kenney (`placeIn`) y personajes reales posados sin animación por frame (`addMiniChar`: el mixer se avanza una vez con `sit`/`idle`), colocados por estado: trabajando sentado en su puesto, revisión en el puesto de revisión, esperando/bloqueado de pie junto al Kanban, fallido en su puesto con aro rojo, libre en el sofá. Kanban exento con columnas TODO/DOING/REVIEW/DONE y notas según los contadores reales.
+- **Tarjetas de planta** P1…Pn (nombre y métricas con punto de color; el texto completo en `title`), secundarias a la escena.
+- **Scroll antes que miniaturizar** (`fitBuildingHeight`): si las plantas quedarían por debajo de ~560 px de ancho, el lienzo crece en alto y la vista hace scroll hasta ~620 px.
+- **Pruebas**: `scripts/building-e2e.mjs` mide el contrato a 1920×1080 (plantas alineadas ±4 px, ancho 550–750 px, alto 65–80 %); la visibilidad de agentes usa rayos paralelos a la vista (cámara ortográfica). Capturas: `node scripts/preview.mjs out.png --building --width 1920 --height 1080`.

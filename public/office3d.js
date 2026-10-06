@@ -81,12 +81,17 @@ const MINT = 0x9fd8c3, WOOD = 0xd8b48a, SCREEN_ON = 0x8fe3c7, WALL_TINT = 0xe9f0
 
 // ── Edificio (FT-46): una planta por proyecto con equipo ──
 const SLAB_H = 0.14;                         // losa entre plantas
-const FLOOR_GAP = WALL_H * 2.35;             // separación visible del edificio explotado (FT-70): deja ver el interior desde fuera
-const FLOOR_H = WALL_H + SLAB_H + FLOOR_GAP; // altura de una planta (pared + losa + aire)
-const FLOOR_Z_STEP = 3.15;                   // las plantas bajas avanzan hacia cámara para que el interior no quede tapado
+// FT-77 v2 (fiel a la referencia): UN edificio — plantas alineadas en un solo eje, paredes más altas que en la sala para que
+// el interior se vea por el frente abierto, y solo una losa fina entre plantas (18–30 px en 1920×1080).
+const BWALL_H = 2.4;                         // altura de pared de una planta del edificio
+const FLOOR_GAP = 0.16;                      // aire entre plantas (losa vista)
+const FLOOR_H = BWALL_H + SLAB_H + FLOOR_GAP; // altura de una planta (pared + losa + aire)
+const FLOOR_Z_STEP = 0;                      // un único eje vertical (antes las plantas avanzaban en diagonal)
+const BUILDING_CAM_DIR = [1, 0.62, 1];       // cámara algo más baja que la de la sala: se ve dentro de cada planta
+const CORE_W = 1.35;                         // núcleo de escalera/ascensor a la derecha del edificio
 const MAX_FLOORS = 12;                       // tope visual; el resto se agrupa en una planta «+N»
 const FLOOR_BOX = [DEFAULT_FLOOR_SIZE.rx, WALL_H, DEFAULT_FLOOR_SIZE.rz]; // fallback de encuadre para `floor`
-const BUILDING_FLOOR_SIZE = recommendedFloorSize(6);
+const BUILDING_FLOOR_SIZE = { kind: 'building', rx: 9.2, rz: 3.9 }; // v2: plantas anchas y poco profundas, como en la referencia (todo el interior a la vista)
 const GUIDE_FLOOR_SIZE = { kind: 'guide', rx: 5.8, rz: 4.0 };
 const WINDOW_ON = 0xffd36b, WALL_PAUSED = 0xd6dad6, SLAB_COLOR = 0xc9d2cc, INTERIOR = 0xf1e5d4, HOVER = 0x3ad0a0;
 const HOVER_K = 0.22, ACTIVE_K = 0.1;            // intensidad del resalte: planta bajo el ratón / planta del proyecto activo (FT-47)
@@ -582,6 +587,7 @@ export class Office3D {
     this.floors = floors;
     this.clearBuilding();
     floors.forEach((f, i) => this.buildFloorBlock(f, i));
+    this.buildStructure(floors.length);
     this.metrics.lastRebuildMs = +(performance.now() - t0).toFixed(1);
     this.metrics.lastFloorCount = floors.length;
     if (floors.length !== before) this.resize();   // la caja a encuadrar cambia de altura
@@ -601,35 +607,114 @@ export class Office3D {
     this.hoverFloor = -1;
   }
 
+  // Estructura común del edificio (FT-77 v2, panel 1 de la referencia): núcleo de escalera/ascensor a la derecha, azotea con
+  // pretil, sombrilla y plantas, y planta baja con zócalo, árboles y un aparcamiento. No es clicable (sin index) ni cambia de tinte.
+  buildStructure(n) {
+    if (!n) return;
+    const s = BUILDING_FLOOR_SIZE, H = n * FLOOR_H;
+    const grp = new THREE.Group(); grp.userData = { structure: true };
+    const box = (w, h, d, color, x, y, z, rough = 0.9) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial({ color, roughness: rough })); m.userData.ownGeo = true; m.position.set(x, y, z); grp.add(m); return m; };
+    // Núcleo (fachada lateral con ventanas en franja)
+    box(CORE_W, H + 0.5, s.rz * 0.4, 0xb9c2c9, s.rx + CORE_W / 2, (H + 0.5) / 2, s.rz * 0.2); // al fondo: no tapa el extremo de las plantas
+    for (let k = 0; k < n; k++) box(0.04, 0.5, s.rz * 0.3, 0x5b6c7a, s.rx + CORE_W + 0.02, k * FLOOR_H + SLAB_H + BWALL_H * 0.55, s.rz * 0.2, 0.4);
+    // Azotea: losa, pretil y terraza
+    const roofY = H;
+    box(s.rx + 0.3, SLAB_H, s.rz + 0.3, 0xc9d2cc, s.rx / 2, roofY + SLAB_H / 2, s.rz / 2);
+    for (const [w, d, x, z] of [[s.rx + 0.3, 0.12, s.rx / 2, -0.09], [s.rx + 0.3, 0.12, s.rx / 2, s.rz + 0.09], [0.12, s.rz + 0.3, -0.09, s.rz / 2], [0.12, s.rz + 0.3, s.rx + 0.09, s.rz / 2]]) box(w, 0.3, d, 0xaeb7b1, x, roofY + SLAB_H + 0.15, z);
+    const pole = box(0.05, 1.0, 0.05, 0x6b7280, s.rx * 0.62, roofY + SLAB_H + 0.5, s.rz * 0.5);
+    const umb = new THREE.Mesh(new THREE.ConeGeometry(0.85, 0.32, 10), new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.8 })); umb.userData.ownGeo = true; umb.position.set(pole.position.x, roofY + SLAB_H + 1.05, pole.position.z); grp.add(umb);
+    this.building.add(grp);
+    for (const [m, x, z, ry] of [['tableRound', s.rx * 0.62, s.rz * 0.5, 0], ['chair', s.rx * 0.62, s.rz * 0.5 + 0.7, Math.PI], ['chair', s.rx * 0.62 - 0.7, s.rz * 0.5, Math.PI / 2], ['pottedPlant', 0.6, 0.6, 0], ['pottedPlant', s.rx - 0.6, s.rz - 0.6, 0], ['loungeSofa', 2.0, s.rz * 0.55, Math.PI, MINT]]) {
+      const o = this.place(m, x, z, { ry, tint: m === 'loungeSofa' ? MINT : undefined }, grp); if (o) o.position.y += roofY + SLAB_H;
+    }
+    // Planta baja: zócalo, acera, árboles y aparcamiento delante a la derecha
+    box(s.rx + CORE_W + 3.2, 0.12, s.rz + 3.2, 0xb8c4b0, (s.rx + CORE_W) / 2, -0.07, s.rz / 2 + 0.6);
+    box(3.6, 0.04, 2.6, 0x6b7280, s.rx + CORE_W + 0.2, 0.0, s.rz + 1.4, 0.95);
+    for (const [x, z, c] of [[s.rx + CORE_W - 0.6, s.rz + 1.0, 0xdc2626], [s.rx + CORE_W + 0.9, s.rz + 1.7, 0xe5e7eb]]) { box(1.05, 0.32, 0.55, c, x, 0.2, z, 0.5); box(0.6, 0.22, 0.5, 0x94a3b8, x - 0.05, 0.47, z, 0.3); }
+    for (const [x, z] of [[-0.9, s.rz + 0.9], [-0.9, 1.0], [s.rx * 0.45, s.rz + 1.3]]) {
+      const tr = box(0.14, 0.7, 0.14, 0x8b5a2b, x, 0.35, z); const crown = new THREE.Mesh(new THREE.SphereGeometry(0.55, 10, 8), new THREE.MeshStandardMaterial({ color: 0x4f9d5d, roughness: 0.9 })); crown.userData.ownGeo = true; crown.position.set(x, 1.0, z); grp.add(crown); void tr;
+    }
+  }
+
   wallSeg() {
     const proto = this.furnCache.get('wall');
     return proto ? Math.max(0.5, new THREE.Box3().setFromObject(proto).getSize(new THREE.Vector3()).x) : 1;
   }
 
   buildingFloorSize(f) {
-    return f?.guide ? GUIDE_FLOOR_SIZE : BUILDING_FLOOR_SIZE;
+    return BUILDING_FLOOR_SIZE; // v2: mismo tamaño y eje para todas (Dirección incluida)
   }
 
+  // Muebles reales (Kenney) en la planta del edificio, en la misma escala que la oficina: Desarrollo al fondo, QA a la derecha,
+  // Kanban en la pared del fondo, reuniones y descanso delante (FT-77 v2, como el panel 1 de la referencia).
+  static BLDG = {
+    dev: [[1.0, 1.2], [2.2, 1.2], [3.4, 1.2], [1.0, 2.5], [2.2, 2.5]],
+    qa: [[7.05, 1.2], [8.2, 1.2]],
+    review: [6.95, 2.55], board: [5.15, 2.0], meeting: [3.55, 3.05], sofa: [8.45, 3.35], wait: [[4.6, 2.75], [5.2, 2.75], [5.8, 2.75]],
+  };
+  placeIn(g, model, x, z, opts = {}) {
+    const o = this.place(model, x, z, opts, g);
+    if (o) { o.position.y += SLAB_H; o.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; } }); }
+    return o;
+  }
   addMiniFurniture(g, i, f, own, size = BUILDING_FLOOR_SIZE) {
-    const y = SLAB_H + 0.02;
-    const matDesk = new THREE.MeshStandardMaterial({ color: WOOD, roughness: 0.85 });
-    const matScreen = new THREE.MeshStandardMaterial({ color: f.working ? SCREEN_ON : 0x334155, emissive: f.working ? SCREEN_ON : 0x000000, emissiveIntensity: f.working ? 0.9 : 0, roughness: 0.45 });
-    const sx = size.rx / BUILDING_FLOOR_SIZE.rx, sz = size.rz / BUILDING_FLOOR_SIZE.rz;
-    const fit = ([x, z]) => [Math.min(size.rx - 0.55, x * sx), Math.min(size.rz - 0.55, z * sz)];
-    const desks = [[1.15, 1.65], [2.55, 1.65], [4.35, 1.65], [5.75, 1.65], [1.25, 4.75], [2.65, 4.75], [6.55, 3.7], [7.55, 3.7]].map(fit);
-    for (let k = 0; k < Math.min(desks.length, Math.max(3, f.agents)); k++) {
-      const [x, z] = desks[k];
-      const d = own(new THREE.BoxGeometry(0.72, 0.08, 0.42), matDesk); d.position.set(x, y + 0.22, z); g.add(d);
-      const s = own(new THREE.BoxGeometry(0.34, 0.23, 0.04), matScreen); s.position.set(x, y + 0.43, z - 0.19); g.add(s);
-    }
-    const board = own(new THREE.BoxGeometry(1.65, 0.88, 0.05), new THREE.MeshStandardMaterial({ color: 0x385d78, roughness: 0.55 }));
-    board.position.set(size.rx * 0.54, y + 0.72, 0.22); g.add(board);
-    const table = own(new THREE.CylinderGeometry(0.42, 0.42, 0.08, 16), matDesk); g.add(table);
-    table.position.set(size.rx * 0.7, y + 0.22, size.rz * 0.68);
-    for (const [x, z] of [[0.75, 0.7], [size.rx - 0.7, size.rz - 0.8], [0.8, size.rz - 0.85]]) {
-      const p = own(new THREE.CylinderGeometry(0.12, 0.16, 0.18, 10), new THREE.MeshStandardMaterial({ color: 0xb98253, roughness: 0.9 })); p.position.set(x, y + 0.09, z); g.add(p);
-      const leaf = own(new THREE.SphereGeometry(0.22, 10, 8), new THREE.MeshStandardMaterial({ color: 0x5fa66a, roughness: 0.9 })); leaf.position.set(x, y + 0.34, z); g.add(leaf);
-    }
+    const B = Office3D.BLDG, y = SLAB_H;
+    const screens = [];
+    const desk = ([x, z], lit) => {
+      const d = this.placeIn(g, 'desk', x, z); if (!d) return;
+      const top = this.topOf(d);
+      const sc = this.placeIn(g, 'computerScreen', x, z - 0.11); if (sc) { sc.position.y = top; sc.traverse((m) => { if (m.isMesh && lit) for (const mt of [].concat(m.material)) if (mt.emissive) screens.push(mt); }); }
+      const kb = this.placeIn(g, 'computerKeyboard', x, z + 0.04); if (kb) kb.position.y = top;
+      this.placeIn(g, 'chairDesk', x, z + 0.5);
+    };
+    const nDesks = Math.min(B.dev.length + B.qa.length, Math.max(4, f.agents + 1));
+    [...B.dev, ...B.qa].slice(0, nDesks).forEach((p, k) => desk(p, k < f.working));
+    for (const mt of screens) { mt.emissive.setHex(SCREEN_ON); mt.emissiveIntensity = 0.8; }
+    // Kanban en la pared del fondo con columnas de color y contadores reales (TODO · DOING · REVIEW · DONE)
+    const [bx, bz] = B.board;
+    // Exenta y baja: con la cámara del edificio la losa de arriba tapa la pared del fondo (FT-77 v2)
+    const BY = 0.78;
+    const frame = own(new THREE.BoxGeometry(2.0, 0.78, 0.06), new THREE.MeshStandardMaterial({ color: 0x2f3a45, roughness: 0.6 })); frame.position.set(bx, y + BY, bz); g.add(frame);
+    for (const lx of [-0.9, 0.9]) { const leg = own(new THREE.BoxGeometry(0.05, BY, 0.05), new THREE.MeshStandardMaterial({ color: 0x475569 })); leg.position.set(bx + lx, y + BY / 2, bz); g.add(leg); }
+    const cols = [0x93c5fd, 0xfcd34d, 0xfdba74, 0x86efac];
+    const counts = [f.queued, f.working, f.review, f.done || 0];
+    cols.forEach((c, k) => {
+      const panel = own(new THREE.BoxGeometry(0.42, 0.64, 0.02), new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.8 })); panel.position.set(bx - 0.72 + k * 0.48, y + BY, bz + 0.04); g.add(panel);
+      const head = own(new THREE.BoxGeometry(0.42, 0.09, 0.025), new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.25 })); head.position.set(bx - 0.72 + k * 0.48, y + BY + 0.27, bz + 0.05); g.add(head);
+      for (let n = 0; n < Math.min(3, counts[k]); n++) { const note = own(new THREE.BoxGeometry(0.3, 0.1, 0.02), new THREE.MeshStandardMaterial({ color: c })); note.position.set(bx - 0.72 + k * 0.48, y + BY + 0.12 - n * 0.14, bz + 0.06); g.add(note); }
+    });
+    // Revisión (puesto con lupa), reuniones, descanso y decoración
+    desk(B.review, false);
+    this.placeIn(g, 'tableRound', B.meeting[0], B.meeting[1], { tint: WOOD });
+    for (const [dx, dz, ry] of [[0, 0.7, Math.PI], [-0.7, 0, Math.PI / 2], [0.7, 0, -Math.PI / 2]]) this.placeIn(g, 'chair', B.meeting[0] + dx, B.meeting[1] + dz, { ry });
+    this.placeIn(g, 'loungeSofa', B.sofa[0], B.sofa[1], { ry: Math.PI, tint: MINT });
+    this.placeIn(g, 'tableCoffee', B.sofa[0], B.sofa[1] - 0.7, { tint: WOOD });
+    this.placeIn(g, 'bookcaseOpen', 0.4, 3.2, { ry: Math.PI / 2 });
+    for (const [x, z, m] of [[0.45, 0.4, 'pottedPlant'], [6.6, 0.35, 'plantSmall1'], [size.rx - 0.45, 1.9, 'pottedPlant'], [3.0, 3.45, 'plantSmall3']]) this.placeIn(g, m, x, z);
+    if (f.guide) { this.placeIn(g, 'kitchenCabinet', 8.6, 2.2, { ry: -Math.PI / 2 }); }
+  }
+
+  // Personaje real en miniatura, posado (sentado al PC, de pie…) sin animarlo cada frame: el mixer se avanza una vez.
+  addMiniChar(g, visual, x, z, ry, own, sit) {
+    const file = CHAR_FILES[hash((visual.name || '') + visual.id) % CHAR_FILES.length];
+    const gltf = this.charCache.get(file);
+    if (!gltf) return this.addMiniAgent(g, visual, x, z, own, 0.9);
+    const model = skeletonClone(gltf.scene);
+    const box = new THREE.Box3().setFromObject(model);
+    const sc = (CHAR_H * 0.92) / (box.getSize(new THREE.Vector3()).y || 1);
+    model.scale.setScalar(sc);
+    model.position.set(x, SLAB_H - box.min.y * sc + (sit ? 0.05 : 0), z);
+    model.rotation.y = ry;
+    model.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = false; } });
+    const mixer = new THREE.AnimationMixer(model);
+    const clip = gltf.animations.find((c) => c.name === (sit ? 'sit' : 'idle')) || gltf.animations[0];
+    if (clip) { mixer.clipAction(clip).play(); mixer.update(0.4); }
+    g.add(model);
+    // Indicador de estado sobre la cabeza (verde trabajando, amarillo esperando, violeta revisión, rojo fallo…)
+    const col = STATE_COLOR[visual.status] || 0x94a3b8;
+    const dot = own(new THREE.SphereGeometry(0.075, 10, 8), new THREE.MeshBasicMaterial({ color: col }));
+    dot.position.set(x, SLAB_H + CHAR_H * 0.92 + 0.18, z); g.add(dot);
+    if (visual.status === 'failed') { const ring = own(new THREE.TorusGeometry(0.13, 0.025, 6, 16), new THREE.MeshBasicMaterial({ color: 0xff3030 })); ring.rotation.x = Math.PI / 2; ring.position.copy(dot.position); g.add(ring); }
   }
 
   addMiniAgent(g, visual, x, z, own, scale = 1) {
@@ -638,27 +723,29 @@ export class Office3D {
     body.position.set(x, SLAB_H + 0.35 * scale, z); body.rotation.y = Math.PI; g.add(body);
     const head = own(new THREE.SphereGeometry(0.12 * scale, 10, 8), new THREE.MeshStandardMaterial({ color: 0xf1c27d, roughness: 0.8 }));
     head.position.set(x, SLAB_H + 0.65 * scale, z); g.add(head);
-    if (visual.status === 'failed' || visual.status === 'blocked') {
-      const mark = own(new THREE.SphereGeometry(0.07 * scale, 8, 6), new THREE.MeshBasicMaterial({ color: visual.status === 'failed' ? 0xff3030 : 0xffbf2e }));
-      mark.position.set(x + 0.18 * scale, SLAB_H + 0.86 * scale, z - 0.03); g.add(mark);
-    }
   }
 
+  // Cada agente va donde dice su estado (como en la planta): trabajando → su puesto (sentado), revisión → puesto de revisión,
+  // esperando/bloqueado → de pie junto al Kanban, fallido → su puesto con aro rojo, libre → zona de descanso.
   addMiniAgents(g, f, own, size = BUILDING_FLOOR_SIZE) {
-    const slots = layoutFloor(f.miniAgents || [], { tasks: [], questions: [] })?.slots || {};
-    const fallback = [[2.0, 2.35], [3.45, 2.35], [5.2, 2.35], [7.0, 2.75], [6.65, 4.1], [7.6, 4.1], [3.0, 4.8], [4.25, 4.8], [6.9, 5.25], [7.75, 5.25], [4.15, 1.15], [5.0, 1.15]];
-    (f.miniAgents || []).forEach((a, k) => {
-      const s = slots[a.id], raw = s ? [s.x + 0.25, s.z + 0.15] : fallback[k % fallback.length];
-      const pos = [Math.min(size.rx - 0.55, raw[0]), Math.min(size.rz - 0.55, raw[1])];
-      this.addMiniAgent(g, a, pos[0], pos[1], own, 0.82);
-      g.userData.agentMarks.push({ id: a.id, name: a.name, status: a.status, role: a.role, x: pos[0], y: SLAB_H + 0.55, z: pos[1] });
+    const B = Office3D.BLDG;
+    const desks = [...B.dev, ...B.qa];
+    let d = 0, w = 0, idle = 0;
+    (f.miniAgents || []).forEach((a) => {
+      let x, z, ry = Math.PI, sit = false;
+      if (a.status === 'working' || a.status === 'failed') { const p = desks[d++ % desks.length]; x = p[0]; z = p[1] + 0.5; sit = a.status === 'working'; }
+      else if (a.status === 'reviewing') { x = B.review[0]; z = B.review[1] + 0.5; sit = true; }
+      else if (a.status === 'waiting' || a.status === 'blocked') { const p = B.wait[w++ % B.wait.length]; x = p[0]; z = p[1] + 0.35; }
+      else { x = B.sofa[0] - 0.55 + (idle % 3) * 0.55; z = B.sofa[1] + 0.05; ry = Math.PI; sit = idle < 3; idle++; }
+      this.addMiniChar(g, a, x, z, ry, own, sit);
+      g.userData.agentMarks.push({ id: a.id, name: a.name, status: a.status, role: a.role, x, y: SLAB_H + 0.55, z });
     });
   }
 
-  addGuideFloor(g, f, own, size = GUIDE_FLOOR_SIZE) {
-    this.addMiniFurniture(g, 0, { ...f, agents: 2, working: 1 }, own, size);
-    this.addMiniAgent(g, { status: f.guide?.status === 'conversando' ? 'working' : 'idle' }, size.rx * 0.46, size.rz * 0.52, own, 0.9);
-    if (f.guide?.po) this.addMiniAgent(g, { status: 'reviewing' }, size.rx * 0.6, size.rz * 0.56, own, 0.84);
+  addGuideFloor(g, f, own, size = BUILDING_FLOOR_SIZE) {
+    this.addMiniFurniture(g, 0, { ...f, agents: 2, working: f.guide?.status === 'conversando' ? 1 : 0 }, own, size);
+    this.addMiniChar(g, { id: 'guide', name: 'Guía', status: f.guide?.status === 'conversando' ? 'working' : 'idle' }, Office3D.BLDG.dev[0][0], Office3D.BLDG.dev[0][1] + 0.5, Math.PI, own, true);
+    if (f.guide?.po) this.addMiniChar(g, { id: 'po', name: 'PO', status: 'reviewing' }, Office3D.BLDG.review[0], Office3D.BLDG.review[1] + 0.5, Math.PI, own, true);
   }
 
   // Una planta = losa + suelo claro + paredes de fondo/izquierda; frontal y derecha quedan abiertas (FT-70).
@@ -666,8 +753,8 @@ export class Office3D {
     const g = new THREE.Group();
     const size = this.buildingFloorSize(f);
     g.position.y = i * FLOOR_H;
-    g.position.x = f.guide ? 1.1 : 0;
-    g.position.z = (this.floors.length - 1 - i) * FLOOR_Z_STEP;
+    g.position.x = 0;
+    g.position.z = (this.floors.length - 1 - i) * FLOOR_Z_STEP; // 0: todas en el mismo eje (FT-77 v2)
     g.userData = { index: i, mats: [], label: null, size, agentMarks: [] };
     const own = (geo, mat) => { const m = new THREE.Mesh(geo, mat); m.userData.ownGeo = true; g.userData.mats.push(mat); return m; };
     const slab = own(new THREE.BoxGeometry(size.rx + 0.3, SLAB_H, size.rz + 0.3), new THREE.MeshStandardMaterial({ color: SLAB_COLOR, roughness: 0.9 }));
@@ -683,6 +770,7 @@ export class Office3D {
       const obj = this.place(model, x, z, { ry, tint: model === 'wall' ? tint : undefined }, g);
       if (!obj) return;
       obj.position.y = SLAB_H;
+      obj.scale.y *= BWALL_H / WALL_H; // paredes más altas que en la sala: interior visible por el frente abierto (v2)
       obj.traverse((m) => {
         if (!m.isMesh) return;
         m.castShadow = false; m.receiveShadow = false;   // cientos de paredes: sin sombras
@@ -703,13 +791,21 @@ export class Office3D {
     });
     if (f.guide) this.addGuideFloor(g, f, own, size);
     else { this.addMiniFurniture(g, i, f, own, size); this.addMiniAgents(g, f, own, size); }
+    // Pilar en la esquina abierta (frente-derecha): ayuda a leer el conjunto como UN edificio (v2)
+    const pillarMat = new THREE.MeshStandardMaterial({ color: 0xd9dfe3, roughness: 0.85 });
+    const pillar = own(new THREE.BoxGeometry(0.22, BWALL_H, 0.22), pillarMat); pillar.position.set(size.rx - 0.11, SLAB_H + BWALL_H / 2, size.rz - 0.11); g.add(pillar);
     this.building.add(g);
     this.floorGroups.push(g);
     // Etiqueta HTML de la planta (como las de los personajes), a la derecha del edificio.
     const el = document.createElement('div');
     el.className = 'o3d-el o3d-floor' + (f.projectId ? '' : ' grouped') + (f.guide ? ' guide' : '');
     const parts = f.guide ? [`${f.guide.status}`, `${f.review} decisiones`] : [`${f.working} trabajando`, `${f.queued} en cola`, `${f.review} en revisión`, `${f.failed} fallidos`];
-    el.textContent = `${f.running ? '' : '⏸ '}${f.name} · ${parts.join(' · ')}`;
+    // Tarjeta tipo referencia: «P3» + nombre y, debajo, las métricas con su punto de color (FT-77 v2)
+    const esc2 = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const line2 = f.guide ? `<span class="m"><i style="background:#34d399"></i>${esc2(f.guide.status)} · ${f.review} decisiones</span>`
+      : `<span class="m"><i style="background:#34d399"></i>${f.working} trabajando · ${f.queued} en cola</span>${f.review ? `<span class="m"><i style="background:#fbbf24"></i>${f.review} en revisión</span>` : ''}${f.failed ? `<span class="m bad"><i style="background:#f87171"></i>${f.failed} fallidos</span>` : ''}`;
+    el.innerHTML = `<b class="pn">P${i + 1}</b><span class="body"><span class="n">${f.running ? '' : '⏸ '}${esc2(f.name)}</span>${line2}</span>`;
+    el.title = `${f.running ? '' : '⏸ '}${f.name} · ${parts.join(' · ')}`; // texto completo (lo usan el tooltip y las pruebas)
     el.dataset.floor = String(i);
     if (f.projectId) el.dataset.projectId = f.projectId;
     this.labelRoot.appendChild(el);
@@ -722,7 +818,7 @@ export class Office3D {
       if (!el) continue;
       // Esquina derecha abierta: con la cámara en (1,1,1) es el punto más a la derecha en pantalla.
       const size = g.userData.size || BUILDING_FLOOR_SIZE;
-      const p = this.project(g.position.x + size.rx, g.position.y + SLAB_H + WALL_H / 2, g.position.z);
+      const p = this.project(g.position.x + size.rx + CORE_W + 0.4, g.position.y + SLAB_H + BWALL_H * 0.5, g.position.z + size.rz * 0.2);
       // Si la etiqueta no cabe a la derecha del edificio (lienzo estrecho, texto largo), se pega al borde del lienzo (FT-48).
       const w = el.offsetWidth || 0, cw = this.cv.clientWidth || 0;
       el.style.left = (cw && p.x + w + 8 > cw ? Math.max(8, cw - 8 - w) : p.x) + 'px';
@@ -767,7 +863,7 @@ export class Office3D {
     const g = this.floorGroups[i];
     if (!full || !g) return null;
     const size = g.userData.size || BUILDING_FLOOR_SIZE;
-    const cy = this.project(g.position.x + size.rx / 2, g.position.y + SLAB_H + WALL_H / 2, g.position.z + size.rz / 2).y;
+    const cy = this.project(g.position.x + size.rx / 2, g.position.y + SLAB_H + BWALL_H / 2, g.position.z + size.rz / 2).y;
     const h = Math.min(full.h, Math.max(42, (this.cv.clientHeight || 480) / Math.max(10, this.floors.length * 3.2)));
     return { x: full.x, y: cy - h / 2, w: full.w, h };
   }
@@ -799,10 +895,12 @@ export class Office3D {
       const screen = { x: cv.left + (ndc.x + 1) / 2 * cv.width, y: cv.top + (1 - ndc.y) / 2 * cv.height };
       const fullRect = this.floorFullScreenRect(i);
       const inRect = !!fullRect && screen.x >= fullRect.x && screen.x <= fullRect.x + fullRect.w && screen.y >= fullRect.y && screen.y <= fullRect.y + fullRect.h;
-      const dir = world.clone().sub(this.camera.position);
-      const dist = dir.length();
-      this.raycaster.set(this.camera.position, dir.normalize());
-      const hit = this.raycaster.intersectObject(this.building, true).find((h) => h.distance < dist - 0.05 && this.floorAncestor(h.object) !== g);
+      // Cámara ortográfica: los rayos de visión son PARALELOS a la dirección de vista (no salen de camera.position). Se lanza el
+      // rayo desde «delante» del agente hacia él con esa dirección (corregido en FT-77 v2, con la cámara más baja del edificio).
+      const vd = new THREE.Vector3(); this.camera.getWorldDirection(vd);
+      const back = 60, origin = world.clone().addScaledVector(vd, -back);
+      this.raycaster.set(origin, vd);
+      const hit = this.raycaster.intersectObject(this.building, true).find((h) => h.distance < back - 0.05 && this.floorAncestor(h.object) !== g);
       return { ...a, screen, inRect, clearSight: !hit, blockedBy: hit ? this.floorAncestor(hit.object)?.userData.index ?? null : null };
     });
   }
@@ -1029,12 +1127,17 @@ export class Office3D {
         border-radius:8px;padding:3px 10px;box-shadow:0 2px 6px rgba(0,0,0,.18)}
       .o3d-zone{font-size:11px;font-weight:800;color:#1f2937;background:rgba(255,255,255,.86);border:1px solid rgba(0,0,0,.08);
         border-radius:6px;padding:3px 9px;box-shadow:0 1px 4px rgba(0,0,0,.14);transform:translate(-50%,-50%)}
-      .o3d-floor{font-size:12px;font-weight:600;color:#1f2937;background:rgba(255,255,255,.92);border:1px solid rgba(0,0,0,.1);
-        border-radius:8px;padding:3px 10px;box-shadow:0 2px 6px rgba(0,0,0,.18);transform:translate(10px,-50%)}
+      .o3d-floor{display:flex;align-items:center;gap:8px;font-size:12px;color:#e5e7eb;background:rgba(17,24,39,.88);border:1px solid rgba(148,163,184,.25);border-radius:10px;padding:7px 11px;transform:translate(0,-50%);white-space:nowrap;box-shadow:0 2px 10px rgba(0,0,0,.25);min-width:190px}
+      .o3d-floor .pn{font-size:11px;color:#94a3b8;font-weight:700;min-width:20px}
+      .o3d-floor .body{display:flex;flex-direction:column;gap:2px}
+      .o3d-floor .n{font-weight:700;font-size:13px;color:#f8fafc}
+      .o3d-floor .m{font-size:11px;color:#cbd5e1;display:flex;align-items:center;gap:5px}
+      .o3d-floor .m i{width:7px;height:7px;border-radius:50%;display:inline-block}
+      .o3d-floor .m.bad{color:#fca5a5}
       .o3d-floor.hover{outline:2px solid #3ad0a0;outline-offset:1px}
-      .o3d-floor.active{border-color:#3ad0a0;box-shadow:0 0 0 2px rgba(58,208,160,.35),0 2px 6px rgba(0,0,0,.18);font-weight:700}
+      .o3d-floor.active{border-color:#3ad0a0;box-shadow:0 0 0 2px rgba(58,208,160,.45),0 2px 10px rgba(0,0,0,.3)}
       .o3d-floor.grouped{color:#64748b;font-style:italic}
-      .o3d-floor.guide{background:rgba(237,253,245,.94);border-color:rgba(52,211,153,.38)}
+      .o3d-floor.guide{background:rgba(6,40,30,.9);border-color:rgba(52,211,153,.45)}
       .o3d-labels:not(.building) .o3d-floor,.o3d-labels.building .o3d-pill,.o3d-labels.building .o3d-bubble,.o3d-labels.building .o3d-board,.o3d-labels.building .o3d-zone{display:none}`;
     document.head.appendChild(style);
     this.labelRoot = document.createElement('div');
@@ -1201,12 +1304,42 @@ export class Office3D {
 
   // ── Encuadre / bucle ──────────────────────────────────────────────────────────
   resize() {
-    const w = this.cv.clientWidth || 320, h = this.cv.clientHeight || 208;
+    const w = this.cv.clientWidth || 320;
+    let h = this.fitBuildingHeight(w);
     this.renderer.setSize(w, h, false);
     if (this.officeLevel === 'agent' && this.selected) this.frameAgentCamera(w / h, this.selected);
     else this.frameCamera(w / h, this.viewBox());
     if (this.camAnim) this.camAnim.to = this.captureFrame();   // en plena transición: el destino es el nuevo encuadre
     if (!this.running && this.renderer) this.renderer.render(this.scene, this.camera);
+  }
+
+  // Contrato visual (FT-77 v2): «scroll vertical antes que miniaturizar». En modo edificio, si con el alto disponible las plantas
+  // quedarían por debajo de ~560 px de ancho, el lienzo crece en alto (y la vista hace scroll) hasta que midan ~620 px.
+  fitBuildingHeight(w) {
+    const wrap = this.cv.parentElement;
+    const reset = () => { if (this.cv.style.height) { this.cv.style.height = ''; if (this.labelRoot) { this.labelRoot.style.height = ''; this.labelRoot.style.bottom = ''; } if (wrap) wrap.style.overflowY = ''; } };
+    if (this.mode !== 'building' || this.officeLevel === 'agent' || !wrap || !this.floorGroups.length) { reset(); return this.cv.clientHeight || 208; }
+    const avail = wrap.clientHeight || this.cv.clientHeight || 208;
+    this.frameCamera(w / avail, this.viewBox());
+    const fw = this.floorPxWidth(0, w);
+    let h = avail;
+    if (fw && fw < 560) h = Math.min(avail * 4, Math.round(avail * (620 / fw)));
+    if (h > avail + 2) {
+      this.cv.style.height = h + 'px';
+      if (this.labelRoot) { this.labelRoot.style.height = h + 'px'; this.labelRoot.style.bottom = 'auto'; }
+      wrap.style.overflowY = 'auto';
+    } else { reset(); h = avail; }
+    return h;
+  }
+  // Ancho en px de la planta i para un lienzo de ancho w (proyección de su caja; no depende del tamaño CSS del lienzo).
+  floorPxWidth(i, w) {
+    const g = this.floorGroups[i];
+    if (!g) return 0;
+    this.camera.updateMatrixWorld(); g.updateWorldMatrix(true, true);
+    const b = new THREE.Box3().setFromObject(g);
+    let x0 = Infinity, x1 = -Infinity;
+    for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) { const v = new THREE.Vector3(x, y, z).project(this.camera); x0 = Math.min(x0, v.x); x1 = Math.max(x1, v.x); }
+    return (x1 - x0) / 2 * w;
   }
 
   frameAgentCamera(aspect, id) {
@@ -1267,16 +1400,15 @@ export class Office3D {
       const s = this.currentFloorSize || DEFAULT_FLOOR_SIZE;
       return [s.rx, WALL_H, s.rz];
     }
-    const maxRx = Math.max(...this.floors.map((f) => this.buildingFloorSize(f).rx), BUILDING_FLOOR_SIZE.rx) + 1.1;
-    const maxRz = Math.max(...this.floors.map((f) => this.buildingFloorSize(f).rz), BUILDING_FLOOR_SIZE.rz);
-    return [maxRx, Math.max(1, this.floors.length) * FLOOR_H + SLAB_H, maxRz + Math.max(0, this.floors.length - 1) * FLOOR_Z_STEP];
+    const n = Math.max(1, this.floors.length);
+    return [BUILDING_FLOOR_SIZE.rx + CORE_W, n * FLOOR_H + 1.3, BUILDING_FLOOR_SIZE.rz]; // + azotea con sombrilla
   }
 
   frameCamera(aspect, box = FLOOR_BOX) {
     const cam = this.camera;
     const [bx, by, bz] = box;
     const center = new THREE.Vector3(bx / 2, by / 2, bz / 2);
-    const dir = new THREE.Vector3(1, 1, 1).normalize();
+    const dir = (this.mode === 'building' ? new THREE.Vector3(...BUILDING_CAM_DIR) : new THREE.Vector3(1, 1, 1)).normalize();
     const radius = Math.hypot(bx, by, bz);
     cam.position.copy(center).addScaledVector(dir, radius * 2);
     cam.up.set(0, 1, 0);
@@ -1291,8 +1423,8 @@ export class Office3D {
       minY = Math.min(minY, v.y); maxY = Math.max(maxY, v.y);
       minZ = Math.min(minZ, v.z); maxZ = Math.max(maxZ, v.z);
     }
-    if (this.mode === 'building') maxX += 4.5;   // sitio a la derecha para las etiquetas de las plantas
-    const margin = 1.08;
+    if (this.mode === 'building') maxX += 6.5;   // sitio a la derecha para las tarjetas de las plantas (secundarias a la escena)
+    const margin = this.mode === 'building' ? 1.16 : 1.08; // edificio ≈ 65–80 % del alto útil (contrato visual)
     let halfW = (maxX - minX) / 2 * margin, halfH = (maxY - minY) / 2 * margin;
     if (halfW / halfH < aspect) halfW = halfH * aspect; else halfH = halfW / aspect;
     const midX = (minX + maxX) / 2, midY = (minY + maxY) / 2;
