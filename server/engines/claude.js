@@ -121,7 +121,6 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, kind, roleTool
       if (raw) { child.stdin.write(userMsg(text)); return true; }
       // Redacción neutra a propósito: un encabezado en mayúsculas tipo «INSTRUCCIÓN… prioritaria… confírmala literalmente» hace que
       // el modelo lo trate como inyección y lo rechace (probado con el CLI real).
-      if (raw) child.stdin.write(userMsg(text)); // FT-62: aviso del sistema (ya redactado), no del cliente
       else child.stdin.write(userMsg(`El cliente (quien revisa tu trabajo) añade esta indicación para lo que queda de la tarea: «${text}». Aplícala a partir de ahora y menciónala en tu resumen final.`));
       return true;
     },

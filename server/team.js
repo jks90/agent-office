@@ -8,7 +8,7 @@ import * as events from './events.js';
 import * as git from './git.js';
 import { allRoles, roleOf } from './roles.js';
 import { parseTasks } from './engines/describe.js';
-import { addUsage } from './usage.js';
+import { addUsage, codexCostUsd } from './usage.js';
 import * as demo from './engines/demo.js';
 import * as claude from './engines/claude.js';
 import * as codex from './engines/codex.js';
@@ -952,7 +952,10 @@ async function runTask(p, agent, t) {
       onLog: (line) => log(agent.id, line),
       onUsage: (u) => { agent.usage = { ...u, engine: engineId, taskId: t.id }; t.usage = addUsage(baseUsage, u);
         // FT-63: contexto por encima del umbral → pedir las notas en caliente (Claude) o, si el motor no admite mensajes, cortar
-        if (at && !cmp.asked && seg < compact.MAX_COMPACTIONS && compact.reached(u, model, at)) {
+        // FT-57 manda sobre FT-63: si el intento ya está cerca de su tope de tokens, se deja que lo corte el tope (va a Revisión) en vez de compactar y relanzar
+        const budgetUsd = Number(s.settings.maxTaskUsd) > 0 ? Number(s.settings.maxTaskUsd) : 3, capTok = Number(s.settings.maxTaskTokens) > 0 ? Number(s.settings.maxTaskTokens) : 0;
+        const nearCap = engineId === 'codex' && (capTok ? (u.total || 0) >= capTok * 0.9 : codexCostUsd(u, model) >= budgetUsd * 0.9); // mismo cálculo que codex.js (Claude lo corta el CLI por US$)
+        if (at && !cmp.asked && seg < compact.MAX_COMPACTIONS && !nearCap && compact.reached(u, model, at)) {
           cmp.asked = true;
           const pct = Math.round(compact.contextShare(u, model) * 100);
           if (job.message) { job.message(compact.COMPACT_INSTRUCTION, { raw: true }); log(agent.id, `🗜 Contexto al ${pct} %: pido las notas (${compact.NOTES_FILE}) para relanzar con contexto limpio`); }
@@ -979,6 +982,7 @@ async function runTask(p, agent, t) {
     events.emit('AgentResumed', ev, { reason: 'compact', attempt: t.attempts, compactions: t.compactions });
     }
     delete t.compactNotes;
+    const entry = jobs.get(agent.id) || {}; // FT-62 tras el bucle de segmentos de FT-63: marca de atasco del último segmento
 
     if (res.costUsd != null) t.costUsd = (t.costUsd || 0) + res.costUsd;
     if (res.sessionId) Object.assign(t, { sessionId: res.sessionId, sessionAt: Date.now(), sessionEngine: engineId });
