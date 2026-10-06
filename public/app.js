@@ -277,11 +277,13 @@ function guideMount(el, panel) {
       <div class="g-head"><b class="g-title">🧭 Guía</b><button class="ghost small g-ear" data-g="ear" hidden></button><span class="g-pickbar"><select class="g-pick" title="Chats"></select><button class="ghost small" data-g="new">＋</button><button class="ghost small g-pdel" data-g="delcur" title="Borrar este chat">🗑</button></span>${panel ? '<button class="ghost small" data-g="close" title="Cerrar (Ctrl+G)">✕</button>' : ''}</div>
       <div class="g-msgs"></div>
       <div class="g-voice" hidden><span class="g-vtxt"></span><i class="g-vlevel"></i></div>
-      <form class="g-form"><button type="button" class="ghost g-mic" data-g="mic" title="Mantén pulsado para hablar (o barra espaciadora con la caja vacía)">🎤</button><textarea rows="1" placeholder="Pídeme algo…" title="Intro envía · Mayús+Intro salto de línea · barra espaciadora con la caja vacía = hablar"></textarea><button class="g-send">Enviar</button><button type="button" class="ghost g-stop" data-g="stop" hidden>■ Parar</button></form>
+      <div class="g-attach" hidden></div>
+      <form class="g-form"><button type="button" class="ghost g-clip" data-g="clip" title="Adjuntar imágenes o ficheros (también Ctrl+V o arrastrar sobre el chat)">📎 Adjuntar</button><input type="file" class="g-file" multiple hidden /><button type="button" class="ghost g-mic" data-g="mic" title="Mantén pulsado para hablar (o barra espaciadora con la caja vacía)">🎤</button><textarea rows="1" placeholder="Pídeme algo…" title="Intro envía · Mayús+Intro salto de línea · barra espaciadora con la caja vacía = hablar"></textarea><button class="g-send">Enviar</button><button type="button" class="ghost g-stop" data-g="stop" hidden>■ Parar</button></form>
     </div></div>`;
   guideRoots.push({ el, panel });
   const ta = el.querySelector('textarea');
-  el.querySelector('form').onsubmit = (e) => { e.preventDefault(); const t = ta.value.trim(); if (t && !G.busy) { ta.value = ''; ta.style.height = ''; guideSend(t); } };
+  el.querySelector('form').onsubmit = (e) => { e.preventDefault(); const t = ta.value.trim(); if ((t || G.pending.length) && !G.busy && !G.uploading) { ta.value = ''; ta.style.height = ''; guideSend(t); } };
+  guideAttachWire(el, ta);
   ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); el.querySelector('form').requestSubmit(); } });
   // Voz (FT-9): mantener 🎤, o la barra espaciadora con la caja vacía
   const mic = el.querySelector('.g-mic');
@@ -302,6 +304,8 @@ function guideMount(el, panel) {
     else if (b.dataset.g === 'delcur') { if (G.chatId) guideDelete(G.chatId); }
     else if (b.dataset.gdel) guideDelete(b.dataset.gdel);
     else if (b.dataset.g === 'stop') guideStop();
+    else if (b.dataset.g === 'clip') el.querySelector('.g-file').click(); // FT-90
+    else if (b.dataset.g === 'unattach') { const [a] = G.pending.splice(Number(b.dataset.i), 1); if (a?.thumb) URL.revokeObjectURL(a.thumb); guideRender(); }
     else if (b.dataset.g === 'close') guideToggle(false);
     else if (b.dataset.g === 'ear') wakeSet(false);
     else if (b.dataset.g === 'play') ttsSpeak(G.messages[b.dataset.i]?.text, Number(b.dataset.i));
@@ -360,6 +364,7 @@ function guideRender() {
     el.querySelector('.g-send').hidden = G.busy;
     el.querySelector('.g-stop').hidden = !G.busy;
     el.querySelector('textarea').disabled = G.busy;
+    guideChips(el);
     const mic = el.querySelector('.g-mic'), vbar = el.querySelector('.g-voice'), mine = V.root === el && V.state !== 'idle';
     mic.disabled = G.busy || (V.state !== 'idle' && !mine);
     mic.classList.toggle('rec', mine && V.state === 'rec');
@@ -369,8 +374,58 @@ function guideRender() {
   wakeSync(); // la escucha continua depende de G.busy y V.state (FT-36)
 }
 
+// FT-90 · adjuntos del chat del Guía: Ctrl+V, arrastrar y soltar o botón «Adjuntar». Se suben al elegirlos (POST /api/upload,
+// FT-95) y viajan como referencias {path} en POST /api/guide/chat. Los límites reflejan los de server/uploads.js.
+const GUIDE_MAX_FILES = 10, GUIDE_MAX_FILE_BYTES = 25e6, GUIDE_MAX_TOTAL_BYTES = 30e6;
+const isImg = (n) => /\.(png|jpe?g|webp|gif)$/i.test(n || '');
+const fmtSize = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+G.pending = []; G.uploading = false;
+const fileUrl = (p) => BASE + 'api/file?path=' + encodeURIComponent(p);
+async function guideAddFiles(list) {
+  const files = [...list];
+  if (!files.length || G.busy || G.uploading) return;
+  if (G.pending.length + files.length > GUIDE_MAX_FILES) return toast(`Máximo ${GUIDE_MAX_FILES} adjuntos por mensaje`, 'error');
+  const ok = [];
+  let total = G.pending.reduce((n, a) => n + a.size, 0);
+  for (const f of files) {
+    if (!f.size) { toast(`${f.name || 'Adjunto'}: está vacío`, 'error'); continue; }
+    if (f.size > GUIDE_MAX_FILE_BYTES) { toast(`${f.name}: demasiado grande (máx. ${GUIDE_MAX_FILE_BYTES / 1e6} MB)`, 'error'); continue; }
+    if (total + f.size > GUIDE_MAX_TOTAL_BYTES) { toast(`${f.name}: se supera el total de ${GUIDE_MAX_TOTAL_BYTES / 1e6} MB por mensaje`, 'error'); continue; }
+    total += f.size; ok.push(f);
+  }
+  if (!ok.length) return;
+  G.uploading = true; guideRender();
+  try {
+    const toB64 = (f) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
+    const payload = [];
+    for (const f of ok) payload.push({ name: f.name || `captura-${Date.now()}.png`, data: await toB64(f) });
+    const up = (await api('POST', '/api/upload', { files: payload })).filter((a) => a?.path);
+    up.forEach((a, i) => { if (isImg(a.name)) a.thumb = URL.createObjectURL(ok[i]); G.pending.push(a); });
+  } catch (e) { toast(e.message || 'No se pudo adjuntar', 'error'); }
+  finally { G.uploading = false; guideRender(); }
+}
+function guideChips(el) {
+  const box = el.querySelector('.g-attach');
+  box.hidden = !G.pending.length && !G.uploading;
+  box.innerHTML = G.pending.map((a, i) => `<span class="g-chip" title="${esc(a.name)}">${a.thumb ? `<img src="${a.thumb}" alt="" />` : '📄'}<span class="g-cname">${esc(a.name)}</span><span class="muted">${fmtSize(a.size)}</span><button type="button" data-g="unattach" data-i="${i}" title="Quitar">✕</button></span>`).join('') + (G.uploading ? '<span class="muted small">⏳ subiendo…</span>' : '');
+  el.querySelector('.g-clip').disabled = G.busy || G.uploading;
+}
+function guideAttachWire(el, ta) {
+  const main = el.querySelector('.g-main'), inp = el.querySelector('.g-file');
+  inp.onchange = () => { guideAddFiles(inp.files).then(() => { inp.value = ''; }); };
+  ta.addEventListener('paste', (e) => { const files = [...(e.clipboardData?.files || [])]; if (files.length) { e.preventDefault(); guideAddFiles(files); } }); // el texto pegado sigue igual
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+  let depth = 0;
+  main.addEventListener('dragenter', (e) => { if (hasFiles(e)) { depth++; main.classList.add('drag'); } });
+  main.addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
+  main.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; main.classList.remove('drag'); } });
+  main.addEventListener('drop', (e) => { if (!hasFiles(e)) return; e.preventDefault(); depth = 0; main.classList.remove('drag'); guideAddFiles(e.dataTransfer.files); });
+}
+function guideMsgFiles(m) {
+  return (m.attachments || []).length ? `<div class="g-files">${m.attachments.map((a) => isImg(a.name) ? `<a href="${fileUrl(a.path)}" target="_blank" title="${esc(a.name)}"><img src="${fileUrl(a.path)}" alt="${esc(a.name)}" /></a>` : `<a class="g-fchip" href="${fileUrl(a.path)}" target="_blank">📄 ${esc(a.name)} <span class="muted">${fmtSize(a.size || 0)}</span></a>`).join('')}</div>` : '';
+}
 function guideMsg(m, i) {
-  if (m.role === 'user') return `<div class="g-msg user">${esc(m.text)}</div>`;
+  if (m.role === 'user') return `<div class="g-msg user">${m.attachments?.length && m.text === 'Adjuntos' ? '' : esc(m.text)}${guideMsgFiles(m)}</div>`;
   if (m.role === 'assistant') return `<div class="g-msg assistant">${md(m.text)}${ttsButton(i, m.text)}</div>`;
   if (m.role === 'meta') return `<div class="g-meta" title="${esc(m.provider || '')}">${esc(m.model || m.provider || '')}${m.costUsd != null ? ` · ≈ ${m.costUsd.toFixed(4)} $` : ''}${m.usage ? ` · ${m.usage.input + m.usage.cacheRead + m.usage.cacheWrite} tok entrada${m.usage.cacheRead ? ` (${m.usage.cacheRead} en caché)` : ''} / ${m.usage.output} salida` : ''}</div>`;
   if (m.role === 'error') return `<div class="g-msg error ${m.stopped ? 'stopped' : ''}">${m.stopped ? '■ ' : '⚠ '}${esc(m.text)}</div>`;
@@ -438,11 +493,12 @@ async function guideSend(text) {
   voiceSpeak(null); // callar lo que estuviera leyendo (FT-9)
   let said = '';
   G.busy = true;
-  G.messages.push({ role: 'user', text });
+  const sent = G.pending; G.pending = [];
+  G.messages.push({ role: 'user', text: text || 'Adjuntos', ...(sent.length ? { attachments: sent } : {}) });
   guideRender();
   const push = (m) => { G.messages.push(m); guideRender(); };
   try {
-    const r = await fetch(BASE + 'api/guide/chat', { method: 'POST', headers: { 'content-type': 'application/json', 'x-ao-client': CLIENT_ID }, body: JSON.stringify({ chatId: G.chatId, text }) });
+    const r = await fetch(BASE + 'api/guide/chat', { method: 'POST', headers: { 'content-type': 'application/json', 'x-ao-client': CLIENT_ID }, body: JSON.stringify({ chatId: G.chatId, text, attachments: sent.map((a) => ({ name: a.name, path: a.path })) }) });
     if (!r.ok) { const j = await r.json().catch(() => ({})); push({ role: 'error', text: j.error || r.statusText }); return; }
     const reader = r.body.getReader(), dec = new TextDecoder();
     let buf = '';
