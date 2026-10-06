@@ -1189,6 +1189,7 @@ async function openSchedules() {
     <div class="sched-list">${list.map((x) => `<div class="sched-row ${x.enabled ? '' : 'off'}">
       <div class="sched-main"><b>${esc(x.title)}</b> <span class="muted">· ${roleChip(x.role)} · ${schedFreq(x)}${x.hookToken ? ' · 🪝 webhook' : ''}${x.reviewRequired ? ' · ✋ revisión obligatoria' : ''}</span>
         <div class="muted">${last(x)}</div>
+        ${x.check ? `<div class="muted">🔎 comprobación: <code>${esc(x.check.slice(0, 90))}</code>${x.lastCheck ? ` · última: ${x.lastCheck.code === 0 ? '✓ sin novedad' : x.lastCheck.code === 2 ? '⚠ creó tarea' : `✗ error ${x.lastCheck.code}`} hace ${waitTxt(x.lastCheck.at)}` : ''}</div>` : ''}
         ${x.hookToken ? `<div class="sched-hook"><code>${esc(hookUrl(x))}</code> <button type="button" class="small ghost" data-copy="${esc(hookUrl(x))}">Copiar</button> <button type="button" class="small ghost" data-copy="${esc(hookUrl(x, true))}" title="Para el flow-test en Docker (notifyUrl de un monitor)">Copiar (Docker)</button></div>` : ''}</div>
       <div class="sched-acts"><button type="button" class="small" data-sched-run="${x.id}">▶ Ahora</button><button type="button" class="small ghost" data-sched-toggle="${x.id}">${x.enabled ? '⏸ Pausar' : '▶ Activar'}</button><button type="button" class="small ghost" data-sched-edit="${x.id}">✎</button><button type="button" class="small danger" data-sched-del="${x.id}">✕</button></div>
     </div>`).join('') || '<p class="empty">Ninguna todavía.</p>'}</div>
@@ -1208,11 +1209,12 @@ async function editSchedule(sid) {
       <div><label>Minutos (si «cada N minutos»; mínimo 5)</label><input name="every" type="number" min="5" value="${esc(String(x.every || 60))}" /></div>
       <div><label>Hora (si «cada día»)</label><input name="at" type="time" value="${esc(x.at || '09:00')}" /></div>
     </div>
+    <label>🔎 Comprobación sin IA (opcional): orden que se ejecuta en la carpeta del proyecto; código 0 = todo bien (no se crea tarea), 2 = crear la tarea con su salida</label><input name="check" value="${esc(x.check || '')}" placeholder="node scripts/revert-posicion.mjs --check" />
     <label><input type="checkbox" name="webhook" ${x.hookToken || mode === 'hook' ? 'checked' : ''} /> 🪝 Además, se puede lanzar por webhook (te doy una URL secreta para un monitor de flow-test u otro sistema)</label>
     <label><input type="checkbox" name="reviewRequired" ${x.reviewRequired ? 'checked' : ''} /> ✋ Revisión obligatoria (nunca se aprueba sola: para tareas que tocan dinero o producción)</label>
     <label><input type="checkbox" name="enabled" ${x.enabled !== false ? 'checked' : ''} /> Activa</label>
     ${buttons('Guardar')}`, async (f) => {
-    const body = { title: f.title, description: f.description, role: f.role, every: f.mode === 'every' ? Number(f.every) : null, at: f.mode === 'at' ? f.at : null, webhook: f.mode === 'hook' || !!f.webhook, reviewRequired: !!f.reviewRequired, enabled: !!f.enabled };
+    const body = { title: f.title, description: f.description, role: f.role, every: f.mode === 'every' ? Number(f.every) : null, at: f.mode === 'at' ? f.at : null, webhook: f.mode === 'hook' || !!f.webhook, reviewRequired: !!f.reviewRequired, enabled: !!f.enabled, check: f.check || '' };
     await api(sid ? 'PATCH' : 'POST', `/api/projects/${projectId}/schedules${sid ? '/' + sid : ''}`, body);
     toast('Programada guardada'); setTimeout(openSchedules, 50);
   }, 'wide');
@@ -2821,7 +2823,7 @@ document.addEventListener('click', async (e) => {
   }
   if (d.qAnswer) return openQuestion(d.qAnswer);
   if (d.schedEdit !== undefined) return editSchedule(d.schedEdit);
-  if (d.schedRun) return api('POST', `/api/projects/${projectId}/schedules/${d.schedRun}/run`).then((r) => { toast(r.skipped ? `Saltada: ${r.skipped}` : `Creada ${r.task}`); openSchedules(); });
+  if (d.schedRun) return api('POST', `/api/projects/${projectId}/schedules/${d.schedRun}/run`).then((r) => { toast(r.checking ? 'Comprobando… (si hay algo que hacer, crea la tarea)' : r.skipped ? `Saltada: ${r.skipped}` : `Creada ${r.task}`); setTimeout(openSchedules, r.checking ? 3000 : 0); });
   if (d.schedToggle) { const x = (await api('GET', `/api/projects/${projectId}/schedules`)).find((y) => y.id === d.schedToggle); return api('PATCH', `/api/projects/${projectId}/schedules/${d.schedToggle}`, { enabled: !x.enabled }).then(openSchedules); }
   if (d.schedDel) { if (confirm('¿Borrar esta programada? (las tareas ya creadas se quedan)')) api('DELETE', `/api/projects/${projectId}/schedules/${d.schedDel}`).then(openSchedules); return; }
   if (d.copy) { try { await navigator.clipboard.writeText(d.copy); toast('Copiado'); } catch { prompt('Copia la URL:', d.copy); } return; }

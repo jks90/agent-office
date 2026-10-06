@@ -1006,14 +1006,39 @@ function runSchedules() {
   const now = Date.now();
   if (now - schedAt < SCHED_EVERY) return;
   schedAt = now;
-  for (const p of get().projects) if (p.running) for (const sch of p.schedules || []) if (scheduleDue(sch, now)) { try { fireSchedule(p, sch); } catch (e) { log(null, `⚠ Programada «${sch.title}»: ${e.message}`); } }
+  for (const p of get().projects) if (p.running) for (const sch of p.schedules || []) if (scheduleDue(sch, now)) {
+    if (sch.check) { runCheck(p, sch); continue; }
+    try { fireSchedule(p, sch); } catch (e) { log(null, `⚠ Programada «${sch.title}»: ${e.message}`); }
+  }
+}
+// Script de comprobación (sin IA): se ejecuta en la carpeta del proyecto (o su repo). Código 0 = sin novedad (solo se apunta);
+// 2 = hay que actuar → se crea la tarea con su salida como datos del aviso; otro = error (se apunta y se reintenta en la siguiente).
+const checking = new Set();
+function runCheck(p, sch) {
+  if (checking.has(sch.id)) return;
+  checking.add(sch.id);
+  sch.lastRunAt = Date.now();
+  const cwd = projectDir(p) || p.repos?.[0]?.path || os.homedir();
+  const ch = spawn('sh', ['-c', sch.check], { cwd, env: { ...process.env, AO_PROJECT: p.name }, stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000 });
+  let out = '';
+  ch.stdout.on('data', (d) => { out += d; if (out.length > 20_000) out = out.slice(-20_000); });
+  ch.stderr.on('data', (d) => { out += d; if (out.length > 20_000) out = out.slice(-20_000); });
+  ch.on('close', (code) => {
+    checking.delete(sch.id);
+    sch.lastCheck = { at: Date.now(), code, out: out.slice(-1500) };
+    if (code === 2) { try { fireSchedule(p, sch, { origin: 'lanzada por su comprobación', extra: out.slice(-4000) }); } catch (e) { log(null, `⚠ Programada «${sch.title}»: ${e.message}`); } }
+    else if (code !== 0) log(null, `⚠ Comprobación de «${sch.title}» falló (código ${code}): ${out.split('\n').filter(Boolean).slice(-1)[0] || ''}`);
+    changed();
+  });
+  ch.on('error', (e) => { checking.delete(sch.id); sch.lastCheck = { at: Date.now(), code: -1, out: e.message }; changed(); });
 }
 const cleanSchedule = (b, prev = {}) => {
   const every = Number(b.every) > 0 ? Math.max(5, Math.min(60 * 24 * 31, Math.round(Number(b.every)))) : null;
   const at = /^\d{1,2}:\d{2}$/.test(String(b.at || '')) ? String(b.at) : null;
   return { ...prev, title: String(b.title ?? prev.title ?? '').trim().slice(0, 120), description: String(b.description ?? prev.description ?? '').slice(0, 8000),
     role: b.role ?? prev.role, every: b.every !== undefined || b.at !== undefined ? every : prev.every ?? null, at: b.every !== undefined || b.at !== undefined ? (every ? null : at) : prev.at ?? null,
-    reviewRequired: b.reviewRequired !== undefined ? !!b.reviewRequired : !!prev.reviewRequired, enabled: b.enabled !== undefined ? !!b.enabled : prev.enabled ?? true };
+    reviewRequired: b.reviewRequired !== undefined ? !!b.reviewRequired : !!prev.reviewRequired, enabled: b.enabled !== undefined ? !!b.enabled : prev.enabled ?? true,
+    check: b.check !== undefined ? (String(b.check || '').trim().slice(0, 500) || null) : prev.check ?? null };
 };
 export function listSchedules(projectId) { return findOr404(get().projects, projectId, 'Proyecto').schedules || []; }
 export function saveSchedule(projectId, b, sid = null) {
@@ -1036,6 +1061,7 @@ export function runScheduleNow(projectId, sid) {
   const p = findOr404(get().projects, projectId, 'Proyecto');
   const sch = (p.schedules || []).find((x) => x.id === sid);
   if (!sch) throw fail(404, 'Programación no encontrada');
+  if (sch.check) { runCheck(p, sch); return { checking: true }; }
   const r = fireSchedule(p, sch, { origin: 'lanzada a mano' }); tick(); return r;
 }
 // POST /api/hooks/<token> (sin x-ao-token: el token de la URL es la credencial). El cuerpo (p. ej. el aviso de un monitor de

@@ -51,6 +51,7 @@ const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, stdio: 
 process.on('exit', () => { try { server.kill('SIGTERM'); ft.close(); fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* nada */ } });
 const call = async (m, p, b) => { const r = await fetch(base + p, { method: m, headers: { 'content-type': 'application/json' }, body: b === undefined ? undefined : JSON.stringify(b) }); const j = await r.json().catch(() => ({})); return { status: r.status, ...j }; };
 const state = () => call('GET', '/api/state');
+const schedules = async (pid) => (await fetch(`${base}/api/projects/${pid}/schedules`)).json();
 const runs = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []);
 try {
   await until(async () => { try { return (await fetch(base + '/api/state')).ok; } catch { return false; } }, 10_000, 100);
@@ -84,6 +85,21 @@ try {
   const th = (await state()).tasks.find((t) => t.title.startsWith('Posición fuera de rango'));
   check('el webhook crea la tarea con los datos del aviso y revisión obligatoria', !!fired.task && /enRango/.test(th?.description || '') && th?.reviewRequired === true, JSON.stringify(fired));
   check('el webhook solo se acepta con su token (cualquier otra ruta sigue pidiendo x-ao-token fuera del loopback)', true);
+  console.log('Comprobación sin IA');
+  const ok0 = await call('POST', `/api/projects/${p.id}/schedules`, { title: 'Vigilar OK', role: 'back', every: 30, check: 'echo todo bien; exit 0' });
+  const n0 = (await state()).tasks.length;
+  await call('POST', `/api/projects/${p.id}/schedules/${ok0.id}/run`);
+  await sleep(1500);
+  const s0 = (await schedules(p.id)).find((x) => x.id === ok0.id);
+  check('código 0 → no crea tarea y apunta «sin novedad»', (await state()).tasks.length === n0 && s0.lastCheck?.code === 0 && /todo bien/.test(s0.lastCheck.out), JSON.stringify(s0.lastCheck));
+  const bad = await call('POST', `/api/projects/${p.id}/schedules`, { title: 'Vigilar FUERA', role: 'back', every: 30, check: 'echo POSICION FUERA DE RANGO; exit 2' });
+  await call('POST', `/api/projects/${p.id}/schedules/${bad.id}/run`);
+  const tb = await until(async () => (await state()).tasks.find((t) => t.title.startsWith('Vigilar FUERA')), 8000, 300);
+  check('código 2 → crea la tarea con la salida del script como datos', /POSICION FUERA DE RANGO/.test(tb?.description || '') && /comprobación/.test(tb?.description || ''), tb?.description?.slice(-200));
+  const err = await call('POST', `/api/projects/${p.id}/schedules`, { title: 'Vigilar roto', role: 'back', every: 30, check: 'exit 7' });
+  await call('POST', `/api/projects/${p.id}/schedules/${err.id}/run`);
+  await sleep(1500);
+  check('otro código → error apuntado y sin tarea', (await schedules(p.id)).find((x) => x.id === err.id).lastCheck?.code === 7 && !(await state()).tasks.some((t) => t.title.startsWith('Vigilar roto')));
 } catch (e) { failed++; console.error('Error:', e.stack || e.message); }
 console.log(failed ? `✗ ${failed} fallos` : '✓ todo bien');
 process.exit(failed ? 1 : 0);
