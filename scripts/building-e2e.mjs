@@ -166,8 +166,8 @@ try {
     await new Promise((r) => setTimeout(r, 3000));
     const after = window.aoOffice.debugState().slots.dev1;
     const ids = Object.keys(d1.slots);
-    const xs = ids.map((id) => d1.slots[id].x), zs = ids.map((id) => d1.slots[id].z);
-    const area = (Math.max(...xs) - Math.min(...xs)) * (Math.max(...zs) - Math.min(...zs));
+    const zoneArea = Object.values(d1.zones).reduce((sum, z) => sum + z.w * z.d, 0);
+    const floorArea = d1.floorSize.rx * d1.floorSize.rz;
     const slotSig = (s) => JSON.stringify({ zone: s.zone, module: s.module, slot: s.slot, x: s.x, z: s.z, status: s.status });
     const stable = ids.every((id) => slotSig(d1.slots[id]) === slotSig(d2.slots[id]));
     const agents10 = Array.from({ length: 10 }, (_, i) => mkAgent('m' + i, i % 3 === 0 ? 'qa' : i % 4 === 0 ? 'docs' : 'back'));
@@ -175,13 +175,30 @@ try {
     window.aoOffice.update({ agents: agents10, tasks: tasks10, questions: [], roles: {}, title: 'FT-69 10', selected: null, projectId: 'ft69' });
     await new Promise((r) => setTimeout(r, 400));
     const d10 = window.aoOffice.debugState();
-    return { zones: Object.keys(d1.zones), slots: ids.length, stable, before, moving, after, areaRatio: area / (13 * 9), size6: d1.floorSize?.kind, size10: d10.floorSize?.kind, slots10: Object.keys(d10.slots).length };
+    return { zones: Object.keys(d1.zones), slots: ids.length, stable, before, moving, after, areaRatio: zoneArea / floorArea, floorSize6: d1.floorSize, size10: d10.floorSize?.kind, slots10: Object.keys(d10.slots).length };
   });
   check('debugState expone zones y slots de 6 agentes', floor69.zones.includes('development') && floor69.zones.includes('review') && floor69.slots === 6, JSON.stringify(floor69));
   check('slots estables entre refrescos idénticos', floor69.stable, JSON.stringify(floor69));
   check('working → review cambia de zona y se anima sin salto', floor69.before.zone === 'development' && floor69.moving.zone === 'review' && floor69.moving.moving === true && floor69.after.zone === 'review', JSON.stringify({ before: floor69.before, moving: floor69.moving, after: floor69.after }));
-  check('4–6 agentes usan planta compacta sin gran vacío', floor69.size6 === 'compact' && floor69.areaRatio > 0.22, JSON.stringify(floor69));
+  check('4–6 agentes usan planta compacta 8.2×5.7 sin gran vacío', floor69.floorSize6?.kind === 'compact' && floor69.floorSize6?.rx === 8.2 && floor69.floorSize6?.rz === 5.7 && floor69.areaRatio >= 0.6, JSON.stringify(floor69));
   check('10 agentes usan oficina media con todos los slots asignados', floor69.size10 === 'medium' && floor69.slots10 === 10, JSON.stringify(floor69));
+  await page.evaluate(() => {
+    const mkAgent = (id, role, status = 'working', taskId = 't-' + id) => ({ id, name: id.toUpperCase(), role, status, taskId, projectId: 'ft69', activity: 'FT-69' });
+    const agents4 = [mkAgent('dev1', 'back'), mkAgent('qa1', 'qa'), mkAgent('doc1', 'docs'), mkAgent('rev1', 'reviewer')];
+    const tasks4 = agents4.map((ag, i) => ({ id: 't-' + ag.id, projectId: 'ft69', agentId: ag.id, status: i === 3 ? 'review' : 'doing', title: 'T' + i }));
+    window.aoOffice.setMode('floor');
+    window.aoOffice.update({ agents: agents4, tasks: tasks4, questions: [], roles: {}, title: 'FT-69 4', selected: null, projectId: 'ft69' });
+  });
+  await sleep(2600);
+  await page.screenshot({ path: path.join(shotDir, 'ft-69-planta-4-agentes.png') });
+  await page.evaluate(() => {
+    const mkAgent = (id, role, status = 'working', taskId = 't-' + id) => ({ id, name: id.toUpperCase(), role, status, taskId, projectId: 'ft69', activity: 'FT-69' });
+    const agents10 = Array.from({ length: 10 }, (_, i) => mkAgent('m' + i, i % 3 === 0 ? 'qa' : i % 4 === 0 ? 'docs' : 'back'));
+    const tasks10 = agents10.map((ag, i) => ({ id: 't-' + ag.id, projectId: 'ft69', agentId: ag.id, status: i % 5 === 0 ? 'review' : 'doing', title: 'T' + i }));
+    window.aoOffice.update({ agents: agents10, tasks: tasks10, questions: [], roles: {}, title: 'FT-69 10', selected: null, projectId: 'ft69' });
+  });
+  await sleep(2600);
+  await page.screenshot({ path: path.join(shotDir, 'ft-69-planta-10-agentes.png') });
   await page.screenshot({ path: path.join(shotDir, 'building-2-planta-beta.png') });
   check('modo recordado en localStorage ao:officeMode=floor', st.stored === 'floor', String(st.stored));
   check('el canvas queda enfocado tras el clic', st.focused);

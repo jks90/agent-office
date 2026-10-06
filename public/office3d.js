@@ -10,13 +10,15 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
-import { layoutFloor, toVisualState } from './office-layout.js';
+import { layoutFloor, recommendedFloorSize, toVisualState } from './office-layout.js';
 
 // ── Geometría de la sala (en unidades Kenney; los modelos son pequeños ≈ 0,7 m/u) ──
 const RX = 13, RZ = 9, WALL_H = 1.29;
 const CENTER = new THREE.Vector3(RX / 2, 0, RZ / 2);
-const SPINE_X = 7.3;                  // pasillo vertical entre las mesas y la zona derecha
-const DOOR = { x: 7.3, z: 0.5 };      // entran por aquí, de uno en uno
+const DEFAULT_FLOOR_SIZE = recommendedFloorSize(0);
+const floorCenter = (size = DEFAULT_FLOOR_SIZE) => new THREE.Vector3(size.rx / 2, 0, size.rz / 2);
+const doorFor = (size = DEFAULT_FLOOR_SIZE) => ({ x: Math.min(size.rx - 0.9, Math.max(0.8, size.rx * 0.58)), z: 0.5 });
+const spineXFor = (size = DEFAULT_FLOOR_SIZE) => Math.min(size.rx - 1.0, Math.max(3.5, size.rx * 0.58));
 const SPEED = 1.7;                    // unidades/s
 const CHAR_H = 0.95;                  // altura objetivo del personaje
 
@@ -28,16 +30,37 @@ for (const z of DESK_ROWS) for (const x of DESK_COLS) DESKS.push({ x, z });
 const seatOf = (d) => ({ x: d.x, z: d.z + 0.5, corr: d.z + 0.5 });
 
 const BOARD_SPOTS = [{ x: 3.0, z: 1.1, corr: null }, { x: 4.2, z: 1.1, corr: null }];
-const BOARD = { x: 4.75, y: 0.78, z: 0.09, w: 2.9, h: 0.98 };
+const BOARD = { x: 4.15, y: 0.78, z: 0.09, w: 2.9, h: 0.98 };
 
-const ZONE_STYLE = {
-  development: { label: 'Desarrollo', color: 0xd6c3ff, x: 1.95, z: 2.7, w: 3.75, d: 3.35 },
-  qa: { label: 'QA', color: 0xb8f0c4, x: 5.85, z: 2.7, w: 3.3, d: 3.35 },
-  docs: { label: 'Documentación', color: 0xb9ddff, x: 2.75, z: 5.85, w: 4.7, d: 1.55 },
-  review: { label: 'Revisión', color: 0xffd36b, x: 8.95, z: 4.75, w: 3.7, d: 2.0 },
-  meeting: { label: 'Reuniones', color: 0xffbbc1, x: 8.25, z: 7.0, w: 3.15, d: 1.85 },
-  board: { label: 'Kanban', color: 0xc9d6df, x: 5.35, z: 1.0, w: 2.8, d: 1.3 },
+const BASE_ZONE_STYLE = {
+  development: { label: 'Desarrollo', color: 0xd6c3ff, x: 1.9, z: 2.35, w: 3.2, d: 3.25, labelX: 2.8, labelZ: 0.85 },
+  qa: { label: 'QA', color: 0xb8f0c4, x: 5.15, z: 2.35, w: 3.0, d: 3.25, labelX: 6.35, labelZ: 0.95 },
+  docs: { label: 'Documentación', color: 0xb9ddff, x: 2.65, z: 4.85, w: 4.3, d: 1.25, labelX: 1.15, labelZ: 4.35 },
+  review: { label: 'Revisión', color: 0xffd36b, x: 7.1, z: 4.25, w: 2.1, d: 2.4, labelX: 7.85, labelZ: 3.25 },
+  meeting: { label: 'Reuniones', color: 0xffbbc1, x: 5.45, z: 5.1, w: 2.2, d: 1.0, labelX: 4.55, labelZ: 4.75 },
+  idle: { label: 'Descanso', color: 0x9fd8c3, x: 7.45, z: 5.05, w: 1.25, d: 0.95, labelX: 7.95, labelZ: 4.25 },
+  board: { label: 'Kanban', color: 0xc9d6df, x: 4.15, z: 1.0, w: 2.8, d: 1.25, labelX: 5.25, labelZ: 0.8 },
 };
+
+function zonesFor(size = DEFAULT_FLOOR_SIZE) {
+  const extraX = Math.max(0, size.rx - DEFAULT_FLOOR_SIZE.rx);
+  const extraZ = Math.max(0, size.rz - DEFAULT_FLOOR_SIZE.rz);
+  const zones = {};
+  for (const [id, z] of Object.entries(BASE_ZONE_STYLE)) {
+    const right = ['qa', 'review', 'idle'].includes(id);
+    const lower = ['docs', 'meeting', 'idle'].includes(id);
+    zones[id] = {
+      ...z,
+      x: z.x + (right ? extraX : extraX * 0.35),
+      z: z.z + (lower ? extraZ : extraZ * 0.25),
+      labelX: z.labelX + (right ? extraX : extraX * 0.35),
+      labelZ: z.labelZ + (lower ? extraZ : extraZ * 0.25),
+      w: z.w + (id === 'development' || id === 'qa' ? extraX * 0.35 : id === 'docs' ? extraX * 0.55 : 0),
+      d: z.d + (id === 'development' || id === 'qa' ? extraZ * 0.35 : 0),
+    };
+  }
+  return zones;
+}
 
 const STATE_COLOR = {
   working: 0x2f80ed, waiting: 0xf6c744, reviewing: 0xef8f35,
@@ -46,9 +69,8 @@ const STATE_COLOR = {
 
 // Zona de descanso y sitios donde deambulan los que no trabajan.
 const LOUNGE = [
-  { x: 9.95, z: 6.85, sit: true }, { x: 10.7, z: 6.85, sit: true },
-  { x: 11.2, z: 1.7 }, { x: 12.1, z: 2.2 }, { x: 8.4, z: 7.0 },
-  { x: 8.8, z: 3.4 }, { x: 10.4, z: 3.4 }, { x: 12.1, z: 6.7 },
+  { x: 7.25, z: 5.05, sit: true }, { x: 7.8, z: 5.05, sit: true },
+  { x: 7.5, z: 4.45 }, { x: 5.45, z: 5.1, sit: true },
 ];
 
 const hash = (s) => [...String(s)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
@@ -61,7 +83,7 @@ const MINT = 0x9fd8c3, WOOD = 0xd8b48a, SCREEN_ON = 0x8fe3c7, WALL_TINT = 0xe9f0
 const SLAB_H = 0.14;                         // losa entre plantas
 const FLOOR_H = WALL_H + SLAB_H;             // altura de una planta (pared + losa)
 const MAX_FLOORS = 12;                       // tope visual; el resto se agrupa en una planta «+N»
-const FLOOR_BOX = [RX, WALL_H, RZ];          // caja que encuadra la cámara en modo `floor`
+const FLOOR_BOX = [DEFAULT_FLOOR_SIZE.rx, WALL_H, DEFAULT_FLOOR_SIZE.rz]; // fallback de encuadre para `floor`
 const WINDOW_ON = 0xffd36b, WALL_PAUSED = 0xd6dad6, SLAB_COLOR = 0xc9d2cc, INTERIOR = 0x2b333b, HOVER = 0x3ad0a0;
 const HOVER_K = 0.22, ACTIVE_K = 0.1;            // intensidad del resalte: planta bajo el ratón / planta del proyecto activo (FT-47)
 const CAM_MS = 380;                              // duración de la transición de cámara edificio ↔ planta (FT-47)
@@ -69,34 +91,34 @@ const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(pre
 
 // Mobiliario estático: {model, x, z, ry(rad), tint(hex)}. Se apoya solo en el suelo (base y=0).
 const FURNITURE = [
-  // Zona de descanso (derecha-delante)
-  { model: 'rugRectangle', x: 10.3, z: 6.4, ry: 0, tint: MINT },
-  { model: 'loungeSofa', x: 10.3, z: 7.0, ry: Math.PI, tint: MINT },
-  { model: 'tableCoffee', x: 10.3, z: 6.2, ry: 0, tint: WOOD },
-  { model: 'pottedPlant', x: 12.3, z: 7.3, ry: 0 },
-  { model: 'lampRoundFloor', x: 8.5, z: 7.3, ry: 0 },
-  // Rincón del café (fondo-derecha)
-  { model: 'kitchenCabinet', x: 10.0, z: 0.55, ry: 0 },
-  { model: 'kitchenCabinet', x: 10.6, z: 0.55, ry: 0 },
-  { model: 'kitchenFridge', x: 11.6, z: 0.6, ry: 0 },
+  // Descanso compacto dentro de su módulo; nada queda suelto fuera de las zonas (FT-69).
+  { model: 'rugRectangle', x: 7.45, z: 5.05, ry: 0, tint: MINT },
+  { model: 'loungeSofa', x: 7.45, z: 5.12, ry: Math.PI, tint: MINT },
+  { model: 'tableCoffee', x: 7.45, z: 4.52, ry: 0, tint: WOOD },
+  { model: 'pottedPlant', x: 7.95, z: 4.1, ry: 0 },
+  { model: 'lampRoundFloor', x: 6.85, z: 5.15, ry: 0 },
+  // Café y archivo pegados al kanban para rellenar el módulo central.
+  { model: 'kitchenCabinet', x: 6.55, z: 0.55, ry: 0 },
+  { model: 'kitchenCabinet', x: 7.1, z: 0.55, ry: 0 },
+  { model: 'kitchenFridge', x: 7.75, z: 0.6, ry: 0 },
   // Estantería contra la pared del fondo
-  { model: 'bookcaseOpen', x: 8.5, z: 0.45, ry: 0 },
+  { model: 'bookcaseOpen', x: 1.0, z: 0.45, ry: 0 },
   // Mesa de reuniones
-  { model: 'tableRound', x: 9.6, z: 3.4, ry: 0, tint: WOOD },
-  // Plantas sueltas, papelera, perchero
-  { model: 'plantSmall1', x: 0.6, z: 4.6, ry: 0 },
-  { model: 'plantSmall2', x: 6.9, z: 7.0, ry: 0 },
-  { model: 'plantSmall3', x: 12.4, z: 4.0, ry: 0 },
-  { model: 'trashcan', x: 7.0, z: 2.7, ry: 0 },
-  { model: 'coatRackStanding', x: 7.7, z: 0.6, ry: 0 },
+  { model: 'tableRound', x: 5.45, z: 5.1, ry: 0, tint: WOOD },
+  // Plantas y útiles dentro de módulos.
+  { model: 'plantSmall1', x: 0.55, z: 4.75, ry: 0 },
+  { model: 'plantSmall2', x: 3.25, z: 5.15, ry: 0 },
+  { model: 'plantSmall3', x: 7.95, z: 2.95, ry: 0 },
+  { model: 'trashcan', x: 3.35, z: 3.05, ry: 0 },
+  { model: 'coatRackStanding', x: 5.95, z: 0.6, ry: 0 },
 ];
 // La cafetera va encima del primer armario (altura real se ajusta al cargar).
-const ON_TOP = [{ model: 'kitchenCoffeeMachine', x: 10.0, z: 0.55, onModel: 'kitchenCabinet' }];
+const ON_TOP = [{ model: 'kitchenCoffeeMachine', x: 6.55, z: 0.55, onModel: 'kitchenCabinet' }];
 // Sillas de la mesa de reuniones
 const MEETING_CHAIRS = [
-  { model: 'chair', x: 9.6, z: 4.1, ry: Math.PI },
-  { model: 'chair', x: 8.9, z: 3.4, ry: Math.PI / 2 },
-  { model: 'chair', x: 10.3, z: 3.4, ry: -Math.PI / 2 },
+  { model: 'chair', x: 5.45, z: 5.45, ry: Math.PI },
+  { model: 'chair', x: 4.95, z: 5.1, ry: Math.PI / 2 },
+  { model: 'chair', x: 5.95, z: 5.1, ry: -Math.PI / 2 },
 ];
 
 const FURNITURE_NEEDED = new Set([
@@ -126,6 +148,8 @@ export class Office3D {
     this.ready = false;
     this.boardSig = '';
     this.floorLayout = null;
+    this.currentFloorSize = DEFAULT_FLOOR_SIZE;
+    this.floorZones = zonesFor(this.currentFloorSize);
     this.visualAgents = [];
     this.hoverActor = null;
     // Modo edificio (FT-46)
@@ -137,7 +161,7 @@ export class Office3D {
     this.hoverFloor = -1;
     this.activeProjectId = null;   // proyecto del desplegable: su planta va resaltada en el edificio (FT-47)
     this.camAnim = null;           // transición de cámara en curso {from, to, t0} (FT-47)
-    this.camCenter = CENTER.clone();
+    this.camCenter = floorCenter(this.currentFloorSize);
     canvas.dataset.officeMode = 'floor';
     if (canvas.tabIndex < 0) canvas.tabIndex = 0;   // enfocable: Esc con el canvas enfocado vuelve al edificio (FT-47, en app.js)
 
@@ -160,9 +184,7 @@ export class Office3D {
     this.building = new THREE.Group();
     this.building.visible = false;
     this.scene.add(this.room, this.building);
-    this.buildFloor();
-    this.buildZones();
-    this.buildBoard();
+    this.rebuildFloorGeometry();
 
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
@@ -200,11 +222,12 @@ export class Office3D {
   }
 
   buildFloor() {
-    const geo = new THREE.PlaneGeometry(RX, RZ);
+    const size = this.currentFloorSize || DEFAULT_FLOOR_SIZE;
+    const geo = new THREE.PlaneGeometry(size.rx, size.rz);
     const mat = new THREE.MeshStandardMaterial({ color: 0xf4efe6, roughness: 0.95, metalness: 0 });
     const floor = new THREE.Mesh(geo, mat);
     floor.rotation.x = -Math.PI / 2;
-    floor.position.set(RX / 2, 0, RZ / 2);
+    floor.position.set(size.rx / 2, 0, size.rz / 2);
     floor.receiveShadow = true;
     this.room.add(floor);
   }
@@ -212,7 +235,7 @@ export class Office3D {
   buildZones() {
     this.zoneLabels = [];
     const rugMat = (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.94, metalness: 0 });
-    for (const [zone, z] of Object.entries(ZONE_STYLE)) {
+    for (const [zone, z] of Object.entries(this.floorZones || zonesFor(this.currentFloorSize))) {
       const rug = new THREE.Mesh(new THREE.PlaneGeometry(z.w, z.d), rugMat(z.color));
       rug.rotation.x = -Math.PI / 2;
       rug.position.set(z.x, 0.012, z.z);
@@ -294,9 +317,7 @@ export class Office3D {
       if (g) this.charCache.set(name, g);
     });
     Promise.all([...furnJobs, ...charJobs]).then(() => {
-      this.buildWalls();
-      this.buildWorkstations();
-      this.buildFurniture();
+      this.rebuildFloorGeometry();
       this.ready = true;
       this.rebuildFloors();        // si ya estamos en modo edificio, ahora que hay paredes que clonar
       this.renderer.render(this.scene, this.camera);
@@ -345,23 +366,39 @@ export class Office3D {
   topOf(obj) { return new THREE.Box3().setFromObject(obj).max.y; }
 
   buildWalls() {
+    const size = this.currentFloorSize || DEFAULT_FLOOR_SIZE;
+    const door = doorFor(size);
     const wallBox = this.furnCache.get('wall') && new THREE.Box3().setFromObject(this.furnCache.get('wall'));
     const seg = wallBox ? Math.max(0.5, wallBox.getSize(new THREE.Vector3()).x) : 1;
     // Pared del fondo (z=0), a lo largo de x. Con una ventana y una puerta.
-    const nBack = Math.ceil(RX / seg);
+    const nBack = Math.ceil(size.rx / seg);
     for (let i = 0; i < nBack; i++) {
       const x = i * seg + seg / 2;
       let model = 'wall';
-      if (i === 1 || i === 8) model = 'wallWindow';
-      if (i === Math.floor(DOOR.x / seg)) model = 'wallDoorway';
-      this.place(model, Math.min(x, RX - seg / 2), 0, { ry: 0, tint: model === 'wall' ? WALL_TINT : undefined });
+      if (i === 1 || i === Math.max(2, nBack - 2)) model = 'wallWindow';
+      if (i === Math.floor(door.x / seg)) model = 'wallDoorway';
+      this.place(model, Math.min(x, size.rx - seg / 2), 0, { ry: 0, tint: model === 'wall' ? WALL_TINT : undefined });
     }
     // Pared izquierda (x=0), a lo largo de z, girada 90°.
-    const nLeft = Math.ceil(RZ / seg);
+    const nLeft = Math.ceil(size.rz / seg);
     for (let i = 0; i < nLeft; i++) {
       const z = i * seg + seg / 2;
-      const model = (i === 2 || i === 5) ? 'wallWindow' : 'wall';
-      this.place(model, 0, Math.min(z, RZ - seg / 2), { ry: Math.PI / 2, tint: model === 'wall' ? WALL_TINT : undefined });
+      const model = (i === 2 || i === Math.max(3, nLeft - 2)) ? 'wallWindow' : 'wall';
+      this.place(model, 0, Math.min(z, size.rz - seg / 2), { ry: Math.PI / 2, tint: model === 'wall' ? WALL_TINT : undefined });
+    }
+  }
+
+  rebuildFloorGeometry() {
+    this.room.clear();
+    this.workstations = [];
+    this.floorZones = zonesFor(this.currentFloorSize);
+    this.buildFloor();
+    this.buildZones();
+    this.buildBoard();
+    if (this.furnCache.size) {
+      this.buildWalls();
+      this.buildWorkstations();
+      this.buildFurniture();
     }
   }
 
@@ -415,6 +452,12 @@ export class Office3D {
     for (const [id, a] of this.actors) if (!this.agents.some((g) => g.id === id)) { this.scene.remove(a.group); this.actors.delete(id); this.removeLabel(id); }
     this.visualAgents = this.agents.map((a) => toVisualState(a, this.tasks, this.questions));
     this.floorLayout = layoutFloor(this.visualAgents, { tasks: this.tasks, questions: this.questions }, this.floorLayout);
+    const nextSize = this.floorLayout?.size || recommendedFloorSize(this.visualAgents.length);
+    if (nextSize.kind !== this.currentFloorSize.kind) {
+      this.currentFloorSize = nextSize;
+      this.rebuildFloorGeometry();
+      if (this.mode === 'floor') this.resize();
+    } else this.currentFloorSize = nextSize;
     const sig = JSON.stringify(this.tasks.map((t) => [t.id, t.status, t.updatedAt]));
     if (sig !== this.boardSig) { this.boardSig = sig; this.drawBoard(); }
     this.rebuildFloors();
@@ -644,7 +687,7 @@ export class Office3D {
     return {
       mode: this.mode, activeProjectId: this.activeProjectId, hoverFloor: this.hoverFloor, animating: !!this.camAnim,
       actors: this.actors.size,
-      zones: Object.fromEntries(Object.entries(ZONE_STYLE).map(([id, z]) => [id, { label: z.label, x: z.x, z: z.z, w: z.w, d: z.d }])),
+      zones: Object.fromEntries(Object.entries(this.floorZones || {}).map(([id, z]) => [id, { label: z.label, x: z.x, z: z.z, w: z.w, d: z.d }])),
       slots,
       floorSize: this.floorLayout?.size || null,
       floors: this.floors.map(({ projectId, name, working, queued, review, running }, i) => ({ projectId, name, working, queued, review, running, screen: this.mode === 'building' ? this.floorScreenRect(i) : null })),
@@ -657,7 +700,7 @@ export class Office3D {
     const gltf = this.charCache.get(file);
     const group = new THREE.Group();
     const a = {
-      group, x: DOOR.x, z: DOOR.z, corr: null, path: [], key: null, moving: false,
+      group, x: doorFor(this.currentFloorSize).x, z: doorFor(this.currentFloorSize).z, corr: null, path: [], key: null, moving: false,
       loungeSpot: index, enterAt: now + this.queuedCount(now) * 0.9, nextWander: Infinity,
       angle: Math.PI, targetAngle: Math.PI, mixer: null, actions: {}, clip: null, current: null,
       emote: null, lastEmote: null, sitSpot: false,
@@ -716,7 +759,8 @@ export class Office3D {
     const za = c.corr ?? c.z;
     const zb = t.corr ?? t.z;
     if (c.corr != null) pts.push({ x: c.x, z: za });
-    if (Math.abs(c.x - t.x) > 0.05 || Math.abs(za - zb) > 0.05) pts.push({ x: SPINE_X, z: za }, { x: SPINE_X, z: zb }, { x: t.x, z: zb });
+    const spineX = spineXFor(this.currentFloorSize);
+    if (Math.abs(c.x - t.x) > 0.05 || Math.abs(za - zb) > 0.05) pts.push({ x: spineX, z: za }, { x: spineX, z: zb }, { x: t.x, z: zb });
     if (t.corr != null) pts.push({ x: t.x, z: t.z });
     return pts;
   }
@@ -856,7 +900,7 @@ export class Office3D {
     this.boardLabel = document.createElement('div');
     this.boardLabel.className = 'o3d-el o3d-board';
     this.labelRoot.appendChild(this.boardLabel);
-    this.zoneLabelEls = Object.entries(ZONE_STYLE).map(([id, z]) => {
+    this.zoneLabelEls = Object.entries(BASE_ZONE_STYLE).map(([id, z]) => {
       const el = document.createElement('div');
       el.className = 'o3d-el o3d-zone';
       el.textContent = z.label;
@@ -886,10 +930,17 @@ export class Office3D {
   }
 
   updateLabels(now) {
+    const actorMarks = this.agents.map((agent) => {
+      const a = this.actors.get(agent.id);
+      return a?.group.visible ? this.project(a.x, 0.7, a.z) : null;
+    }).filter((p) => p?.visible);
     for (const { id, el } of this.zoneLabelEls || []) {
-      const z = ZONE_STYLE[id], p = this.project(z.x, 0.08, z.z - z.d / 2 + 0.1);
+      const z = this.floorZones[id];
+      if (!z) { el.style.opacity = '0'; continue; }
+      const p = this.project(z.labelX ?? z.x, 0.08, z.labelZ ?? (z.z - z.d / 2 + 0.1));
+      const close = actorMarks.some((a) => Math.hypot(a.x - p.x, a.y - p.y) < 64);
       el.style.left = p.x + 'px';
-      el.style.top = p.y + 'px';
+      el.style.top = (p.y - (close ? 30 : 0)) + 'px';
       el.style.opacity = p.visible ? '1' : '0';
     }
     // Pizarra: título + pendientes.
@@ -931,7 +982,7 @@ export class Office3D {
 
   bubbleText(agent, a, now) {
     const visual = this.visualAgents.find((v) => v.id === agent.id) || toVisualState(agent, this.tasks, this.questions);
-    if (a.moving) return { text: '→ ' + (ZONE_STYLE[a.dest?.zone]?.label || 'zona'), kind: '' };
+    if (a.moving) return { text: '→ ' + ((this.floorZones || BASE_ZONE_STYLE)[a.dest?.zone]?.label || 'zona'), kind: '' };
     if (visual.status === 'failed') return { text: `⚠ #${visual.taskId || agent.taskId || '?'} falló`, kind: 'error' };
     if (this.selected === agent.id || this.hoverActor === agent.id) {
       if (visual.status === 'blocked') return { text: 'Bloqueado', kind: 'review' };
@@ -1016,7 +1067,10 @@ export class Office3D {
 
   // Caja [0..x]×[0..y]×[0..z] que debe caber en pantalla: la sala, o el edificio entero con su azotea.
   viewBox() {
-    if (this.mode !== 'building') return FLOOR_BOX;
+    if (this.mode !== 'building') {
+      const s = this.currentFloorSize || DEFAULT_FLOOR_SIZE;
+      return [s.rx, WALL_H, s.rz];
+    }
     return [RX, Math.max(1, this.floors.length) * FLOOR_H + SLAB_H, RZ];
   }
 

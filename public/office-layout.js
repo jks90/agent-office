@@ -17,51 +17,51 @@ const RUNNING = new Set(['doing', 'working', 'running']);
 
 const BASE_MODULES = {
   development: [
-    { x: 1.15, z: 2.0, rot: Math.PI },
-    { x: 2.65, z: 2.0, rot: Math.PI },
-    { x: 1.15, z: 3.55, rot: Math.PI },
-    { x: 2.65, z: 3.55, rot: Math.PI },
+    { x: 1.15, z: 1.65, rot: Math.PI },
+    { x: 2.55, z: 1.65, rot: Math.PI },
+    { x: 1.15, z: 3.0, rot: Math.PI },
+    { x: 2.55, z: 3.0, rot: Math.PI },
   ],
   qa: [
-    { x: 5.1, z: 2.0, rot: Math.PI },
-    { x: 6.55, z: 2.0, rot: Math.PI },
-    { x: 5.1, z: 3.55, rot: Math.PI },
-    { x: 6.55, z: 3.55, rot: Math.PI },
+    { x: 4.35, z: 1.65, rot: Math.PI },
+    { x: 5.75, z: 1.65, rot: Math.PI },
+    { x: 4.35, z: 3.0, rot: Math.PI },
+    { x: 5.75, z: 3.0, rot: Math.PI },
   ],
   docs: [
-    { x: 1.35, z: 5.9, rot: Math.PI * 0.75 },
-    { x: 2.85, z: 5.9, rot: Math.PI * 0.75 },
-    { x: 4.35, z: 5.9, rot: Math.PI * 0.75 },
+    { x: 1.25, z: 4.8, rot: Math.PI * 0.75 },
+    { x: 2.65, z: 4.8, rot: Math.PI * 0.75 },
+    { x: 4.05, z: 4.8, rot: Math.PI * 0.75 },
   ],
   review: [
-    { x: 7.85, z: 4.85, rot: -Math.PI / 2 },
-    { x: 9.15, z: 4.85, rot: -Math.PI / 2 },
-    { x: 10.45, z: 4.85, rot: -Math.PI / 2 },
+    { x: 6.55, z: 3.7, rot: -Math.PI / 2 },
+    { x: 7.55, z: 3.7, rot: -Math.PI / 2 },
+    { x: 6.55, z: 4.75, rot: -Math.PI / 2 },
   ],
   meeting: [
-    { x: 7.95, z: 7.0, rot: 0 },
-    { x: 8.95, z: 7.55, rot: -Math.PI / 2 },
-    { x: 6.95, z: 7.55, rot: Math.PI / 2 },
+    { x: 5.45, z: 4.85, rot: 0 },
+    { x: 6.15, z: 5.15, rot: -Math.PI / 2 },
+    { x: 4.75, z: 5.15, rot: Math.PI / 2 },
   ],
   idle: [
-    { x: 10.55, z: 7.1, rot: Math.PI },
-    { x: 11.45, z: 7.1, rot: Math.PI },
-    { x: 10.55, z: 6.25, rot: 0 },
+    { x: 7.25, z: 5.05, rot: Math.PI },
+    { x: 7.8, z: 5.05, rot: Math.PI },
+    { x: 7.5, z: 4.45, rot: 0 },
   ],
   board: [
-    { x: 4.9, z: 0.95, rot: 0 },
-    { x: 5.95, z: 0.95, rot: 0 },
+    { x: 3.65, z: 0.95, rot: 0 },
+    { x: 4.7, z: 0.95, rot: 0 },
   ],
 };
 
 const MODULE_SHIFT = {
-  development: { x: 0, z: 3.1 },
-  qa: { x: 0, z: 3.1 },
-  docs: { x: 4.5, z: 0 },
-  review: { x: 0, z: 1.45 },
-  meeting: { x: 2.9, z: 0 },
-  idle: { x: 0, z: -1.35 },
-  board: { x: 2.35, z: 0 },
+  development: { x: 0, z: 2.75 },
+  qa: { x: 0, z: 2.75 },
+  docs: { x: 4.1, z: 0 },
+  review: { x: 0, z: 1.1 },
+  meeting: { x: 2.5, z: 0 },
+  idle: { x: 0, z: -1.0 },
+  board: { x: 2.1, z: 0 },
 };
 
 export function toVisualState(agent, tasks = [], questions = []) {
