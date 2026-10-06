@@ -205,6 +205,7 @@ Las tareas nacen de la rama base en su worktree; si varias tocan los mismos fich
 | `demo` | simulado | — |
 | `claude` | `claude -p --output-format stream-json` en el worktree | lectura/edición + shell de andar por casa (node, npm, git sin push, grep, sed, cp…; sin rm/sudo/docker/ssh); `--strict-mcp-config`: no hereda tus MCP globales; puede ver sus capturas con `scripts/preview.mjs` |
 | `codex` | `codex exec --json -s workspace-write` en el worktree | sandbox de Codex (el PO, `read-only`) |
+| `local` (FT-54) | el mismo `codex exec`, con un proveedor propio (LM Studio / Ollama) por `-c` | como `codex` |
 
 Cada agente elige motor y modelo desde su panel (clic en el personaje o en su ficha).
 Variables: `AO_PORT` (7420), `AO_HOST` (127.0.0.1), `AO_DATA_DIR`, `AO_CLAUDE_BIN`, `AO_CODEX_BIN`.
@@ -445,3 +446,14 @@ Cada tarea empezaba de cero. Ahora cada agente tiene una memoria corta por proye
 - **Para que salga rentable:** tope de ≈1 500 tokens por fichero (`MAX_CHARS` = 6 000; al pasarse se descartan las más antiguas) y deduplicado (≥80 % de palabras en común).
 - **Control:** sección «🧠 Memoria» en la ficha del agente para verla y editarla (`GET/PUT /api/memory/:projectId[?agent=id]`), interruptor en Ajustes (`agentMemory`).
 - Prueba: `node scripts/memory-e2e.mjs` (11 checks). Su efecto en el coste entra en el benchmark de FT-61 (variante con y sin memoria).
+
+## 🖥️ IA local (LM Studio / Ollama) (FT-54)
+
+Cuarto motor, `local`: trabaja con un modelo que corre en tu máquina, sin cuota ni nube. **Quien ejecuta es el CLI de Codex** (`server/engines/local.js` envuelve `codex.js`): mismo worktree, stream JSON, mensajes en caliente y sandbox; solo cambia el proveedor, que se pasa por línea de comandos (`-c model_provider=aolocal -c model_providers.aolocal.base_url=… -c …wire_api="responses"`) sin tocar tu `~/.codex/config.toml`. Si el servidor pide clave, va por `env_key` (`AO_LOCAL_API_KEY`).
+
+- **Requisitos**: el CLI `codex` instalado y un servidor OpenAI-compatible con **un modelo con soporte de herramientas** cargado: LM Studio con el servidor activado (`:1234`, ≥ 0.3.29) u `ollama serve` (`:11434`, ≥ 0.13). Un modelo sin tools (se detecta en LM Studio y Ollama) se rechaza al arrancar con un mensaje claro; sirven p. ej. qwen2.5-coder, llama-3.x-instruct, devstral. El Codex actual solo admite `wire_api = "responses"` (`/v1/responses`); `AO_LOCAL_WIRE_API=chat` es para un Codex antiguo.
+- **Configuración** (Ajustes ▸ Motores de IA ▸ IA local): preajustes «LM Studio :1234» / «Ollama :11434» (URL editable), clave opcional (en `data/.ai-keys.json`; no viaja por el SSE) y **Probar** (`GET /v1/models`): lista los modelos y guarda `settings.local = {baseUrl, model, allowAuto}`. Ahí se elige el modelo por defecto; en «Contratar agente» / ficha del agente, el motor `local` ofrece la lista del servidor. El motor `auto` solo elige `local` si marcas «Permitir…» (`allowAuto`, apagado de serie). API: `POST /api/engines/local/probe` y `/settings`; `GET /api/engines` trae `local: {installed, loggedIn, text: «LM Studio · 3 modelos», model}`.
+- **Guía**: proveedor `local-api` en «Proveedor del Guía» (el cliente de `openai-api.js` con la URL base y la clave de la IA local).
+- **Cuota y coste**: sin cuota (`quota.gate('local')` nunca bloquea) y `costUsd` 0; los tokens por sesión se cuentan igual (`turn.completed`), con «límite n/d».
+- **Limitaciones**: más lento y menos capaz que Claude/Codex en la nube (el prompt añade una nota de brevedad); un modelo pequeño puede no usar las herramientas (se avisa en el log si no ejecutó ninguna).
+- Prueba: `node scripts/local-engine-e2e.mjs` (servidor OpenAI-compatible falso + `codex` real; sin `codex` se salta la tarea).

@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as store from '../store.js';
+import * as localServer from './local-server.js';
 
 const exec = promisify(execFile);
 const BIN = { claude: process.env.AO_CLAUDE_BIN || 'claude', codex: process.env.AO_CODEX_BIN || 'codex' };
@@ -37,8 +38,13 @@ export function getApiKey(provider) {
 export function engineEnv(engine) {
   const k = readKeys();
   if (engine === 'claude' && k.claude) return { ANTHROPIC_API_KEY: k.claude };
+  if (engine === 'local' && k.local) return { AO_LOCAL_API_KEY: k.local };
   return {};
 }
+// FT-54: clave opcional del servidor de IA local (motor `local` y proveedor `local-api` del Guide). No va en settings (viaja por SSE).
+// Guarda/borra la clave opcional del servidor local ("" la borra; undefined la deja).
+export const setLocalKey = (k) => { if (k !== undefined) setApiKey('local', k); };
+export const localKey = () => readKeys().local || null;
 
 // Clave API para los proveedores HTTP del Guide (FT-8): la guardada en Ajustes ▸ Motores (claude → Anthropic; la de Codex también
 // se copia aquí como `openai`) o, si no hay, la variable de entorno.
@@ -46,6 +52,7 @@ export function guideApiKey(provider) {
   const k = readKeys();
   if (provider === 'anthropic') return k.claude || process.env.ANTHROPIC_API_KEY || null;
   if (provider === 'openai') return k.openai || process.env.OPENAI_API_KEY || null;
+  if (provider === 'local') return k.local || null;
   return null;
 }
 
@@ -88,9 +95,17 @@ export function cachedEnginesStatus() {
   }
   return statusCache.value;
 }
+// FT-54 · IA local: «instalado» = el CLI de Codex (es quien ejecuta); «sesión» = el servidor responde a /v1/models.
+async function localStatus(codex) {
+  const cfg = localServer.config();
+  const base = { installed: codex.installed, method: 'local', presets: localServer.PRESETS, baseUrl: cfg?.baseUrl || '', model: cfg?.model || '', allowAuto: !!cfg?.allowAuto, apiKey: mask(readKeys().local), billing: null };
+  if (!cfg?.baseUrl) return { ...base, loggedIn: false, models: [], text: 'sin configurar' };
+  const p = await localServer.probe(cfg.baseUrl, readKeys().local);
+  return p.ok ? { ...base, loggedIn: true, kind: p.kind, models: p.models, text: p.text } : { ...base, loggedIn: false, models: [], text: 'el servidor no responde', error: p.error };
+}
 export async function enginesStatus() {
   const [claude, codex] = await Promise.all([claudeStatus(), codexStatus()]);
-  return { claude: { ...claude, login: publicLogin('claude') }, codex: { ...codex, login: publicLogin('codex') } };
+  return { claude: { ...claude, login: publicLogin('claude') }, codex: { ...codex, login: publicLogin('codex') }, local: await localStatus(codex) };
 }
 
 // ── Modelos disponibles por motor ──────────────────────────────────────────
@@ -123,7 +138,11 @@ export async function enginesModels() {
     codex = (Array.isArray(list) ? list : []).filter((m) => typeof m === 'object' && m.visibility !== 'hide').map((m) => ({ id: m.slug, label: `${m.display_name || m.slug}${m.slug === 'gpt-5.5' ? ' — comprobado con tu cuenta' : ''}`, available: true, note: m.slug === 'gpt-5.5' ? '' : 'sin comprobar con tu plan de ChatGPT' })).filter((m) => m.id && !/review/i.test(m.id));
   } catch { /* sin caché */ }
   if (!codex.some((m) => m.id === 'gpt-5.5')) codex.push({ id: 'gpt-5.5', label: 'gpt-5.5', available: true });
-  return { claude, codex, claudeVersion: v };
+  // FT-54: modelos que lista el servidor local (LM Studio / Ollama)
+  const cfg = localServer.config();
+  const lp = cfg?.baseUrl ? await localServer.probe(cfg.baseUrl, readKeys().local) : null;
+  const local = (lp?.models || []).map((id) => ({ id, label: id, available: true }));
+  return { claude, codex, local, claudeVersion: v };
 }
 
 // ── Logins en curso ─────────────────────────────────────────────────────────
