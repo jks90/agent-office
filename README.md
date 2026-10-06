@@ -333,6 +333,14 @@ Medido el 6 OCT 2026: lo caro no es el arranque (≈31k tokens con `--strict-mcp
 - **Estimación** en las tarjetas de Por hacer / Backlog: mediana del coste de las últimas 10 tareas hechas del mismo rol (`costEstimates()`).
 - **RTK** (rtk-ai/rtk, Apache-2.0): si está instalado (`~/.local/bin/rtk` o `AO_RTK_BIN`; `AO_RTK=off` lo apaga), los agentes Claude arrancan con su hook PreToolUse por `--settings` (NO se toca `~/.claude/settings.json`) y se permiten solo los `rtk …` equivalentes a la lista blanca (`RTK_RULES`, nunca `rtk run`). Comprime salidas de git/grep/ls/lint; no las de Read/Grep nativos. `rtk gain` enseña el ahorro.
 
+### Subagente explorador (FT-65)
+
+Lo leído se reenvía en cada turno; para exploraciones amplias el agente delega en un subagente que lee en **su propio contexto** y devuelve solo un resumen.
+- **Claude:** `server/engines/claude.js` pasa `--agents` con `explorador` (modelo `haiku`, tools solo de lectura: Read/Grep/Glob + shell de lectura de la lista blanca; sin Edit/Write ni MCP, así que respeta la allowlist y `--strict-mcp-config`), permite `Task`/`Agent` al agente principal y veta con `--disallowedTools` los subagentes integrados (`general-purpose`, `Explore`, `Plan`). `AO_EXPLORER=off` lo desactiva.
+- **Prompt:** `economyBlock` añade «para explorar más de 3 ficheros, delega en el explorador y trabaja con su resumen».
+- **Codex: no aplica.** `codex exec` no tiene subagentes/`spawn` que se puedan declarar por flag (no verificable aquí: `codex` pide aprobación en este entorno); ese caso lo cubre el índice de código (FT-58). Con motor `auto` cada agente usa lo de su motor; el texto del prompt dice «si tu motor la tiene».
+- **Medición pendiente:** la comparación con/sin explorador (tarea «enumera dónde se emite cada tipo de evento») requiere consumir cuota real; compárala con `AO_EXPLORER=off` en el benchmark de FT-61.
+
 ## ⏸ Sin cuota a mitad de tarea: pausa y reanudación automática (FT-66)
 
 Si un agente se queda sin cuota de la suscripción mientras trabaja (Claude: «usage limit reached», «5-hour limit», 429…; Codex: «You've hit your usage limit… try again at …»), la tarea **no** va a Fallidas:

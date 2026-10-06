@@ -16,6 +16,17 @@ const WORK_TOOLS = ['Read', 'Edit', 'MultiEdit', 'Write', 'Glob', 'Grep', 'TodoW
 const ASK_RULE = `Bash(node ${path.join(ROOT, 'bin', 'ao-ask.mjs')} *)`;
 const PLAN_TOOLS = ['Read', 'Glob', 'Grep', ASK_RULE, 'Bash(ls *)', 'Bash(cat *)', 'Bash(head *)', 'Bash(sed -n *)', 'Bash(grep *)', 'Bash(find *)', 'Bash(wc *)', 'Bash(git log*)', 'Bash(git status*)', 'Bash(git diff*)'];
 
+// Subagente explorador (FT-65): solo lectura (Read/Grep/Glob + shell de lectura de la lista blanca), modelo barato.
+export const EXPLORER = {
+  name: 'explorador',
+  def: {
+    description: 'Explora el repo en un contexto aparte (entender un módulo, buscar todos los usos de algo, enumerar dónde ocurre algo) y devuelve solo un resumen corto con rutas y líneas. Solo lectura.',
+    prompt: 'Eres un explorador de código de SOLO LECTURA. Responde a la pregunta que te den leyendo lo necesario (Grep -n y Read con offset/limit; nunca ficheros grandes enteros). Devuelve únicamente un resumen breve (máx. ~25 líneas): hallazgos con `ruta:línea` y una frase cada uno. No pegues código largo ni modifiques nada.',
+    tools: ['Read', 'Grep', 'Glob', 'Bash(ls *)', 'Bash(cat *)', 'Bash(head *)', 'Bash(sed -n *)', 'Bash(grep *)', 'Bash(find *)', 'Bash(wc *)', 'Bash(git log*)', 'Bash(git status*)', 'Bash(git diff*)'],
+    model: 'haiku',
+  },
+};
+
 // RTK instalado → hook solo para los agentes (por --settings; no se toca ~/.claude/settings.json del usuario).
 const RTK_BIN = [process.env.AO_RTK_BIN, path.join(os.homedir(), '.local/bin/rtk'), '/usr/local/bin/rtk'].find((f) => f && fs.existsSync(f)) || null;
 export const rtkAvailable = () => !!RTK_BIN && process.env.AO_RTK !== 'off';
@@ -39,6 +50,13 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, budgetUsd, eff
     tools.push('mcp__flow-test');
   }
   args.push('--strict-mcp-config', '--mcp-config', JSON.stringify({ mcpServers }));
+  // FT-65: subagente «explorador» (solo lectura, haiku): lee en SU contexto y devuelve un resumen; lo leído no se reenvía en cada turno del agente.
+  // Su lista de tools es explícita (sin MCP, sin Edit/Write) y --strict-mcp-config sigue vigente; el resto de subagentes integrados se veta.
+  if (process.env.AO_EXPLORER !== 'off') {
+    args.push('--agents', JSON.stringify({ [EXPLORER.name]: EXPLORER.def }));
+    tools.push('Task', 'Agent');
+    args.push('--disallowedTools', 'Task(general-purpose)', 'Task(Explore)', 'Task(Plan)', 'Agent(general-purpose)', 'Agent(Explore)', 'Agent(Plan)');
+  }
   args.push('--allowedTools', ...tools);
 
   const env = { ...process.env, ...extraEnv, BROWSER: 'true' };
