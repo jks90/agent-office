@@ -240,6 +240,19 @@ document.addEventListener('click', (e) => {
   fetch(BASE + 'api/guide/tool', { method: 'POST', headers: { 'content-type': 'application/json', 'x-ao-client': CLIENT_ID }, body: JSON.stringify({ name: 'flowtest.show', args: { flow: a.dataset.born, ...(a.dataset.bornNode ? { node: a.dataset.bornNode } : {}) } }) })
     .then(() => { if (!EMBEDDED) toast('Ábrelo desde flow-test (Config ▸ Agentes) para que lo enseñe'); }).catch(() => {});
 });
+// Clic en la etiqueta de rol de un agente → baja a su tarjeta en «Roles» (abre la sección si estaba plegada) y la resalta.
+function gotoRole(id) {
+  if (collapsed.roles) { collapsed.roles = false; safeSet('ao:collapsed', JSON.stringify(collapsed)); applyCollapsed(); }
+  const card = [...document.querySelectorAll('#roles .role-card')].find((c) => c.dataset.roleId === id);
+  if (!card) return toast(`El rol «${id}» no está en el catálogo`, 'error');
+  const grp = card.closest('.role-group');
+  if (grp?.classList.contains('collapsed')) { grp.classList.remove('collapsed'); collapsed['roles:' + grp.dataset.roleGroup] = false; safeSet('ao:collapsed', JSON.stringify(collapsed)); }
+  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  card.classList.remove('flash'); void card.offsetWidth; card.classList.add('flash');
+  setTimeout(() => card.classList.remove('flash'), 1800);
+}
+document.addEventListener('click', (e) => { const h = e.target.closest('.role-group-head'); if (!h) return; const g = h.parentElement; g.classList.toggle('collapsed'); collapsed['roles:' + g.dataset.roleGroup] = g.classList.contains('collapsed'); safeSet('ao:collapsed', JSON.stringify(collapsed)); });
+document.addEventListener('click', (e) => { const b = e.target.closest('[data-goto-role]'); if (b) { e.stopPropagation(); gotoRole(b.dataset.gotoRole); } });
 const roleChip = (role) => `<span class="chip" style="--c:${S.roles[role]?.color}">${esc(S.roles[role]?.label || role)}</span>`;
 
 // ── Guía 🧭 (FT-6) ──────────────────────────────────────────────────────────
@@ -895,7 +908,7 @@ function renderTeam() {
         <div class="member-main"><b>${esc(a.name)}</b><div class="act">${busy(a) ? esc(a.activity) : 'En la zona de descanso ☕'}</div></div>
         <span class="eng">${esc(a.engine)}${a.engine === 'auto' && a.activeEngine ? ' → ' + esc(a.activeEngine) : ''}${a.model ? ' · ' + esc(a.model) : ''}</span>
       </div>
-      <div class="member-foot">${roleChip(a.role)}<span class="state ${a.status}"><span class="dot ${a.status}"></span>${a.status === 'paused' ? 'En pausa' : a.status === 'working' ? 'Trabajando' : 'Descansando'}</span></div>
+      <div class="member-foot"><button type="button" class="chip-link" data-goto-role="${esc(a.role)}" title="Ver el rol ${esc(r?.label || a.role)}">${roleChip(a.role)}</button><span class="state ${a.status}"><span class="dot ${a.status}"></span>${a.status === 'paused' ? 'En pausa' : a.status === 'working' ? 'Trabajando' : 'Descansando'}</span></div>
       ${task ? `<div class="task">▶ ${esc(tcode(task))} ${esc(task.title)}</div>` : ''}
       <div class="meta"><span>${done} entregadas</span>${cost ? `<span>≈ ${cost.toFixed(2)} $</span>` : ''}${r?.custom ? `<span title="${esc(r.description || '')}">rol de fichero · ${esc(r.source)}</span>` : ''}</div>
       ${projectsOf(a.id).length ? `<div class="meta"><span>también en: ${projectsOf(a.id).map(esc).join(', ')}</span></div>` : ''}
@@ -937,17 +950,30 @@ function renderRepos() {
     </tr>`).join('')}</tbody></table>` : '<p class="empty">Sin repositorios. Añade uno, o crea un enlace en la carpeta del proyecto del hub y pulsa ↻ Carpetas.</p>';
 }
 
+// Roles agrupados por carpeta del catálogo (disasterworld/, flowtest/…; «General» = raíz; «De serie» = los integrados).
+// Cada grupo se pliega; por defecto solo se abre el que tiene roles del equipo del proyecto activo (lo elegido se recuerda).
+const roleGroupOf = (r) => r.custom ? (r.file.replace(/^.*\/_agentes\/roles\//, '').split('/').slice(0, -1).join('/') || 'General') : 'De serie';
 function renderRoles() {
   const roles = Object.entries(S.roles);
   $('#roles-summary').textContent = `${roles.filter(([, r]) => r.custom).length} del catálogo · ${roles.filter(([, r]) => !r.custom).length} de serie`;
-  $('#roles').innerHTML = roles.map(([id, r]) => `
-    <div class="role-card" style="--c:${r.color}">
+  const inTeam = (id) => team().some((a) => a.role === id);
+  const groups = {};
+  for (const [id, r] of roles) (groups[roleGroupOf(r)] ||= []).push([id, r]);
+  const order = Object.keys(groups).sort((a, b) => (groups[b].some(([id]) => inTeam(id)) - groups[a].some(([id]) => inTeam(id))) || (a === 'De serie') - (b === 'De serie') || a.localeCompare(b));
+  const card = ([id, r]) => `
+    <div class="role-card" data-role-id="${esc(id)}" style="--c:${r.color}">
       <b>${esc(r.label)}</b> <span class="muted">· ${r.kind === 'planner' ? 'planifica' : r.kind === 'qa' ? 'QA' : r.kind === 'docs' ? 'documenta' : 'desarrolla'}${r.model ? ' · ' + esc(r.model) : ''}${r.handles?.length ? ' · atiende ' + r.handles.join('/') : ''}</span>
       <div class="desc">${esc(r.description || r.system.slice(0, 160))}</div>
       ${r.skills?.length ? `<div class="sk">🧩 ${r.skills.map(esc).join(' · ')}</div>` : ''}
       <div class="src">${r.custom ? `📄 ${esc(r.file.replace(/^.*\/_agentes\/roles\//, 'catálogo/'))}` : 'de serie'}${team().some((a) => a.role === id) ? ' · en plantilla' : ''}</div>
       <div class="acts">${r.custom ? `<button class="small ghost" data-role-edit="${id}">✎ Editar</button><button class="small danger" data-role-del="${id}">✕</button>` : `<button class="small ghost" data-role-dup="${id}">Copiar al catálogo…</button>`}</div>
-    </div>`).join('');
+    </div>`;
+  $('#roles').innerHTML = order.map((g) => {
+    const list = groups[g].sort(([a, ra], [b, rb]) => (inTeam(b) - inTeam(a)) || ra.label.localeCompare(rb.label));
+    const used = list.filter(([id]) => inTeam(id)).length;
+    const key = 'roles:' + g, closed = key in collapsed ? collapsed[key] : !used;
+    return `<div class="role-group ${closed ? 'collapsed' : ''}" data-role-group="${esc(g)}"><h4 class="role-group-head"><span class="caret">▾</span> ${esc(g)} <span class="muted">(${list.length}${used ? ` · ${used} en plantilla` : ''})</span></h4><div class="role-grid">${list.map(card).join('')}</div></div>`;
+  }).join('');
 }
 
 async function renderSkills(reload = false) {

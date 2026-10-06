@@ -99,7 +99,8 @@ main { flex: 1; display: flex; flex-direction: column; padding: var(--s-3) 18px 
 .office-floor-row.active { border-color: var(--ok); box-shadow: inset 3px 0 0 var(--ok); }
 .office-floor-row span { color: var(--muted); font-size: 12px; white-space: nowrap; }
 #task-filter { width: 220px; padding: 7px 10px; }
-#roles { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--s-2); }
+#roles { display: flex; flex-direction: column; gap: var(--s-2); }
+#roles .role-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--s-2); }
 table.repos { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; }
 table.repos th, table.repos td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 table.repos th { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
@@ -555,3 +556,12 @@ tr[data-cost-task] { cursor: pointer; }
 .card.discarded:hover { opacity: 1; }
 /* El proyecto activo no tiene revisiones pendientes: el chip avisa de las de otros proyectos, más discreto */
 .review-chip.others { opacity: .65; font-weight: 500; }
+/* Etiqueta de rol clicable en la tarjeta del agente → lleva a su tarjeta en «Roles» */
+.chip-link { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; }
+.chip-link:hover .chip { filter: brightness(1.25); text-decoration: underline; }
+.role-card.flash { outline: 2px solid var(--c); outline-offset: 2px; transition: outline-color .3s; }
+/* Roles por grupo (carpeta del catálogo), plegables */
+.role-group-head { margin: 4px 0 6px; font-size: 13px; cursor: pointer; user-select: none; display: flex; gap: 6px; align-items: baseline; }
+.role-group-head .caret { display: inline-block; transition: transform .15s; }
+.role-group.collapsed .caret { transform: rotate(-90deg); }
+#roles .role-group.collapsed .role-grid { display: none; }
