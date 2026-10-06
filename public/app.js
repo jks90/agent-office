@@ -857,6 +857,7 @@ function card(t) {
     ${t.status === 'doing' && agent ? `<div class="live">● ${esc(agent.activity)}</div>` : ''}
     ${t.status === 'todo' && t.quotaBlocked && t.activity ? `<div class="quota-hold">${esc(t.activity)}</div>` : ''}
     ${['todo', 'backlog'].includes(t.status) && S.costEstimates?.[t.role] != null ? `<div class="meta"><span class="cost-est" title="Estimación: mediana del coste de las últimas tareas hechas por el rol ${esc(t.role)}. Tope por intento: ${S.settings.maxTaskUsd || 3} $">≈ ${S.costEstimates[t.role].toFixed(2)} $</span></div>` : ''}
+    ${t.quotaPaused && t.status === 'todo' ? `<div class="quota-hold">${esc(t.activity || '⏸ sin cuota')}${t.quotaPaused.resetsAt > Date.now() ? ` (en ${fmtLeft(t.quotaPaused.resetsAt)})` : ''} <button class="small ghost" data-resume-now="${t.id}" title="Ignorar la espera y relanzarla en el siguiente reparto">▶ Reanudar ya</button></div>` : ''}
     ${t.budgetHit && t.status === 'review' ? '<div class="quota-hold">⚠️ cortada por el tope de gasto: revisa y decide</div>' : ''}
     ${t.summary && t.status !== 'doing' ? `<div class="sum">${esc(t.summary)}</div>` : ''}
     ${mergeChips(t) ? `<div class="merge-row">${mergeChips(t)}</div>` : ''}
@@ -1725,3 +1726,10 @@ if (EMBEDDED && !SETTINGS_EMBED) {
   }, true);
   window.addEventListener('storage', (e) => { if (e.key === 'ao:voice-wake') wakeSet(e.newValue === '1'); });
 }
+// FT-66: «Reanudar ya» en una tarea pausada por falta de cuota
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest?.('[data-resume-now]');
+  if (!b) return;
+  e.stopPropagation();
+  try { await api('POST', `/api/tasks/${b.dataset.resumeNow}/resume-now`); toast('Se relanza en el siguiente reparto'); } catch { /* api() ya avisa */ }
+});
