@@ -24,6 +24,7 @@ import * as guide from './guide/index.js';
 import { getProvider as desktopProvider } from './desktop/index.js';
 import * as stt from './guide/stt/index.js';
 import * as wake from './guide/stt/wake.js';
+import * as tts from './guide/tts/index.js'; // FT-52
 import * as quota from './quota.js';
 import * as memory from './memory.js';
 import * as claudeEngine from './engines/claude.js';
@@ -84,7 +85,8 @@ const inputStatus = () => {
   if (Date.now() - inputCache.t > 30_000) { let v; try { const a = desktopProvider().inputAvailable(); v = { ok: !!a.ok, missing: a.missing || [] }; } catch (e) { v = { ok: false, missing: [] }; } inputCache = { t: Date.now(), v }; }
   return inputCache.v;
 };
-const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), costEstimates: team.costEstimates(), rtk: claudeEngine.rtkAvailable(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot() }; };
+// FT-50: cada tarea sin empezar lleva `plannedAgentId`/`plannedReason` (calculados en cada snapshot, no persistidos).
+const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), tasks: team.withPlannedAgents(st), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), costEstimates: team.costEstimates(), rtk: claudeEngine.rtkAvailable(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot() }; };
 
 async function readBody(req) {
   const limit = req.url.startsWith('/api/upload') ? 40e6 : req.url.startsWith('/api/guide/stt') ? 12e6 : 1e6; // adjuntos y audio del Guide (FT-9) en base64
@@ -122,6 +124,8 @@ const routes = [
     if (typeof b.audio !== 'string' || !b.audio) throw fail(400, 'Falta el audio (base64)');
     return stt.transcribe(Buffer.from(b.audio, 'base64'), b.mime, b.lang);
   }],
+  // Voz de salida (FT-52): GET = proveedor TTS, voz y estado; POST {text, voice?} → audio (se atiende en `guideTts`, respuesta binaria)
+  ['GET', /^\/api\/guide\/tts$/, (_, __, q) => tts.status(q.provider)],
   // Palabra de activación (FT-35): {audio: base64, mime, durationMs?} → {wake, rest, ms}. Solo STT local (nunca OpenAI); audio ≤200 KB / 3 s
   ['POST', /^\/api\/guide\/wake$/, (_, b) => {
     if (typeof b.audio !== 'string' || !b.audio) throw fail(400, 'Falta el audio (base64)');
@@ -191,6 +195,7 @@ const routes = [
   ['DELETE', /^\/api\/tasks\/([\w-]+)$/, ([id]) => team.deleteTask(id)],
   ['POST', /^\/api\/tasks\/([\w-]+)\/approve$/, ([id]) => team.approve(id)],
   ['POST', /^\/api\/tasks\/([\w-]+)\/update-from-base$/, ([id]) => team.updateFromBase(id)], // FT-19
+  ['POST', /^\/api\/tasks\/([\w-]+)\/assign$/, ([id], b) => team.assignTask(id, b.agentId || null)], // FT-50: «Asignar a…» desde la tarjeta (agentId vacío = volver a elegir por rol)
   ['POST', /^\/api\/tasks\/([\w-]+)\/reject$/, gated(([id], b) => team.reject(id, b.feedback, b.images, b.attachments))],
   ['GET', /^\/api\/tasks\/([\w-]+)\/diff$/, async ([id]) => ({ diff: await team.taskDiff(id) })],
   ['POST', /^\/api\/agents$/, (_, b) => team.hire(b)],
@@ -214,6 +219,8 @@ const routes = [
     if (typeof b.guideModel === 'string') st.guideModel = b.guideModel.trim();
     if (guide.providerNames().includes(b.guideProvider)) st.guideProvider = b.guideProvider;
     if (stt.providerNames().includes(b.sttProvider)) st.sttProvider = b.sttProvider; // FT-9
+    if (tts.providerNames().includes(b.ttsProvider)) st.ttsProvider = b.ttsProvider; // FT-52
+    if (typeof b.ttsVoice === 'string' && b.ttsVoice.length < 80) st.ttsVoice = b.ttsVoice;
     if (typeof b.sttLang === 'string' && /^(auto|[a-z]{2})$/.test(b.sttLang.trim())) st.sttLang = b.sttLang.trim();
     if (b.guideModels && typeof b.guideModels === 'object') { // modelo por proveedor del Guide (FT-8)
       st.guideModels = { ...st.guideModels };
@@ -282,6 +289,15 @@ async function guideChat(req, res) {
   res.end();
 }
 
+// POST /api/guide/tts {text, voice?} → audio/wav (o audio/mpeg). 503 si el proveedor no está disponible.
+async function guideTts(req, res) {
+  try {
+    const b = await readBody(req);
+    const { audio, mime } = await tts.synthesize(b.text, typeof b.voice === 'string' ? b.voice : undefined, typeof b.provider === 'string' ? b.provider : undefined);
+    res.writeHead(200, { 'content-type': mime, 'content-length': audio.length, 'cache-control': 'no-store' }).end(audio);
+  } catch (e) { res.writeHead(e.status || 500, { 'content-type': 'application/json' }).end(JSON.stringify({ error: e.message })); }
+}
+
 http.createServer(async (req, res) => {
   const { pathname } = new URL(req.url, 'http://x');
   if (TOKEN && !isLoopback(req) && req.headers['x-ao-token'] !== TOKEN) {
@@ -291,6 +307,7 @@ http.createServer(async (req, res) => {
   if (pathname === '/api/file') return serveUpload(req, res);
   if (!pathname.startsWith('/api/')) return serveStatic(req, res);
   if (pathname === '/api/guide/chat' && req.method === 'POST') return guideChat(req, res);
+  if (pathname === '/api/guide/tts' && req.method === 'POST') return guideTts(req, res);
   const route = routes.find(([m, re]) => m === req.method && re.test(pathname));
   if (!route) return res.writeHead(404, { 'content-type': 'application/json' }).end('{"error":"Ruta desconocida"}');
   try {

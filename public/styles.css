@@ -187,6 +187,16 @@ dialog select[multiple].tall { height: 160px; }
 a.born:hover { text-decoration: underline; }
 .task-born { margin: 2px 0 6px; }
 .task-born .born { font-size: 12px; white-space: normal; }
+/* FT-50: quién hará la tarea (tarjeta y modal): chip fijo, «previsto:» discontinuo o aviso ámbar + desplegable «Asignar a…» */
+.who { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 6px; min-width: 0; }
+.who-chip { font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 99px; border: 1px solid color-mix(in srgb, var(--c, #999) 45%, transparent); background: color-mix(in srgb, var(--c, #999) 14%, transparent); color: var(--text); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.who-chip:hover { border-color: var(--c, #999); background: color-mix(in srgb, var(--c, #999) 26%, transparent); filter: none; }
+.who-chip.planned { border-style: dashed; color: #cfd5e6; }
+.who-chip.planned i { font-style: normal; color: var(--muted); font-weight: 500; }
+.who-chip.warn { border-color: #fbbf2466; background: #fbbf2418; color: #fbbf24; }
+.who-chip .eng-tag { color: var(--muted); font-weight: 500; }
+.who-pick { font-size: 11px; padding: 2px 4px; max-width: 130px; background: var(--panel); color: var(--muted); border: 1px solid var(--line-soft); border-radius: var(--r-sm); cursor: pointer; }
+.task-who .who { margin: 4px 0 8px; }
 .card .sum { font-size: 12px; color: #cfd5e6; margin-top: var(--s-2); max-height: 70px; overflow: hidden; white-space: pre-wrap; }
 .card .err { font-size: 12px; color: #ffb6b6; margin-top: var(--s-2); white-space: pre-wrap; max-height: 70px; overflow: hidden; }
 .embed-only { display: none; align-items: center; gap: 6px; }
@@ -354,6 +364,11 @@ dialog.question .q-context { color: var(--muted); font-size: 13px; margin-bottom
 .g-tool pre { margin: 0; padding: 6px 9px; border-top: 1px dashed var(--line); max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
 .g-tool pre.bad { color: #ffb3b3; }
 .g-typing { align-self: flex-start; color: var(--muted); font-size: 12px; padding: 2px 6px; }
+/* ▶ escuchar la respuesta (FT-52) */
+.g-play { float: right; margin: 2px 0 0 8px; font-size: 12px; padding: 0 7px; line-height: 20px; min-width: 26px; opacity: .65; }
+.g-msg:hover .g-play, .g-play.on, .g-play:focus-visible { opacity: 1; }
+.g-play.on { color: var(--accent); }
+.g-play:disabled { opacity: .3; cursor: not-allowed; }
 .g-meta { align-self: flex-start; color: var(--muted); font-size: 11px; padding: 0 6px; }
 .guide .g-form { display: flex; gap: var(--s-2); padding: var(--s-2) var(--s-3); border-top: 1px solid var(--line-soft); align-items: flex-end; }
 .guide .g-form textarea { resize: none; flex: 1; max-height: 140px; }

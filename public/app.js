@@ -217,6 +217,7 @@ function guideMount(el, panel) {
     else if (b.dataset.g === 'stop') guideStop();
     else if (b.dataset.g === 'close') guideToggle(false);
     else if (b.dataset.g === 'ear') wakeSet(false);
+    else if (b.dataset.g === 'play') ttsSpeak(G.messages[b.dataset.i]?.text, Number(b.dataset.i));
     else if (b.dataset.gchat) guideOpen(b.dataset.gchat);
     else if (b.dataset.ghint) { ta.value = b.dataset.ghint; ta.focus(); }
   });
@@ -255,7 +256,7 @@ function guideRender() {
 
 function guideMsg(m, i) {
   if (m.role === 'user') return `<div class="g-msg user">${esc(m.text)}</div>`;
-  if (m.role === 'assistant') return `<div class="g-msg assistant">${md(m.text)}</div>`;
+  if (m.role === 'assistant') return `<div class="g-msg assistant">${md(m.text)}${ttsButton(i, m.text)}</div>`;
   if (m.role === 'meta') return `<div class="g-meta" title="${esc(m.provider || '')}">${esc(m.model || m.provider || '')}${m.costUsd != null ? ` · ≈ ${m.costUsd.toFixed(4)} $` : ''}${m.usage ? ` · ${m.usage.input + m.usage.cacheRead + m.usage.cacheWrite} tok entrada${m.usage.cacheRead ? ` (${m.usage.cacheRead} en caché)` : ''} / ${m.usage.output} salida` : ''}</div>`;
   if (m.role === 'error') return `<div class="g-msg error ${m.stopped ? 'stopped' : ''}">${m.stopped ? '■ ' : '⚠ '}${esc(m.text)}</div>`;
   const state = m.ok == null ? '<span class="st">⏳</span>' : m.ok ? '<span class="st ok">✓</span>' : '<span class="st bad">✗</span>';
@@ -267,12 +268,13 @@ function guideMsg(m, i) {
 async function guideRefresh() { try { G.chats = await api('GET', '/api/guide/chats'); } catch { /* sin servidor */ } G.loaded = true; guideRender(); }
 async function guideOpen(id) {
   if (G.busy) return toast('Espera a que el Guía termine o pulsa «Parar»');
-  G.chatId = id; safeSet('ao:guide-chat', id);
+  ttsStop(); G.chatId = id; safeSet('ao:guide-chat', id);
   try { G.messages = (await api('GET', `/api/guide/chats/${id}`)).messages; } catch { G.chatId = null; G.messages = []; }
   guideRender();
 }
-function guideNew() { if (G.busy) return; G.chatId = null; G.messages = []; safeSet('ao:guide-chat', ''); guideRender(); guideRoots.forEach((r) => r.el.querySelector('textarea').focus()); }
+function guideNew() { if (G.busy) return; ttsStop(); G.chatId = null; G.messages = []; safeSet('ao:guide-chat', ''); guideRender(); guideRoots.forEach((r) => r.el.querySelector('textarea').focus()); }
 async function guideShow() {
+  if (!T.info) ttsInfoLoad();
   guideMount($('#view-guide'), false);
   if (!G.loaded) { await guideRefresh(); const last = safeGet('ao:guide-chat'); if (last && !G.chatId && G.chats.some((c) => c.id === last)) await guideOpen(last); }
   guideRender();
@@ -281,6 +283,7 @@ async function guideShow() {
 function guideToggle(open = !G.panelOpen) {
   if (activeTab === 'guide') { $('#view-guide textarea')?.focus(); return; }
   G.panelOpen = open;
+  if (!open) ttsStop();
   const p = $('#guide-panel');
   p.hidden = !open;
   if (open) { guideMount(p, true); guideShow().then(() => p.querySelector('textarea')?.focus()); }
@@ -405,7 +408,7 @@ function voiceDeliver(text, root) {
 // Se pausa (y se sueltan las pistas del micro) con G.busy, V.state≠idle, speechSynthesis hablando o la pestaña oculta.
 const W = { on: false, active: false, stream: null, rec: null, starting: false, timer: null, lastNotified: null };
 const WAKE_MS = 2500;
-const wakeWanted = () => W.on && !document.hidden && !G.busy && V.state === 'idle' && !(window.speechSynthesis && speechSynthesis.speaking);
+const wakeWanted = () => W.on && !document.hidden && !G.busy && V.state === 'idle' && !ttsPlaying();
 
 function wakeRender() {
   const txt = W.active ? '👂 Escuchando «oye guía»' : '👂 «oye guía» en pausa';
@@ -478,17 +481,112 @@ function guideRootEl() {
 }
 document.addEventListener('visibilitychange', wakeSync);
 
-// TTS opcional: solo respuestas cortas y sin código. voiceSpeak(null) calla.
-function voiceSpeak(text) {
-  if (!window.speechSynthesis) return;
-  speechSynthesis.cancel();
-  if (!text || !voicePref.tts() || text.length > 320 || /```/.test(text)) return;
-  const plain = text.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[*_`#>]/g, '').replace(/\s+/g, ' ').trim();
-  if (!plain) return;
-  const u = new SpeechSynthesisUtterance(plain);
-  u.lang = ({ es: 'es-ES', en: 'en-US', ca: 'ca-ES', fr: 'fr-FR', de: 'de-DE', pt: 'pt-PT', it: 'it-IT' })[S.settings.sttLang] || navigator.language || 'es-ES';
-  speechSynthesis.speak(u);
+// ── Salida de voz del Guía 🔊 (FT-52) ─────────────────────────────────────────
+// Botón ▶ en cada respuesta del Guía y casilla «Leer en voz alta»: POST /api/guide/tts → <audio> (voz local de piper por defecto).
+// Si el proveedor del servidor falla o es «browser», cae a speechSynthesis eligiendo una voz femenina en español. Una sola reproducción
+// a la vez; `ttsPlaying()` la expone a `wakeWanted()` para pausar la escucha continua mientras suena.
+const T = { state: 'idle', key: null, audio: null, url: null, seq: 0, info: null }; // state: idle | loading | playing
+const TTS_LANG = { es: 'es-ES', en: 'en-US', ca: 'ca-ES', fr: 'fr-FR', de: 'de-DE', pt: 'pt-PT', it: 'it-IT' };
+const ttsPlaying = () => T.state !== 'idle' || !!(window.speechSynthesis && speechSynthesis.speaking);
+// Texto plano de una respuesta: sin bloques de código, enlaces ni marcas de markdown.
+const ttsPlain = (text) => String(text || '').replace(/```[\s\S]*?```/g, ' ').replace(/!\[[^\]]*\]\([^)]*\)/g, ' ').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/`([^`]*)`/g, '$1').replace(/^\s{0,3}(?:#{1,6}|>|[-*+]|\d+[.)])\s+/gm, '').replace(/[*_~#>]/g, '').replace(/\s+/g, ' ').trim();
+const ttsInfoLoad = () => api('GET', '/api/guide/tts').then((i) => { T.info = i; guideRender(); }).catch(() => {});
+// ¿Se puede leer? → '' si sí; si no, el motivo (tooltip del botón deshabilitado).
+function ttsWhy() {
+  if (!T.info) return '';
+  const cur = T.info.providers.find((p) => p.name === T.info.provider);
+  if (cur?.ok || window.speechSynthesis) return '';
+  return `Voz no disponible: ${cur?.reason || 'sin proveedor TTS'}`;
 }
+function ttsButton(i, text) {
+  if (!ttsPlain(text)) return '';
+  const mine = T.key === i, why = ttsWhy();
+  const [ic, tip] = why ? ['▶', why] : mine && T.state === 'loading' ? ['⏳', 'Preparando la voz… (pulsa para cancelar)'] : mine && T.state === 'playing' ? ['⏸', 'Parar'] : ['▶', 'Escuchar esta respuesta'];
+  return `<button type="button" class="ghost small g-play ${mine && T.state !== 'idle' ? 'on' : ''}" data-g="play" data-i="${i}" title="${esc(tip)}" aria-label="${esc(tip)}" ${why ? 'disabled' : ''}>${ic}</button>`;
+}
+function ttsBrowserVoice(lang) {
+  const fam = lang.slice(0, 2).toLowerCase();
+  const vs = speechSynthesis.getVoices().filter((v) => v.lang.toLowerCase().startsWith(fam));
+  return vs.find((v) => /female|m[oó]nica|paulina|luc[ií]a|elvira|helena|laura|sabina|google espa/i.test(v.name)) || vs[0] || null;
+}
+function ttsStop() {
+  T.seq++; // invalida peticiones en vuelo
+  if (T.audio) { T.audio.pause(); T.audio.removeAttribute('src'); T.audio = null; }
+  if (T.url) { URL.revokeObjectURL(T.url); T.url = null; }
+  if (window.speechSynthesis) speechSynthesis.cancel();
+  const was = T.state !== 'idle';
+  T.state = 'idle'; T.key = null;
+  if (was) guideRender();
+}
+function ttsBrowserSpeak(text, seq) {
+  if (!window.speechSynthesis) return false;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = TTS_LANG[S.settings.sttLang] || 'es-ES';
+  const v = ttsBrowserVoice(u.lang);
+  if (v) u.voice = v;
+  u.rate = 1; u.pitch = 1;
+  const end = () => { if (T.seq === seq) { T.state = 'idle'; T.key = null; guideRender(); } };
+  u.onend = end; u.onerror = end;
+  T.state = 'playing';
+  speechSynthesis.speak(u);
+  return true;
+}
+// Lee `text` (markdown) con la clave `key` (índice del mensaje o 'auto'); pulsar de nuevo la misma clave la para.
+// opts.provider/opts.voice: la prueba de Ajustes usa lo del formulario sin guardar.
+async function ttsSpeak(text, key, opts = {}) {
+  const same = T.key === key && T.state !== 'idle';
+  ttsStop();
+  if (same) return;
+  const plain = ttsPlain(text).slice(0, 4000);
+  if (!plain) return;
+  const seq = ++T.seq;
+  T.key = key; T.state = 'loading'; guideRender();
+  try {
+    if ((opts.provider || T.info?.provider) === 'browser') { if (!ttsBrowserSpeak(plain, seq)) throw new Error('sin speechSynthesis'); guideRender(); return; }
+    const r = await fetch(BASE + 'api/guide/tts', { method: 'POST', headers: { 'content-type': 'application/json', 'x-ao-client': CLIENT_ID }, body: JSON.stringify({ text: plain, ...(opts.voice ? { voice: opts.voice } : {}), ...(opts.provider ? { provider: opts.provider } : {}) }) });
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw Object.assign(new Error(j.error || r.statusText), { status: r.status }); }
+    const blob = await r.blob();
+    if (T.seq !== seq) return; // el usuario paró o cambió de chat mientras se sintetizaba
+    T.url = URL.createObjectURL(blob);
+    const a = T.audio = new Audio(T.url);
+    const end = () => { if (T.audio === a) { T.state = 'idle'; T.key = null; T.audio = null; URL.revokeObjectURL(T.url); T.url = null; guideRender(); } };
+    a.addEventListener('ended', end); a.addEventListener('error', end);
+    await a.play();
+    if (T.seq === seq) { T.state = 'playing'; guideRender(); }
+  } catch (e) {
+    if (T.seq !== seq) return;
+    T.state = 'idle'; T.key = null;
+    // respaldo: voz del navegador (el servidor no tiene proveedor o falló); el texto no sale del PC
+    if (!opts.provider && window.speechSynthesis && ttsBrowserSpeak(plain, seq)) { T.key = key; guideRender(); return; }
+    toast('No se pudo leer en voz alta: ' + e.message);
+    guideRender();
+  }
+}
+function voiceSpeak(text) {
+  if (!text) return ttsStop();
+  if (!voicePref.tts() || text.length > 320 || /```/.test(text) || V.state !== 'idle') return;
+  ttsSpeak(text, 'auto');
+}
+
+// Ajustes ▸ «🔊 Voz del Guía»: voces del proveedor elegido en el formulario (sin guardar) y «Probar voz».
+async function ttsFillSettings() {
+  const sel = $('#tts-voice'), prov = document.querySelector('select[name=ttsProvider]');
+  if (!sel || !prov) return;
+  try {
+    const i = await api('GET', '/api/guide/tts?provider=' + encodeURIComponent(prov.value));
+    T.info = { ...i, provider: T.info?.provider || i.provider }; // lo guardado manda hasta que se pulse Guardar
+    sel.innerHTML = i.voices.map((v) => `<option value="${esc(v.id)}" ${v.id === i.voice ? 'selected' : ''}>${esc(v.label)}</option>`).join('');
+    const me = i.providers.find((p) => p.name === prov.value);
+    $('#tts-info').innerHTML = `· ${me?.ok ? '<span class="ok">disponible</span>' : `<span class="bad">no disponible: ${esc(me?.reason || '')}</span>`}`;
+  } catch { sel.innerHTML = '<option value="">—</option>'; }
+}
+document.addEventListener('change', (e) => { if (e.target.matches?.('select[name=ttsProvider]')) ttsFillSettings(); });
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-tts-test]');
+  if (!b) return;
+  const provider = document.querySelector('select[name=ttsProvider]')?.value, voice = $('#tts-voice')?.value;
+  ttsSpeak('Hola, soy tu guía. Así sueno cuando te leo una respuesta.', 'test', { provider, voice });
+});
 
 // Ajustes ▸ «Probar micrófono»: graba (corta sola tras el silencio), enseña el nivel y la transcripción con su latencia.
 let voiceTestRec = null;
@@ -612,6 +710,7 @@ function render() {
     ? `🔗 ${esc(BOARD_LABELS[b.kind] || b.kind)} · <a href="${esc(b.url || '#')}" target="_blank" rel="noopener">${esc(b.config.repo || b.config.boardId || b.config.projectKey || '')}</a> · ${b.syncedAt ? 'hace ' + ago(b.syncedAt) : 'sin sincronizar'}${pending ? ` · <span title="tareas sin tarjeta fuera">${pending} sin tarjeta</span>` : ''}${b.lastError ? ` <span class="bad" title="${esc(b.lastError)}">⚠</span>` : ''} ${job?.running ? `<span class="muted">⇪ ${job.done}/${job.total}${job.waitingUntil ? ' · esperando a GitHub' : ''}</span> <button class="small ghost" data-board-cancel>✕</button>` : `<button class="small" data-board-syncall title="Igualar los dos lados: trae y lleva los estados y crea fuera las tarjetas que falten">⇅ Sincronizar</button>`}`
     : `<button class="small ghost" data-action="settings" title="Conecta GitHub, Trello o Jira en Ajustes ▸ Tablero online">🔗 Conectar tablero…</button>`;
   if (drawerAgent) renderDrawer();
+  refreshTaskWho(); // FT-50
   publishContext();
 }
 
@@ -837,6 +936,33 @@ const mergeChips = (t) => t.status !== 'review' || !t.branch ? '' : [
 ].join(' ');
 const updateBtn = (t) => t.status === 'review' && t.branch && t.behind ? `<button class="small ghost" data-update="${t.id}" title="Fusiona ${esc(baseOf(t))} en la rama de la tarea; si choca, vuelve al agente con el conflicto">⬆ Actualizar con ${esc(baseOf(t))}</button>` : '';
 
+// FT-50: quién hará la tarea. Fijo (el agente que la tiene o el asignado con «Asignar a…»), previsto (`plannedAgentId`, que el
+// servidor calcula con la misma regla que el planificador) o aviso ámbar si nadie del equipo tiene el rol. El chip abre el
+// cajón del agente (motor, modelo, registro) o, sin agente, «Contratar agente» con el rol ya elegido; el desplegable reasigna.
+const UNSTARTED = ['backlog', 'todo', 'failed'];
+const engineTag = (a) => `${a.engine}${a.engine === 'auto' && a.activeEngine ? '→' + a.activeEngine : ''}${a.model ? '/' + a.model : ''}`;
+const assignable = (t) => team().filter((a) => a.role === t.role || (S.roles[a.role]?.handles || []).includes(t.role));
+function whoRow(t) {
+  const byId = (id) => id && S.agents.find((a) => a.id === id);
+  const fixed = byId(t.agentId) || byId(t.assignedAgentId);
+  const planned = !fixed && byId(t.plannedAgentId);
+  const a = fixed || planned;
+  const open = UNSTARTED.includes(t.status);
+  const chip = a
+    ? `<button type="button" class="who-chip${planned ? ' planned' : ''}" data-agent="${a.id}" title="${planned ? `Previsto: ${esc(a.name)} es el primer agente del equipo libre con ese rol (cambia con «Asignar a…»). ` : ''}Abrir a ${esc(a.name)} para configurarlo (motor, modelo) o ver su registro">👤 ${planned ? '<i>previsto:</i> ' : ''}${esc(a.name)} · <span class="eng-tag">${esc(engineTag(a))}</span></button>`
+    : open ? `<button type="button" class="who-chip warn" data-hire-role="${esc(t.role)}" title="${esc(t.plannedReason || 'nadie del equipo tiene ese rol')}. Clic: contratar un agente con ese rol">⚠️ sin agente para este rol</button>` : '';
+  if (!chip) return '';
+  const opts = open ? assignable(t) : [];
+  const pick = opts.length || t.assignedAgentId ? `<select class="who-pick" data-assign="${t.id}" title="Asignar a… fija quién hará la tarea (sin pasar por la regla del rol)"><option value="">Asignar a…</option>${opts.map((x) => `<option value="${x.id}">${esc(x.name)} · ${esc(engineTag(x))}</option>`).join('')}${t.assignedAgentId ? '<option value="__auto">(automático: por rol)</option>' : ''}</select>` : '';
+  return `<div class="who">${chip}${pick}</div>`;
+}
+// El modal «Ver la tarea» no se repinta por SSE: solo se refresca su fila de agente al llegar un estado nuevo.
+function refreshTaskWho() {
+  const el = $('#dialog .task-who');
+  const t = openTaskId && S.tasks.find((x) => x.id === openTaskId);
+  if (el && t && $('#dialog').open) el.innerHTML = whoRow(t);
+}
+
 function card(t) {
   const agent = S.agents.find((a) => a.id === t.agentId);
   const deps = t.dependsOn.map((d) => {
@@ -860,8 +986,9 @@ function card(t) {
   return `<div class="card ${t.status}" data-task="${t.id}" draggable="${['backlog', 'todo', 'failed'].includes(t.status)}" style="--c:${S.roles[t.role]?.color}">
     <div class="card-head">${roleChip(t.role)} <span class="task-id" title="Código de la tarea (rama ao/${t.code || t.id}; cítalo en commits y docs)">${esc(tcode(t))}</span>${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? ` <span class="repo-chip">📁 ${esc(t.repo || '?')}</span>` : ''}${t.source?.flow ? ` <span title="Importada del tablero «${esc(t.source.flow)}» · columna ${esc(t.source.column)}">🗂</span>` : ''}${(t.feedbackImages?.length || t.files?.length) ? ` <span title="${esc([...(t.feedbackImages || []), ...(t.files || [])].map((f) => f.split('/').pop()).join(', '))}">📎${(t.feedbackImages?.length || 0) + (t.files?.length || 0)}</span>` : ''}${t.source?.url ? ` <a class="ext" href="${esc(t.source.url)}" target="_blank" rel="noopener" title="${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} · ${esc(t.source.id)}${t.source.remoteStatus ? ' · fuera: ' + esc(t.source.remoteStatus) : ''}">🔗 ${esc(t.source.id)}</a>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}</div>
     <div class="t">${esc(t.title)}</div>
+    ${whoRow(t)}
     ${t.context ? `<div class="meta">${bornFrom(t)}</div>` : ''}
-    <div class="meta">${agent ? `<span>👤 ${esc(agent.name)}</span>` : ''}${deps ? `<span>depende de ${deps}</span>` : ''}${t.costUsd ? ` <span>💲${t.costUsd.toFixed(3)}</span>` : ''}</div>
+    ${deps || t.costUsd ? `<div class="meta">${deps ? `<span>depende de ${deps}</span>` : ''}${t.costUsd ? ` <span>💲${t.costUsd.toFixed(3)}</span>` : ''}</div>` : ''}
     ${t.status === 'doing' && agent ? `<div class="live">● ${esc(agent.activity)}</div>` : ''}
     ${t.status === 'todo' && t.quotaBlocked && t.activity ? `<div class="quota-hold">${esc(t.activity)}</div>` : ''}
     ${['todo', 'backlog'].includes(t.status) && S.costEstimates?.[t.role] != null ? `<div class="meta"><span class="cost-est" title="Estimación: mediana del coste de las últimas tareas hechas por el rol ${esc(t.role)}. Tope por intento: ${S.settings.maxTaskUsd || 3} $">≈ ${S.costEstimates[t.role].toFixed(2)} $</span></div>` : ''}
@@ -1160,10 +1287,10 @@ Pasos, convenciones y ejemplos…</textarea>
   quota: () => showTab('summary'), // FT-45: el chip de cuota abre el Resumen
   building: () => setOfficeMode('building'), // FT-47: «🏢 Edificio» en el pie de la Oficina
   'toggle-run': () => api('POST', `/api/projects/${projectId}/run`, { running: !project()?.running }),
-  hire: () => dialog(`
+  hire: (role) => dialog(`
     <h3>Contratar agente</h3>
     <label>Nombre</label><input name="name" required autofocus />
-    <label>Rol</label><select name="role">${roleOptions('back')}</select>
+    <label>Rol</label><select name="role">${roleOptions(S.roles[role] ? role : 'back')}</select>
     <label>Motor</label><select name="engine">${engineOptions('auto')}</select>
     <label>Modelo (opcional)</label>${modelSelect('model', 'auto', '')}
     ${buttons('Contratar')}`, (f) => api('POST', '/api/agents', { ...f, model: pickModel(f), projectId })),
@@ -1211,6 +1338,12 @@ Pasos, convenciones y ejemplos…</textarea>
     <select name="sttLang">${[['es', 'Español'], ['en', 'English'], ['ca', 'Català'], ['fr', 'Français'], ['de', 'Deutsch'], ['pt', 'Português'], ['it', 'Italiano'], ['auto', 'Detectar']].map(([k, n]) => `<option value="${k}" ${(S.settings.sttLang || 'es') === k ? 'selected' : ''}>${n}</option>`).join('')}</select>
     <label><input type="checkbox" name="voiceReview" ${voicePref.review() ? 'checked' : ''} /> Revisar antes de enviar (el texto dictado queda en la caja)</label>
     <label><input type="checkbox" name="voiceTts" ${voicePref.tts() ? 'checked' : ''} /> Leer en voz alta las respuestas cortas del Guía (solo en este navegador)</label>
+    <div class="section-title">🔊 Voz del Guía (FT-52)</div>
+    <label>Proveedor de voz <span id="tts-info" class="muted"></span></label>
+    <select name="ttsProvider">${[['piper', 'Local · piper (sin nube, recomendado)'], ['openai', 'OpenAI · /v1/audio/speech (nube)'], ['browser', 'Navegador · speechSynthesis (respaldo)']].map(([k, n]) => `<option value="${k}" ${(S.settings.ttsProvider || 'piper') === k ? 'selected' : ''}>${n}</option>`).join('')}</select>
+    <label>Voz</label>
+    <div style="display:flex;gap:8px;align-items:center"><select name="ttsVoice" id="tts-voice" style="flex:1"><option>Cargando…</option></select><button type="button" class="small" data-tts-test>🔊 Probar voz</button></div>
+    <p class="muted">Con piper la voz se genera en este PC; la primera vez se descarga el modelo (~75 MB) de Hugging Face. Con OpenAI el texto de la respuesta sale a la nube. El botón ▶ de cada respuesta del Guía y la casilla «Leer en voz alta» usan esta voz.</p>
     <label><input type="checkbox" name="voiceWake" ${voicePref.wake() ? 'checked' : ''} /> Escucha continua (di «oye guía») <span id="wake-info" class="muted"></span></label>
     <p class="muted">Apagada de serie. Con ella activa el micrófono queda abierto y se analiza en este navegador; solo los segmentos con voz van al STT local (nunca a OpenAI) para detectar «oye guía», con un indicador 👂 siempre visible (FT-36).</p>
     <div style="display:flex;gap:8px;align-items:center"><button type="button" class="small" data-voice-test>🎤 Probar micrófono</button><span id="voice-test" class="muted"></span></div>
@@ -1236,7 +1369,9 @@ Pasos, convenciones y ejemplos…</textarea>
     ${buttons()}`, async (f) => {
     safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0'); (SETTINGS_EMBED ? safeSet('ao:voice-wake', f.voiceWake ? '1' : '0') : wakeSet(!!f.voiceWake)); // en el panel de flow-test no se abre el micro: el iframe principal lo recoge por el evento `storage`
     refreshSttLocal();
+    ttsStop();
     await api('POST', '/api/settings', { ...f, quotaGuard: !!f.quotaGuard, agentMemory: !!f.agentMemory, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
+    ttsInfoLoad();
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
     if (repos.map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|') !== cur) await api('PATCH', `/api/projects/${projectId}`, { repos });
@@ -1523,6 +1658,7 @@ document.addEventListener('click', async (e) => {
 
 document.addEventListener('click', (e) => {
   if (e.target.closest('[data-action="settings"]')) {
+    setTimeout(ttsFillSettings, 50); // el diálogo se abre en otro manejador del mismo clic
     api('GET', '/api/guide/stt').then((st) => { const el = $('#stt-info'); if (el) el.innerHTML = st.providers.map((p) => `· ${esc(p.name)}: ${p.ok ? '<span class="ok">disponible</span>' : `<span class="bad" title="${esc(p.reason)}">no disponible</span>`}`).join(' ');
       const box = document.querySelector('input[name=voiceWake]');
       if (box && st.wake && !st.wake.ok) { box.disabled = true; box.checked = false; $('#wake-info').innerHTML = `<span class="bad">— no disponible: ${esc(st.wake.reason || 'sin STT local')}</span>`; } }).catch(() => {});
@@ -1639,8 +1775,9 @@ function openTask(id) {
   if (t.status === 'review') acts.push(`<button class="small ghost" data-diff="${t.id}">Ver cambios</button>${updateBtn(t)}<button class="small ok" data-approve="${t.id}">✓ Aprobar${t.branch ? ' y fusionar' : ''}</button><button class="small ghost" data-reject="${t.id}">↩ Devolver</button>`);
   if (t.status === 'failed') acts.push(`<button class="small" data-reject="${t.id}">↻ Reintentar</button>`);
   dialog(`
-    <div class="task-head">${roleChip(t.role)} <b>${esc(tcode(t))}</b>${repoKey ? ` <span>📁 ${esc(repoKey)}</span>` : ''} <span class="st">${STATUS[t.status] || t.status}</span>${agent ? ` <span>👤 ${esc(agent.name)}</span>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}${t.costUsd ? ` <span>≈ ${t.costUsd.toFixed(2)} $</span>` : ''}${t.source?.url ? ` <a href="${esc(t.source.url)}" target="_blank" rel="noopener" style="color:#93c5fd">🔗 ${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} ${esc(t.source.id)}</a>` : ''}<div class="spacer"></div><span>${new Date(t.createdAt).toLocaleString()}</span></div>
+    <div class="task-head">${roleChip(t.role)} <b>${esc(tcode(t))}</b>${repoKey ? ` <span>📁 ${esc(repoKey)}</span>` : ''} <span class="st">${STATUS[t.status] || t.status}</span>${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}${t.costUsd ? ` <span>≈ ${t.costUsd.toFixed(2)} $</span>` : ''}${t.source?.url ? ` <a href="${esc(t.source.url)}" target="_blank" rel="noopener" style="color:#93c5fd">🔗 ${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} ${esc(t.source.id)}</a>` : ''}<div class="spacer"></div><span>${new Date(t.createdAt).toLocaleString()}</span></div>
     <div class="task-title" tabindex="-1" autofocus>${esc(t.title)}</div>
+    <div class="task-who">${whoRow(t)}</div>
     ${t.context ? `<div class="task-born">${bornFrom(t)}</div>` : ''}
     <div class="task-sec"><h4>${t.kind === 'plan' ? 'Encargo al PO' : 'Qué va a hacer'}</h4><div class="md">${md(t.description)}</div></div>
     ${att.length ? `<div class="task-sec"><h4>Adjuntos</h4><div class="task-attach">${att.map(attachHtml).join('')}</div></div>` : ''}
@@ -1699,8 +1836,9 @@ document.addEventListener('click', async (e) => {
   if (!el) return;
   const d = el.dataset;
   if (d.action === 'suite') { S.suite = await api('GET', '/api/suite'); renderSuite(); return toast(S.suite.ok ? `flow-test OK · ${S.suite.plan || S.suite.mode}` : S.suite.reason, S.suite.ok ? '' : 'error'); }
+  if (d.hireRole !== undefined) { if ($('#dialog').open) $('#dialog').close(); return actions.hire(d.hireRole); } // FT-50: chip ámbar de la tarjeta
   if (d.action) return actions[d.action]?.();
-  if (d.agent) return openDrawer(d.agent);
+  if (d.agent) { if (el.closest('#dialog')) $('#dialog').close(); return openDrawer(d.agent); } // desde el modal de la tarea, el cajón queda detrás: se cierra antes (FT-50)
   if (d.close !== undefined) return closeDrawer();
   if (d.logFocus !== undefined) { $('#log')?.focus(); return; }
   if (d.stop) return api('POST', `/api/agents/${d.stop}/stop`);
@@ -1779,6 +1917,14 @@ document.addEventListener('click', async (e) => {
   }
 });
 
+// FT-50: «Asignar a…» en la tarjeta o en el modal de la tarea → fija el agente (o vuelve a la regla del rol); el chip se repinta por SSE.
+document.addEventListener('change', async (e) => {
+  const sel = e.target.closest?.('select[data-assign]');
+  if (!sel || !sel.value) return;
+  const v = sel.value, t = S.tasks.find((x) => x.id === sel.dataset.assign), a = S.agents.find((x) => x.id === v);
+  sel.value = '';
+  try { await api('POST', `/api/tasks/${sel.dataset.assign}/assign`, { agentId: v === '__auto' ? null : v }); toast(a ? `${tcode(t)} → la hará ${a.name}` : `${tcode(t)}: el agente vuelve a elegirse por rol`); } catch { /* api() ya avisó */ }
+});
 $('#project').onchange = (e) => { projectId = e.target.value; safeSet('ao:project', projectId); closeDrawer(); };
 // Campo del objetivo compacto: una línea que crece con el texto; Enter encarga, Shift+Enter salta de línea.
 $('#goal').addEventListener('input', (e) => { e.target.style.height = 'auto'; e.target.style.height = Math.min(160, e.target.scrollHeight) + 'px'; });
