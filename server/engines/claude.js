@@ -35,10 +35,13 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kin
   // FT-5: entrada stream-json con stdin abierto → se pueden inyectar mensajes del cliente en caliente.
   const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--append-system-prompt', system];
   if (resumeSession) args.push('--resume', resumeSession); // reintento de la MISMA tarea en su worktree: reaprovecha el contexto (y su caché) en vez de volver a explorar
+  // FT-134: sin segundo plano en los workers (hook que rechaza run_in_background) + RTK si está instalado; un único --settings.
+  const preHooks = [{ matcher: 'Bash', hooks: [{ type: 'command', command: `${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(ROOT, 'bin', 'ao-nobg.mjs'))}` }] }];
   if (rtkAvailable() && mode !== 'plan') {
-    args.push('--settings', JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: `${RTK_BIN} hook claude` }] }] } }));
+    preHooks.push({ matcher: 'Bash', hooks: [{ type: 'command', command: `${RTK_BIN} hook claude` }] });
     tools.push(...RTK_RULES.map((r) => `Bash(${r})`));
   }
+  args.push('--settings', JSON.stringify({ hooks: { PreToolUse: preHooks } }));
   if (budgetUsd) args.push('--max-budget-usd', String(budgetUsd)); // tope de gasto por intento: al pasarlo, el CLI corta y la tarea falla con el motivo
   if (effort) args.push('--effort', effort); // menos «pensamiento» = menos tokens de salida (medium por defecto)
   args.push('--model', model || 'sonnet'); // nunca heredar el modelo por defecto de la sesión del usuario (puede no estar disponible en -p)
@@ -78,7 +81,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kin
   if (extraBash.length && !builtin.includes('Bash')) builtin.push('Bash');
   args.push('--tools', builtin.join(','), '--allowedTools', ...tools);
 
-  const env = { ...process.env, ...extraEnv, BROWSER: 'true' };
+  const env = { ...process.env, ...extraEnv, BROWSER: 'true', CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' };
   if (rtkAvailable() && !String(env.PATH || '').split(':').includes(path.dirname(RTK_BIN))) env.PATH = `${path.dirname(RTK_BIN)}:${env.PATH || ''}`; // el comando reescrito («rtk git …») tiene que encontrarse
   delete env.CLAUDECODE; // si el servidor se lanzó desde una sesión de Claude Code
   // detached: el hijo lidera su propio grupo de procesos, para pausar (SIGSTOP/SIGCONT) y matar también a sus subprocesos (FT-5).

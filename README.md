@@ -545,6 +545,14 @@ Lo leído se reenvía en cada turno; para exploraciones amplias el agente delega
 - **Codex: no aplica.** `codex exec` no tiene subagentes/`spawn` que se puedan declarar por flag (no verificable aquí: `codex` pide aprobación en este entorno); ese caso lo cubre el índice de código (FT-58). Con motor `auto` cada agente usa lo de su motor; el texto del prompt dice «si tu motor la tiene».
 - **Medición pendiente:** la comparación con/sin explorador (tarea «enumera dónde se emite cada tipo de evento») requiere consumir cuota real; compárala con `AO_EXPLORER=off` en el benchmark de FT-61.
 
+## 🚫 Sin procesos en segundo plano en los workers (FT-134)
+
+En `claude -p` no hay notificaciones: un proceso lanzado con `run_in_background` muere al cerrarse la sesión y la tarea llegaba a Revisión sin entregable (caso FT-133). Ahora:
+- `--settings` lleva siempre un hook `PreToolUse` (`bin/ao-nobg.mjs`) que rechaza `Bash` con `run_in_background:true` explicando «ejecútalo en primer plano con timeout», y el worker arranca con `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`.
+- El prompt base (junto a las reglas de preguntar) pide no lanzar procesos en segundo plano ni esperar avisos; comandos largos en primer plano con timeout (hasta 10 min).
+- Al terminar, si el resumen dice «me avisará», «en segundo plano» o «cuando termine» y no hay diff, la tarea vuelve a **Por hacer** (sin Revisión) con esa nota como indicación.
+- Prueba: `node scripts/nobg-e2e.mjs`.
+
 ## ⏸ Sin cuota a mitad de tarea: pausa y reanudación automática (FT-66)
 
 Si un agente se queda sin cuota de la suscripción mientras trabaja (Claude: «usage limit reached», «5-hour limit», 429…; Codex: «You've hit your usage limit… try again at …»), la tarea **no** va a Fallidas:
