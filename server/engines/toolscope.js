@@ -21,20 +21,24 @@ const BY_KIND = {
   planner: { builtin: ['Read', 'Glob', 'Grep', 'Bash'], bash: [...PLAN_SHELL, ASK_RULE], mcp: false },
 };
 
-// → { builtin (para --tools), allowed (para --allowedTools, sin MCP ni RTK), mcp }
+// FT-115 · capacidad «browser»: tools browser.* del Guía por ao-mcp (Chromium dedicado). Solo estos roles; otro rol la activa con `tools: …, browser`.
+export const BROWSER_ROLES = ['qa-suite', 'office-flowtest'];
+
+// → { builtin (para --tools), allowed (para --allowedTools, sin MCP ni RTK), mcp, browser }
 // WebFetch/WebSearch/NotebookEdit/Task no están en ningún valor por defecto: ni se envían ni se permiten.
-export function claudeScope({ kind = 'dev', mode = 'work', roleTools = null, hasSkills = false } = {}) {
+export function claudeScope({ kind = 'dev', mode = 'work', roleTools = null, hasSkills = false, roleId = '' } = {}) {
   const k = mode === 'plan' ? 'planner' : (BY_KIND[kind] ? kind : 'dev');
   const base = BY_KIND[k];
   let builtin = [...base.builtin], bash = [...base.bash];
+  const browser = mode !== 'plan' && (BROWSER_ROLES.includes(String(roleId)) || !!roleTools?.includes('browser'));
   if (roleTools?.length && mode !== 'plan') {
-    const names = roleTools.filter((t) => !t.startsWith('Bash('));
+    const names = roleTools.filter((t) => !t.startsWith('Bash(') && t !== 'browser');
     if (names.length) builtin = names;
     bash = [...bash, ...roleTools.filter((t) => t.startsWith('Bash(')).map((t) => t.slice(5, -1))];
   }
   if (hasSkills && mode !== 'plan' && !builtin.includes('Skill')) builtin.push('Skill'); // las skills del rol se enlazan en el worktree (linkSkillsInto)
   const allowed = [...builtin.filter((t) => t !== 'Bash'), ...(builtin.includes('Bash') ? bash.map((r) => `Bash(${r})`) : [])];
-  return { builtin, allowed: [...new Set(allowed)], mcp: base.mcp && mode !== 'plan' };
+  return { builtin, allowed: [...new Set(allowed)], mcp: base.mcp && mode !== 'plan', browser };
 }
 
 // Codex no tiene lista de herramientas por nombre: se apagan por -c las opcionales (web_search no la usa ningún rol;
