@@ -820,6 +820,10 @@ El escaneo del workspace ya no crea un Coordi por carpeta descubierta: solo `cre
 - La 🔔 abre primero la 🛡/pregunta pendiente (aunque la hubieras pospuesto); sin ninguna, va a «Para ti».
 - Prueba: `node scripts/embedded-e2e.mjs [captura.png]` (flow-test simulado con iframe + proxy `/agents/` como `agents-proxy.js`, vista 🌐, contestar, 🔔, textos y fotogramas).
 
+## 🎯 Oficina fiel al estado (FT-148)
+
+La posición de cada agente REAL la decide solo su estado: `working` → su mesa sentado (sin paseos); `reviewing` → Revisión; esperando o bloqueado por dependencia → Kanban; espera al usuario (❓/✋) → junto a la mesa «Tú»; `failed` y sin cuota → su mesa; libre → Descanso. Solo los libres pasean (`WANDER_SPOTS`: café, nevera, planta, charla). Al cambiar de estado caminan a su sitio nuevo. QA: `aoOffice.simulate(s)` acelera el reloj y `debugState()` da la posición real. Prueba: `node scripts/office-fidelity-e2e.mjs`.
+
 ## 🛒 Marketplace: paquetes `ao-pkg/1` de roles, skills y agentes (FT-141)
 
 `server/marketplace.js` exporta e importa paquetes JSON `{format:"ao-pkg/1", kind, name, version, summary, author, files:[{path, content(base64), sha256}], meta, memory?}` (tope 2 MB). No habla con la nube: flow-test hace de puerta (`/account-link/marketplace/*`).
@@ -831,3 +835,14 @@ El escaneo del workspace ya no crea un Coordi por carpeta descubierta: solo `cre
 - `POST /api/marketplace/inspect` previsualiza (existe, versión instalada, código, secretos); `GET /api/marketplace/installed` da las versiones instaladas (`data/marketplace-installed.json`) para «actualizar».
 - **El cliente se protege solo** (no se fía de la nube): antes de escribir nada valida todo el paquete y rechaza con 422 rutas absolutas, con `..`, `\` o bytes nulos, ficheros repetidos, `name`/`org` fuera de `/^[a-z0-9][a-z0-9._-]{0,63}$/i` (ni `.` ni `..`), más de 200 ficheros, ficheros > 512 KB, sha256 que no coincide y destinos que sean (o cuelguen de) un enlace simbólico. Un fallo rechaza el paquete entero.
 - e2e: `node scripts/marketplace-e2e.mjs`.
+
+### Vista 🛒 Marketplace, ⬆ Publicar e ⬇ Instalar (FT-142)
+
+`server/marketplace-cloud.js` habla **solo con flow-test** (`settings.flowTestUrl` + `/account-link/marketplace/*`, que reenvía a la nube con el token de vinculación; aquí nunca se ve). Sin vinculación (401/403/412) responde **412** con `{unlinked:true, linkUrl}` y la UI pinta el aviso con enlace «Vincular en flow-test».
+
+- **Vista** (menú lateral 🛒, `?view` no hace falta): pestañas «👥 Mi team» y «🌍 Público», búsqueda, filtro por tipo y tarjetas con nombre, versión, autor/org, resumen, descargas, 🧠 si trae memoria y «⏳ pendiente de moderación». «⟳ Actualizar» si la versión de la nube difiere de la instalada.
+- **⬆ Publicar**: en cada rol del catálogo, cada skill del catálogo y la ficha del agente (agente: solo team, con memoria). Diálogo con ámbito, versión, resumen y previsualización de ficheros, memoria y saneado (un secreto bloquea con 422).
+- **⬇ Instalar**: lista los ficheros; skill con código exige 🛡 (`confirmCode`); agente con memoria exige proyecto destino; si ya existe, casilla de sobrescribir.
+- **API local**: `GET /api/marketplace/status`, `GET /api/marketplace/items?scope=&kind=&q=`, `GET|DELETE /api/marketplace/items/:id`, `POST /api/marketplace/items/:id/install {overwrite?, confirmCode?, projectId?}`, `POST /api/marketplace/preview` y `POST /api/marketplace/publish {kind,id,scope,version?,summary?}`.
+- **Guía**: `marketplace.search` (lectura) y `marketplace.install` (siempre 🛡 con la lista de ficheros); `app.navigate` acepta `view=marketplace`.
+- e2e con flow-test y nube simulados: `node scripts/marketplace-cloud-e2e.mjs` (módulo) y `node scripts/marketplace-ui-e2e.mjs [captura.png]` (UI con Chrome; usa catálogo temporal).

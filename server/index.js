@@ -41,6 +41,7 @@ import * as tts from './guide/tts/index.js'; // FT-52
 import * as quota from './quota.js';
 import * as memory from './memory.js';
 import * as marketplace from './marketplace.js'; // FT-141
+import * as mpCloud from './marketplace-cloud.js'; // FT-142
 import * as codeindex from './codeindex.js'; // FT-58
 import * as claudeEngine from './engines/claude.js';
 
@@ -215,6 +216,14 @@ const routes = [
   ['POST', /^\/api\/marketplace\/inspect$/, (_, b) => marketplace.inspect(b.package, b)],
   ['POST', /^\/api\/marketplace\/import$/, (_, b) => { const r = marketplace.importPackage(b.package, b); store.changed(); return r; }],
   ['GET', /^\/api\/marketplace\/installed$/, () => marketplace.installed()],
+  // FT-142: nube vía flow-test (/account-link/marketplace/*)
+  ['GET', /^\/api\/marketplace\/status$/, () => mpCloud.status()],
+  ['GET', /^\/api\/marketplace\/items$/, (_, __, q) => mpCloud.search(q)],
+  ['GET', /^\/api\/marketplace\/items\/([\w.-]+)$/, ([id]) => mpCloud.inspectItem(id)],
+  ['POST', /^\/api\/marketplace\/items\/([\w.-]+)\/install$/, async ([id], b) => { const r = await mpCloud.install(id, b); store.changed(); return r; }],
+  ['DELETE', /^\/api\/marketplace\/items\/([\w.-]+)$/, ([id]) => mpCloud.remove(id)],
+  ['POST', /^\/api\/marketplace\/preview$/, (_, b) => mpCloud.previewPublish(b)],
+  ['POST', /^\/api\/marketplace\/publish$/, (_, b) => mpCloud.publish(b)],
   // Catálogos de MCP y scripts para los agentes (server/toolcatalog.js)
   ['GET', /^\/api\/tools$/, () => ({ mcp: { catalog: toolcat.mcpCatalog(), inventory: toolcat.mcpInventory() }, scripts: { catalog: toolcat.scriptCatalog(), inventory: toolcat.scriptInventory() } })],
   ['POST', /^\/api\/tools\/mcp$/, (_, b) => toolcat.addMcp(b)],
@@ -413,7 +422,7 @@ const server = http.createServer(async (req, res) => {
     const out = await route[2](pathname.match(route[1]).slice(1), req.method === 'GET' ? {} : await readBody(req), Object.fromEntries(new URL(req.url, 'http://x').searchParams), req);
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(out ?? { ok: true }));
   } catch (e) {
-    res.writeHead(e.status || 500, { 'content-type': 'application/json' }).end(JSON.stringify({ error: e.message, gated: e.gated, suite: e.suite, missing: e.missing, retryAfterMs: e.retryAfterMs }));
+    res.writeHead(e.status || 500, { 'content-type': 'application/json' }).end(JSON.stringify({ error: e.message, gated: e.gated, suite: e.suite, missing: e.missing, retryAfterMs: e.retryAfterMs, needsConfirm: e.needsConfirm, hasCode: e.hasCode, target: e.target, findings: e.findings, unlinked: e.unlinked, linkUrl: e.linkUrl }));
   }
 });
 server.on('upgrade', (req, socket) => { // FT-118: WebSocket de la extensión (solo loopback; se autentica con código/clave)

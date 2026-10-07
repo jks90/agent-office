@@ -96,6 +96,7 @@ export function toVisualState(agent, tasks = [], questions = []) {
     taskId: task?.id,
     taskTitle: task?.title,
     projectId,
+    quota: !!(agent.quotaBlocked || agent.quotaPaused || agent.status === 'paused' || task?.quotaBlocked || task?.quotaPaused), // FT-148: sin cuota → su mesa 💤
     tool: agent.activeEngine || agent.engine || task?.tool,
     activity: agent.activity || task?.activity || '',
   };
@@ -173,8 +174,10 @@ function normalizeRole(role = '') {
 }
 
 function zoneFor(agent) {
-  if (agent.status === 'reviewing' || agent.status === 'failed') return 'review';
+  // FT-148: el estado manda. failed → su mesa (aro rojo); bloqueado por dependencia → Kanban; sin cuota → su mesa.
+  if (agent.status === 'reviewing') return 'review';
   if (agent.status === 'waiting') return 'board';
+  if (agent.status === 'blocked' && !agent.quota) return 'board';
   if (agent.status === 'idle') return agent.role === 'manager' ? 'meeting' : 'idle';
   return roleZone(agent.role);
 }
