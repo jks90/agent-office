@@ -170,14 +170,20 @@ async function resolveRepos({ repos, repoPath }) {
 export const isWorktreeCopy = (p) => /(^|\/)data\/worktrees\//.test(String(p || ''));
 
 export async function syncWorkspace() {
-  let files, dir;
+  let files, dir, dirs;
   try {
     const r = await fetch(`${flowTestUrl()}/workspace/flows`, { signal: AbortSignal.timeout(8000) });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
-    files = j.files || []; dir = j.dir || null;
+    files = j.files || []; dir = j.dir || null; dirs = j.dirs || [];
   } catch (e) { throw fail(502, `No pude leer el workspace de flow-test: ${e.message}`); }
   const counts = new Map([['default', 0]]);
+  // Toda carpeta de primer nivel es un proyecto aunque aún no tenga flows (solo documentos o subcarpetas, p. ej. «tareas/»);
+  // flow-test ≥ 5.20 manda `dirs` (también las vacías). assets/ y privado/ son del sistema, no proyectos.
+  const topOf = (rel) => String(rel).split('/')[0];
+  const isProjectFolder = (name) => name && !name.startsWith('.') && !name.startsWith('_') && !['assets', 'privado'].includes(name) && !isWorktreeCopy(name);
+  for (const d of dirs) { const top = topOf(d); if (isProjectFolder(top) && !counts.has(top)) counts.set(top, 0); }
+  for (const f of files) { const parts = String(f.path).split('/'); if (parts.length > 1 && isProjectFolder(parts[0]) && !counts.has(parts[0])) counts.set(parts[0], 0); }
   for (const f of files) {
     if (f.type && f.type !== 'flow') continue;
     if (isWorktreeCopy(f.path)) continue;
