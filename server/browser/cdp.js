@@ -1,7 +1,7 @@
 // FT-114 · BrowserDriver sobre Chromium/Chrome/Brave dedicado, controlado por CDP con puppeteer-core.
 // puppeteer-core se importa en el primer launch(): sin él el resto de AgentOffice arranca igual (503 claro).
 import fs from 'node:fs';
-import { bad, checkUrl, maskHeaders, ringPush, profileDir, saveShot, MAX_SHOT_WIDTH } from './util.js';
+import { bad, checkUrl, maskHeaders, ringPush, profileDir, saveShot, MAX_SHOT_WIDTH, readPageExpr, paginateRead } from './util.js';
 
 const CANDIDATES = {
   linux: ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium', '/usr/bin/chromium-browser', '/snap/bin/chromium', '/usr/bin/brave-browser'],
@@ -41,7 +41,7 @@ export function createCdpDriver() {
 
   function register(page) {
     if (byPage.has(page)) return byPage.get(page);
-    const tab = { id: `t${++seq}`, page, session: null, console: [], network: [], reqs: new Map(), refs: new Map(), rev: new Map(), refSeq: 0 };
+    const tab = { id: `t${++seq}`, page, session: null, console: [], network: [], reqs: new Map(), refs: new Map(), rev: new Map(), refSeq: 0, pending: new Set() };
     byPage.set(page, tab);
     tabs.set(tab.id, tab);
     page.on('console', (m) => ringPush(tab.console, { ts: Date.now(), level: m.type(), text: clip(m.text(), 500) }));
@@ -49,13 +49,15 @@ export function createCdpDriver() {
     page.on('request', (r) => {
       const e = { ts: Date.now(), method: r.method(), url: clip(r.url(), 500), type: r.resourceType(), status: null, requestHeaders: maskHeaders(r.headers()) };
       tab.reqs.set(r, e);
+      tab.pending.add(r);
       ringPush(tab.network, e);
     });
+    page.on('requestfinished', (r) => tab.pending.delete(r));
     page.on('response', (r) => {
       const e = tab.reqs.get(r.request());
       if (e) { e.status = r.status(); e.responseHeaders = maskHeaders(r.headers()); }
     });
-    page.on('requestfailed', (r) => { const e = tab.reqs.get(r); if (e) e.failed = r.failure()?.errorText || 'failed'; });
+    page.on('requestfailed', (r) => { tab.pending.delete(r); const e = tab.reqs.get(r); if (e) e.failed = r.failure()?.errorText || 'failed'; });
     page.on('framenavigated', (f) => { if (f === page.mainFrame()) { tab.refs.clear(); tab.rev.clear(); } }); // los backendNodeId mueren con el documento
     page.on('close', () => {
       tabs.delete(tab.id);
@@ -115,7 +117,33 @@ export function createCdpDriver() {
     }
     return tab.session;
   }
-  const navInfo = async (tab) => ({ url: tab.page.url(), title: await tab.page.title().catch(() => '') });
+  // FT-132 · Espera inteligente tras una acción: red en reposo (sin peticiones vivas ~400 ms) y DOM estable (~300 ms),
+  // con tope (AO_BROWSER_SETTLE_MS, 3 s). Nunca falla: devuelve lo esperado y si llegó a asentarse.
+  async function settle(tab, { timeout = Number(process.env.AO_BROWSER_SETTLE_MS) || 3000 } = {}) {
+    const t0 = Date.now();
+    await new Promise((r) => setTimeout(r, 120)); // deja arrancar las peticiones que provoca la acción
+    let quietSince = Date.now();
+    while (Date.now() - t0 < timeout) {
+      if (tab.pending.size) quietSince = Date.now();
+      else if (Date.now() - quietSince >= 400) break;
+      await new Promise((r) => setTimeout(r, 60));
+    }
+    const networkIdle = !tab.pending.size;
+    let domStable = false;
+    const left = Math.max(300, timeout - (Date.now() - t0));
+    try {
+      domStable = await tab.page.evaluate((ms, cap) => new Promise((res) => {
+        let t; const done = (v) => { mo.disconnect(); clearTimeout(t); clearTimeout(c); res(v); };
+        const mo = new MutationObserver(() => { clearTimeout(t); t = setTimeout(() => done(true), ms); });
+        mo.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+        t = setTimeout(() => done(true), ms); const c = setTimeout(() => done(false), cap);
+      }), 300, left);
+    } catch { domStable = true; } // el documento cambió durante la espera (navegación): ya está asentado
+    return { networkIdle, domStable, waitedMs: Date.now() - t0 };
+  }
+  // wait=false → sin espera (p. ej. teclear carácter a carácter)
+  const navInfo = async (tab, wait) => ({ url: tab.page.url(), title: await tab.page.title().catch(() => ''), ...(wait === false ? {} : { settle: await settle(tab) }) });
+  const quick = (tab) => navInfo(tab, false);
 
   // ref → centro del nodo en coordenadas del viewport (o null si no tiene caja)
   async function centerOf(tab, backendNodeId) {
@@ -303,7 +331,7 @@ export function createCdpDriver() {
     },
 
     // action: click | dblclick | hover | focus | select (value; array o «a|b» en <select multiple>)
-    async act({ ref, x, y, action = 'click', value, button = 'left' } = {}) {
+    async act({ ref, x, y, action = 'click', value, button = 'left', toX, toY, toRef } = {}) {
       const tab = await cur();
       const t = await target(tab, { ref, x, y });
       const m = tab.page.mouse;
@@ -311,7 +339,13 @@ export function createCdpDriver() {
       if (action === 'click' && t.backendNodeId) long = !!(await callOn(tab, t.backendNodeId, KIND_FN).catch(() => null))?.submit;
       const w = await watch(tab);
       try {
-        if (action === 'hover') await m.move(t.x, t.y);
+        if (action === 'rightclick') await m.click(t.x, t.y, { button: 'right' });
+        else if (action === 'drag') { // FT-132 · arrastrar de (ref|x,y) a (toRef|toX,toY)
+          const d = await target(tab, { ref: toRef, x: toX, y: toY });
+          await m.move(t.x, t.y); await m.down();
+          for (let i = 1; i <= 8; i++) await m.move(t.x + (d.x - t.x) * i / 8, t.y + (d.y - t.y) * i / 8);
+          await m.up();
+        } else if (action === 'hover') await m.move(t.x, t.y);
         else if (action === 'click') await m.click(t.x, t.y, { button });
         else if (action === 'dblclick') await m.click(t.x, t.y, { clickCount: 2 });
         else if (action === 'focus') { if (t.backendNodeId) await (await cdp(tab)).send('DOM.focus', { backendNodeId: t.backendNodeId }); else await m.click(t.x, t.y); }
@@ -366,22 +400,36 @@ export function createCdpDriver() {
       else await tab.page.mouse.move(400, 300);
       if (dx || dy) await tab.page.mouse.wheel({ deltaX: Number(dx), deltaY: Number(dy) });
       else if (!ref) throw bad(400, 'indica dx/dy o ref');
-      await new Promise((r) => setTimeout(r, 150));
+      await settle(tab, { timeout: 1500 }); // contenido perezoso que se carga al hacer scroll
       return { ok: true, scrollX: await tab.page.evaluate('Math.round(scrollX)'), scrollY: await tab.page.evaluate('Math.round(scrollY)') };
     },
 
     // PNG/JPEG reducido a ≤1280 px de ancho en data/browser/captures
-    async screenshot({ format = 'png', fullPage = false } = {}) {
+    // FT-132 · detail:'low' → JPEG q50 de ≤800 px (barato); region:{x,y,w,h} (px CSS del viewport) → zoom a esa zona.
+    // Devuelve scale/originX/originY: css = origin + píxel_de_la_captura / scale (para actuar por coordenadas).
+    async screenshot({ format = 'png', fullPage = false, detail, region, maxWidth } = {}) {
       const tab = await cur();
       const s = await cdp(tab);
       const m = await s.send('Page.getLayoutMetrics');
       const vp = m.cssVisualViewport || m.visualViewport;
-      const w = fullPage ? m.cssContentSize.width : vp.clientWidth;
-      const h = fullPage ? m.cssContentSize.height : vp.clientHeight;
-      const scale = Math.min(1, MAX_SHOT_WIDTH / w);
-      const fmt = format === 'jpeg' || format === 'jpg' ? 'jpeg' : 'png';
-      const { data } = await s.send('Page.captureScreenshot', { format: fmt, quality: fmt === 'jpeg' ? 70 : undefined, captureBeyondViewport: fullPage, clip: { x: fullPage ? 0 : vp.pageX, y: fullPage ? 0 : vp.pageY, width: w, height: h, scale } });
-      return { ...saveShot(Buffer.from(data, 'base64'), fmt, tab.id), width: Math.round(w * scale), height: Math.round(h * scale), tabId: tab.id };
+      const low = detail === 'low';
+      const R = !fullPage && region && Number(region.w) > 0 && Number(region.h) > 0 ? { x: Number(region.x) || 0, y: Number(region.y) || 0, w: Number(region.w), h: Number(region.h) } : null;
+      const w = R ? R.w : fullPage ? m.cssContentSize.width : vp.clientWidth;
+      const h = R ? R.h : fullPage ? m.cssContentSize.height : vp.clientHeight;
+      const cap = Math.min(MAX_SHOT_WIDTH, Number(maxWidth) || (low ? 800 : MAX_SHOT_WIDTH));
+      const scale = R ? Math.min(2, cap / w) : Math.min(1, cap / w);
+      const fmt = low || format === 'jpeg' || format === 'jpg' ? 'jpeg' : 'png';
+      const ox = R ? R.x : 0, oy = R ? R.y : 0;
+      const { data } = await s.send('Page.captureScreenshot', { format: fmt, quality: fmt === 'jpeg' ? (low ? 50 : 70) : undefined, captureBeyondViewport: fullPage, clip: { x: fullPage ? 0 : vp.pageX + ox, y: fullPage ? 0 : vp.pageY + oy, width: w, height: h, scale } });
+      return { ...saveShot(Buffer.from(data, 'base64'), fmt, tab.id), width: Math.round(w * scale), height: Math.round(h * scale), tabId: tab.id, scale, originX: ox, originY: oy };
+    },
+
+    // FT-132 · Texto legible de la página (modo lectura), paginado: offset/max en caracteres o «section» (encabezado).
+    async readPage({ selector, offset, max, section } = {}) {
+      const tab = await cur();
+      let raw;
+      try { raw = await tab.page.evaluate(readPageExpr(selector)); } catch (e) { throw bad(422, `readPage: ${String(e.message).split('\n')[0]}`); }
+      return { tabId: tab.id, url: tab.page.url(), title: await tab.page.title().catch(() => ''), ...paginateRead(raw, { offset, max, section }) };
     },
 
     // FT-117 · Caja (viewport, px CSS) de un ref o de un punto: para la marca visual del panel. null si no hay.
@@ -465,7 +513,7 @@ export function createCdpDriver() {
         if (e?.name === 'TimeoutError') throw bad(408, 'tiempo de espera agotado');
         throw e;
       }
-      return { ok: true, ...(await navInfo(tab)) };
+      return { ok: true, ...(await quick(tab)) };
     },
   };
   return driver;

@@ -308,6 +308,7 @@ const routes = [
     if (b.maxParallel) st.maxParallel = Math.max(1, Math.min(8, Number(b.maxParallel) || 4));
     if (typeof b.guideModel === 'string') st.guideModel = b.guideModel.trim();
     if (guide.providerNames().includes(b.guideProvider)) st.guideProvider = b.guideProvider;
+    if (b.guideBrowserMaxUsd !== undefined) st.guideBrowserMaxUsd = Math.max(0, Math.min(100, Number(b.guideBrowserMaxUsd) || 0)); // FT-132: tope de coste por petición del Guía con navegador (0 = sin tope)
     if (stt.providerNames().includes(b.sttProvider)) st.sttProvider = b.sttProvider; // FT-9
     if (tts.providerNames().includes(b.ttsProvider)) st.ttsProvider = b.ttsProvider; // FT-52
     if (typeof b.ttsVoice === 'string' && b.ttsVoice.length < 80) st.ttsVoice = b.ttsVoice;

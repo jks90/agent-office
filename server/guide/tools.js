@@ -164,9 +164,12 @@ const remember = (s) => { for (const k of [...seenNodes.keys()]) if (k.startsWit
 const nodeOf = (ref) => { if (!ref) return null; for (const [k, n] of seenNodes) if (k.endsWith(`:${ref}`)) return n; return null; };
 const nodeInfo = (ref) => { const n = nodeOf(ref); return n ? `Control: «${n.name}» (${n.role}) [${ref}]` : `Control: ${ref || 'elemento con foco'}`; };
 // click: control destructivo → irreversible (confirmación siempre), como ui.act
-const refDynamic = async (a) => {
-  const n = nodeOf(a.ref);
-  const ctx = `Navegador del agente\n${nodeInfo(a.ref)}\nAcción: ${a.action || 'click'}`;
+const refDynamic = async (a0) => {
+  const a = fromShot(a0);
+  let n = nodeOf(a.ref), byPoint = false;
+  if (!n && !a.ref && ['click', 'dblclick', 'rightclick', undefined].includes(a.action)) { n = await pointNode(a); byPoint = !!n; } // FT-132: por coordenadas también se mira qué hay debajo
+  const ctx = `Navegador del agente\n${n && byPoint ? `Bajo (${a.x},${a.y}): «${n.name}» (${n.role})` : nodeInfo(a.ref)}\nAcción: ${a.action || 'click'}`;
+  if (byPoint && n.submit) return { policy: 'irreversible', context: `⚠ Botón de envío de formulario pulsado por coordenadas\n${ctx}` };
   if (n && isDestructive(n)) return { policy: 'irreversible', context: `⚠ Control potencialmente destructivo\n${ctx}` };
   // FT-116: botón/enlace en una página con campos de contraseña o tarjeta → puede enviar credenciales o un pago
   if (n && n.role === 'button' && pageHasSensitiveField(n)) return { policy: 'irreversible', context: `⚠ Página con campos de contraseña/pago: esto puede enviar el formulario\n${ctx}` };
@@ -174,6 +177,72 @@ const refDynamic = async (a) => {
 };
 // ¿El último snapshot de la pestaña del nodo tiene un campo de contraseña/tarjeta?
 const pageHasSensitiveField = (n) => { const key = [...seenNodes].find(([, v]) => v === n)?.[0]; const tab = key?.slice(0, key.lastIndexOf(':')); for (const [k, x] of seenNodes) if (k.startsWith(`${tab}:`) && ['textbox', 'searchbox'].includes(x.role) && (x.states?.includes('protected') || bpolicy.SENSITIVE_FIELD.test(x.name || ''))) return true; return false; };
+
+// FT-132 · Coordenadas sobre la última captura: la captura guarda escala y origen (zoom de región) y `shot:true` los deshace.
+let lastShot = null;
+const fromShot = (a) => {
+  if (!a.shot) return a;
+  if (!lastShot) throw fail(409, 'No hay captura previa: haz browser.screenshot antes de actuar por coordenadas (o quita «shot»)');
+  const cx = (v) => lastShot.originX + Number(v) / lastShot.scale, cy = (v) => lastShot.originY + Number(v) / lastShot.scale;
+  const { shot, ...r } = a;
+  if (r.x != null) r.x = Math.round(cx(r.x)); if (r.y != null) r.y = Math.round(cy(r.y));
+  if (r.toX != null) r.toX = Math.round(cx(r.toX)); if (r.toY != null) r.toY = Math.round(cy(r.toY));
+  return r;
+};
+// Sin ref (coordenadas): mira qué elemento hay bajo el punto para aplicar la misma política que con ref (destructivo / envío de formulario)
+const pointNode = async (a) => {
+  if (a.x == null || a.y == null) return null;
+  try {
+    const r = await agentDriver().evaluate({ expression: `(() => { const e = document.elementFromPoint(${Number(a.x)}, ${Number(a.y)}); if (!e) return null; const b = e.closest('button,a,input,[role=button]') || e; return { tag: b.tagName, type: b.type || '', name: (b.getAttribute('aria-label') || b.value || b.innerText || b.title || '').replace(/\\s+/g, ' ').trim().slice(0, 120) }; })()` });
+    const v = r.value;
+    if (!v) return null;
+    return { role: v.tag === 'BUTTON' || v.type === 'submit' || v.type === 'button' ? 'button' : v.tag === 'A' ? 'link' : 'generic', name: v.name || `(${v.tag.toLowerCase()})`, submit: v.type === 'submit' };
+  } catch { return null; }
+};
+// FT-132 · find en lenguaje natural: tokens de la consulta (sin artículos), palabras de rol y sinónimos es/en → puntuación
+const NL_STOP = new Set('el la los las un una unos unas de del al en para que the a an of to and y o con por hacer haz click clic pulsar pulsa'.split(' '));
+const NL_ROLE = { boton: 'button', button: 'button', enlace: 'link', link: 'link', campo: 'textbox', caja: 'textbox', textbox: 'textbox', input: 'textbox', casilla: 'checkbox', checkbox: 'checkbox', opcion: 'option', desplegable: 'combobox', select: 'combobox', pestana: 'tab', tab: 'tab', imagen: 'img', titulo: 'heading', encabezado: 'heading', menu: 'menuitem', radio: 'radio', interruptor: 'switch' };
+const NL_SYN = [['anadir', 'agregar', 'add', 'meter'], ['carrito', 'cesta', 'cart', 'basket', 'bag'], ['comprar', 'buy', 'purchase', 'pedir', 'order', 'checkout'], ['enviar', 'send', 'submit', 'mandar'], ['buscar', 'search', 'busqueda', 'find'], ['cerrar', 'close', 'dismiss', 'x'], ['aceptar', 'accept', 'agree', 'ok', 'vale', 'allow'], ['rechazar', 'reject', 'decline', 'deny'], ['siguiente', 'next', 'continuar', 'continue'], ['anterior', 'previous', 'back', 'volver'], ['entrar', 'login', 'sign', 'iniciar', 'acceder'], ['correo', 'email', 'mail'], ['nombre', 'name'], ['telefono', 'phone', 'tel'], ['direccion', 'address'], ['guardar', 'save'], ['eliminar', 'borrar', 'delete', 'remove', 'quitar'], ['cookies', 'cookie', 'consentimiento']];
+const stem = (w) => (w.length > 4 && w.endsWith('s') ? w.slice(0, -1) : w);
+export function findByQuery(nodes, query, limit = 8) {
+  const toks = plain(query).split(/[^a-z0-9]+/).filter(Boolean);
+  const roles = new Set(toks.map((t) => NL_ROLE[t]).filter(Boolean));
+  const words = toks.filter((t) => !NL_STOP.has(t) && !NL_ROLE[t]).map(stem);
+  const groups = words.map((w) => new Set([w, ...(NL_SYN.find((g) => g.some((x) => stem(x) === w)) || []).map(stem)]));
+  const scored = [];
+  for (const n of nodes) {
+    const name = plain(n.name), val = plain(n.value);
+    let score = 0, hit = 0;
+    for (const g of groups) {
+      let best = 0;
+      for (const w of g) {
+        const exact = new RegExp(`(^|[^a-z0-9])${w.replace(/[^a-z0-9]/g, '')}s?([^a-z0-9]|$)`).test(name);
+        best = Math.max(best, exact ? 3 : name.includes(w) ? 2 : val.includes(w) ? 1 : 0);
+      }
+      if (best) { hit++; score += best; }
+    }
+    if (words.length && !hit) continue;
+    if (roles.size) { if (roles.has(n.role)) score += 2; else if (!words.length) continue; }
+    if (INTERACTIVE_ROLES.has(n.role)) score += 0.5;
+    score -= Math.min(1, n.name.length / 400); // a igualdad, el nombre más corto gana
+    if (score > 0) scored.push({ n, score });
+  }
+  return scored.sort((a, b) => b.score - a.score).slice(0, limit).map(({ n, score }) => ({ ...n, score: Math.round(score * 10) / 10 }));
+}
+const INTERACTIVE_ROLES = new Set(['button', 'link', 'textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'switch', 'menuitem', 'tab', 'option']);
+// FT-132 · snapshot incremental: por pestaña se guardan las líneas del último snapshot y solo se devuelve lo nuevo/cambiado
+const lastLines = new Map();
+const nodeLine = (s, n) => renderSnapshot({ ...s, nodes: [n], truncated: false }).split('\n')[1];
+function diffSnapshot(s) {
+  const lines = new Map(s.nodes.map((n) => [n.ref, nodeLine(s, n)]));
+  const prev = lastLines.get(s.tabId);
+  lastLines.set(s.tabId, { url: s.url, lines });
+  if (!prev || prev.url !== s.url) return null;
+  const add = [...lines].filter(([r, l]) => prev.lines.get(r) !== l).map(([, l]) => `+ ${l}`);
+  const gone = [...prev.lines.keys()].filter((r) => !lines.has(r));
+  const same = lines.size - add.length;
+  return [`# ${s.title || '(sin título)'} — ${s.url} (cambios respecto al snapshot anterior)`, ...add, ...(gone.length ? [`- desaparecen: ${gone.join(' ')}`] : []), `= ${same} nodos sin cambios${s.truncated ? ` · truncado: faltan ${s.omitted}` : ''}`].join('\n');
+}
 
 // ── Workspace de flow-test (los flows NO están en los repos: viven en flows/ de flow-test, con enlaces a cada repo) ──
 async function ftGet(pathAndQuery) {
@@ -326,20 +395,33 @@ export const tools = [
     async ({ url, action }) => { const d = agentDriver(); if (action) return d[action](); if (!url) throw fail(400, 'Falta «url» o «action»'); return d.navigate({ url }); },
     { precheck: urlPrecheck }),
   T('browser.snapshot', 'PRIMERO SIEMPRE: árbol de accesibilidad compacto de la pestaña activa, una línea por nodo `[e12] button "Enviar"`. Usa esas refs en click/type/select/scroll. No gasta tokens de imagen: usa browser.screenshot solo si necesitas VER el aspecto (gráficos, maquetación).',
-    obj(), 'read', async () => { const s = await agentDriver().snapshot(); remember(s); return bpolicy.untrusted({ tabId: s.tabId, url: s.url, title: s.title, total: s.total, truncated: s.truncated, snapshot: bpolicy.wrapUntrusted(renderSnapshot(s)) }); },
-    { precheck: browserPrecheck }),
-  T('browser.find', 'Busca nodos de la pestaña activa por rol exacto (button, link, textbox…) y/o texto (subcadena del nombre o valor, sin mayúsculas). Devuelve sus refs; más barato que leer todo el snapshot.',
-    obj({ role: str('Rol, p. ej. «button»'), text: str('Texto del nombre o valor') }), 'read',
-    async ({ role, text }) => {
-      if (!role && !text) throw fail(400, 'Indica «role» y/o «text»');
+    obj({ diff: { type: 'boolean', description: 'FT-132: solo los cambios respecto al snapshot anterior de esta pestaña (mucho más barato tras actuar)' } }), 'read',
+    async ({ diff } = {}) => {
       const s = await agentDriver().snapshot(); remember(s);
+      const d = diffSnapshot(s); // siempre actualiza la base, se pida diff o no
+      return bpolicy.untrusted({ tabId: s.tabId, url: s.url, title: s.title, total: s.total, truncated: s.truncated, mode: diff && d ? 'diff' : 'full', snapshot: bpolicy.wrapUntrusted(diff && d ? d : renderSnapshot(s)) });
+    },
+    { precheck: browserPrecheck }),
+  T('browser.readPage', 'FT-132 · Texto legible de la página (modo lectura: encabezados, párrafos, listas, tablas; sin menús ni scripts), paginado. Úsalo para LEER artículos, resultados o listados en vez del snapshot completo. Devuelve «next» (offset de la página siguiente) y las secciones (encabezados) para saltar con «section».',
+    obj({ offset: { type: 'integer', description: 'Carácter desde el que leer (0)' }, max: { type: 'integer', description: 'Caracteres por página (6000, máx. 20000)' }, section: str('Salta al encabezado que contenga este texto'), selector: str('Selector CSS de la zona a leer (opcional)') }), 'read',
+    async (a) => { const r = await agentDriver().readPage(a); return bpolicy.untrusted({ ...r, text: bpolicy.wrapUntrusted(r.text) }); },
+    { precheck: browserPrecheck }),
+  T('browser.find', 'Busca nodos de la pestaña activa. Con «query» en lenguaje natural («el botón de añadir al carrito», «campo del correo») devuelve hasta 8 candidatos con puntuación; con role/text, filtro exacto por rol y subcadena. Devuelve refs; más barato que leer todo el snapshot.',
+    obj({ query: str('Descripción en lenguaje natural del control'), role: str('Rol, p. ej. «button»'), text: str('Texto del nombre o valor') }), 'read',
+    async ({ query, role, text }) => {
+      if (!role && !text && !query) throw fail(400, 'Indica «query», «role» y/o «text»');
+      const s = await agentDriver().snapshot(); remember(s);
+      if (query) {
+        const nodes = findByQuery(s.nodes.filter((n) => !role || n.role === role), query);
+        return bpolicy.untrusted({ tabId: s.tabId, url: s.url, count: nodes.length, truncated: s.truncated, nodes, ...(nodes.length ? {} : { hint: 'Sin candidatos: prueba con otras palabras, browser.readPage o haz scroll' }) });
+      }
       const q = plain(text);
       const nodes = s.nodes.filter((n) => (!role || n.role === role) && (!q || plain(`${n.name} ${n.value}`).includes(q))).slice(0, 50);
       return bpolicy.untrusted({ tabId: s.tabId, url: s.url, count: nodes.length, truncated: s.truncated, nodes });
     }, { precheck: browserPrecheck }),
-  T('browser.click', 'Clic (o dblclick / hover / focus) en un nodo por su ref de browser.snapshot/find. Si el nombre del control parece destructivo (eliminar, enviar, pagar, confirmar…) pide confirmación SIEMPRE. Solo usa x,y si el nodo no tiene ref. Después, snapshot.',
-    obj({ ref: str('ref del nodo'), action: { type: 'string', enum: ['click', 'dblclick', 'hover', 'focus'] }, x: { type: 'integer' }, y: { type: 'integer' } }), 'execute',
-    async (a) => agentDriver().act({ ...a, action: a.action || 'click' }),
+  T('browser.click', 'Clic (o dblclick / rightclick / hover / focus / drag) en un nodo por su ref de browser.snapshot/find. Si el nombre del control parece destructivo (eliminar, enviar, pagar, confirmar…) pide confirmación SIEMPRE. Sin ref (canvas, mapas, widgets sin accesibilidad) usa x,y: con shot=true son píxeles de la ÚLTIMA browser.screenshot (también con zoom de región); drag arrastra hasta toRef o toX,toY. Devuelve cuándo se asentó la página (settle).',
+    obj({ ref: str('ref del nodo'), action: { type: 'string', enum: ['click', 'dblclick', 'rightclick', 'hover', 'focus', 'drag'] }, x: { type: 'integer' }, y: { type: 'integer' }, shot: { type: 'boolean', description: 'x,y (y toX,toY) están en píxeles de la última captura' }, toRef: str('Destino del drag (ref)'), toX: { type: 'integer' }, toY: { type: 'integer' } }), 'execute',
+    async (a) => agentDriver().act({ ...fromShot(a), action: a.action || 'click' }),
     { precheck: browserPrecheck, dynamic: refDynamic }),
   T('browser.type', 'Escribe texto en un campo por su ref (lo enfoca antes); rellena date/time/datetime-local/range/color/contenteditable según su tipo (formato nativo, p. ej. 2026-10-08, 19:30). El resultado trae {navigated,url,title} y, si un envío no se produjo, validation con el motivo. clear=true lo vacía antes; submit=true pulsa Enter después (irreversible: confirmación SIEMPRE). El texto NUNCA se guarda en el audit.',
     obj({ ref: str('ref del campo'), text: str('Texto'), clear: { type: 'boolean' }, submit: { type: 'boolean' } }, ['text']), 'execute',
@@ -355,8 +437,8 @@ export const tools = [
     { precheck: browserPrecheck, auditArgs: ({ paths, ...r }) => ({ ...r, files: [].concat(paths || []).map((p) => String(p).split('/').pop()) }),
       dynamic: async (a) => ({ policy: 'execute', context: `Subir ${[].concat(a.paths || []).length} fichero(s) a la página\n${nodeInfo(a.ref)}` }) }),
   T('browser.scroll', 'Desplaza la rueda sobre un nodo (por ref) o el centro de la página: dy>0 baja, dx>0 a la derecha (píxeles). Devuelve la posición. Después, snapshot si buscas algo más abajo.',
-    obj({ ref: str('ref del nodo (opcional)'), dx: { type: 'integer' }, dy: { type: 'integer' } }), 'navigate',
-    async (a) => agentDriver().scroll(a), { precheck: browserPrecheck }),
+    obj({ ref: str('ref del nodo (opcional)'), dx: { type: 'integer' }, dy: { type: 'integer' }, x: { type: 'integer' }, y: { type: 'integer' }, shot: { type: 'boolean', description: 'x,y en píxeles de la última captura' } }), 'navigate',
+    async (a) => agentDriver().scroll(fromShot(a)), { precheck: browserPrecheck }),
   T('browser.press', 'Pulsa una tecla (p. ej. «Tab», «Escape», «ArrowDown») en el elemento con foco o en el de «ref». Enter y Delete son irreversibles (confirmación SIEMPRE).',
     obj({ key: str('Nombre de tecla de puppeteer, p. ej. «Tab»'), ref: str('ref a enfocar antes (opcional)') }, ['key']), 'execute',
     async ({ key, ref }) => agentDriver().type({ ref, key }),
@@ -364,12 +446,13 @@ export const tools = [
   T('browser.waitFor', 'Espera a que aparezca un texto, un selector CSS o una URL (subcadena), o simplemente ms. timeout en ms (10 s por defecto); 408 si no ocurre.',
     obj({ text: str('Texto visible'), selector: str('Selector CSS'), url: str('Subcadena de URL'), ms: { type: 'integer' }, timeout: { type: 'integer' } }), 'read',
     async (a) => agentDriver().waitFor(a), { precheck: browserPrecheck }),
-  T('browser.screenshot', 'Captura la pestaña activa y DEVUELVE LA IMAGEN (además de la ruta en data/browser/captures; máx. 1280 px de ancho). Cuesta más que browser.snapshot: úsala solo cuando necesites VER el aspecto. Actúa siempre por ref, no por coordenadas de la imagen.',
-    obj({ fullPage: { type: 'boolean', description: 'Toda la página, no solo lo visible' }, format: { type: 'string', enum: ['png', 'jpeg'] } }), 'read',
+  T('browser.screenshot', 'Captura la pestaña activa y DEVUELVE LA IMAGEN (además de la ruta en data/browser/captures; máx. 1280 px de ancho). Cuesta más que browser.snapshot: úsala solo cuando necesites VER el aspecto o actuar por coordenadas. Prefiere actuar por ref; si no hay ref, pulsa con browser.click {x,y,shot:true} sobre píxeles de ESTA captura. detail=low (JPEG ≤800 px) es mucho más barata; region {x,y,w,h} (px de la página visible) hace zoom a esa zona y las coordenadas posteriores con shot=true siguen valiendo.',
+    obj({ fullPage: { type: 'boolean', description: 'Toda la página, no solo lo visible' }, format: { type: 'string', enum: ['png', 'jpeg'] }, detail: { type: 'string', enum: ['low', 'high'], description: 'low = JPEG reducido (barato)' }, region: { type: 'object', description: 'Zoom: {x,y,w,h} en px de la página visible', properties: { x: { type: 'integer' }, y: { type: 'integer' }, w: { type: 'integer' }, h: { type: 'integer' } } } }), 'read',
     async (a, ctx) => {
       const r = await agentDriver().screenshot(a);
+      lastShot = { scale: r.scale || 1, originX: r.originX || 0, originY: r.originY || 0 };
       // por MCP la imagen viaja en base64 (ao-mcp la convierte en contenido `image`); por la API normal solo la ruta
-      return { path: r.path, width: r.width, height: r.height, bytes: r.bytes, format: r.format, ...(ctx?.via === 'mcp' ? { image: { mimeType: r.format === 'jpeg' ? 'image/jpeg' : 'image/png', data: fs.readFileSync(r.path).toString('base64') } } : {}) };
+      return { path: r.path, width: r.width, height: r.height, bytes: r.bytes, format: r.format, scale: r.scale, ...(ctx?.via === 'mcp' ? { image: { mimeType: r.format === 'jpeg' ? 'image/jpeg' : 'image/png', data: fs.readFileSync(r.path).toString('base64') } } : {}) };
     }, { precheck: browserPrecheck }),
   T('browser.console', 'Mensajes de consola de la pestaña activa (anillo de 200): {ts, level, text}. limit (50 por defecto); clear=true los vacía.',
     obj({ limit: { type: 'integer' }, clear: { type: 'boolean' } }), 'read', async (a) => bpolicy.untrusted(await agentDriver().console(a)), { precheck: browserPrecheck }),

@@ -1,6 +1,6 @@
 // FT-114 · Driver falso (AO_BROWSER=fake): mismo contrato que cdp.js, sin Chromium, para pruebas.
 import { readFileSync } from 'node:fs';
-import { bad, checkUrl, maskHeaders, ringPush, saveShot } from './util.js';
+import { bad, checkUrl, maskHeaders, ringPush, saveShot, paginateRead } from './util.js';
 
 const PNG = readFileSync(new URL('../desktop/fake.png', import.meta.url));
 const TREE = [
@@ -73,7 +73,14 @@ export function createFakeDriver() {
     },
     async upload(a = {}) { const t = cur(); log.push({ op: 'upload', ...a }); return { ok: true, files: (a.files || []).map((f) => f.split('/').pop()), ...nav(t) }; },
     async scroll(a = {}) { cur(); log.push({ op: 'scroll', ...a }); return { ok: true, scrollX: a.dx || 0, scrollY: a.dy || 0 }; },
-    async screenshot() { const t = cur(); return { ...saveShot(PNG, 'png', t.id), width: 1, height: 1, tabId: t.id }; },
+    async screenshot(a = {}) { const t = cur(); log.push({ op: 'screenshot', ...a }); return { ...saveShot(PNG, 'png', t.id), width: 1, height: 1, tabId: t.id, scale: 1, originX: a.region?.x || 0, originY: a.region?.y || 0 }; },
+    // FT-132 · texto de lectura de la página falsa: un encabezado y una línea por nodo
+    async readPage(a = {}) {
+      const t = cur();
+      const raw = [`# ${nav(t).title || url(t)}`, ...treeOf(url(t)).map((n) => `${n.role}: ${n.name}`)].join('\n');
+      log.push({ op: 'readPage', ...a });
+      return { tabId: t.id, ...nav(t), ...paginateRead(raw, a) };
+    },
     // FT-117 · caja fija por ref (la página falsa apila los 4 elementos) o alrededor del punto
     async box({ ref, x, y } = {}) {
       const m = /^e(\d+)$/.exec(ref || '');

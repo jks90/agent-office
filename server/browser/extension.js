@@ -10,7 +10,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { accept } from './ws.js';
-import { bad, checkUrl, dataDir, maskHeaders, saveShot } from './util.js';
+import { bad, checkUrl, dataDir, maskHeaders, saveShot, readPageExpr, paginateRead } from './util.js';
 
 const CALL_TIMEOUT = 30_000;
 const CODE_TTL = 5 * 60_000;
@@ -153,6 +153,12 @@ export function createExtensionDriver() {
       const iv = setInterval(tick, 1000 / Math.min(2, Math.max(0.2, fps)));
       tick();
       return () => { stopped = true; clearInterval(iv); };
+    },
+    // FT-132 · modo lectura con la misma expresión que el driver CDP, evaluada en la pestaña cedida
+    async readPage(a = {}) {
+      const r = await call('evaluate', { expression: readPageExpr(a.selector) });
+      const t = (await call('tabs.list')).find((x) => x.active) || {};
+      return { tabId: t.id, url: t.url, title: t.title, ...paginateRead(r?.value, a) };
     },
     evaluate: c('evaluate'),
     async console(a) { return call('console', a); },

@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { estimateCost, sumUsage } from '../budget.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 export const label = 'Claude Code (CLI)';
@@ -23,6 +24,7 @@ export function create() {
   let child = null, opts = null, sessionId = null, idle = null;
   let queue = null; // { push(ev), end() } del turno en curso
   const stderr = [];
+  const turnUse = new Map(); // FT-132: usage por mensaje del turno en curso
 
   function spawnChild() {
     const mcpServers = { [MCP_SERVER]: { command: process.execPath, args: [path.join(ROOT, 'bin/ao-mcp.mjs')], env: { AO_URL: `http://127.0.0.1:${process.env.AO_PORT || 7420}`, ...(process.env.AO_TOKEN ? { AO_TOKEN: process.env.AO_TOKEN } : {}), ...(opts.chatId ? { AO_CHAT_ID: opts.chatId } : {}) } } };
@@ -48,6 +50,11 @@ export function create() {
       if (ev.session_id) sessionId = ev.session_id;
       if (!queue) return;
       if (ev.type === 'assistant') {
+        if (ev.message?.usage && ev.message.id) { // FT-132: coste estimado en curso (el real solo llega al final)
+          turnUse.set(ev.message.id, ev.message.usage);
+          const u = sumUsage(turnUse);
+          queue.push({ type: 'usage', usage: u, costUsd: estimateCost(opts?.model, u) });
+        }
         for (const b of ev.message?.content || []) {
           if (b.type === 'text' && b.text?.trim()) queue.push({ type: 'text', text: b.text });
           else if (b.type === 'tool_use') queue.push({ type: 'tool_call', id: b.id, name: toolName(b.name), args: b.input || {} });
@@ -60,7 +67,7 @@ export function create() {
         }
       } else if (ev.type === 'result') {
         if (ev.is_error) queue.push({ type: 'error', error: ev.result || 'Error del modelo' });
-        else queue.push({ type: 'done', sessionId, costUsd: ev.total_cost_usd ?? null });
+        else queue.push({ type: 'done', sessionId, costUsd: ev.total_cost_usd ?? null, ...(turnUse.size ? { usage: sumUsage(turnUse) } : {}) });
         queue.end();
       }
     });
@@ -80,6 +87,7 @@ export function create() {
     async *send({ text, context = '' }) {
       if (queue) throw new Error('Ya hay un turno en curso');
       const items = [], waiters = [];
+      turnUse.clear();
       let ended = false;
       queue = { push: (ev) => { items.push(ev); waiters.shift()?.(); }, end: () => { ended = true; waiters.shift()?.(); } };
       try {

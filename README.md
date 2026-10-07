@@ -361,6 +361,17 @@ Nació de la demo sobre `httpbin.org/forms/post`: el agente rellenó todo y puls
 - **Envío que no se envía**: si tras pulsar enviar (clic en submit, Enter o `submit:true`) no hubo navegación y el formulario es inválido, el resultado trae `submitted:false`, `validation:[{field, type, message}]` (`form.checkValidity` + `validationMessage` de cada campo inválido) y una `hint`.
 - Prueba: `node scripts/browser-forms-e2e.mjs` (Chromium headless real: todos los tipos, el HTML de httpbin servido en local —se rechaza la hora fuera de rango y, corregida, se envía— y validación por Enter).
 
+### 🌐 Navegador: tarea abierta, paridad con «Claude in Chrome» (FT-132)
+
+Para pedir cualquier cosa y que el Guía se mueva solo (el prompt tiene un modo «tarea abierta»: planifica, ejecuta seguido salvo 🛡, se recupera de errores, **verifica antes de dar por terminado** y en tareas de navegador usa solo `browser.*`):
+
+- **`browser.readPage`** `{selector?, offset?, max?, section?}`: texto legible (encabezados `#`, listas `-`, filas `a | b`; `<pre>`/JSON tal cual), paginado. Devuelve `total`, `next`, `sections` y, si recorta, `truncated`+`hint`. No hace falta `evaluate` (que pide 🛡) para leer.
+- **`browser.find {query}`**: lenguaje natural («el botón de añadir al carrito») sobre el snapshot → refs candidatos ordenados.
+- **Coordenadas sobre la captura**: `browser.click {x,y,shot:true}` (+ `rightclick`, `dblclick`, `hover`, `drag` con `toX,toY`/`toRef`) y `browser.scroll {x,y,shot}` usan píxeles de la última `browser.screenshot`, incluso con zoom (`region:{x,y,w,h}`, escala ≤2). Pulsar así un botón de envío o destructivo también pide 🛡.
+- **Esperas inteligentes**: act/type(Enter)/navigate/back/forward/reload/scroll devuelven `settle:{networkIdle,domStable,waitedMs}` (red en reposo + DOM estable; tope `AO_BROWSER_SETTLE_MS`, 3 s).
+- **Coste**: `browser.snapshot {diff:true}` devuelve solo los cambios (`mode:'diff'`, líneas `+`/`- desaparecen:`); `browser.screenshot {detail:'low'}` = JPEG ≤800 px. `settings.guideBrowserMaxUsd` (por defecto 1 $, 0 = sin tope; `POST /api/settings`) limita cada petición: al llegar avisa y para (`done.capped`). El evento `done` lleva `browser:{calls,costUsd,usage,maxUsd,capped,ms}` y el panel 🌐 muestra «💸 Última petición». Sin límite de pasos.
+- Límites: la extensión «Mi navegador» no soporta `region`/`detail` ni `settle`. El coste es una estimación por tokens (claude-cli solo da el real al final).
+
 ### 🛡 Seguridad del navegador del agente (FT-116)
 
 - **Dominios** (`settings.browserPolicy = { default: 'ask'|'allow'|'block', domains: { 'dominio': 'allow'|'block'|'ask' } }`, Ajustes ▸ 🌐 Navegador del agente, o `POST /api/settings {browserPolicy}`; módulo `server/browser/policy.js`). `block` gana a todo; subdominios heredan la regla. Sin regla: **pregunta 🛡 la 1.ª vez por dominio y sesión** (en memoria; «Sí» lo recuerda hasta reiniciar). `file://`, `chrome://`, `about:` (salvo `about:blank`), `data:`… se bloquean siempre; `localhost`, `127.x`, redes privadas y hosts sin punto, salvo que su host esté como `allow` explícito. Se aplica a `navigate` y `tabs new` (por la URL pedida) y a **todas** las tools sobre la pestaña activa (una redirección o un clic a un dominio bloqueado hace que la siguiente llamada responda 403). El rechazo es 403.

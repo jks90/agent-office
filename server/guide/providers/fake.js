@@ -18,10 +18,11 @@ export function create() {
       let script = [];
       if (at >= 0) { try { script = JSON.parse(text.slice(at + 3)); } catch { yield { type: 'error', error: 'Guion de prueba no válido (JSON)' }; return; } }
       if (!script.length) { yield { type: 'text', text: `fake: ${text}` }; yield { type: 'done', sessionId, costUsd: 0 }; return; }
-      let n = 0;
+      let n = 0, spent = 0;
       for (const step of script) {
         if (stopped) { yield { type: 'error', error: 'Parado por el usuario', stopped: true }; return; }
         if (step.say) { yield { type: 'text', text: String(step.say) }; continue; }
+        if (step.cost != null) { spent += Number(step.cost); yield { type: 'usage', costUsd: spent, usage: { input: 1000, output: 100, cacheRead: 0, cacheWrite: 0 } }; continue; } // FT-132: simula gasto (tope de coste)
         const id = `fake_${++n}`;
         yield { type: 'tool_call', id, name: step.tool, args: step.args || {} };
         try {
@@ -31,7 +32,7 @@ export function create() {
           yield { type: 'tool_result', id, ok: false, result: String(e.message).slice(0, 2000) };
         }
       }
-      yield { type: 'done', sessionId, costUsd: 0 };
+      yield { type: 'done', sessionId, costUsd: spent };
     },
     stop() { stopped = true; },
   };

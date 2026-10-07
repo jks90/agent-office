@@ -940,7 +940,8 @@ function renderBrowser() {
   const hs = b.handoffs || [];
   $('#br-side').innerHTML = `<h4>🤝 Peticiones del agente</h4>` + (hs.length
     ? hs.map((h) => `<div class="br-handoff"><div>${esc(h.reason || 'El agente necesita que lo hagas tú')}</div><button class="small" data-brhand="${esc(h.id)}">Tomar el control</button></div>`).join('')
-    : `<p class="muted">Sin peticiones. Cuando el agente necesite ayuda (login, captcha…) aparecerá aquí.</p>`);
+    : `<p class="muted">Sin peticiones. Cuando el agente necesite ayuda (login, captcha…) aparecerá aquí.</p>`)
+    + (b.lastRequest ? `<h4>💸 Última petición (FT-132)</h4><p class="muted">${b.lastRequest.calls} acciones · ${b.lastRequest.costUsd != null ? '$' + Number(b.lastRequest.costUsd).toFixed(3) : 'coste n/d'}${b.lastRequest.usage ? ` · ${(b.lastRequest.usage.input || 0) + (b.lastRequest.usage.cacheRead || 0) + (b.lastRequest.usage.cacheWrite || 0)} tok entrada / ${b.lastRequest.usage.output || 0} salida` : ''} · ${Math.round(b.lastRequest.ms / 1000)} s${b.lastRequest.capped ? ` · ⚠ tope de $${b.lastRequest.maxUsd} alcanzado` : ''}</p>` : '');
 }
 // Entrada del usuario → driver (solo con el control tomado); x,y en px CSS del viewport según el tamaño del fotograma
 const brPoint = (e) => { const r = $('#br-img').getBoundingClientRect(); return brFrame && r.width ? { x: ((e.clientX - r.left) / r.width) * brFrame.w, y: ((e.clientY - r.top) / r.height) * brFrame.h } : null; };

@@ -8,6 +8,8 @@ import * as store from '../store.js';
 import * as context from '../context.js';
 import * as activity from '../events.js';
 import { SYSTEM } from './prompt.js';
+import { maxUsd } from './budget.js';
+import * as browserPanel from '../browser/panel.js';
 import * as review from '../review.js';
 import { resolveRefs, dirOf } from '../uploads.js'; // FT-95
 import * as claudeCli from './providers/claude-cli.js';
@@ -132,13 +134,38 @@ export async function* chat({ chatId, text, attachments, client = null }) {
   store.changed();
   let reply = '';
   const flush = () => { if (reply) { c.messages.push({ role: 'assistant', ts: Date.now(), text: reply }); reply = ''; } };
+  // FT-132: tareas abiertas con navegador — coste estimado en curso, acciones y tope (settings.guideBrowserMaxUsd, 1 $; 0 = sin tope)
+  const capUsd = maxUsd(store.get().settings);
+  let browserCalls = 0, estUsd = 0, estUsage = null, capHit = false;
   try {
-    for await (const ev of provider.send({ text, context: prompt, client })) {
+    for await (const raw of provider.send({ text, context: prompt, client })) {
+      let ev = raw;
+      if (ev.type === 'usage') { // solo interno: no sale por SSE ni se guarda
+        estUsd = ev.costUsd ?? estUsd; estUsage = ev.usage || estUsage;
+        if (browserCalls && capUsd > 0 && estUsd >= capUsd && !capHit) {
+          capHit = true; flush();
+          const warn = `⚠ Tope de coste alcanzado (≈$${estUsd.toFixed(2)} de $${capUsd} por petición; Ajustes → guideBrowserMaxUsd). Paro aquí: dime si continúo y con qué.`;
+          c.messages.push({ role: 'assistant', ts: Date.now(), text: warn });
+          yield { type: 'text', text: warn };
+          provider.stop();
+        }
+        continue;
+      }
+      if (/^browser[._]/.test(ev.name || '') && ev.type === 'tool_call') browserCalls++;
+      if (capHit && ev.type === 'error') ev = { type: 'done', sessionId: provider.sessionId, costUsd: estUsd, usage: estUsage, capped: true }; // el «Parado» lo provoca el tope
       if (ev.type === 'text') { reply += (reply ? '\n\n' : '') + ev.text; }
       else if (ev.type === 'tool_call') { flush(); c.messages.push({ role: 'tool', ts: Date.now(), id: ev.id, name: ev.name, args: ev.args, ok: null, result: null }); }
       else if (ev.type === 'tool_result') { flush(); const m = c.messages.findLast((x) => x.role === 'tool' && x.id === ev.id); if (m) Object.assign(m, { ok: ev.ok, result: ev.result.slice(0, 4000) }); }
       else if (ev.type === 'error') { flush(); c.messages.push({ role: 'error', ts: Date.now(), text: ev.error, stopped: !!ev.stopped }); }
-      else if (ev.type === 'done') { flush(); if (ev.costUsd != null || ev.usage) c.messages.push({ role: 'meta', ts: Date.now(), provider: name, model, costUsd: ev.costUsd ?? null, usage: ev.usage || null }); }
+      else if (ev.type === 'done') {
+        flush();
+        if (browserCalls) { // FT-132: tokens y coste de la petición con navegador → evento done y panel 🌐
+          const info = { calls: browserCalls, costUsd: ev.costUsd ?? (estUsd || null), usage: ev.usage || estUsage || null, maxUsd: capUsd, capped: capHit, ms: Date.now() - turnStart };
+          ev = { ...ev, browser: info };
+          browserPanel.setLastRequest({ ...info, at: Date.now() });
+        }
+        if (ev.costUsd != null || ev.usage) c.messages.push({ role: 'meta', ts: Date.now(), provider: name, model, costUsd: ev.costUsd ?? null, usage: ev.usage || null, ...(ev.browser ? { browser: ev.browser } : {}) });
+      }
       yield ev.type === 'done' ? { ...ev, provider: name, model } : ev;
       if (ev.type !== 'text') { c.updatedAt = Date.now(); saveChat(c); }
     }
