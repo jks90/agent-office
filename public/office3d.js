@@ -180,6 +180,8 @@ export class Office3D {
     this.title = '';
     this.selected = null;
     this.actors = new Map();       // agentId → { group, mixer, actions, nav... }
+    this.miniActors = [];          // muñecos del modo edificio (vivos, como los de la planta)
+    this.bAnim = null;             // ascensor, árboles y sombrilla del edificio
     this.furnCache = new Map();    // nombre → gltf.scene (prototipo para clonar)
     this.charCache = new Map();    // nombre → gltf
     this.workstations = [];        // { x,z,screenMats[] }
@@ -637,6 +639,7 @@ export class Office3D {
       if (m.userData.ownGeo) m.geometry.dispose();     // las geometrías de los clones son del prototipo: no se tocan
     });
     this.building.clear();
+    this.miniActors = []; this.bAnim = null;
     for (const g of this.floorGroups) g.userData.label?.remove();
     this.floorGroups = [];
     this.hoverFloor = -1;
@@ -652,12 +655,19 @@ export class Office3D {
     // Núcleo (fachada lateral con ventanas en franja)
     box(CORE_W, H + 0.5, s.rz * 0.4, 0xb9c2c9, s.rx + CORE_W / 2, (H + 0.5) / 2, s.rz * 0.2); // al fondo: no tapa el extremo de las plantas
     for (let k = 0; k < n; k++) box(0.04, 0.5, s.rz * 0.3, 0x5b6c7a, s.rx + CORE_W + 0.02, k * FLOOR_H + SLAB_H + BWALL_H * 0.55, s.rz * 0.2, 0.4);
+    // Ascensor panorámico en la cara del núcleo que mira a la cámara: guía + cabina iluminada que va de planta en planta
+    const liftX = s.rx + CORE_W / 2, liftZ = s.rz * 0.4 + 0.1;
+    box(0.06, H + 0.4, 0.06, 0x64748b, liftX - 0.34, (H + 0.4) / 2, liftZ - 0.04, 0.5);
+    box(0.06, H + 0.4, 0.06, 0x64748b, liftX + 0.34, (H + 0.4) / 2, liftZ - 0.04, 0.5);
+    const cabin = box(0.6, 0.78, 0.18, 0xfef3c7, liftX, SLAB_H + 0.42, liftZ, 0.3);
+    cabin.material.emissive = new THREE.Color(0xfbbf24); cabin.material.emissiveIntensity = 0.55;
+    this.bAnim = { cabin, n, floorH: FLOOR_H, base: SLAB_H + 0.42, floor: 0, target: 0, wait: 2, crowns: [], umb: null };
     // Azotea: losa, pretil y terraza
     const roofY = H;
     box(s.rx + 0.3, SLAB_H, s.rz + 0.3, 0xc9d2cc, s.rx / 2, roofY + SLAB_H / 2, s.rz / 2);
     for (const [w, d, x, z] of [[s.rx + 0.3, 0.12, s.rx / 2, -0.09], [s.rx + 0.3, 0.12, s.rx / 2, s.rz + 0.09], [0.12, s.rz + 0.3, -0.09, s.rz / 2], [0.12, s.rz + 0.3, s.rx + 0.09, s.rz / 2]]) box(w, 0.3, d, 0xaeb7b1, x, roofY + SLAB_H + 0.15, z);
     const pole = box(0.05, 1.0, 0.05, 0x6b7280, s.rx * 0.62, roofY + SLAB_H + 0.5, s.rz * 0.5);
-    const umb = new THREE.Mesh(new THREE.ConeGeometry(0.85, 0.32, 10), new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.8 })); umb.userData.ownGeo = true; umb.position.set(pole.position.x, roofY + SLAB_H + 1.05, pole.position.z); grp.add(umb);
+    const umb = new THREE.Mesh(new THREE.ConeGeometry(0.85, 0.32, 10), new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.8 })); umb.userData.ownGeo = true; umb.position.set(pole.position.x, roofY + SLAB_H + 1.05, pole.position.z); grp.add(umb); this.bAnim.umb = umb;
     this.building.add(grp);
     for (const [m, x, z, ry] of [['tableRound', s.rx * 0.62, s.rz * 0.5, 0], ['chair', s.rx * 0.62, s.rz * 0.5 + 0.7, Math.PI], ['chair', s.rx * 0.62 - 0.7, s.rz * 0.5, Math.PI / 2], ['pottedPlant', 0.6, 0.6, 0], ['pottedPlant', s.rx - 0.6, s.rz - 0.6, 0], ['loungeSofa', 2.0, s.rz * 0.55, Math.PI, MINT]]) {
       const o = this.place(m, x, z, { ry, tint: m === 'loungeSofa' ? MINT : undefined }, grp); if (o) o.position.y += roofY + SLAB_H;
@@ -667,7 +677,7 @@ export class Office3D {
     box(3.6, 0.04, 2.6, 0x6b7280, s.rx + CORE_W + 0.2, 0.0, s.rz + 1.4, 0.95);
     for (const [x, z, c] of [[s.rx + CORE_W - 0.6, s.rz + 1.0, 0xdc2626], [s.rx + CORE_W + 0.9, s.rz + 1.7, 0xe5e7eb]]) { box(1.05, 0.32, 0.55, c, x, 0.2, z, 0.5); box(0.6, 0.22, 0.5, 0x94a3b8, x - 0.05, 0.47, z, 0.3); }
     for (const [x, z] of [[-0.9, s.rz + 0.9], [-0.9, 1.0], [s.rx * 0.45, s.rz + 1.3]]) {
-      const tr = box(0.14, 0.7, 0.14, 0x8b5a2b, x, 0.35, z); const crown = new THREE.Mesh(new THREE.SphereGeometry(0.55, 10, 8), new THREE.MeshStandardMaterial({ color: 0x4f9d5d, roughness: 0.9 })); crown.userData.ownGeo = true; crown.position.set(x, 1.0, z); grp.add(crown); void tr;
+      const tr = box(0.14, 0.7, 0.14, 0x8b5a2b, x, 0.35, z); const crown = new THREE.Mesh(new THREE.SphereGeometry(0.55, 10, 8), new THREE.MeshStandardMaterial({ color: 0x4f9d5d, roughness: 0.9 })); crown.userData.ownGeo = true; crown.position.set(x, 1.0, z); grp.add(crown); void tr; this.bAnim.crowns.push(crown);
     }
   }
 
@@ -745,6 +755,12 @@ export class Office3D {
     const clip = gltf.animations.find((c) => c.name === (sit ? 'sit' : 'idle')) || gltf.animations[0];
     if (clip) { mixer.clipAction(clip).play(); mixer.update(0.4); }
     g.add(model);
+    // Vivo como en la planta (teclear, respirar, mirar, gestos); quieto solo si su motor no tiene cuota
+    const a = { mixer, actions: {}, current: clip ? mixer.clipAction(clip) : null, clip: clip?.name || null, bones: {}, sitSpot: !!sit, moving: false,
+      phase: Math.random() * 10, nextGesture: Math.random() * 6, emote: null, wander: null, visual, base: clip?.name || null };
+    for (const c of gltf.animations) { const act = mixer.clipAction(c); if (/^emote|^pick-up|^jump|^interact/.test(c.name)) { act.loop = THREE.LoopOnce; act.clampWhenFinished = true; } a.actions[c.name] = act; }
+    for (const n of BONES) { const b = model.getObjectByName(n); if (b) a.bones[n] = { b, rest: b.quaternion.clone() }; }
+    this.miniActors.push(a);
     // Indicador de estado sobre la cabeza (verde trabajando, amarillo esperando, violeta revisión, rojo fallo…)
     const col = STATE_COLOR[visual.status] || 0x94a3b8;
     const dot = own(new THREE.SphereGeometry(0.075, 10, 8), new THREE.MeshBasicMaterial({ color: col }));
@@ -1155,6 +1171,29 @@ export class Office3D {
       a._ws = (visual.status === 'working' && !a.moving) ? this.nearestWorkstation(a.x, a.z) : -1;
     });
     this.refreshScreens();
+  }
+
+  // Modo edificio: los muñecos hacen lo mismo que en la planta (sin desplazarse) y el edificio respira: ascensor, árboles, sombrilla.
+  stepBuilding(dt, now) {
+    if (reducedMotion()) return;
+    for (const a of this.miniActors) {
+      const v = a.visual;
+      a.fuel = !this.quota?.[v.tool]?.limitReached;
+      this.scheduleGesture(a, v, now);
+      const name = a.emote && now < a.emote.until && a.actions[a.emote.name] ? a.emote.name : a.base;
+      if (name && a.clip !== name) this.playClip(a, name);
+      for (const { b, rest } of Object.values(a.bones)) b.quaternion.copy(rest);
+      a.mixer.update(dt);
+      this.livePose(a, v, now);
+    }
+    const B = this.bAnim;
+    if (!B) return;
+    // Ascensor: espera unos segundos, elige otra planta y va hacia ella
+    const y = B.cabin.position.y, goal = B.base + B.target * B.floorH;
+    if (Math.abs(goal - y) > 0.01) B.cabin.position.y += Math.sign(goal - y) * Math.min(Math.abs(goal - y), dt * 1.6);
+    else if ((B.wait -= dt) <= 0) { B.target = B.n > 1 ? (B.target + 1 + Math.floor(Math.random() * (B.n - 1))) % B.n : 0; B.wait = 2 + Math.random() * 4; } // siempre a OTRA planta
+    B.crowns.forEach((c, i) => { c.rotation.z = Math.sin(now * 0.9 + i * 1.7) * 0.05; c.rotation.x = Math.sin(now * 0.7 + i) * 0.04; });
+    if (B.umb) B.umb.rotation.y += dt * 0.15;
   }
 
   nearestWorkstation(x, z) {
@@ -1574,7 +1613,7 @@ export class Office3D {
     const now = this.elapsed;
     try {
       this.tickCamera(t);
-      if (this.mode === 'building') this.updateFloorLabels();   // sin personajes: solo recolocar las etiquetas
+      if (this.mode === 'building') { this.stepBuilding(dt, now); this.updateFloorLabels(); }
       else { this.step(dt, now); this.updateLabels(now); }
     } catch (err) { /* nunca romper el bucle de render */ }
     this.renderer.render(this.scene, this.camera);
