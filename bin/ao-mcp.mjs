@@ -8,17 +8,38 @@
 // Entorno: AO_URL (por defecto http://127.0.0.1:7420), AO_TOKEN (opcional, solo fuera del loopback), AO_CHAT_ID (chat del Guide, FT-22: clave de confirmOnce).
 // Los nombres MCP no admiten «.» (^[a-zA-Z0-9_-]+$): `task.create` se publica como `task_create` y se traduce al llamar.
 import readline from 'node:readline';
+import http from 'node:http';
+import https from 'node:https';
 
 const base = (process.env.AO_URL || 'http://127.0.0.1:7420').replace(/\/$/, '');
 const headers = { 'content-type': 'application/json', 'x-ao-via': 'mcp', ...(process.env.AO_CHAT_ID ? { 'x-ao-chat': process.env.AO_CHAT_ID } : {}), ...(process.env.AO_TOKEN ? { 'x-ao-token': process.env.AO_TOKEN } : {}) };
 const PROTOCOL = '2025-06-18';
 const mcpName = (n) => n.replace(/\./g, '_');
 
-async function api(method, path, body) {
-  const r = await fetch(base + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw Object.assign(new Error(j.error || `${r.status} ${path}`), { status: r.status });
-  return j;
+// FT-128 · Con node:http y sin timeouts propios: fetch (undici) corta a los 300 s sin cabeceras, y una confirmación 🛡
+// puede tardar más. El tope lo pone AO_MCP_TOOL_TIMEOUT_MS (por defecto 30 min, mayor que el de la confirmación en el servidor).
+const TOOL_TIMEOUT_MS = Number(process.env.AO_MCP_TOOL_TIMEOUT_MS) || 30 * 60_000;
+function api(method, path, body) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(base + path);
+    const data = body ? JSON.stringify(body) : undefined;
+    const req = (u.protocol === 'https:' ? https : http).request(u, { method, headers: data ? { ...headers, 'content-length': Buffer.byteLength(data) } : headers }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        clearTimeout(timer);
+        let j = {};
+        try { j = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* cuerpo no JSON */ }
+        if (res.statusCode >= 400) reject(Object.assign(new Error(j.error || `${res.statusCode} ${path}`), { status: res.statusCode }));
+        else resolve(j);
+      });
+      res.on('error', (e) => { clearTimeout(timer); reject(e); });
+    });
+    const timer = setTimeout(() => req.destroy(Object.assign(new Error('el usuario no ha contestado a la confirmación (tiempo agotado)'), { status: 408 })), TOOL_TIMEOUT_MS);
+    timer.unref?.();
+    req.on('error', (e) => { clearTimeout(timer); reject(e); });
+    req.end(data);
+  });
 }
 
 let catalog = null; // nombre MCP → tool de AgentOffice

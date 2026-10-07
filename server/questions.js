@@ -10,7 +10,9 @@ const pending = new Map(); // id → { id, taskId, agentId, projectId, question,
 const MAX_OPEN_PER_TASK = 1;
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
 
-const CONFIRM_TIMEOUT_MS = 10 * 60_000; // sin respuesta a una confirmación del Guide = «No»
+const CONFIRM_TIMEOUT_MS = 10 * 60_000; // sin respuesta a una confirmación del Guide: la tool falla (FT-128; antes contaba como «No»)
+const confirmTimeoutMs = () => Number(process.env.AO_CONFIRM_TIMEOUT_MS) || CONFIRM_TIMEOUT_MS;
+const timeoutError = () => fail(408, 'el usuario no ha contestado a la confirmación');
 const MAX_OPEN_CONFIRMS = 5;
 
 export const list = () => [...pending.values()].map(({ waiters, ...q }) => q);
@@ -50,7 +52,8 @@ export function wait(id, ms = 50_000) {
   });
 }
 
-function settle(q, answer) {
+function settle(q, answer, timedOut = false) {
+  if (timedOut) answer = null;
   pending.delete(q.id);
   const s = store.get();
   const t = s.tasks.find((x) => x.id === q.taskId);
@@ -60,7 +63,7 @@ function settle(q, answer) {
   const ctx = { projectId: q.projectId, taskId: q.taskId, taskCode: q.taskCode, agentId: q.agentId };
   if (answer != null && q.taskId) events.emit('UserInstructionAdded', ctx, { kind: 'answer', questionId: q.id, text: String(answer).slice(0, 500) });
   if (agent?.taskId === q.taskId) events.emit('AgentResumed', ctx, { reason: answer == null ? 'question-cancelled' : 'answered', questionId: q.id });
-  const res = answer == null ? { status: 'cancelled' } : { status: 'answered', answer };
+  const res = timedOut ? { status: 'timeout' } : answer == null ? { status: 'cancelled' } : { status: 'answered', answer };
   for (const w of q.waiters) w(res);
   q.waiters = [];
   store.changed();
@@ -75,6 +78,10 @@ export function confirm({ question, context = '' }) {
 // FT-116 · Como confirm, pero con las opciones que se pidan (p. ej. «Listo» / «Cancelar» en el handoff del navegador).
 // Resuelve con el texto elegido, o null si la pregunta se cancela o caduca.
 export function choose({ question, context = '', options = ['Sí', 'No'] }) {
+  // FT-128 · dedupe: si ya hay una confirmación idéntica pendiente (p. ej. el modelo reintenta tras un fallo), se espera a la misma
+  const text = String(question).trim().slice(0, 500);
+  const dup = [...pending.values()].find((p) => p.kind === 'confirm' && p.question === text && p.context === String(context || '').trim().slice(0, 4000));
+  if (dup) return new Promise((resolve, reject) => dup.waiters.push((r) => (r.status === 'timeout' ? reject(timeoutError()) : resolve(r.status === 'answered' ? r.answer : null))));
   if ([...pending.values()].filter((q) => q.kind === 'confirm').length >= MAX_OPEN_CONFIRMS) throw fail(429, 'Hay demasiadas confirmaciones pendientes: resuélvelas antes');
   const q = {
     id: store.newId(), kind: 'confirm', taskId: null, taskCode: null, agentId: null, agentName: 'Guide', projectId: null,
@@ -83,10 +90,11 @@ export function choose({ question, context = '', options = ['Sí', 'No'] }) {
   };
   pending.set(q.id, q);
   store.changed();
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => { if (pending.has(q.id)) settle(q, null); }, CONFIRM_TIMEOUT_MS);
+  return new Promise((resolve, reject) => {
+    // Sin respuesta en el tope: la pregunta se retira de 🔔 y la tool falla con un error claro (no cuenta como «No»)
+    const timer = setTimeout(() => { if (pending.has(q.id)) settle(q, undefined, true); }, confirmTimeoutMs());
     timer.unref?.();
-    q.waiters.push((r) => { clearTimeout(timer); resolve(r.status === 'answered' ? r.answer : null); });
+    q.waiters.push((r) => { clearTimeout(timer); if (r.status === 'timeout') reject(timeoutError()); else resolve(r.status === 'answered' ? r.answer : null); });
   });
 }
 
