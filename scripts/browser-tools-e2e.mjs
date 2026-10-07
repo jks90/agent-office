@@ -130,6 +130,14 @@ try {
   const tn = await A.tool('browser.tabs', { action: 'new', url: 'http://example.test/dos' });
   check('tabs new → pestaña activa con la url', tn.ok && tn.body.active && /dos/.test(tn.body.url), JSON.stringify(tn.body));
 
+  section('control compartido (FT-117): con «user» al mando el agente espera');
+  await A.post('/api/browser/control', { mode: 'user' });
+  check('browser.click con el control en «user» → 409', (await A.tool('browser.click', { ref: 'e4' })).status === 409);
+  check('browser.navigate con el control en «user» → 409', (await A.tool('browser.navigate', { url: 'http://example.test/x' })).status === 409);
+  check('browser.snapshot (lectura) sigue funcionando', (await A.tool('browser.snapshot')).ok);
+  await A.post('/api/browser/control', { mode: 'agent' });
+  check('devuelto el control, browser.click vuelve a actuar', (await A.tool('browser.click', { ref: 'e4' })).ok);
+
   section('solo fuera: nunca flow-test/AgentOffice');
   for (const u of [`http://127.0.0.1:${A.port}/`, `http://localhost:${A.port}/x`, `http://127.0.0.1:${stubPort}/`]) {
     const r = await A.tool('browser.navigate', { url: u });

@@ -20,6 +20,7 @@ import { parseKeys } from '../desktop/input.js';
 import { flowTestUrl } from '../suite.js';
 import fs from 'node:fs';
 import { getDriver, renderSnapshot } from '../browser/index.js';
+import { agentDriver } from '../browser/panel.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
 const VIEWS = ['office', 'summary', 'tasks', 'agents', 'guide', 'browser', 'settings'];
@@ -300,60 +301,60 @@ export const tools = [
   // — Navegador del agente (FT-115, sobre el driver de FT-114): Chromium dedicado por CDP. Flujo: snapshot → actuar por ref → snapshot —
   T('browser.tabs', 'Pestañas del navegador del agente (Chromium dedicado, no el del usuario). action: list (por defecto) | new (url opcional) | select | close (con id). Abre el navegador si hace falta. Nunca sobre flow-test/AgentOffice ({inside:true}).',
     obj({ action: { type: 'string', enum: ['list', 'new', 'select', 'close'] }, id: str('Id de pestaña (select/close)'), url: str('URL http(s) (new)') }), 'read',
-    async ({ action = 'list', id, url }) => { const b = getDriver().tabs; return action === 'new' ? b.new({ url }) : action === 'select' ? b.select({ id }) : action === 'close' ? b.close({ id }) : b.list(); },
+    async ({ action = 'list', id, url }) => { const b = agentDriver().tabs; return action === 'new' ? b.new({ url }) : action === 'select' ? b.select({ id }) : action === 'close' ? b.close({ id }) : b.list(); },
     { precheck: async (a) => (a.url && urlInside(a.url) ? INSIDE : null) }),
   T('browser.navigate', 'Navega la pestaña activa del navegador del agente a una URL http(s), o con action=back|forward|reload. Después haz browser.snapshot. Para mostrar una web al usuario usa browser.open. Nunca flow-test/AgentOffice ({inside:true}).',
     obj({ url: str('URL http(s)'), action: { type: 'string', enum: ['back', 'forward', 'reload'] } }), 'navigate',
-    async ({ url, action }) => { const d = getDriver(); if (action) return d[action](); if (!url) throw fail(400, 'Falta «url» o «action»'); return d.navigate({ url }); },
+    async ({ url, action }) => { const d = agentDriver(); if (action) return d[action](); if (!url) throw fail(400, 'Falta «url» o «action»'); return d.navigate({ url }); },
     { precheck: async (a) => (a.url && urlInside(a.url) ? INSIDE : browserPrecheck()) }),
   T('browser.snapshot', 'PRIMERO SIEMPRE: árbol de accesibilidad compacto de la pestaña activa, una línea por nodo `[e12] button "Enviar"`. Usa esas refs en click/type/select/scroll. No gasta tokens de imagen: usa browser.screenshot solo si necesitas VER el aspecto (gráficos, maquetación).',
-    obj(), 'read', async () => { const s = await getDriver().snapshot(); remember(s); return { tabId: s.tabId, url: s.url, title: s.title, total: s.total, truncated: s.truncated, snapshot: renderSnapshot(s) }; },
+    obj(), 'read', async () => { const s = await agentDriver().snapshot(); remember(s); return { tabId: s.tabId, url: s.url, title: s.title, total: s.total, truncated: s.truncated, snapshot: renderSnapshot(s) }; },
     { precheck: browserPrecheck }),
   T('browser.find', 'Busca nodos de la pestaña activa por rol exacto (button, link, textbox…) y/o texto (subcadena del nombre o valor, sin mayúsculas). Devuelve sus refs; más barato que leer todo el snapshot.',
     obj({ role: str('Rol, p. ej. «button»'), text: str('Texto del nombre o valor') }), 'read',
     async ({ role, text }) => {
       if (!role && !text) throw fail(400, 'Indica «role» y/o «text»');
-      const s = await getDriver().snapshot(); remember(s);
+      const s = await agentDriver().snapshot(); remember(s);
       const q = plain(text);
       const nodes = s.nodes.filter((n) => (!role || n.role === role) && (!q || plain(`${n.name} ${n.value}`).includes(q))).slice(0, 50);
       return { tabId: s.tabId, url: s.url, count: nodes.length, truncated: s.truncated, nodes };
     }, { precheck: browserPrecheck }),
   T('browser.click', 'Clic (o dblclick / hover / focus) en un nodo por su ref de browser.snapshot/find. Si el nombre del control parece destructivo (eliminar, enviar, pagar, confirmar…) pide confirmación SIEMPRE. Solo usa x,y si el nodo no tiene ref. Después, snapshot.',
     obj({ ref: str('ref del nodo'), action: { type: 'string', enum: ['click', 'dblclick', 'hover', 'focus'] }, x: { type: 'integer' }, y: { type: 'integer' } }), 'execute',
-    async (a) => getDriver().act({ ...a, action: a.action || 'click' }),
+    async (a) => agentDriver().act({ ...a, action: a.action || 'click' }),
     { precheck: browserPrecheck, dynamic: refDynamic }),
   T('browser.type', 'Escribe texto en un campo por su ref (lo enfoca antes). clear=true lo vacía antes; submit=true pulsa Enter después (irreversible: confirmación SIEMPRE). El texto NUNCA se guarda en el audit.',
     obj({ ref: str('ref del campo'), text: str('Texto'), clear: { type: 'boolean' }, submit: { type: 'boolean' } }, ['text']), 'execute',
-    async (a) => getDriver().type(a),
+    async (a) => agentDriver().type(a),
     { precheck: browserPrecheck, auditArgs: ({ text, ...r }) => ({ ...r, chars: [...String(text ?? '')].length }),
       dynamic: async (a) => (a.submit ? { policy: 'irreversible', context: `⚠ Escribir y pulsar Enter (puede enviar el formulario)\n${nodeInfo(a.ref)}` } : null) }),
   T('browser.select', 'Elige una opción de un <select> por su ref (value o texto visible).',
     obj({ ref: str('ref del select'), value: str('Valor o texto de la opción') }, ['ref', 'value']), 'execute',
-    async ({ ref, value }) => getDriver().act({ ref, action: 'select', value }), { precheck: browserPrecheck }),
+    async ({ ref, value }) => agentDriver().act({ ref, action: 'select', value }), { precheck: browserPrecheck }),
   T('browser.scroll', 'Desplaza la rueda sobre un nodo (por ref) o el centro de la página: dy>0 baja, dx>0 a la derecha (píxeles). Devuelve la posición. Después, snapshot si buscas algo más abajo.',
     obj({ ref: str('ref del nodo (opcional)'), dx: { type: 'integer' }, dy: { type: 'integer' } }), 'navigate',
-    async (a) => getDriver().scroll(a), { precheck: browserPrecheck }),
+    async (a) => agentDriver().scroll(a), { precheck: browserPrecheck }),
   T('browser.press', 'Pulsa una tecla (p. ej. «Tab», «Escape», «ArrowDown») en el elemento con foco o en el de «ref». Enter y Delete son irreversibles (confirmación SIEMPRE).',
     obj({ key: str('Nombre de tecla de puppeteer, p. ej. «Tab»'), ref: str('ref a enfocar antes (opcional)') }, ['key']), 'execute',
-    async ({ key, ref }) => getDriver().type({ ref, key }),
+    async ({ key, ref }) => agentDriver().type({ ref, key }),
     { precheck: browserPrecheck, dynamic: async ({ key, ref }) => (/^(enter|delete|numpadenter)$/i.test(key) ? { policy: 'irreversible', context: `⚠ Tecla «${key}»\n${nodeInfo(ref)}` } : null) }),
   T('browser.waitFor', 'Espera a que aparezca un texto, un selector CSS o una URL (subcadena), o simplemente ms. timeout en ms (10 s por defecto); 408 si no ocurre.',
     obj({ text: str('Texto visible'), selector: str('Selector CSS'), url: str('Subcadena de URL'), ms: { type: 'integer' }, timeout: { type: 'integer' } }), 'read',
-    async (a) => getDriver().waitFor(a), { precheck: browserPrecheck }),
+    async (a) => agentDriver().waitFor(a), { precheck: browserPrecheck }),
   T('browser.screenshot', 'Captura la pestaña activa y DEVUELVE LA IMAGEN (además de la ruta en data/browser/captures; máx. 1280 px de ancho). Cuesta más que browser.snapshot: úsala solo cuando necesites VER el aspecto. Actúa siempre por ref, no por coordenadas de la imagen.',
     obj({ fullPage: { type: 'boolean', description: 'Toda la página, no solo lo visible' }, format: { type: 'string', enum: ['png', 'jpeg'] } }), 'read',
     async (a, ctx) => {
-      const r = await getDriver().screenshot(a);
+      const r = await agentDriver().screenshot(a);
       // por MCP la imagen viaja en base64 (ao-mcp la convierte en contenido `image`); por la API normal solo la ruta
       return { path: r.path, width: r.width, height: r.height, bytes: r.bytes, format: r.format, ...(ctx?.via === 'mcp' ? { image: { mimeType: r.format === 'jpeg' ? 'image/jpeg' : 'image/png', data: fs.readFileSync(r.path).toString('base64') } } : {}) };
     }, { precheck: browserPrecheck }),
   T('browser.console', 'Mensajes de consola de la pestaña activa (anillo de 200): {ts, level, text}. limit (50 por defecto); clear=true los vacía.',
-    obj({ limit: { type: 'integer' }, clear: { type: 'boolean' } }), 'read', async (a) => getDriver().console(a), { precheck: browserPrecheck }),
+    obj({ limit: { type: 'integer' }, clear: { type: 'boolean' } }), 'read', async (a) => agentDriver().console(a), { precheck: browserPrecheck }),
   T('browser.network', 'Peticiones de red de la pestaña activa (anillo de 200): método, URL, estado, tipo; cabeceras sensibles enmascaradas. limit (50 por defecto); clear=true las vacía.',
-    obj({ limit: { type: 'integer' }, clear: { type: 'boolean' } }), 'read', async (a) => getDriver().network(a), { precheck: browserPrecheck }),
+    obj({ limit: { type: 'integer' }, clear: { type: 'boolean' } }), 'read', async (a) => agentDriver().network(a), { precheck: browserPrecheck }),
   T('browser.evaluate', 'Ejecuta una expresión JavaScript en la página activa y devuelve el valor (recortado a 20 KB). Puede hacer cualquier cosa en la página: pide confirmación. Prefiere snapshot/click/type.',
     obj({ expression: str('Expresión JS') }, ['expression']), 'write',
-    async ({ expression }) => { const r = await getDriver().evaluate({ expression }); const v = typeof r.value === 'string' ? r.value : JSON.stringify(r.value); return { value: String(v ?? '').slice(0, 20_000) }; },
+    async ({ expression }) => { const r = await agentDriver().evaluate({ expression }); const v = typeof r.value === 'string' ? r.value : JSON.stringify(r.value); return { value: String(v ?? '').slice(0, 20_000) }; },
     { precheck: browserPrecheck, auditArgs: ({ expression }) => ({ expression: summarize(expression) }) }),
 
   // — Escritorio (FT-22): delegan en server/desktop/ —
