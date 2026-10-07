@@ -80,14 +80,11 @@ const LOUNGE = [
   { x: 7.5, z: 4.45 }, { x: 5.45, z: 5.1, sit: true },
 ];
 
-// Oficina viva: a dónde van los que no tienen tarea y qué hacen allí (gesto repetido y/o pose sujetando algo).
+// FT-148: solo los LIBRES pasean, y solo por descanso/recreo (café, nevera, planta, charla). Oficina viva: a dónde van los que no tienen tarea y qué hacen allí (gesto repetido y/o pose sujetando algo).
 // `face`: hacia dónde miran al llegar (π = al fondo). Solo se quedan quietos si su motor no tiene cuota.
 const WANDER_SPOTS = [
   { id: 'cafe', label: '☕ Café', x: 6.55, z: 1.05, face: Math.PI, gesture: 'interact-right', hold: 'holding-right', stay: [6, 10] },
   { id: 'nevera', label: '🥤 Nevera', x: 7.75, z: 1.15, face: Math.PI, gesture: 'interact-right', hold: 'holding-right', stay: [4, 7] },
-  { id: 'libros', label: '📚 Buscando un libro', x: 1.0, z: 0.95, face: Math.PI, gesture: 'interact-left', stay: [5, 9] },
-  { id: 'archivo', label: '📚 Consultando', x: 0.8, z: 2.75, face: -Math.PI / 2, gesture: 'pick-up', hold: 'holding-both', stay: [5, 9] },
-  { id: 'kanban', label: '🗂 Mirando el kanban', x: 4.15, z: 1.4, face: Math.PI, gesture: 'interact-right', stay: [4, 8] },
   { id: 'planta', label: '🪴 Regando', x: 6.15, z: 4.05, face: Math.PI, gesture: 'interact-right', stay: [3, 6] },
   { id: 'charla', label: '💬 Charlando', x: 5.45, z: 4.55, face: 0, gesture: 'emote-yes', stay: [6, 11] },
 ];
@@ -1024,9 +1021,12 @@ export class Office3D {
     for (const v of this.visualAgents) {
       const s = this.floorLayout?.slots?.[v.id];
       const a = this.actors.get(v.id);
-      if (s) slots[v.id] = { zone: s.zone, module: s.module, slot: s.index, x: s.x, z: s.z, status: v.status, key: a?.key || null, moving: !!a?.moving };
+      if (s) slots[v.id] = { zone: s.zone, module: s.module, slot: s.index, x: s.x, z: s.z, status: v.status, key: a?.key || null, moving: !!a?.moving, ax: a ? +a.x.toFixed(2) : null, az: a ? +a.z.toFixed(2) : null, sit: !!a?.sitSpot, wander: a?.wander?.id || null };
     }
+    const tu = {}; // FT-148: los que esperan al usuario no tienen slot de planta
+    for (const [id] of this.waitOn || []) { const a = this.actors.get(id); if (a) tu[id] = { ax: +a.x.toFixed(2), az: +a.z.toFixed(2), moving: !!a.moving, key: a.key }; }
     return {
+      deskPos: this.deskPos ? { x: this.deskPos.x, z: this.deskPos.z } : null, waiting: tu,
       mode: this.mode, officeLevel: this.officeLevel, selectedAgentId: this.selected || null, activeProjectId: this.activeProjectId, hoverFloor: this.hoverFloor, hoverActor: this.hoverActor, animating: !!this.camAnim,
       camera: { center: { x: +this.camCenter.x.toFixed(3), y: +this.camCenter.y.toFixed(3), z: +this.camCenter.z.toFixed(3) }, span: +(this.camera.top - this.camera.bottom).toFixed(3) },
       actors: this.actors.size,
@@ -1094,7 +1094,12 @@ export class Office3D {
 
   targetFor(agent, index, a) {
     const visual = this.visualAgents.find((v) => v.id === agent.id) || toVisualState(agent, this.tasks, this.questions);
-    const w = a?.wander;
+    // FT-148: si espera al usuario (❓/✋), junto a la mesa «Tú» (hueco según su orden entre los que esperan).
+    if (this.waitOn?.has(agent.id) && this.deskPos) {
+      const k = [...this.waitOn.keys()].sort().indexOf(agent.id);
+      return { key: 'tu:' + k, zone: 'tu', x: this.deskPos.x - 0.6 + (k % 3) * 0.6, z: this.deskPos.z + 0.75 + Math.floor(k / 3) * 0.5, corr: null, sit: false, status: visual.status };
+    }
+    const w = visual.status === 'idle' ? a?.wander : null; // FT-148: los paseos son solo de los libres
     if (w) return { key: 'wander:' + w.id, zone: 'wander', x: w.x, z: w.z, corr: null, sit: false, status: visual.status };
     const s = this.floorLayout?.slots?.[agent.id];
     if (s) return {
@@ -1260,11 +1265,9 @@ export class Office3D {
   miniWalk(a, v, dt, now) {
     if (v.status !== 'idle' || !a.fuel || !a.model) { a.moving = false; return; }
     const B = Office3D.BLDG, m = a.model;
-    const SPOTS = [
-      { id: 'kanban', x: B.wait[1][0], z: B.wait[1][1] + 0.35, face: Math.PI, gesture: 'interact-right' },
-      { id: 'reunion', x: B.meeting[0], z: B.meeting[1] + 0.55, face: Math.PI, gesture: 'emote-yes' },
-      { id: 'revision', x: B.review[0] - 0.6, z: B.review[1] + 0.6, face: Math.PI / 2, gesture: 'interact-left' },
-      { id: 'mesa', x: B.dev[4][0] + 0.9, z: B.dev[4][1] + 0.55, face: Math.PI, gesture: 'pick-up' },
+    const SPOTS = [ // FT-148: solo descanso/recreo (el sofá y la zona de charla), nunca kanban/revisión/mesas de trabajo
+      { id: 'charla', x: B.sofa[0] - 0.8, z: B.sofa[1] + 0.2, face: Math.PI, gesture: 'emote-yes' },
+      { id: 'cafe', x: B.sofa[0] - 0.8, z: B.sofa[1] - 0.5, face: Math.PI, gesture: 'interact-right' },
     ];
     const W = a.walk;
     if (!W) {
@@ -1827,6 +1830,12 @@ export class Office3D {
     cam.top = midY + halfH; cam.bottom = midY - halfH;
     cam.near = -maxZ - 5; cam.far = -minZ + 5;
     cam.updateProjectionMatrix();
+  }
+
+  // FT-148 (QA): avanza el reloj de la planta `seconds` simulados sin esperar al tiempo real.
+  simulate(seconds, dt = 0.05) {
+    if (this.mode === 'building') return;
+    for (let i = 0; i < seconds / dt; i++) { this.elapsed += dt; this.step(dt, this.elapsed); }
   }
 
   frame() {
