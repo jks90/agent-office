@@ -101,12 +101,37 @@ async function conflictsOf(cwd, base, branch) {
 
 // Fusiona la base dentro de la rama, en el worktree de la tarea. → { conflicts: [] } si entró limpio (o ya estaba al día);
 // con conflicto aborta el merge (el worktree queda como estaba) y devuelve las rutas en conflicto.
+// Ficheros de historial donde cada tarea solo AÑADE líneas (CHANGELOG…): un choque ahí se resuelve conservando ambos lados.
+export const UNION_FILES = /(^|\/)(CHANGELOG|CHANGES|HISTORY|HISTORIAL)[^/]*\.md$/i;
+
+/** Resuelve un fichero en conflicto con `git merge-file --union` (base :1, nuestra :2, la suya :3) y lo marca resuelto. */
+async function unionResolve(dir, file) {
+  const tmp = fs.mkdtempSync(path.join(DATA_DIR, '.union-'));
+  try {
+    const stage = async (n) => { try { return (await exec('git', ['-C', dir, 'show', `:${n}:${file}`], { maxBuffer: 50e6 })).stdout; } catch { return ''; } };
+    const [base, ours, theirs] = [await stage(1), await stage(2), await stage(3)];
+    const f = (n, c) => { const x = path.join(tmp, n); fs.writeFileSync(x, c); return x; };
+    const o = f('ours', ours);
+    await exec('git', ['merge-file', '--union', o, f('base', base), f('theirs', theirs)]).catch(() => {}); // --union nunca deja marcas
+    fs.writeFileSync(path.join(dir, file), fs.readFileSync(o));
+    await git(dir, 'add', '--', file);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+
 export async function updateFromBase(dir, base) {
   try {
     await exec('git', ['-C', dir, '-c', 'user.name=AgentOffice', '-c', 'user.email=agent-office@local', 'merge', '--no-edit', base], { maxBuffer: 50e6 });
     return { conflicts: [] };
   } catch (e) {
     const conflicts = (await git(dir, 'diff', '--name-only', '--diff-filter=U').catch(() => '')).split('\n').filter(Boolean);
+    // Solo choques en ficheros de historial → se combinan ambos lados y se cierra la fusión (sin molestar al agente)
+    if (conflicts.length && conflicts.every((c) => UNION_FILES.test(c))) {
+      try {
+        for (const c of conflicts) await unionResolve(dir, c);
+        await exec('git', ['-C', dir, '-c', 'user.name=AgentOffice', '-c', 'user.email=agent-office@local', 'commit', '--no-edit'], { maxBuffer: 50e6 });
+        return { conflicts: [], unioned: conflicts };
+      } catch { /* si algo falla, se trata como un choque normal */ }
+    }
     try { await git(dir, 'merge', '--abort'); } catch { /* no había merge en curso */ }
     if (!conflicts.length) throw new Error(`No pude actualizar la rama con ${base}: ${e.stderr || e.message}`);
     return { conflicts };

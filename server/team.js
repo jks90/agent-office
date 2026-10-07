@@ -630,7 +630,7 @@ export async function autoReview(p, t) {
   try {
     if (t.reviewRequired) return hold('✋ marcada «revisión obligatoria»: la revisa una persona');
     if (t.budgetHit || t.stuck) return hold('✋ terminó cortada (tope de gasto o atasco): la revisa una persona');
-    if ((t.autoReviews || 0) >= review.MAX_AUTO_CYCLES) return hold('⚠️ dos revisiones automáticas fallidas: la revisa una persona');
+    if ((t.autoReviews || 0) >= review.MAX_AUTO_CYCLES) return hold(`⚠️ ${review.MAX_AUTO_CYCLES} revisiones automáticas fallidas: la revisa una persona`);
     const repo = repoOfTask(p, t);
     const checks = review.declaredChecks(t);
     const dirOk = t.branch && fs.existsSync(git.worktreeDir(p, t));
@@ -649,10 +649,24 @@ export async function autoReview(p, t) {
       await approve(t.id, { by: 'auto', verdict: { approve: true, text: `pasan las verificaciones declaradas (${checks.join('; ')})` } });
       return;
     }
+    // La rama se pone al día con la base ANTES de revisar (el revisor ve el código real y no devuelve por desfase). Choques solo en
+    // historiales (CHANGELOG…) se combinan solos; un choque de verdad vuelve al agente sin gastar intento de revisión.
+    for (const x of taskRepos(p, t)) {
+      try { await syncWithBase(p, x, t); } catch (e) { if (e.conflicts) return; throw e; }
+    }
+    if (t.status !== 'review') return;
     const v = await runReviewer(p, t, repo, cwd, checks); // auto-qa
     if (t.status !== 'review') return; // un humano decidió mientras tanto
     if (!v) return hold('✋ el revisor no devolvió un veredicto válido: la revisa una persona');
-    if (v.approve) await approve(t.id, { by: 'auto-qa', verdict: { approve: true, text: v.reasons.join('; ') || 'sin objeciones' } });
+    if (v.approve) {
+      // Lo que el revisor ve mejorable pero no bloquea va a tareas nuevas en el backlog (no se encadenan solas)
+      const made = [];
+      for (const f of v.followups || []) {
+        try { made.push(createTask({ projectId: p.id, title: f.title, description: `${f.description || ''}\n\n_(Propuesta por la revisión automática de ${t.code || t.id}.)_`, role: t.role, status: 'backlog', sizeChecked: false }).code); } catch { /* rol desaparecido: se omite */ }
+      }
+      const extra = [v.pending?.length ? `pendiente de comprobar fuera: ${v.pending.join('; ')}` : '', made.length ? `mejoras al backlog: ${made.join(', ')}` : ''].filter(Boolean).join(' · ');
+      await approve(t.id, { by: 'auto-qa', verdict: { approve: true, text: [v.reasons.join('; ') || 'sin objeciones', extra].filter(Boolean).join(' · ') } });
+    }
     else await reject(t.id, v.feedback || v.reasons.join('\n') || 'El revisor automático pide cambios.', [], [], 'auto-qa');
   } catch (e) { hold(`✋ la revisión automática falló (${e.message}): la revisa una persona`); }
   finally { reviewing.delete(t.id); delete t.reviewing; changed(); }
@@ -665,7 +679,7 @@ export async function reReview(id) {
   if (t.status !== 'review') throw fail(409, 'La tarea no está en revisión');
   const p = get().projects.find((x) => x.id === t.projectId);
   if (review.policyOf(get().settings, p) === 'manual') throw fail(409, 'La revisión de este proyecto es manual');
-  delete t.reviewNote; changed();
+  delete t.reviewNote; delete t.autoReviews; changed(); // lo pide una persona: nuevos intentos de revisión automática
   setImmediate(() => autoReview(p, t).catch(() => {}));
   return { ok: true };
 }
