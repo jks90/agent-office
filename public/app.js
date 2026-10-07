@@ -923,7 +923,7 @@ function render() {
   run.classList.toggle('on', !!p?.running);
   run.disabled = !p;
 
-  office.update({ agents: team(), tasks: tasks(), questions: S.questions || [], roles: S.roles, title: p?.name || '', selected: drawerAgent, projects: visibleProjects(), allAgents: S.agents, allTasks: S.tasks, projectId }); // projects/allAgents/allTasks: modo edificio (FT-46); projectId: planta resaltada (FT-47)
+  office.update({ agents: team(), tasks: tasks(), questions: S.questions || [], roles: S.roles, title: p?.name || '', selected: drawerAgent, projects: visibleProjects(), allAgents: S.agents, allTasks: S.tasks, projectId, quota: S.quota || {} }); // projects/allAgents/allTasks: modo edificio (FT-46); projectId: planta resaltada (FT-47)
   renderSuite();
   renderTeam();
   renderRepos();

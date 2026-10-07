@@ -73,6 +73,23 @@ const LOUNGE = [
   { x: 7.5, z: 4.45 }, { x: 5.45, z: 5.1, sit: true },
 ];
 
+// Oficina viva: a dónde van los que no tienen tarea y qué hacen allí (gesto repetido y/o pose sujetando algo).
+// `face`: hacia dónde miran al llegar (π = al fondo). Solo se quedan quietos si su motor no tiene cuota.
+const WANDER_SPOTS = [
+  { id: 'cafe', label: '☕ Café', x: 6.55, z: 1.05, face: Math.PI, gesture: 'interact-right', hold: 'holding-right', stay: [6, 10] },
+  { id: 'nevera', label: '🥤 Nevera', x: 7.75, z: 1.15, face: Math.PI, gesture: 'interact-right', hold: 'holding-right', stay: [4, 7] },
+  { id: 'libros', label: '📚 Buscando un libro', x: 1.0, z: 0.95, face: Math.PI, gesture: 'interact-left', stay: [5, 9] },
+  { id: 'archivo', label: '📚 Consultando', x: 0.8, z: 2.75, face: -Math.PI / 2, gesture: 'pick-up', hold: 'holding-both', stay: [5, 9] },
+  { id: 'kanban', label: '🗂 Mirando el kanban', x: 4.15, z: 1.4, face: Math.PI, gesture: 'interact-right', stay: [4, 8] },
+  { id: 'planta', label: '🪴 Regando', x: 6.15, z: 4.05, face: Math.PI, gesture: 'interact-right', stay: [3, 6] },
+  { id: 'charla', label: '💬 Charlando', x: 5.45, z: 4.55, face: 0, gesture: 'emote-yes', stay: [6, 11] },
+];
+const rand = (a, b) => a + Math.random() * (b - a);
+// Brazos al frente (pose de «holding-both» de los Kenney): base del tecleo.
+const ARM_FWD_L = new THREE.Quaternion(0, 0.5, 0, -0.866);
+const ARM_FWD_R = new THREE.Quaternion(0, -0.5, 0, -0.866);
+const BONES = ['torso', 'head', 'arm-left', 'arm-right'];
+
 const hash = (s) => [...String(s)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
 const CHAR_FILES = [];
 for (const g of ['female', 'male']) for (const l of ['a', 'b', 'c', 'd', 'e', 'f']) CHAR_FILES.push(`character-${g}-${l}`);
@@ -467,7 +484,8 @@ export class Office3D {
   // `agents`/`tasks` son los del proyecto activo (modo `floor`); `projects`/`allAgents`/`allTasks`, todo el
   // estado, para el edificio (modo `building`, FT-46). Si no llegan, se conservan los últimos.
   // `projectId` (FT-47) es el proyecto activo del desplegable: en el edificio su planta va resaltada.
-  update({ agents, tasks, questions, roles, title, selected, projects, allAgents, allTasks, projectId }) {
+  update({ agents, tasks, questions, roles, title, selected, projects, allAgents, allTasks, projectId, quota }) {
+    if (quota !== undefined) this.quota = quota || {};
     this.agents = agents || [];
     this.tasks = tasks || [];
     this.questions = questions || [];
@@ -962,6 +980,7 @@ export class Office3D {
       loungeSpot: index, enterAt: now + this.queuedCount(now) * 0.9, nextWander: Infinity,
       angle: Math.PI, targetAngle: Math.PI, mixer: null, actions: {}, clip: null, current: null,
       emote: null, lastEmote: null, sitSpot: false,
+      wander: null, nextGesture: 0, phase: Math.random() * 10, bones: null,
     };
     if (gltf) {
       const model = skeletonClone(gltf.scene);
@@ -978,6 +997,8 @@ export class Office3D {
         if (/^emote|^pick-up|^jump|^interact/.test(clip.name)) { act.loop = THREE.LoopOnce; act.clampWhenFinished = true; }
         a.actions[clip.name] = act;
       }
+      a.bones = {};
+      for (const n of BONES) { const b = model.getObjectByName(n); if (b) a.bones[n] = { b, rest: b.quaternion.clone() }; }
     }
     // Disco del color del rol bajo los pies.
     const visual = this.visualAgents.find((v) => v.id === agent.id) || toVisualState(agent, this.tasks, this.questions);
@@ -1000,6 +1021,8 @@ export class Office3D {
 
   targetFor(agent, index, a) {
     const visual = this.visualAgents.find((v) => v.id === agent.id) || toVisualState(agent, this.tasks, this.questions);
+    const w = a?.wander;
+    if (w) return { key: 'wander:' + w.id, zone: 'wander', x: w.x, z: w.z, corr: null, sit: false, status: visual.status };
     const s = this.floorLayout?.slots?.[agent.id];
     if (s) return {
       key: `${s.zone}:${s.module}:${s.index}:${visual.status}`,
@@ -1023,12 +1046,55 @@ export class Office3D {
     return pts;
   }
 
+  // ¿Puede moverse? Solo se quedan quietos si su motor no tiene cuota (o la tarea espera por cuota) o si están en pausa.
+  hasFuel(agent, visual) {
+    if (agent.status === 'paused' || agent.quotaPaused || agent.quotaBlocked) return false;
+    const task = visual.taskId && this.tasks.find((t) => t.id === visual.taskId);
+    if (task && (task.quotaPaused || task.quotaBlocked)) return false;
+    const engine = agent.activeEngine || agent.engine;
+    const out = (e) => !!this.quota?.[e]?.limitReached;
+    if (engine === 'auto') return !(out('claude') && out('codex'));
+    return !out(engine);
+  }
+
+  // Los que no tienen tarea dan vueltas por la oficina: café, libros, kanban, charla…
+  planWander(agent, a, visual, fuel, now) {
+    if (visual.status !== 'idle' || !fuel) { a.wander = null; a.nextWander = Infinity; return; }
+    if (a.nextWander === Infinity) a.nextWander = now + rand(2, 9);
+    const w = a.wander;
+    if (w) {
+      if (!a.moving && a.key === 'wander:' + w.id && w.until == null) { w.until = now + rand(...w.stay); a.targetAngle = w.face; a.nextGesture = now + 0.3; }
+      if (w.until != null && now > w.until) { a.wander = null; a.nextWander = now + rand(7, 16); }
+      return;
+    }
+    if (a.moving || now < a.nextWander) return;
+    const busy = new Set([...this.actors.values()].map((o) => o.wander?.id).filter(Boolean));
+    const free = WANDER_SPOTS.filter((s) => !busy.has(s.id) && s.id !== a.lastWander);
+    if (!free.length) { a.nextWander = now + rand(4, 8); return; }
+    const s = free[Math.floor(Math.random() * free.length)];
+    a.wander = { ...s, until: null };
+    a.lastWander = s.id;
+  }
+
   step(dt, now) {
+    // Al montar la vista o cambiar de proyecto no hay nadie: cada uno aparece ya en su sitio, sin «entrar a trabajar».
+    const fresh = this.actors.size === 0;
     this.agents.forEach((agent, i) => {
       let a = this.actors.get(agent.id);
-      if (!a) a = this.spawnActor(agent, i, now);
+      if (!a) {
+        a = this.spawnActor(agent, i, now);
+        if (fresh) {
+          const t0 = this.targetFor(agent, i, a);
+          Object.assign(a, { x: t0.x, z: t0.z, key: t0.key, dest: t0, corr: t0.corr, sitSpot: !!t0.sit, enterAt: now, path: [] });
+          if (t0.sit) a.angle = a.targetAngle = Math.PI;
+        }
+      }
       if (now < a.enterAt) { a.group.visible = false; return; }
       a.group.visible = true;
+
+      const vis0 = this.visualAgents.find((v) => v.id === agent.id) || toVisualState(agent, this.tasks, this.questions);
+      a.fuel = this.hasFuel(agent, vis0);
+      this.planWander(agent, a, vis0, a.fuel, now);
 
       const t = this.targetFor(agent, i, a);
       if (t.key !== a.key) { a.path = this.route(a, t); a.key = t.key; a.corr = null; a.dest = t; a.sitSpot = !!t.sit; }
@@ -1046,6 +1112,7 @@ export class Office3D {
         a.moving = false;
         // En reposo miran al fondo (-z): el que trabaja a su monitor, el PO a la pizarra.
         if (a.key === 'desk' || a.key === 'board' || a.sitSpot) a.targetAngle = Math.PI;
+        else if (a.wander && a.key === 'wander:' + a.wander.id) a.targetAngle = a.wander.face;
       }
 
       // Emotes al llegar según el estado de su tarea.
@@ -1076,9 +1143,12 @@ export class Office3D {
         a.disc.material.opacity = this.selected === agent.id || visual.status === 'failed' ? 0.95 : 0.58;
       }
 
-      // Animación.
+      // Animación: clip del estado y, encima, movimiento procedural de huesos (respirar, mirar, teclear).
+      this.scheduleGesture(a, visual, now);
       this.playClip(a, this.chooseClip(a, agent, now));
+      if (a.bones) for (const { b, rest } of Object.values(a.bones)) b.quaternion.copy(rest);
       if (a.mixer) a.mixer.update(dt);
+      this.livePose(a, visual, now);
 
       // Encender la pantalla de su mesa cuando trabaja sentado.
       // (el encendido se resuelve abajo en refreshScreens)
@@ -1102,9 +1172,51 @@ export class Office3D {
     });
   }
 
+  // Gestos sueltos cada pocos segundos según lo que hacen (señalar el kanban, coger la taza, asentir en la charla…).
+  scheduleGesture(a, visual, now) {
+    if (!a.fuel || a.moving || (a.emote && now < a.emote.until) || now < a.nextGesture) return;
+    let name = null;
+    const w = a.wander;
+    if (w && a.key === 'wander:' + w.id) name = w.gesture;
+    else if (visual.status === 'waiting' || visual.status === 'blocked') name = 'interact-right';
+    else if (visual.status === 'idle' && !a.sitSpot) name = Math.random() < 0.5 ? 'emote-yes' : 'interact-left';
+    a.nextGesture = now + (w ? rand(2.2, 4) : rand(5, 11));
+    if (name && a.actions[name]) a.emote = { name, until: now + (a.actions[name].getClip().duration || 1) + 0.15 };
+  }
+
+  // Capa procedural sobre el clip (los huesos se resetean a reposo antes de cada mixer.update).
+  livePose(a, visual, now) {
+    const B = a.bones;
+    if (!B || !a.fuel || a.moving) return;
+    const t = now + a.phase;
+    const torso = B.torso?.b, head = B.head?.b, armL = B['arm-left']?.b, armR = B['arm-right']?.b;
+    if (torso) torso.rotation.x += Math.sin(t * 1.9) * 0.025;               // respirar
+    const gesturing = a.emote && now < a.emote.until;
+    if (visual.status === 'working' && a.sitSpot) {
+      // Teclear con pausas para «pensar» (≈1,5 s de cada 7): brazos al frente y golpecitos alternos.
+      const thinking = (t % 7) > 5.5;
+      if (armL && armR) {
+        armL.quaternion.copy(ARM_FWD_L); armR.quaternion.copy(ARM_FWD_R);
+        const k = thinking ? 0 : 0.22;
+        // El brazo va a lo largo de su eje X local: girar en Z sube/baja la mano (signo opuesto en cada lado).
+        armL.rotateZ(-0.3 + Math.max(0, Math.sin(t * 14)) * k);
+        armR.rotateZ(0.3 - Math.max(0, Math.sin(t * 14 + 1.7)) * k);
+      }
+      if (head) { head.rotation.x += thinking ? -0.18 : 0.06 + Math.sin(t * 0.9) * 0.04; head.rotation.y += Math.sin(t * 0.35) * 0.22; }
+      if (torso) torso.rotation.x += 0.08;                                    // inclinado hacia la pantalla
+    } else if (!gesturing && head) {
+      // Mirar alrededor: más tranquilo sentado, más curioso de pie.
+      const amp = a.sitSpot ? 0.3 : 0.45;
+      head.rotation.y += Math.sin(t * 0.45) * amp + Math.sin(t * 1.3) * 0.08;
+      head.rotation.x += Math.sin(t * 0.6) * 0.06 - (visual.status === 'waiting' ? 0.12 : 0);
+    }
+  }
+
   chooseClip(a, agent, now) {
     if (a.emote && now < a.emote.until && a.actions[a.emote.name]) return a.emote.name;
     if (a.moving) return a.actions.walk ? 'walk' : 'idle';
+    const w = a.wander;
+    if (w?.hold && a.key === 'wander:' + w.id && a.actions[w.hold]) return w.hold;
     const visual = this.visualAgents.find((v) => v.id === agent.id) || toVisualState(agent, this.tasks, this.questions);
     if (a.sitSpot && ['working', 'reviewing', 'blocked'].includes(visual.status)) return a.actions.sit ? 'sit' : 'idle';
     if (a.sitSpot) return a.actions.sit ? 'sit' : 'idle';
@@ -1249,8 +1361,11 @@ export class Office3D {
 
   bubbleText(agent, a, now) {
     const visual = this.visualAgents.find((v) => v.id === agent.id) || toVisualState(agent, this.tasks, this.questions);
+    if (a.moving && a.wander) return { text: '→ ' + a.wander.label, kind: '' };
     if (a.moving) return { text: '→ ' + ((this.floorZones || BASE_ZONE_STYLE)[a.dest?.zone]?.label || 'zona'), kind: '' };
     if (visual.status === 'failed') return { text: `⚠ #${visual.taskId || agent.taskId || '?'} falló`, kind: 'error' };
+    if (a.fuel === false && agent.status !== 'paused') return { text: '💤 sin cuota', kind: 'review' };
+    if (a.wander && (this.selected === agent.id || this.hoverActor === agent.id)) return { text: a.wander.label, kind: '' };
     if (this.selected === agent.id || this.hoverActor === agent.id) {
       if (visual.status === 'blocked') return { text: 'Bloqueado', kind: 'review' };
       if (visual.status === 'waiting') return { text: 'En cola', kind: 'plan' };
