@@ -130,11 +130,11 @@ export function createExtensionDriver() {
     back: c('back'), forward: c('forward'), reload: c('reload'),
     snapshot: c('snapshot'),
     act: c('act'), type: c('type'), scroll: c('scroll'),
-    upload: async () => { throw bad(501, 'browser.upload aún no está disponible con la extensión «Mi navegador» (FT-130): usa el navegador dedicado'); },
+    upload: c('upload'), // FT-136: DOM.setFileInputFiles en la extensión (rutas ya validadas por AgentOffice)
     async screenshot(a = {}) {
       const r = await call('screenshot', a);
       if (!r?.data) throw bad(500, 'la extensión no devolvió imagen');
-      return { ...saveShot(Buffer.from(r.data, 'base64'), r.format === 'jpeg' ? 'jpeg' : 'png', r.tabId), width: r.width, height: r.height, tabId: r.tabId };
+      return { ...saveShot(Buffer.from(r.data, 'base64'), r.format === 'jpeg' ? 'jpeg' : 'png', r.tabId), width: r.width, height: r.height, tabId: r.tabId, scale: r.scale ?? 1, originX: r.originX ?? 0, originY: r.originY ?? 0 };
     },
     box: async (a = {}) => call('box', a).catch(() => null), // rectángulo del elemento (marca del panel, FT-117)
     // FT-117 · sin screencast fiable en chrome.debugger: el panel en vivo degrada a capturas JPEG periódicas

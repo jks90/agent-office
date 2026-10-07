@@ -36,10 +36,15 @@ function fakeExtension(url, hello) {
     if (m.op === 'tabs.list') return reply({ ok: true, result: x.ceded });
     if (m.op === 'navigate') return reply({ ok: true, result: { url: P.url, title: 'Nav' } });
     if (m.op === 'snapshot') return reply({ ok: true, result: { tabId: '7', url: 'https://example.com/', title: 'Ejemplo', nodes: [{ ref: 'e1', role: 'button', name: 'Enviar', value: '', states: [] }], total: 1, truncated: false, omitted: 0 } });
-    if (m.op === 'screenshot') return reply({ ok: true, result: { data: PNG, format: 'png', width: 1, height: 1, tabId: '7' } });
+    if (m.op === 'screenshot' && !P.detail && !P.region) return reply({ ok: true, result: { data: PNG, format: 'png', width: 1, height: 1, tabId: '7' } });
     if (m.op === 'network') return reply({ ok: true, result: { tabId: '7', entries: [{ url: 'https://example.com/', requestHeaders: { Authorization: 'Bearer secreto', Accept: '*/*' } }] } });
     if (m.op === 'act' && P.ref === 'e99') return reply({ ok: false, status: 404, error: 'ref e99 desconocida' });
+    if (m.op === 'evaluate' && /querySelector\('article/.test(P.expression)) return reply({ ok: true, result: { value: '# Título\nPárrafo uno.\n## Datos\nfila | dos' } }); // FT-136: readPage
     if (m.op === 'evaluate') return reply({ ok: false, status: 422, error: 'boom' });
+    if (m.op === 'upload' && P.ref === 'e5') return reply({ ok: false, status: 400, error: 'e5 no es un <input type=file>' });
+    if (m.op === 'upload') return reply({ ok: true, result: { ok: true, files: P.files.map((f) => f.split('/').pop()), url: 'https://example.com/', title: 'Ejemplo', settle: { networkIdle: true, domStable: true, waitedMs: 500 } } });
+    if (m.op === 'screenshot' && (P.detail || P.region)) return reply({ ok: true, result: { data: PNG, format: P.detail === 'low' ? 'jpeg' : 'png', width: 1, height: 1, tabId: '7', scale: P.region ? 2 : 1, originX: P.region?.x || 0, originY: P.region?.y || 0 } });
+    if (m.op === 'act' && P.action === 'hover') return reply({ ok: true, result: { ok: true, via: 'ref', url: 'https://example.com/', title: 'Ejemplo', settle: { networkIdle: true, domStable: true, waitedMs: 400 } } });
     if (m.op === 'hang') return;
     reply({ ok: true, result: { ok: true, op: m.op, params: P } });
   };
@@ -96,6 +101,23 @@ await rejects(d.act({ ref: 'e99' }), 404, 'error 404 de la extensión se propaga
 await rejects(d.evaluate({ expression: 'x' }), 422, 'error 422 de evaluate se propaga');
 const act = await d.act({ ref: 'e1', action: 'click' });
 ok(act.op === 'act' && act.params.ref === 'e1', 'act reenvía ref y acción');
+
+// FT-136 · paridad con el driver CDP: upload, readPage, settle, region/detail
+const up = await d.upload({ ref: 'e2', files: ['/tmp/a.txt', '/tmp/b.txt'] });
+ok(up.ok && up.files.join() === 'a.txt,b.txt' && up.settle?.domStable === true, 'upload llega a la extensión (ya no 501) y devuelve settle');
+ok(calls.some((c) => c.op === 'upload' && c.params.ref === 'e2' && c.params.files.length === 2), 'upload reenvía ref y rutas');
+await rejects(d.upload({ ref: 'e5', files: ['/tmp/a.txt'] }), 400, 'upload a un campo que no es de fichero: 400 de la extensión');
+const rp = await d.readPage({ max: 600 });
+ok(rp.tabId === '7' && rp.url === 'https://example.com/' && rp.text.includes('Párrafo uno.') && rp.sections.length === 2, 'readPage: texto legible paginado con secciones');
+const rs = await d.readPage({ section: 'Datos' });
+ok(rs.offset > 0 && rs.text.startsWith('## Datos'), 'readPage: section salta al encabezado');
+await rejects(d.readPage({ section: 'nada' }), 404, 'readPage: sección inexistente da 404');
+const hv = await d.act({ ref: 'e1', action: 'hover' });
+ok(hv.settle?.networkIdle === true && typeof hv.settle.waitedMs === 'number', 'las acciones devuelven settle como en cdp.js');
+const lo = await d.screenshot({ detail: 'low' });
+ok(lo.path.endsWith('.jpg') && lo.scale === 1, 'screenshot detail:low llega como JPEG');
+const rg = await d.screenshot({ region: { x: 10, y: 20, w: 100, h: 50 } });
+ok(rg.scale === 2 && rg.originX === 10 && rg.originY === 20 && calls.at(-1).params.region.w === 100, 'screenshot region: reenvía la zona y devuelve scale/origin');
 
 // FT-117 en modo extensión: el panel en vivo degrada a capturas periódicas
 const frames = [];
