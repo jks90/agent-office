@@ -322,6 +322,18 @@ Fase A de la épica «Navegador del agente»: `server/browser/` con un contrato 
 - Los popups pasan a ser la pestaña activa. Prueba: `node scripts/browser-driver-e2e.mjs`.
 - Pendiente (siguientes fases): tools `browser.*` en `server/guide/tools.js` con política y `bin/ao-mcp.mjs`, respondiendo `{inside:true}` para flow-test/AgentOffice como `ui.*`. `puppeteer-core` sigue en `devDependencies`: mover a `dependencies` cuando se exponga al usuario.
 
+## 🌐 Navegador — panel en vivo (FT-117)
+
+Vista **🌐 Navegador** (menú lateral, `?view=browser` y `app.navigate view=browser` del Guía): lo que ve el navegador dedicado del agente, en directo.
+
+- **Vídeo**: `driver.screencast(onFrame)` (CDP `Page.startScreencast`, JPEG, ≤10 fps, sigue a la pestaña activa) → SSE `GET /api/browser/stream` (`frame`, `mark`, `control`). Solo está abierto mientras la vista se ve; sin espectadores el screencast se para. El estado (control, pestañas, URL, handoffs) va en el snapshot SSE (`browser`).
+- **Barra**: quién controla (🤖 agente / 🧑 tú), atrás/adelante/recargar, URL, pestañas (seleccionar, cerrar, ＋), «Abrir/Cerrar navegador».
+- **Tomar el control** (`POST /api/browser/control {mode:'user'|'agent'}`): el agente queda en pausa y tus clics, rueda y teclas sobre el fotograma se reenvían (`POST /api/browser/input`), como en el modo Live de flow-test. «Devolver al agente» lo reanuda. Sin el control, la entrada responde 409.
+- **Marca**: `panel.agentDriver()` es el driver que deben usar las tools `browser.*` (A2): lanza 409 mientras controla el usuario y, antes de `act`/`type`/`scroll`, pinta 1 s un rectángulo sobre el ref (`driver.box()`).
+- **Handoff (A3)**: el panel lateral lista `browser.handoffs` (`panel.addHandoff({reason})` / `resolveHandoff(id)`); hoy vacío hasta que A3 los genere. «Tomar el control» desde la petición.
+- Responsive: ≤760 px el panel lateral pasa bajo la imagen.
+- Prueba: `node scripts/browser-panel-e2e.mjs [--real] [dir-capturas]` (driver fake por defecto; `--real` con Chromium headless). Capturas en `docs/FT-117/`.
+
 ## Estructura
 
 ```

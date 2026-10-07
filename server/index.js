@@ -24,6 +24,7 @@ import crypto2 from 'node:crypto';
 import { saveRole, deleteRole } from './roles.js';
 import { ladders, normalizeLadder } from './model-ladder.js'; // FT-60
 import * as activity from './events.js';
+import * as browserPanel from './browser/panel.js'; // FT-117
 import * as telegram from './telegram.js'; // avisos al móvil (ReviewPending, bloqueos, fallos)
 import * as selfupdate from './selfupdate.js'; // se pone al día solo con GitHub cuando no hay nadie trabajando
 import * as context from './context.js';
@@ -100,7 +101,7 @@ const inputStatus = () => {
   return inputCache.v;
 };
 // FT-50: cada tarea sin empezar lleva `plannedAgentId`/`plannedReason` (calculados en cada snapshot, no persistidos).
-const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), tasks: review.decorate(team.withPlannedAgents(st)), modelLadders: ladders(st.settings), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), costEstimates: team.costEstimates(), rtk: claudeEngine.rtkAvailable(), codeIndexInstalled: codeindex.available(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot() }; };
+const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), tasks: review.decorate(team.withPlannedAgents(st)), modelLadders: ladders(st.settings), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), costEstimates: team.costEstimates(), rtk: claudeEngine.rtkAvailable(), codeIndexInstalled: codeindex.available(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot(), browser: browserPanel.status() }; };
 
 async function readBody(req) {
   const limit = req.url.startsWith('/api/upload') ? 40e6 : req.url.startsWith('/api/guide/stt') ? 12e6 : 1e6; // adjuntos y audio del Guide (FT-9) en base64
@@ -124,6 +125,14 @@ const routes = [
   ['GET', /^\/api\/state$/, () => snapshot()],
   // Cuota restante de las suscripciones de Claude y Codex (FT-45); ?force=1 se salta la caché de 60 s
   ['GET', /^\/api\/quota$/, (_, __, q) => quota.readAll({ force: q.force === '1' })],
+  // Panel del navegador del agente (FT-117): estado, abrir/cerrar, control agente↔usuario, navegación, pestañas y entrada (el vídeo va por /api/browser/stream)
+  ['GET', /^\/api\/browser$/, () => browserPanel.refresh()],
+  ['POST', /^\/api\/browser\/open$/, () => browserPanel.open()],
+  ['POST', /^\/api\/browser\/close$/, () => browserPanel.close()],
+  ['POST', /^\/api\/browser\/control$/, (_, b) => browserPanel.setControl(b.mode)],
+  ['POST', /^\/api\/browser\/nav$/, (_, b) => browserPanel.nav(b)],
+  ['POST', /^\/api\/browser\/tab$/, (_, b) => browserPanel.tab(b)],
+  ['POST', /^\/api\/browser\/input$/, (_, b) => browserPanel.input(b)],
   // Activity Stream tipado (FT-1)
   ['GET', /^\/api\/events$/, (_, __, q) => activity.list(q)],
   // Contexto de la UI (FT-2): lo que el usuario está viendo, por cliente (cabecera `x-ao-client`)
@@ -374,6 +383,7 @@ http.createServer(async (req, res) => {
   }
   if (pathname === '/events') return events(req, res);
   if (pathname === '/api/file') return serveUpload(req, res);
+  if (pathname === '/api/browser/stream') return browserPanel.subscribe(req, res); // FT-117
   if (!pathname.startsWith('/api/')) return serveStatic(req, res);
   if (pathname === '/api/guide/chat' && req.method === 'POST') return guideChat(req, res);
   if (pathname === '/api/guide/tts' && req.method === 'POST') return guideTts(req, res);
