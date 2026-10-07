@@ -69,10 +69,16 @@ function settle(q, answer) {
 // Confirmación del Guide Agent (FT-4): pregunta Sí/No sin respuesta libre y sin tarea asociada (kind:'confirm').
 // Resuelve true solo si el usuario contesta «Sí»; «Más tarde» no la cancela, pero tras 10 min sin respuesta cuenta como «No».
 export function confirm({ question, context = '' }) {
+  return choose({ question, context, options: ['Sí', 'No'] }).then((a) => a === 'Sí');
+}
+
+// FT-116 · Como confirm, pero con las opciones que se pidan (p. ej. «Listo» / «Cancelar» en el handoff del navegador).
+// Resuelve con el texto elegido, o null si la pregunta se cancela o caduca.
+export function choose({ question, context = '', options = ['Sí', 'No'] }) {
   if ([...pending.values()].filter((q) => q.kind === 'confirm').length >= MAX_OPEN_CONFIRMS) throw fail(429, 'Hay demasiadas confirmaciones pendientes: resuélvelas antes');
   const q = {
     id: store.newId(), kind: 'confirm', taskId: null, taskCode: null, agentId: null, agentName: 'Guide', projectId: null,
-    question: String(question).trim().slice(0, 500), options: ['Sí', 'No'], allowCustom: false,
+    question: String(question).trim().slice(0, 500), options, allowCustom: false,
     context: String(context || '').trim().slice(0, 4000), createdAt: Date.now(), waiters: [],
   };
   pending.set(q.id, q);
@@ -80,7 +86,7 @@ export function confirm({ question, context = '' }) {
   return new Promise((resolve) => {
     const timer = setTimeout(() => { if (pending.has(q.id)) settle(q, null); }, CONFIRM_TIMEOUT_MS);
     timer.unref?.();
-    q.waiters.push((r) => { clearTimeout(timer); resolve(r.status === 'answered' && r.answer === 'Sí'); });
+    q.waiters.push((r) => { clearTimeout(timer); resolve(r.status === 'answered' ? r.answer : null); });
   });
 }
 

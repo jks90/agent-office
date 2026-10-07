@@ -43,7 +43,7 @@ let serverLog = '';
 async function startServer(name, env = {}) {
   const dataDir = path.join(tmp, 'data-' + name);
   fs.mkdirSync(dataDir, { recursive: true });
-  fs.writeFileSync(path.join(dataDir, 'state.json'), JSON.stringify({ settings: { flowTestUrl: `http://127.0.0.1:${stubPort}`, maxParallel: 4, workspaceHostDir: path.join(tmp, 'sin-workspace') } }));
+  fs.writeFileSync(path.join(dataDir, 'state.json'), JSON.stringify({ settings: { flowTestUrl: `http://127.0.0.1:${stubPort}`, maxParallel: 4, browserPolicy: { default: 'ask', domains: { 'example.test': 'allow' } }, workspaceHostDir: path.join(tmp, 'sin-workspace') } }));
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
   const proc = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, HOME: homeDir, AO_PORT: String(port), AO_HOST: '127.0.0.1', AO_DATA_DIR: dataDir, AO_GUIDE_FAKE: '1', AO_DESKTOP: 'fake', ...env } });
@@ -82,7 +82,7 @@ const cleanup = () => { for (const s of servers) { try { s.kill('SIGTERM'); } ca
 process.on('exit', cleanup);
 process.on('SIGINT', () => process.exit(130));
 
-const POLICIES = { 'browser.tabs': 'read', 'browser.navigate': 'navigate', 'browser.snapshot': 'read', 'browser.find': 'read', 'browser.click': 'execute', 'browser.type': 'execute', 'browser.select': 'execute', 'browser.scroll': 'navigate', 'browser.press': 'execute', 'browser.waitFor': 'read', 'browser.screenshot': 'read', 'browser.console': 'read', 'browser.network': 'read', 'browser.evaluate': 'write' };
+const POLICIES = { 'browser.tabs': 'read', 'browser.navigate': 'navigate', 'browser.snapshot': 'read', 'browser.find': 'read', 'browser.click': 'execute', 'browser.type': 'execute', 'browser.select': 'execute', 'browser.scroll': 'navigate', 'browser.press': 'execute', 'browser.waitFor': 'read', 'browser.screenshot': 'read', 'browser.console': 'read', 'browser.network': 'read', 'browser.evaluate': 'execute', 'browser.requestHuman': 'navigate' };
 
 try {
   section('capacidad «browser» por rol (unidad)');
@@ -101,7 +101,7 @@ try {
   section('flujo snapshot → actuar por ref');
   const nav = await A.tool('browser.navigate', { url: 'http://example.test/uno' });
   check('navigate → 200 con url', nav.ok && /example\.test\/uno/.test(nav.body.url), JSON.stringify(nav.body));
-  check('navigate con esquema no http → 400', (await A.tool('browser.navigate', { url: 'file:///etc/passwd' })).status === 400);
+  check('navigate con esquema no http → 403 (política FT-116)', (await A.tool('browser.navigate', { url: 'file:///etc/passwd' })).status === 403);
   const snap = await A.tool('browser.snapshot');
   check('snapshot devuelve texto con refs [e1]', snap.ok && /\[e3\] button "Enviar"/.test(snap.body.snapshot), JSON.stringify(snap.body).slice(0, 200));
   const f = await A.tool('browser.find', { role: 'link', text: 'MÁS' });
@@ -122,7 +122,7 @@ try {
   check('press Enter → irreversible', pe.asked && pe.res.status === 403);
   check('press Tab → sin confirmación', (await A.toolAnswer('browser.press', { key: 'Tab' }, null)).res.ok);
   const ev = await A.toolAnswer('browser.evaluate', { expression: 'document.title' }, 'Sí');
-  check('evaluate → pide confirmación (write) y devuelve valor', ev.asked && ev.res.ok && /document\.title/.test(ev.res.body.value), JSON.stringify(ev.res.body));
+  check('evaluate → pide confirmación SIEMPRE (FT-116) y devuelve valor', ev.asked && ev.res.ok && /document\.title/.test(ev.res.body.value), JSON.stringify(ev.res.body));
   for (const [n, a] of [['browser.scroll', { dy: 300 }], ['browser.waitFor', { ms: 10 }], ['browser.console', {}], ['browser.network', {}], ['browser.tabs', {}], ['browser.select', { ref: 'e2', value: 'x' }]]) {
     const r = await A.tool(n, a);
     check(`${n} → 200`, r.ok, JSON.stringify(r.body));
@@ -158,7 +158,7 @@ try {
   section('ao-mcp para agentes worker (AO_MCP_ONLY=browser)');
   const w = mcpClient(A.base, { AO_MCP_ONLY: 'browser' });
   const names = (await w.rpc('tools/list')).result.tools.map((t) => t.name);
-  check('lista solo browser_* (14), sin browser_open ni task_* ni terminal_*', names.length === 14 && names.every((n) => n.startsWith('browser_')) && !names.includes('browser_open'), names.join());
+  check('lista solo browser_* (15), sin browser_open ni task_* ni terminal_*', names.length === 15 && names.every((n) => n.startsWith('browser_')) && !names.includes('browser_open'), names.join());
   check('una tool fuera de la lista → error', !!(await w.rpc('tools/call', { name: 'task_list', arguments: {} })).error);
   w.close();
 

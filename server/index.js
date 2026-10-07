@@ -30,6 +30,7 @@ import * as selfupdate from './selfupdate.js'; // se pone al día solo con GitHu
 import * as context from './context.js';
 import * as guideTools from './guide/tools.js';
 import * as guidePolicy from './guide/policy.js';
+import * as browserPolicy from './browser/policy.js';
 import * as guide from './guide/index.js';
 import { getProvider as desktopProvider } from './desktop/index.js';
 import * as stt from './guide/stt/index.js';
@@ -307,6 +308,7 @@ const routes = [
     }
     if (b.guidePolicy && typeof b.guidePolicy === 'object') guidePolicy.setPolicy(b.guidePolicy);
     if (typeof b.guideInputFallback === 'boolean') guidePolicy.setPolicy({ guideInputFallback: b.guideInputFallback }); // FT-30
+    if (b.browserPolicy && typeof b.browserPolicy === 'object') browserPolicy.setBrowserPolicy(b.browserPolicy); // FT-116
     store.changed();
     return st;
   }],

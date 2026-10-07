@@ -20,7 +20,9 @@ import { parseKeys } from '../desktop/input.js';
 import { flowTestUrl } from '../suite.js';
 import fs from 'node:fs';
 import { getDriver, renderSnapshot } from '../browser/index.js';
-import { agentDriver } from '../browser/panel.js';
+import { agentDriver, addHandoff, resolveHandoff, setControl, status as browserStatus } from '../browser/panel.js';
+import * as bpolicy from '../browser/policy.js';
+import * as questions from '../questions.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
 const VIEWS = ['office', 'summary', 'tasks', 'agents', 'guide', 'browser', 'settings'];
@@ -139,12 +141,22 @@ const urlInside = (u) => {
   try { return new URL(u).host === new URL(flowTestUrl()).host; } catch { return false; }
 };
 // Si el navegador está abierto y la pestaña activa es nuestra UI → {inside:true} sin tocar nada.
+// FT-116: además, la pestaña activa debe pasar la política de dominios (403 si está bloqueada, p. ej. tras una redirección).
 async function browserPrecheck() {
   const d = getDriver();
   if (!d.isOpen()) return null;
   const tab = (await d.tabs.list()).find((t) => t.active);
-  return tab && urlInside(tab.url) ? INSIDE : null;
+  if (tab && urlInside(tab.url)) return INSIDE;
+  if (tab?.url) await bpolicy.guard(tab.url);
+  return null;
 }
+// URL a la que apunta la llamada (navigate/tabs new) o, si no, la de la pestaña activa: inside → INSIDE; si no, política de dominios.
+const urlPrecheck = async (a) => {
+  if (a.url) { if (urlInside(a.url)) return INSIDE; await bpolicy.guard(a.url); return null; }
+  return browserPrecheck();
+};
+// URL (sin query) de la página sobre la que actúa una tool, para el audit
+const pageUrl = async (args) => { try { if (args?.url) return bpolicy.auditUrl(args.url); const d = getDriver(); return d.isOpen() ? bpolicy.auditUrl((await d.tabs.list()).find((t) => t.active)?.url) : null; } catch { return null; } };
 // Último snapshot visto por pestaña: permite saber el nombre del control antes de pulsarlo (política dinámica).
 const seenNodes = new Map();
 const remember = (s) => { for (const k of [...seenNodes.keys()]) if (k.startsWith(`${s.tabId}:`)) seenNodes.delete(k); for (const n of s.nodes) seenNodes.set(`${s.tabId}:${n.ref}`, n); };
@@ -154,8 +166,13 @@ const nodeInfo = (ref) => { const n = nodeOf(ref); return n ? `Control: «${n.na
 const refDynamic = async (a) => {
   const n = nodeOf(a.ref);
   const ctx = `Navegador del agente\n${nodeInfo(a.ref)}\nAcción: ${a.action || 'click'}`;
-  return n && isDestructive(n) ? { policy: 'irreversible', context: `⚠ Control potencialmente destructivo\n${ctx}` } : { policy: 'execute', context: ctx };
+  if (n && isDestructive(n)) return { policy: 'irreversible', context: `⚠ Control potencialmente destructivo\n${ctx}` };
+  // FT-116: botón/enlace en una página con campos de contraseña o tarjeta → puede enviar credenciales o un pago
+  if (n && n.role === 'button' && pageHasSensitiveField(n)) return { policy: 'irreversible', context: `⚠ Página con campos de contraseña/pago: esto puede enviar el formulario\n${ctx}` };
+  return { policy: 'execute', context: ctx };
 };
+// ¿El último snapshot de la pestaña del nodo tiene un campo de contraseña/tarjeta?
+const pageHasSensitiveField = (n) => { const key = [...seenNodes].find(([, v]) => v === n)?.[0]; const tab = key?.slice(0, key.lastIndexOf(':')); for (const [k, x] of seenNodes) if (k.startsWith(`${tab}:`) && ['textbox', 'searchbox'].includes(x.role) && (x.states?.includes('protected') || bpolicy.SENSITIVE_FIELD.test(x.name || ''))) return true; return false; };
 
 // ── Workspace de flow-test (los flows NO están en los repos: viven en flows/ de flow-test, con enlaces a cada repo) ──
 async function ftGet(pathAndQuery) {
@@ -302,13 +319,13 @@ export const tools = [
   T('browser.tabs', 'Pestañas del navegador del agente (Chromium dedicado, no el del usuario). action: list (por defecto) | new (url opcional) | select | close (con id). Abre el navegador si hace falta. Nunca sobre flow-test/AgentOffice ({inside:true}).',
     obj({ action: { type: 'string', enum: ['list', 'new', 'select', 'close'] }, id: str('Id de pestaña (select/close)'), url: str('URL http(s) (new)') }), 'read',
     async ({ action = 'list', id, url }) => { const b = agentDriver().tabs; return action === 'new' ? b.new({ url }) : action === 'select' ? b.select({ id }) : action === 'close' ? b.close({ id }) : b.list(); },
-    { precheck: async (a) => (a.url && urlInside(a.url) ? INSIDE : null) }),
+    { precheck: urlPrecheck }),
   T('browser.navigate', 'Navega la pestaña activa del navegador del agente a una URL http(s), o con action=back|forward|reload. Después haz browser.snapshot. Para mostrar una web al usuario usa browser.open. Nunca flow-test/AgentOffice ({inside:true}).',
     obj({ url: str('URL http(s)'), action: { type: 'string', enum: ['back', 'forward', 'reload'] } }), 'navigate',
     async ({ url, action }) => { const d = agentDriver(); if (action) return d[action](); if (!url) throw fail(400, 'Falta «url» o «action»'); return d.navigate({ url }); },
-    { precheck: async (a) => (a.url && urlInside(a.url) ? INSIDE : browserPrecheck()) }),
+    { precheck: urlPrecheck }),
   T('browser.snapshot', 'PRIMERO SIEMPRE: árbol de accesibilidad compacto de la pestaña activa, una línea por nodo `[e12] button "Enviar"`. Usa esas refs en click/type/select/scroll. No gasta tokens de imagen: usa browser.screenshot solo si necesitas VER el aspecto (gráficos, maquetación).',
-    obj(), 'read', async () => { const s = await agentDriver().snapshot(); remember(s); return { tabId: s.tabId, url: s.url, title: s.title, total: s.total, truncated: s.truncated, snapshot: renderSnapshot(s) }; },
+    obj(), 'read', async () => { const s = await agentDriver().snapshot(); remember(s); return bpolicy.untrusted({ tabId: s.tabId, url: s.url, title: s.title, total: s.total, truncated: s.truncated, snapshot: bpolicy.wrapUntrusted(renderSnapshot(s)) }); },
     { precheck: browserPrecheck }),
   T('browser.find', 'Busca nodos de la pestaña activa por rol exacto (button, link, textbox…) y/o texto (subcadena del nombre o valor, sin mayúsculas). Devuelve sus refs; más barato que leer todo el snapshot.',
     obj({ role: str('Rol, p. ej. «button»'), text: str('Texto del nombre o valor') }), 'read',
@@ -317,7 +334,7 @@ export const tools = [
       const s = await agentDriver().snapshot(); remember(s);
       const q = plain(text);
       const nodes = s.nodes.filter((n) => (!role || n.role === role) && (!q || plain(`${n.name} ${n.value}`).includes(q))).slice(0, 50);
-      return { tabId: s.tabId, url: s.url, count: nodes.length, truncated: s.truncated, nodes };
+      return bpolicy.untrusted({ tabId: s.tabId, url: s.url, count: nodes.length, truncated: s.truncated, nodes });
     }, { precheck: browserPrecheck }),
   T('browser.click', 'Clic (o dblclick / hover / focus) en un nodo por su ref de browser.snapshot/find. Si el nombre del control parece destructivo (eliminar, enviar, pagar, confirmar…) pide confirmación SIEMPRE. Solo usa x,y si el nodo no tiene ref. Después, snapshot.',
     obj({ ref: str('ref del nodo'), action: { type: 'string', enum: ['click', 'dblclick', 'hover', 'focus'] }, x: { type: 'integer' }, y: { type: 'integer' } }), 'execute',
@@ -349,13 +366,25 @@ export const tools = [
       return { path: r.path, width: r.width, height: r.height, bytes: r.bytes, format: r.format, ...(ctx?.via === 'mcp' ? { image: { mimeType: r.format === 'jpeg' ? 'image/jpeg' : 'image/png', data: fs.readFileSync(r.path).toString('base64') } } : {}) };
     }, { precheck: browserPrecheck }),
   T('browser.console', 'Mensajes de consola de la pestaña activa (anillo de 200): {ts, level, text}. limit (50 por defecto); clear=true los vacía.',
-    obj({ limit: { type: 'integer' }, clear: { type: 'boolean' } }), 'read', async (a) => agentDriver().console(a), { precheck: browserPrecheck }),
+    obj({ limit: { type: 'integer' }, clear: { type: 'boolean' } }), 'read', async (a) => bpolicy.untrusted(await agentDriver().console(a)), { precheck: browserPrecheck }),
   T('browser.network', 'Peticiones de red de la pestaña activa (anillo de 200): método, URL, estado, tipo; cabeceras sensibles enmascaradas. limit (50 por defecto); clear=true las vacía.',
-    obj({ limit: { type: 'integer' }, clear: { type: 'boolean' } }), 'read', async (a) => agentDriver().network(a), { precheck: browserPrecheck }),
+    obj({ limit: { type: 'integer' }, clear: { type: 'boolean' } }), 'read', async (a) => bpolicy.untrusted(await agentDriver().network(a)), { precheck: browserPrecheck }),
   T('browser.evaluate', 'Ejecuta una expresión JavaScript en la página activa y devuelve el valor (recortado a 20 KB). Puede hacer cualquier cosa en la página: pide confirmación. Prefiere snapshot/click/type.',
-    obj({ expression: str('Expresión JS') }, ['expression']), 'write',
-    async ({ expression }) => { const r = await agentDriver().evaluate({ expression }); const v = typeof r.value === 'string' ? r.value : JSON.stringify(r.value); return { value: String(v ?? '').slice(0, 20_000) }; },
-    { precheck: browserPrecheck, auditArgs: ({ expression }) => ({ expression: summarize(expression) }) }),
+    obj({ expression: str('Expresión JS') }, ['expression']), 'execute',
+    async ({ expression }) => { const r = await agentDriver().evaluate({ expression }); const v = typeof r.value === 'string' ? r.value : JSON.stringify(r.value); return bpolicy.untrusted({ value: String(v ?? '').slice(0, 20_000) }); },
+    { precheck: browserPrecheck, auditArgs: ({ expression }) => ({ expression: /pass|contrase|token|secret|card|tarjeta/i.test(expression) ? `(oculta: ${String(expression).length} car.)` : summarize(expression) }),
+      dynamic: async ({ expression }) => ({ policy: 'irreversible', context: `⚠ JavaScript arbitrario en la página: SIEMPRE pide confirmación\n\n\`\`\`js\n${String(expression).slice(0, 600)}\n\`\`\`` }) }),
+  T('browser.requestHuman', 'Pasa el control al usuario cuando necesitas algo que no debes hacer tú: captcha, login, 2FA, datos personales o de pago. Pausa tu trabajo, avisa al usuario (🛡 con «Listo»/«Cancelar») y vuelve cuando pulse «Listo» (done:true); después haz browser.snapshot. Nunca pidas ni teclees contraseñas por tu cuenta (FT-116).',
+    obj({ motivo: str('Qué tiene que hacer el usuario, en una frase') }, ['motivo']), 'navigate',
+    async ({ motivo }) => {
+      if (!getDriver().isOpen()) throw fail(409, 'El navegador del agente está cerrado: ábrelo con browser.navigate antes');
+      await addHandoff({ reason: String(motivo).slice(0, 300) });
+      await setControl('user');
+      let a = null;
+      try { a = await questions.choose({ question: `🤝 El agente del navegador necesita que lo hagas tú: ${String(motivo).slice(0, 300)}`, options: ['Listo', 'Cancelar'], context: 'Tienes el control del navegador (pestaña Navegador). Haz lo que haga falta —captcha, login, 2FA…— y pulsa «Listo» para que el agente continúe. Sus acciones están en pausa.' }); }
+      finally { for (const h of browserStatus().handoffs.filter((x) => x.reason === String(motivo).slice(0, 300))) await resolveHandoff(h.id); await setControl('agent').catch(() => {}); }
+      return a === 'Listo' ? { done: true } : { done: false, cancelled: a === 'Cancelar', timeout: a == null };
+    }, { precheck: browserPrecheck }),
 
   // — Escritorio (FT-22): delegan en server/desktop/ —
   T('window.getActive', 'Ventana activa del escritorio del usuario (id, título, app, pid). Si es flow-test/AgentOffice responde {inside:true} y hay que usar app.getContext.', obj(), 'read',
@@ -472,6 +501,7 @@ export async function run(name, args = {}, ctx = {}) {
   const done = (result, extra = {}) => audit({ ...entry, result, ms: Date.now() - t0, ...extra });
   try {
     if (!args || typeof args !== 'object' || Array.isArray(args)) throw fail(400, 'args debe ser un objeto');
+    if (name.startsWith('browser.') && name !== 'browser.open') entry.page = await pageUrl(args); // FT-116
     validate(tool.input, args);
     if (tool.pending) return tool.handler(args, ctx);
     if (tool.precheck) { const early = await tool.precheck(args, ctx); if (early) { done('ok'); return early; } }

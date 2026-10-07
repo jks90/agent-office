@@ -10,6 +10,13 @@ const TREE = [
   { role: 'link', name: 'Más info', value: '', states: [] },
 ];
 
+// FT-116 · las URLs con /login añaden un campo de contraseña y un botón «Entrar» (no destructivo por nombre) para probar la política
+const LOGIN = [
+  { role: 'textbox', name: 'Contraseña', value: '', states: ['protected'] },
+  { role: 'button', name: 'Entrar', value: '', states: [] },
+];
+const treeOf = (u) => (/\/login/.test(u) ? [...TREE, ...LOGIN] : TREE);
+
 export function createFakeDriver() {
   let open = false, seq = 0, active = null;
   const tabs = new Map();
@@ -49,12 +56,12 @@ export function createFakeDriver() {
     async reload() { const t = cur(); go(t, url(t)); t.hist.pop(); t.i--; return nav(t); },
     async snapshot() {
       const t = cur();
-      const nodes = TREE.map((n, i) => ({ ...n, ref: `e${i + 1}`, value: t.values[`e${i + 1}`] || '' }));
+      const nodes = treeOf(url(t)).map((n, i) => ({ ...n, ref: `e${i + 1}`, value: t.values[`e${i + 1}`] || '' }));
       return { tabId: t.id, ...nav(t), nodes, total: nodes.length, truncated: false, omitted: 0 };
     },
     async act(a = {}) {
       const t = cur();
-      if (a.ref && !/^e[1-4]$/.test(a.ref) && (a.x == null)) throw bad(404, `ref ${a.ref} desconocido`);
+      if (a.ref && !(/^e\d+$/.test(a.ref) && Number(a.ref.slice(1)) <= treeOf(url(t)).length) && (a.x == null)) throw bad(404, `ref ${a.ref} desconocido`);
       log.push({ op: 'act', ...a });
       return { ok: true, via: a.ref ? 'ref' : 'xy', ...nav(t) };
     },
@@ -68,7 +75,7 @@ export function createFakeDriver() {
     async screenshot() { const t = cur(); return { ...saveShot(PNG, 'png', t.id), width: 1, height: 1, tabId: t.id }; },
     // FT-117 · caja fija por ref (la página falsa apila los 4 elementos) o alrededor del punto
     async box({ ref, x, y } = {}) {
-      const m = /^e([1-4])$/.exec(ref || '');
+      const m = /^e(\d+)$/.exec(ref || '');
       if (m) return { x: 40, y: 60 + (m[1] - 1) * 70, w: 300, h: 50 };
       return x != null && y != null ? { x: Number(x) - 12, y: Number(y) - 12, w: 24, h: 24 } : null;
     },
@@ -80,7 +87,7 @@ export function createFakeDriver() {
         if (!t) return;
         const last = log.at(-1);
         const esc = (s) => String(s).replace(/[<&>"]/g, (c) => `&#${c.charCodeAt(0)};`);
-        const rows = TREE.map((n, i) => `<rect x="40" y="${60 + i * 70}" width="300" height="50" rx="6" fill="#fff" stroke="#8aa"/><text x="52" y="${90 + i * 70}" font-size="18" fill="#123">${esc(n.role)}: ${esc(n.name)} ${esc(t.values[`e${i + 1}`] || '')}</text>`).join('');
+        const rows = treeOf(url(t)).map((n, i) => `<rect x="40" y="${60 + i * 70}" width="300" height="50" rx="6" fill="#fff" stroke="#8aa"/><text x="52" y="${90 + i * 70}" font-size="18" fill="#123">${esc(n.role)}: ${esc(n.name)} ${esc(t.values[`e${i + 1}`] || '')}</text>`).join('');
         const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500"><rect width="800" height="500" fill="#eef3f8"/><text x="40" y="36" font-size="20" fill="#345">${esc(url(t))}</text>${rows}<text x="40" y="420" font-size="14" fill="#567">${last ? esc(JSON.stringify(last)) : ''}</text></svg>`;
         onFrame({ mime: 'image/svg+xml', data: Buffer.from(svg).toString('base64'), w: 800, h: 500, tabId: t.id, url: url(t) });
       };

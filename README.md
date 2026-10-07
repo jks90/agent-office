@@ -324,7 +324,7 @@ Fase A de la épica «Navegador del agente»: `server/browser/` con un contrato 
 
 ### Tools `browser.*` del Guía y de los agentes (FT-115)
 
-Las 14 tools exponen el driver: `browser.tabs`, `navigate` (url o back/forward/reload), `snapshot`, `find` (rol y/o texto), `click`, `type`, `select`, `scroll`, `press`, `waitFor`, `screenshot`, `console`, `network` y `evaluate`. `browser.open` (xdg-open) sigue siendo «enseñar una web al usuario en su navegador normal».
+Las 15 tools exponen el driver (la 15.ª, `browser.requestHuman`, es de FT-116): `browser.tabs`, `navigate` (url o back/forward/reload), `snapshot`, `find` (rol y/o texto), `click`, `type`, `select`, `scroll`, `press`, `waitFor`, `screenshot`, `console`, `network` y `evaluate`. `browser.open` (xdg-open) sigue siendo «enseñar una web al usuario en su navegador normal».
 
 - **Flujo guiado por las descripciones**: `snapshot` primero (texto, barato), actuar siempre por `ref`, `screenshot` solo si hace falta ver el aspecto.
 - **Política**: lectura (`tabs`, `snapshot`, `find`, `waitFor`, `screenshot`, `console`, `network`) automática; `navigate`/`scroll` = navigate; `click`, `type`, `select`, `press` = execute (ajuste del Guía); `evaluate` = write (confirma). **Irreversible, confirma siempre**: `click` sobre un control destructivo (mismas palabras que `ui.act`), `type` con `submit` y `press` de Enter/Delete. El texto de `browser.type` nunca va al audit (solo `chars`).
@@ -332,6 +332,15 @@ Las 14 tools exponen el driver: `browser.tabs`, `navigate` (url o back/forward/r
 - **`browser.screenshot` devuelve la imagen**: por MCP, `bin/ao-mcp.mjs` la entrega como contenido `type:image` (base64) además del texto con la ruta, así que Claude la ve (con claude-cli sustituye al 501 de `screen.describe`); por `POST /api/guide/tool` solo la ruta.
 - **Agentes worker**: la capacidad `browser` (`server/engines/toolscope.js`) está activa para los roles `qa-suite` y `office-flowtest` (otro rol la activa con `tools: …, browser` en su frontmatter; nunca en modo plan). `claude.js` les añade un MCP stdio `agentoffice-browser` con `AO_MCP_ONLY=browser`: solo ven `browser_*` (sin `browser_open`); política y auditoría siguen en el servidor. Solo motor Claude.
 - Prueba: `node scripts/browser-tools-e2e.mjs` (driver fake, MCP real); con `AO_E2E_REAL_BROWSER=1` repite lo esencial con Chromium real.
+
+### 🛡 Seguridad del navegador del agente (FT-116)
+
+- **Dominios** (`settings.browserPolicy = { default: 'ask'|'allow'|'block', domains: { 'dominio': 'allow'|'block'|'ask' } }`, Ajustes ▸ 🌐 Navegador del agente, o `POST /api/settings {browserPolicy}`; módulo `server/browser/policy.js`). `block` gana a todo; subdominios heredan la regla. Sin regla: **pregunta 🛡 la 1.ª vez por dominio y sesión** (en memoria; «Sí» lo recuerda hasta reiniciar). `file://`, `chrome://`, `about:` (salvo `about:blank`), `data:`… se bloquean siempre; `localhost`, `127.x`, redes privadas y hosts sin punto, salvo que su host esté como `allow` explícito. Se aplica a `navigate` y `tabs new` (por la URL pedida) y a **todas** las tools sobre la pestaña activa (una redirección o un clic a un dominio bloqueado hace que la siguiente llamada responda 403). El rechazo es 403.
+- **Irreversible = confirma siempre**: además de lo de FT-115, `click` sobre un botón en una página con campo de contraseña/tarjeta (nombre tipo contraseña, card, iban… o estado `protected`) y **`browser.evaluate`, siempre** (aunque `guidePolicy` esté en automático).
+- **Datos no confiables**: `snapshot`, `find`, `console`, `network` y `evaluate` devuelven `untrusted:true` + `aviso` («DATOS NO CONFIABLES…»); el texto del snapshot va entre `<<<DATOS_WEB_NO_CONFIABLES … >>>`. El prompt del Guía repite la regla.
+- **Handoff** `browser.requestHuman({motivo})`: lista la petición en el panel 🌐, pasa el control al usuario (el agente queda en pausa, sus acciones dan 409), lanza una pregunta 🛡 «Listo»/«Cancelar» (campana y barra de preguntas) y, al responder, devuelve el control: `{done:true}` con «Listo»; `{done:false, cancelled|timeout}` si no. Caduca a los 10 min.
+- **Auditoría** (`guide-audit.jsonl`): cada `browser.*` registra `page` (URL sin query/hash), acción, `ref` y resultado (también los 403 por dominio). Nunca el texto tecleado (solo `chars`) ni expresiones de `evaluate` que mencionen contraseñas/tokens.
+- Prueba: `node scripts/browser-policy-e2e.mjs`.
 
 ## 🌐 Navegador — panel en vivo (FT-117)
 
@@ -341,7 +350,7 @@ Vista **🌐 Navegador** (menú lateral, `?view=browser` y `app.navigate view=br
 - **Barra**: quién controla (🤖 agente / 🧑 tú), atrás/adelante/recargar, URL, pestañas (seleccionar, cerrar, ＋), «Abrir/Cerrar navegador».
 - **Tomar el control** (`POST /api/browser/control {mode:'user'|'agent'}`): el agente queda en pausa y tus clics, rueda y teclas sobre el fotograma se reenvían (`POST /api/browser/input`), como en el modo Live de flow-test. «Devolver al agente» lo reanuda. Sin el control, la entrada responde 409.
 - **Marca**: `panel.agentDriver()` es el driver que deben usar las tools `browser.*` (A2): lanza 409 mientras controla el usuario y, antes de `act`/`type`/`scroll`, pinta 1 s un rectángulo sobre el ref (`driver.box()`).
-- **Handoff (A3)**: el panel lateral lista `browser.handoffs` (`panel.addHandoff({reason})` / `resolveHandoff(id)`); hoy vacío hasta que A3 los genere. «Tomar el control» desde la petición.
+- **Handoff (A3)**: el panel lateral lista `browser.handoffs` (`panel.addHandoff({reason})` / `resolveHandoff(id)`); los genera `browser.requestHuman` (FT-116). «Tomar el control» desde la petición.
 - Responsive: ≤760 px el panel lateral pasa bajo la imagen.
 - Prueba: `node scripts/browser-panel-e2e.mjs [--real] [dir-capturas]` (driver fake por defecto; `--real` con Chromium headless). Capturas en `docs/FT-117/`.
 
