@@ -642,3 +642,9 @@ La vista de planta sigue el panel 2 de `diseno-edificio-referencia.png`:
 - Más densidad: doble monitor por puesto, estanterías en la pared izquierda, plantas grandes en las esquinas y mesita auxiliar.
 
 Captura: `node scripts/preview.mjs out.png --width 1920 --height 1080`.
+
+## 🫧 Burbujas de estado en la oficina (FT-123)
+
+En la planta, cada agente lleva siempre una burbuja compacta: icono + código de tarea + estado (`✏️ FT-115 editando…`, `✋ FT-114 en revisión`, `⏳ en cola`, `⛔ bloqueado`, `💤 sin cuota`, `☕ libre`). Al pasar el ratón o seleccionar se expande con la actividad completa. Si dos se pisan (mesas contiguas) se apilan hacia arriba —sin tapar las píldoras de zona ni la pizarra— con una línea fina hasta el avatar. En el edificio no se ven y en pantallas estrechas (<640 px) solo llevan icono + código. El DOM solo se toca cuando cambia el texto.
+
+Ajustes → «Burbujas de estado» (`settings.officeBubbles`, `POST /api/settings`): `'todas'` (por defecto) o `'al pasar'`. Prueba: `node scripts/bubbles-e2e.mjs [captura.png]`.

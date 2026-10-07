@@ -486,7 +486,8 @@ export class Office3D {
   // `agents`/`tasks` son los del proyecto activo (modo `floor`); `projects`/`allAgents`/`allTasks`, todo el
   // estado, para el edificio (modo `building`, FT-46). Si no llegan, se conservan los últimos.
   // `projectId` (FT-47) es el proyecto activo del desplegable: en el edificio su planta va resaltada.
-  update({ agents, tasks, questions, roles, title, selected, projects, allAgents, allTasks, projectId, quota }) {
+  update({ agents, tasks, questions, roles, title, selected, projects, allAgents, allTasks, projectId, quota, bubbles }) {
+    if (bubbles !== undefined) this.bubbleMode = bubbles === 'al pasar' ? 'al pasar' : 'todas'; // FT-123
     if (quota !== undefined) this.quota = quota || {};
     this.agents = agents || [];
     this.tasks = tasks || [];
@@ -1327,7 +1328,9 @@ export class Office3D {
       .o3d-pill.waiting{background:#fff4bf}.o3d-pill.reviewing{background:#fed7aa}.o3d-pill.blocked{background:#fde68a}.o3d-pill.failed{background:#fee2e2}.o3d-pill.idle{background:#e2e8f0}
       .o3d-pill.sel{outline:2px solid #f6c744;outline-offset:1px}
       .o3d-bubble{font-size:11px;font-weight:600;color:#1f2937;background:rgba(255,255,255,.95);border:1px solid rgba(0,0,0,.08);
-        border-radius:9px;padding:3px 8px;box-shadow:0 2px 6px rgba(0,0,0,.2);max-width:190px;overflow:hidden;text-overflow:ellipsis}
+        border-radius:9px;padding:3px 8px;box-shadow:0 2px 6px rgba(0,0,0,.2);max-width:190px}
+      .o3d-bubble.full{overflow:hidden;text-overflow:ellipsis}
+      .o3d-bubble::after{content:'';position:absolute;left:50%;top:100%;width:1px;height:var(--lead,0px);background:rgba(71,85,105,.7)}
       .o3d-bubble.plan{background:#f5f3ff;color:#4c1d95;border-color:#c4b5fd}
       .o3d-bubble.review{background:#fff7ed;color:#9a3412;border-color:#fdba74}
       .o3d-bubble.error{background:#fef2f2;color:#991b1b;border-color:#fca5a5}
@@ -1372,7 +1375,7 @@ export class Office3D {
       const pill = document.createElement('div'); pill.className = 'o3d-el o3d-pill';
       const bubble = document.createElement('div'); bubble.className = 'o3d-el o3d-bubble';
       this.labelRoot.append(pill, bubble);
-      e = { pill, bubble }; this.labelEls.set(id, e);
+      e = { pill, bubble, text: null }; this.labelEls.set(id, e);
     }
     return e;
   }
@@ -1426,32 +1429,77 @@ export class Office3D {
       e.pill.style.top = (foot.y + 4) + 'px';
       e.pill.style.opacity = foot.visible ? '1' : '0';
 
-      const { text, kind } = this.bubbleText(agent, a, now);
+      const { text, kind, full } = this.bubbleText(agent, a, now);
+      e.pos = null;
       if (text) {
-        e.bubble.textContent = text;
-        e.bubble.className = 'o3d-el o3d-bubble' + (kind ? ' ' + kind : '');
-        e.bubble.style.left = head.x + 'px';
-        e.bubble.style.top = (head.y - 2) + 'px';
-        e.bubble.style.opacity = head.visible ? '1' : '0';
-      } else e.bubble.style.opacity = '0';
+        // FT-123: solo se toca el DOM si el texto o la clase cambian (la posición sí se escribe cada frame, tras apilar)
+        const cls = 'o3d-el o3d-bubble' + (kind ? ' ' + kind : '') + (full ? ' full' : '');
+        if (e.text !== text) { e.bubble.textContent = text; e.text = text; e.w = 0; }
+        if (e.cls !== cls) { e.bubble.className = cls; e.cls = cls; e.w = 0; }
+        if (!e.w) { e.w = e.bubble.offsetWidth || 60; e.h = e.bubble.offsetHeight || 20; }
+        e.pos = { x: head.x, y: head.y - 2, vis: head.visible, hover: !!full };
+      } else if (e.text !== null) { e.text = null; e.bubble.style.opacity = '0'; }
     });
+    this.stackBubbles();
     for (const id of this.labelEls.keys()) if (!seen.has(id)) this.removeLabel(id);
+  }
+
+  // FT-123: anti-solape. Ordena las burbujas de abajo arriba y sube cada una hasta que no pise a otra ni a las píldoras de zona/pizarra;
+  // si hubo que subirla, una línea fina la une a su avatar (--lead). Las que no tienen sitio visible quedan en su posición.
+  stackBubbles() {
+    const obst = [];
+    for (const { el } of this.zoneLabelEls || []) if (el.style.opacity === '1') obst.push(this.boxOf(el, 0.5, 0.5));
+    if (this.boardLabel.style.opacity === '1') obst.push(this.boxOf(this.boardLabel, 0.5, 1));
+    const list = [...this.labelEls.values()].filter((e) => e.pos).sort((p, q) => q.pos.y - p.pos.y);
+    const placed = [];
+    for (const e of list) {
+      const w = e.w, h = e.h;
+      let y = e.pos.y;
+      const hit = (b) => e.pos.x - w / 2 < b.r && e.pos.x + w / 2 > b.l && y - h < b.b && y > b.t;
+      for (let i = 0; i < 40; i++) {
+        const o = obst.find(hit) || placed.find(hit);
+        if (!o) break;
+        y = o.t - 2;
+      }
+      e.bubble.style.setProperty('--lead', Math.max(0, e.pos.y - y) + 'px');
+      e.bubble.style.left = e.pos.x + 'px';
+      e.bubble.style.top = y + 'px';
+      e.bubble.style.opacity = e.pos.vis ? '1' : '0';
+      e.bubble.style.zIndex = e.pos.hover ? '3' : '';
+      placed.push({ l: e.pos.x - w / 2, r: e.pos.x + w / 2, t: y - h, b: y });
+    }
+  }
+
+  boxOf(el, ax, ay) {
+    if (el._bt !== el.textContent) { el._bt = el.textContent; el._w = el.offsetWidth; el._h = el.offsetHeight; }
+    const x = parseFloat(el.style.left) || 0, y = parseFloat(el.style.top) || 0;
+    return { l: x - el._w * ax, r: x + el._w * (1 - ax), t: y - el._h * ay, b: y + el._h * (1 - ay) };
   }
 
   bubbleText(agent, a, now) {
     const visual = this.visualAgents.find((v) => v.id === agent.id) || toVisualState(agent, this.tasks, this.questions);
+    const hov = this.selected === agent.id || this.hoverActor === agent.id;
     if (a.moving && a.wander) return { text: '→ ' + a.wander.label, kind: '' };
     if (a.moving) return { text: '→ ' + ((this.floorZones || BASE_ZONE_STYLE)[a.dest?.zone]?.label || 'zona'), kind: '' };
     if (visual.status === 'failed') return { text: `⚠ #${visual.taskId || agent.taskId || '?'} falló`, kind: 'error' };
     if (a.fuel === false && agent.status !== 'paused') return { text: '💤 sin cuota', kind: 'review' };
-    if (a.wander && (this.selected === agent.id || this.hoverActor === agent.id)) return { text: a.wander.label, kind: '' };
-    if (this.selected === agent.id || this.hoverActor === agent.id) {
-      if (visual.status === 'blocked') return { text: 'Bloqueado', kind: 'review' };
-      if (visual.status === 'waiting') return { text: 'En cola', kind: 'plan' };
-      if (visual.status === 'reviewing') return { text: `✋ #${visual.taskId || 'tarea'} en revisión`, kind: 'review' };
-      if (visual.status === 'working') return { text: visual.activity ? '✏️ ' + visual.activity : 'Trabajando…', kind: '' };
+    if (a.wander && hov) return { text: a.wander.label, kind: '' };
+    if (hov) {
+      if (visual.status === 'blocked') return { text: 'Bloqueado', kind: 'review', full: true };
+      if (visual.status === 'waiting') return { text: 'En cola', kind: 'plan', full: true };
+      if (visual.status === 'reviewing') return { text: `✋ #${visual.taskId || 'tarea'} en revisión`, kind: 'review', full: true };
+      if (visual.status === 'working') return { text: visual.activity ? '✏️ ' + visual.activity : 'Trabajando…', kind: '', full: true };
     }
-    return { text: null };
+    if (this.bubbleMode === 'al pasar') return { text: null };
+    // Burbuja compacta siempre visible (en móvil, solo icono + código)
+    const code = visual.taskId || agent.taskId || '';
+    const compact = this.cv.clientWidth < 640;
+    const tag = (icon, label, kind) => ({ text: compact ? (code ? `${icon} ${code}` : icon) : [icon, code, label].filter(Boolean).join(' '), kind });
+    if (visual.status === 'blocked') return tag('⛔', 'bloqueado', 'review');
+    if (visual.status === 'waiting') return tag('⏳', 'en cola', 'plan');
+    if (visual.status === 'reviewing') return tag('✋', 'en revisión', 'review');
+    if (visual.status === 'working') return tag('✏️', 'editando…', '');
+    return tag('☕', 'libre', '');
   }
 
   // ── Clic / hover ──────────────────────────────────────────────────────────────
