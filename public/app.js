@@ -13,6 +13,8 @@ const statusSinceByAgent = new Map();
 const activityLoaded = new Set();
 
 import { Office } from './office3d.js';
+import { createOfficePanels } from './office-panels.js'; // paneles informativos en los márgenes de la planta (FT-125)
+let officePanels = null;
 import { dictationSupported, createDictation, insertAtCursor } from './dictation.js'; // dictado por voz (FT-43)
 const office = new Office($('#office'), { onAgentClick: (id) => enterAgent(id), onFloorClick: (id) => enterFloor(id), onGuideClick: () => showTab('guide'), onMineClick: (pid) => { inboxProject = pid || null; showTab('inbox'); renderInbox(); } }); // clic planta/agente → navegación continua (FT-47/FT-71)
 window.aoOffice = office; // para QA: aoOffice.debugState() / setMode() (FT-46)
@@ -75,6 +77,7 @@ function connectEvents() {
   es.addEventListener('activity', (e) => {
     const ev = JSON.parse(e.data);
     rememberActivity(ev);
+    officePanels?.onEvent(ev); // FT-125: «📜 Actividad» en vivo
     if (drawerAgent === ev.agentId) renderDrawer();
   });
   // Órdenes del Guide Agent (FT-4): llegan por SSE `ui` (navegar, abrir tarea/agente, enseñar un flow en flow-test).
@@ -1030,6 +1033,16 @@ function render() {
   run.disabled = !p;
 
   office.update({ agents: team(), tasks: tasks(), questions: S.questions || [], roles: S.roles, title: p?.name || '', selected: drawerAgent, projects: visibleProjects(), allAgents: S.agents, allTasks: S.tasks, projectId, quota: S.quota || {}, bubbles: S.settings?.officeBubbles, mine: mineSummary(projectId), mineByProject: Object.fromEntries(visibleProjects().map((q) => [q.id, mineSummary(q.id).total])) }); // FT-124: mi mesa y puntos del edificio // FT-123: burbujas; projects/allAgents/allTasks: modo edificio (FT-46); projectId: planta resaltada (FT-47)
+  if (!officePanels) { // FT-125: paneles de los márgenes de la planta (se crean aquí porque usan inboxItems/INBOX_KIND, definidos más abajo)
+    officePanels = createOfficePanels({ office, S: () => S, projectId: () => projectId, esc, inboxItems, inboxKind: INBOX_KIND, api,
+      openAgent: (id) => enterAgent(id), openTask: (id) => { const t = S.tasks.find((x) => x.id === id); if (t) openTask(t.id); },
+      openInbox: (pid) => { inboxProject = pid || null; showTab('inbox'); renderInbox(); },
+      quota: { name: QUOTA_NAME, worst: quotaWorst, sev: quotaSev } });
+    office.onLabelsTick = () => officePanels.layout();
+    office.panels = officePanels; // para QA
+  }
+  officePanels.update();
+  officePanels.layout();
   renderSuite();
   renderTeam();
   renderRepos();
@@ -2181,6 +2194,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="supervisorApproves" ${project()?.supervisorApproves ? 'checked' : ''}><span>🧑‍⚖️ Delegar en el Coordinador / Supervisor de «${esc(project()?.name)}» (FT-122): aprueba las tareas en revisión (también las de revisión obligatoria) si sus verificaciones pasan con la rama al día (y, con diffs de más de 30 líneas, un revisor barato lo confirma), y quita dependencias que sobran solo si la bloqueante falló. Sin marcar solo deja «✅ listo para aprobar» y avisa.</span></label>
     ${(project()?.team || []).some((id) => S.agents.find((a) => a.id === id)?.role === 'coordinador') ? '' : `<div><button type="button" class="small" data-add-supervisor>🧑‍⚖️ Añadir coordinador</button></div>`}
     ${S.tasks.filter((t) => t.projectId === projectId && t.depProposal).map((t) => `<p class="muted" style="margin:2px 0">🧑‍⚖️ ${esc(t.depProposal.why)} <button type="button" class="small" data-dep-proposal="${t.id}:1">Quitar</button> <button type="button" class="small" data-dep-proposal="${t.id}:0">Mantener</button></p>`).join('')}
+    <label><input type="checkbox" name="officePanels" ${S.settings.officePanels !== false ? 'checked' : ''} /> 🗂 Paneles de información en los márgenes de la planta 3D (FT-125)</label>
     <label>🫧 Burbujas de estado en la oficina 3D (FT-123)</label>
     <select name="officeBubbles">${[['todas', 'Todas visibles (icono + tarea + estado)'], ['al pasar', 'Solo al pasar el ratón / seleccionar']].map(([v, l]) => `<option value="${v}" ${(S.settings.officeBubbles || 'todas') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
     <label>Revisión por defecto de la empresa (proyectos con «Igual que la empresa»)</label>
@@ -2196,7 +2210,7 @@ Pasos, convenciones y ejemplos…</textarea>
     safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0'); (SETTINGS_EMBED ? safeSet('ao:voice-wake', f.voiceWake ? '1' : '0') : wakeSet(!!f.voiceWake)); // en el panel de flow-test no se abre el micro: el iframe principal lo recoge por el evento `storage`
     refreshSttLocal();
     ttsStop();
-    await api('POST', '/api/settings', { ...f, ponytailRoles: Object.fromEntries(Object.keys(S.roles).map((id) => [id, !!f['pt_' + id]])), quotaGuard: !!f.quotaGuard, stuckGuard: !!f.stuckGuard, cacheAffinity: !!f.cacheAffinity, agentMemory: !!f.agentMemory, claudeMemory: !!f.claudeMemory, modelLadder: { claude: f.ladder_claude || '', codex: f.ladder_codex || '' }, codeIndex: !!f.codeIndex, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback, browserPolicy: { default: f.browserDefault, domains: Object.fromEntries(String(f.browserDomains || '').split('\n').map((l) => l.trim().split(/\s+/)).filter((p) => p[0]).map((p) => [p[0], p[1] || 'allow'])) } });
+    await api('POST', '/api/settings', { ...f, ponytailRoles: Object.fromEntries(Object.keys(S.roles).map((id) => [id, !!f['pt_' + id]])), quotaGuard: !!f.quotaGuard, officePanels: !!f.officePanels, stuckGuard: !!f.stuckGuard, cacheAffinity: !!f.cacheAffinity, agentMemory: !!f.agentMemory, claudeMemory: !!f.claudeMemory, modelLadder: { claude: f.ladder_claude || '', codex: f.ladder_codex || '' }, codeIndex: !!f.codeIndex, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback, browserPolicy: { default: f.browserDefault, domains: Object.fromEntries(String(f.browserDomains || '').split('\n').map((l) => l.trim().split(/\s+/)).filter((p) => p[0]).map((p) => [p[0], p[1] || 'allow'])) } });
     ttsInfoLoad();
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');

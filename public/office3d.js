@@ -1449,6 +1449,27 @@ export class Office3D {
     return { x: (v.x * 0.5 + 0.5) * w, y: (-v.y * 0.5 + 0.5) * h, visible: v.z < 1 };
   }
 
+  // FT-125: casco convexo (px del lienzo) del volumen de la planta: suelo + paredes. Los paneles de los márgenes no lo pisan nunca.
+  floorHull() {
+    const sz = this.currentFloorSize || DEFAULT_FLOOR_SIZE, pts = [];
+    for (const x of [0, sz.rx]) for (const y of [0, WALL_H]) for (const z of [0, sz.rz]) { const p = this.project(x, y, z); if (p.visible) pts.push(p); }
+    pts.sort((a, b) => a.x - b.x || a.y - b.y);
+    const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+    const half = (list) => { const h = []; for (const p of list) { while (h.length >= 2 && cross(h[h.length - 2], h[h.length - 1], p) <= 0) h.pop(); h.push(p); } h.pop(); return h; };
+    return pts.length < 3 ? [] : [...half(pts), ...half(pts.slice().reverse())];
+  }
+
+  // FT-125: cajas (px del lienzo) de lo que se ve flotando sobre la planta: burbujas, píldoras de zona y título de la pizarra.
+  obstacles() {
+    const out = [];
+    for (const { el } of this.zoneLabelEls || []) if (el.style.opacity === '1') out.push(this.boxOf(el, 0.5, 0.5));
+    if (this.boardLabel.style.opacity === '1') out.push(this.boxOf(this.boardLabel, 0.5, 1));
+    for (const e of this.labelEls.values()) {
+      if (e.pos && e.bubble.style.opacity === '1') { const x = parseFloat(e.bubble.style.left) || 0, y = parseFloat(e.bubble.style.top) || 0; out.push({ l: x - e.w / 2, r: x + e.w / 2, t: y - e.h, b: y }); }
+    }
+    return out;
+  }
+
   updateLabels(now) {
     const actorMarks = this.agents.map((agent) => {
       const a = this.actors.get(agent.id);
@@ -1590,7 +1611,8 @@ export class Office3D {
     const hov = this.selected === agent.id || this.hoverActor === agent.id;
     if (a.moving && a.wander) return { text: '→ ' + a.wander.label, kind: '' };
     if (a.moving) return { text: '→ ' + ((this.floorZones || BASE_ZONE_STYLE)[a.dest?.zone]?.label || 'zona'), kind: '' };
-    if (visual.status === 'failed') return { text: `⚠ #${visual.taskId || agent.taskId || '?'} falló`, kind: 'error' };
+    const codeOf = (id) => this.tasks.find((t) => t.id === id)?.code || ''; // FT-125: nunca el id interno de la tarea
+    if (visual.status === 'failed') return { text: `⚠ ${codeOf(visual.taskId || agent.taskId) || 'tarea'} falló`, kind: 'error' };
     const wait = this.waitOn.get(agent.id); // FT-124: el agente espera al usuario
     if (wait) return { text: wait === 'question' ? '❓ te pregunta' : '✋ espera tu revisión', kind: 'review' };
     if (a.fuel === false && agent.status !== 'paused') return { text: '💤 sin cuota', kind: 'review' };
@@ -1598,14 +1620,16 @@ export class Office3D {
     if (hov) {
       if (visual.status === 'blocked') return { text: 'Bloqueado', kind: 'review', full: true };
       if (visual.status === 'waiting') return { text: 'En cola', kind: 'plan', full: true };
-      if (visual.status === 'reviewing') return { text: `✋ #${visual.taskId || 'tarea'} en revisión`, kind: 'review', full: true };
+      if (visual.status === 'reviewing') return { text: `✋ ${codeOf(visual.taskId || agent.taskId) || 'tarea'} en revisión`, kind: 'review', full: true };
       if (visual.status === 'working') return { text: visual.activity ? '✏️ ' + visual.activity : 'Trabajando…', kind: '', full: true };
     }
     if (this.bubbleMode === 'al pasar') return { text: null };
     // Burbuja compacta siempre visible (en móvil, solo icono + código)
-    const code = visual.taskId || agent.taskId || '';
+    // FT-125: el código (FT-n) de la tarea, no su id interno; un agente libre no lleva código y sí su nombre.
+    const free = !['blocked', 'waiting', 'reviewing', 'working'].includes(visual.status);
+    const code = free ? '' : codeOf(visual.taskId || agent.taskId);
     const compact = this.cv.clientWidth < 640;
-    const tag = (icon, label, kind) => ({ text: compact ? (code ? `${icon} ${code}` : icon) : [icon, code, label].filter(Boolean).join(' '), kind });
+    const tag = (icon, label, kind) => ({ text: compact ? (code ? `${icon} ${code}` : icon) : [icon, code || (free ? agent.name : ''), label].filter(Boolean).join(' '), kind });
     if (visual.status === 'blocked') return tag('⛔', 'bloqueado', 'review');
     if (visual.status === 'waiting') return tag('⏳', 'en cola', 'plan');
     if (visual.status === 'reviewing') return tag('✋', 'en revisión', 'review');
@@ -1814,7 +1838,10 @@ export class Office3D {
     try {
       this.tickCamera(t);
       if (this.mode === 'building') { this.stepBuilding(dt, now); this.updateFloorLabels(); }
-      else { this.step(dt, now); this.updateLabels(now); }
+      else {
+        this.step(dt, now); this.updateLabels(now);
+        if (this.onLabelsTick && t - (this._lt || 0) > 400) { this._lt = t; this.onLabelsTick(); } // FT-125: recoloca los paneles de los márgenes
+      }
     } catch (err) { /* nunca romper el bucle de render */ }
     this.renderer.render(this.scene, this.camera);
     this.metrics.frames++;
