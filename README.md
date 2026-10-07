@@ -820,6 +820,10 @@ El escaneo del workspace ya no crea un Coordi por carpeta descubierta: solo `cre
 - La 🔔 abre primero la 🛡/pregunta pendiente (aunque la hubieras pospuesto); sin ninguna, va a «Para ti».
 - Prueba: `node scripts/embedded-e2e.mjs [captura.png]` (flow-test simulado con iframe + proxy `/agents/` como `agents-proxy.js`, vista 🌐, contestar, 🔔, textos y fotogramas).
 
+## 🎯 Oficina fiel al estado (FT-148)
+
+La posición de cada agente REAL la decide solo su estado: `working` → su mesa sentado (sin paseos); `reviewing` → Revisión; esperando o bloqueado por dependencia → Kanban; espera al usuario (❓/✋) → junto a la mesa «Tú»; `failed` y sin cuota → su mesa; libre → Descanso. Solo los libres pasean (`WANDER_SPOTS`: café, nevera, planta, charla). Al cambiar de estado caminan a su sitio nuevo. QA: `aoOffice.simulate(s)` acelera el reloj y `debugState()` da la posición real. Prueba: `node scripts/office-fidelity-e2e.mjs`.
+
 ## 🛒 Marketplace: paquetes `ao-pkg/1` de roles, skills y agentes (FT-141)
 
 `server/marketplace.js` exporta e importa paquetes JSON `{format:"ao-pkg/1", kind, name, version, summary, author, files:[{path, content(base64), sha256}], meta, memory?}` (tope 2 MB). No habla con la nube: flow-test hace de puerta (`/account-link/marketplace/*`).
