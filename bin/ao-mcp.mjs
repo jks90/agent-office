@@ -23,7 +23,9 @@ async function api(method, path, body) {
 
 let catalog = null; // nombre MCP → tool de AgentOffice
 async function tools() {
-  catalog = new Map((await api('GET', '/api/guide/tools')).map((t) => [mcpName(t.name), t]));
+  // FT-115 · AO_MCP_ONLY=browser (agentes worker con la capacidad «browser»): solo browser.* salvo browser.open (xdg-open en el escritorio del usuario)
+  const only = process.env.AO_MCP_ONLY === 'browser' ? (t) => t.name.startsWith('browser.') && t.name !== 'browser.open' : () => true;
+  catalog = new Map((await api('GET', '/api/guide/tools')).filter(only).map((t) => [mcpName(t.name), t]));
   return [...catalog.entries()].map(([name, t]) => ({
     name, description: `[${t.policy}] ${t.description}`, inputSchema: t.input,
   }));
@@ -48,7 +50,11 @@ async function handle(msg) {
         const tool = catalog.get(params.name);
         if (!tool) return err(id, -32602, `Tool desconocida: ${params.name}`);
         const out = await api('POST', '/api/guide/tool', { name: tool.name, args: params.arguments || {} });
-        return ok(id, { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] });
+        // FT-115 · browser.screenshot: la imagen va como contenido MCP `image` (base64) para que el modelo la vea; el resto, como texto
+        const { image, ...rest } = out && typeof out === 'object' ? out : { value: out };
+        const content = [{ type: 'text', text: JSON.stringify(image ? rest : out, null, 2) }];
+        if (image?.data) content.push({ type: 'image', data: image.data, mimeType: image.mimeType || 'image/png' });
+        return ok(id, { content });
       } catch (e) {
         // Fallos de la tool (403 rechazada, 501 pendiente, 404…) son resultados con isError para que el modelo los vea.
         return ok(id, { content: [{ type: 'text', text: `Error${e.status ? ' ' + e.status : ''}: ${e.message}` }], isError: true });

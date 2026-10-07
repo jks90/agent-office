@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  body { font: 13px system-ui, sans-serif; width: 300px; margin: 10px; }
+  button, input { font: inherit; width: 100%; box-sizing: border-box; margin: 3px 0; padding: 5px; }
+  #st { font-weight: 600; margin-bottom: 6px; }
+  small { color: #666; }
+</style>
+<div id="st">…</div>
+<button id="cede">Dejar al agente esta pestaña</button>
+<button id="revoke">Quitar esta pestaña al agente</button>
+<hr />
+<input id="url" placeholder="ws://127.0.0.1:7420/api/browser/ext" />
+<input id="code" placeholder="Código de AgentOffice (Ajustes ▸ Navegador)" autocomplete="off" />
+<button id="connect">Conectar / emparejar</button>
+<small>El agente solo ve y toca las pestañas cedidas (grupo morado «AgentOffice»). Chrome mostrará el aviso de depuración: es normal.</small>
+<script src="popup.js"></script>

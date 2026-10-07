@@ -632,3 +632,31 @@ select.tool-assign { width: auto; max-width: 150px; font-size: 11px; padding: 2p
 .sched-hook { margin-top: 4px; font-size: 11px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .sched-hook code { overflow: hidden; text-overflow: ellipsis; max-width: 460px; white-space: nowrap; }
 .sched-acts { display: flex; gap: 4px; flex-wrap: wrap; }
+
+/* ── Navegador del agente (FT-117) ─────────────────────────────────────────── */
+.br { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--s-2); padding: var(--s-3); }
+.br-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+.br-who { padding: 3px 10px; border-radius: 999px; background: var(--panel2); font-size: 13px; white-space: nowrap; }
+.br-who.user { background: var(--accent); color: var(--accent-ink); }
+.br-url { flex: 1 1 200px; min-width: 0; display: flex; }
+.br-url input { width: 100%; background: var(--panel3); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 5px 10px; }
+.br-url input:disabled { opacity: .7; }
+.br-tabs { display: flex; gap: var(--s-1); overflow-x: auto; flex: none; }
+.br-tabs:empty { display: none; }
+.br-tab { display: inline-flex; align-items: center; background: var(--panel2); border-radius: var(--r-sm); white-space: nowrap; }
+.br-tab.on { outline: 1px solid var(--accent); }
+.br-tab button { background: none; color: inherit; border: 0; padding: 4px 8px; cursor: pointer; }
+.br-tab button:disabled, .br-new:disabled { cursor: default; opacity: .6; }
+.br-tab .x { padding: 4px 6px; color: var(--muted); }
+.br-new { background: none; border: 1px dashed var(--line); border-radius: var(--r-sm); cursor: pointer; padding: 2px 8px; }
+.br-body { flex: 1; min-height: 0; display: flex; gap: var(--s-3); }
+.br-stage { flex: 1; min-width: 0; position: relative; display: flex; align-items: center; justify-content: center; background: #05070c; border: 2px solid var(--line); border-radius: var(--r-md); overflow: hidden; outline: none; }
+.br-stage.user { border-color: var(--accent); cursor: crosshair; }
+.br-stage img { max-width: 100%; max-height: 100%; display: block; user-select: none; }
+.br-stage img[hidden], .br-mark[hidden], .br-empty[hidden] { display: none; }
+.br-mark { position: absolute; border: 3px solid #ff3d71; border-radius: 4px; background: rgba(255,61,113,.18); box-shadow: 0 0 0 2px rgba(255,255,255,.6); pointer-events: none; }
+.br-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: var(--s-4); color: var(--muted); pointer-events: none; }
+.br-side { width: 260px; flex: none; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--s-3); overflow: auto; }
+.br-side h4 { margin: 0 0 var(--s-2); }
+.br-handoff { background: var(--panel2); border-radius: var(--r-sm); padding: var(--s-2); margin-bottom: var(--s-2); display: flex; flex-direction: column; gap: var(--s-2); }
+@media (max-width: 760px) { .br-body { flex-direction: column; } .br-side { width: auto; max-height: 30%; } .br-stage { min-height: 200px; } }

@@ -880,8 +880,97 @@ document.addEventListener('click', async (e) => {
   document.querySelectorAll('.model-pick').forEach((w) => repaintModel(w, w.dataset.engine, modelPickValue(w)));
 });
 const pickModel = (f) => (f.model === '__other' ? (f.model_other || '').trim() : f.model || '');
+// ── Navegador del agente (FT-117) ───────────────────────────────────────────
+// Vista en vivo: el estado (control, pestañas, url, handoffs) llega en `S.browser` (SSE de estado); los fotogramas y la marca
+// del elemento sobre el que actúa el agente, por /api/browser/stream (solo abierto mientras la vista está a la vista).
+let brES = null, brFrame = null, brMarkT = 0, brLastWheel = 0;
+const brCall = (p, body) => api('POST', 'api/browser/' + p, body || {}).then((r) => r, () => null);
+function brShow() {
+  renderBrowser();
+  if (brES) return;
+  brES = new EventSource(BASE + 'api/browser/stream');
+  brES.addEventListener('frame', (e) => {
+    brFrame = JSON.parse(e.data);
+    const img = $('#br-img');
+    img.src = `data:${brFrame.mime};base64,${brFrame.data}`;
+    img.dataset.fw = brFrame.w; img.dataset.fh = brFrame.h; // tamaño del viewport del fotograma (px CSS)
+    img.hidden = false;
+    $('#br-empty').hidden = true;
+  });
+  brES.addEventListener('mark', (e) => {
+    const m = JSON.parse(e.data), img = $('#br-img');
+    if (!brFrame || !img.clientWidth) return;
+    const k = img.clientWidth / brFrame.w, el = $('#br-mark');
+    Object.assign(el.style, { left: img.offsetLeft + m.x * k + 'px', top: img.offsetTop + m.y * k + 'px', width: Math.max(8, m.w * k) + 'px', height: Math.max(8, m.h * k) + 'px' });
+    el.hidden = false;
+    clearTimeout(brMarkT);
+    brMarkT = setTimeout(() => { el.hidden = true; }, m.ms || 1000);
+  });
+}
+function brHide() { if (brES) { brES.close(); brES = null; } }
+function renderBrowser() {
+  const b = S.browser;
+  if (!b || $('#view-browser').hidden) return;
+  const mine = b.control === 'user';
+  $('#br-who').textContent = mine ? '🧑 Controlas tú' : '🤖 Controla el agente';
+  $('#br-who').className = 'br-who ' + (mine ? 'user' : 'agent');
+  const ctl = $('#br-control');
+  ctl.textContent = mine ? '↩ Devolver al agente' : '✋ Tomar el control';
+  ctl.disabled = !b.open;
+  ctl.title = mine ? 'El agente reanuda' : 'El agente queda en pausa y tus clics y teclas van a la página';
+  const op = $('#br-open');
+  op.textContent = b.open ? 'Cerrar navegador' : 'Abrir navegador';
+  op.disabled = !b.open && !b.available;
+  for (const id of ['br-back', 'br-fwd', 'br-reload']) $('#' + id).disabled = !(b.open && mine);
+  const u = $('#br-url');
+  u.disabled = !(b.open && mine);
+  if (document.activeElement !== u) u.value = b.url || '';
+  $('#br-tabs').innerHTML = b.open
+    ? b.tabs.map((t) => `<span class="br-tab ${t.active ? 'on' : ''}"><button data-brtab="${esc(t.id)}" ${mine ? '' : 'disabled'} title="${esc(t.url)}">${esc((t.title || t.url || 'nueva pestaña').slice(0, 28))}</button><button class="x" data-brclose="${esc(t.id)}" ${mine ? '' : 'disabled'} title="Cerrar pestaña">✕</button></span>`).join('') + `<button class="br-new" data-brnew ${mine ? '' : 'disabled'} title="Nueva pestaña">＋</button>`
+    : '';
+  if (!b.open) { brFrame = null; $('#br-img').hidden = true; }
+  $('#br-empty').hidden = !!b.open && !!brFrame;
+  $('#br-empty').textContent = b.open ? 'Esperando imagen…' : b.available ? 'El navegador del agente está cerrado. Ábrelo o espera a que el agente lo use.' : 'No hay navegador disponible: ' + (b.missing || []).join(', ');
+  $('#br-stage').classList.toggle('user', mine);
+  const hs = b.handoffs || [];
+  $('#br-side').innerHTML = `<h4>🤝 Peticiones del agente</h4>` + (hs.length
+    ? hs.map((h) => `<div class="br-handoff"><div>${esc(h.reason || 'El agente necesita que lo hagas tú')}</div><button class="small" data-brhand="${esc(h.id)}">Tomar el control</button></div>`).join('')
+    : `<p class="muted">Sin peticiones. Cuando el agente necesite ayuda (login, captcha…) aparecerá aquí.</p>`);
+}
+// Entrada del usuario → driver (solo con el control tomado); x,y en px CSS del viewport según el tamaño del fotograma
+const brPoint = (e) => { const r = $('#br-img').getBoundingClientRect(); return brFrame && r.width ? { x: ((e.clientX - r.left) / r.width) * brFrame.w, y: ((e.clientY - r.top) / r.height) * brFrame.h } : null; };
+const brMine = () => S.browser?.control === 'user' && S.browser.open;
+$('#br-stage').addEventListener('click', (e) => { $('#br-stage').focus(); const p = brMine() && brPoint(e); if (p) brCall('input', { type: 'click', ...p }); });
+$('#br-stage').addEventListener('dblclick', (e) => { const p = brMine() && brPoint(e); if (p) brCall('input', { type: 'dblclick', ...p }); });
+$('#br-stage').addEventListener('wheel', (e) => {
+  const p = brMine() && brPoint(e);
+  if (!p) return;
+  e.preventDefault();
+  if (Date.now() - brLastWheel < 60) return;
+  brLastWheel = Date.now();
+  brCall('input', { type: 'wheel', ...p, dx: e.deltaX, dy: e.deltaY });
+}, { passive: false });
+$('#br-stage').addEventListener('keydown', (e) => {
+  if (!brMine() || e.ctrlKey || e.metaKey || e.altKey) return;
+  e.preventDefault();
+  brCall('input', e.key.length === 1 ? { type: 'text', text: e.key } : { type: 'key', key: e.key });
+});
+$('#br-control').addEventListener('click', () => brCall('control', { mode: brMine() ? 'agent' : 'user' }).then(() => $('#br-stage').focus()));
+$('#br-open').addEventListener('click', () => brCall(S.browser?.open ? 'close' : 'open').then(() => brShow()));
+$('#br-back').addEventListener('click', () => brCall('nav', { op: 'back' }));
+$('#br-fwd').addEventListener('click', () => brCall('nav', { op: 'forward' }));
+$('#br-reload').addEventListener('click', () => brCall('nav', { op: 'reload' }));
+$('#br-url-form').addEventListener('submit', (e) => { e.preventDefault(); let u = $('#br-url').value.trim(); if (u && !/^[a-z]+:/i.test(u)) u = 'https://' + u; if (u) brCall('nav', { op: 'go', url: u }); });
+$('#view-browser').addEventListener('click', (e) => {
+  const t = e.target.closest('[data-brtab],[data-brclose],[data-brnew],[data-brhand]');
+  if (!t) return;
+  if (t.dataset.brtab) brCall('tab', { op: 'select', id: t.dataset.brtab });
+  else if (t.dataset.brclose) brCall('tab', { op: 'close', id: t.dataset.brclose });
+  else if (t.dataset.brnew !== undefined) brCall('tab', { op: 'new', url: 'about:blank' });
+  else if (t.dataset.brhand) brCall('control', { mode: 'user' });
+});
 const VIEW_PARAM = new URLSearchParams(location.search).get('view'); // ?view=guide (botón «Guía» de flow-test, FT-3)
-let activeTab = ['office', 'tasks', 'agents', 'guide'].includes(VIEW_PARAM) ? VIEW_PARAM : safeGet('ao:tab') || 'office';
+let activeTab = ['office', 'tasks', 'agents', 'guide', 'browser'].includes(VIEW_PARAM) ? VIEW_PARAM : safeGet('ao:tab') || 'office';
 function showTab(tab) {
   const prev = activeTab;
   activeTab = tab;
@@ -894,6 +983,7 @@ function showTab(tab) {
   }
   if (tab === 'agents') { renderSkills(); renderClaudeMemory(); renderTools(); }
   if (tab === 'inbox') setTimeout(renderInbox); // al arrancar con «Para ti» guardada, su código aún no está definido: después de cargar
+  if (tab === 'browser') brShow(); else brHide();
   if (tab === 'guide') guideShow(); else guideRender();
   publishContext();
 }
@@ -939,7 +1029,7 @@ function render() {
   run.classList.toggle('on', !!p?.running);
   run.disabled = !p;
 
-  office.update({ agents: team(), tasks: tasks(), questions: S.questions || [], roles: S.roles, title: p?.name || '', selected: drawerAgent, projects: visibleProjects(), allAgents: S.agents, allTasks: S.tasks, projectId, quota: S.quota || {} }); // projects/allAgents/allTasks: modo edificio (FT-46); projectId: planta resaltada (FT-47)
+  office.update({ agents: team(), tasks: tasks(), questions: S.questions || [], roles: S.roles, title: p?.name || '', selected: drawerAgent, projects: visibleProjects(), allAgents: S.agents, allTasks: S.tasks, projectId, quota: S.quota || {}, bubbles: S.settings?.officeBubbles }); // FT-123: burbujas; projects/allAgents/allTasks: modo edificio (FT-46); projectId: planta resaltada (FT-47)
   renderSuite();
   renderTeam();
   renderRepos();
@@ -948,6 +1038,7 @@ function render() {
   renderBoard();
   renderSummary();
   renderInbox();
+  renderBrowser();
   renderQuotaChip();
   const ts = tasks();
   const working = team().filter((a) => a.status === 'working');
@@ -1876,6 +1967,15 @@ function logKind(line) {
 }
 
 // ── Diálogos ───────────────────────────────────────────────────────────────
+// FT-118: estado de la extensión y emparejamiento (Ajustes ▸ Navegador)
+function browserExtBlock() {
+  const x = S.browser?.ext || {};
+  const state = x.connected ? `🟢 conectada · ${x.tabs?.length || 0} pestaña(s) cedida(s)` : x.paired ? '⚪ emparejada, sin conexión (abre el navegador con la extensión)' : '⚪ sin emparejar';
+  return `<p class="muted" style="margin:2px 0 8px">Extensión «Mi navegador» (carpeta <code>extension/</code>): ${state}.
+    <button type="button" class="small" data-browser-pair>Generar código de emparejamiento</button>
+    ${x.paired ? '<button type="button" class="small" data-browser-forget>Olvidar extensión</button>' : ''}
+    <span id="bx-code" style="font-weight:600">${x.pairing ? `Código: ${esc(x.pairing.code)} (caduca en 5 min; un solo uso)` : ''}</span></p>`;
+}
 function dialog(html, onSubmit, cls = '') {
   const dlg = $('#dialog');
   dlg.className = cls;
@@ -1999,6 +2099,9 @@ Pasos, convenciones y ejemplos…</textarea>
     <div><label>Escalera de modelos · Codex (el mini sale de models_cache.json)</label><input name="ladder_codex" value="${esc((S.modelLadders?.codex || []).join(', '))}" placeholder="gpt-5.5" /></div></div>
     <p class="muted">Cada tarea empieza en el primer peldaño y sube uno al devolverla desde revisión o si el agente falla (máx. 2 veces). Un modelo fijado en el agente o el rol no entra en la cascada.</p>
     <label>Objetivo de costes (FT-76): coste por tarea aprobada ≤ X % del interactivo</label><input name="costTargetPct" type="number" min="10" max="500" step="5" value="${S.settings.costTargetPct || 100}" />
+    <label>Navegador del agente (FT-114 · FT-118)</label>
+    <select name="browserMode">${[['dedicated', 'Chromium dedicado (perfil propio de AgentOffice)'], ['extension', 'Mi navegador (extensión de extension/)']].map(([v, t]) => `<option value="${v}" ${(S.browser?.mode || 'dedicated') === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
+    ${browserExtBlock()}
     <label><input type="checkbox" name="cacheAffinity" ${S.settings.cacheAffinity !== false ? 'checked' : ''} /> Agrupar tareas del mismo repo y rol seguidas para aprovechar la caché del prompt (FT-64)</label>
     <label><input type="checkbox" name="stuckGuard" ${S.settings.stuckGuard !== false ? 'checked' : ''} /> Detectar agentes atascados: aviso y, si sigue, parar y pasar a Revisión (FT-62)</label>
     <div class="grid2"><div><label>Mismo comando/lectura (veces)</label><input name="stuckRepeat" type="number" min="2" max="20" value="${S.settings.stuckRepeat || 3}" /></div>
@@ -2055,7 +2158,11 @@ Pasos, convenciones y ejemplos…</textarea>
     <select name="reviewPolicy">${[['', `Igual que la empresa (${REVIEW_LABEL[S.settings.reviewPolicy || 'manual']})`], ['manual', REVIEW_LABEL.manual], ['auto-qa', REVIEW_LABEL['auto-qa']], ['auto', REVIEW_LABEL.auto]].map(([v, l]) => `<option value="${v}" ${(project()?.reviewPolicy || '') === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
     <label>🧑‍✈️ Coordinador del equipo de «${esc(project()?.name)}» (reglas fijas, sin IA: refuerza el rol que tiene trabajo listo y nadie libre, cambia a motor automático a quien se queda sin cuota y manda al banquillo a quien lleva rato sin nada que hacer)</label>
     <select name="coordinator">${[['', 'Apagado'], ['suggest', 'Solo sugerir (en 🔔 Para ti, con «Aplicar»)'], ['auto', 'Automático (lo hace solo y lo apunta en 🔔 Para ti)']].map(([v, l]) => `<option value="${v}" ${(project()?.coordinator || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
-    <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="supervisorApproves" ${project()?.supervisorApproves ? 'checked' : ''}><span>🧑‍⚖️ Delegar en el Coordinador / Supervisor de «${esc(project()?.name)}» (FT-122): aprueba las tareas en revisión (también las de revisión obligatoria) si sus verificaciones pasan con la rama al día, y quita dependencias que sobran. Sin marcar solo deja «✅ listo para aprobar» y avisa.</span></label>
+    <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="supervisorApproves" ${project()?.supervisorApproves ? 'checked' : ''}><span>🧑‍⚖️ Delegar en el Coordinador / Supervisor de «${esc(project()?.name)}» (FT-122): aprueba las tareas en revisión (también las de revisión obligatoria) si sus verificaciones pasan con la rama al día (y, con diffs de más de 30 líneas, un revisor barato lo confirma), y quita dependencias que sobran solo si la bloqueante falló. Sin marcar solo deja «✅ listo para aprobar» y avisa.</span></label>
+    ${(project()?.team || []).some((id) => S.agents.find((a) => a.id === id)?.role === 'coordinador') ? '' : `<div><button type="button" class="small" data-add-supervisor>🧑‍⚖️ Añadir coordinador</button></div>`}
+    ${S.tasks.filter((t) => t.projectId === projectId && t.depProposal).map((t) => `<p class="muted" style="margin:2px 0">🧑‍⚖️ ${esc(t.depProposal.why)} <button type="button" class="small" data-dep-proposal="${t.id}:1">Quitar</button> <button type="button" class="small" data-dep-proposal="${t.id}:0">Mantener</button></p>`).join('')}
+    <label>🫧 Burbujas de estado en la oficina 3D (FT-123)</label>
+    <select name="officeBubbles">${[['todas', 'Todas visibles (icono + tarea + estado)'], ['al pasar', 'Solo al pasar el ratón / seleccionar']].map(([v, l]) => `<option value="${v}" ${(S.settings.officeBubbles || 'todas') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
     <label>Revisión por defecto de la empresa (proyectos con «Igual que la empresa»)</label>
     <select name="reviewPolicyAll">${['manual', 'auto-qa', 'auto'].map((v) => `<option value="${v}" ${(S.settings.reviewPolicy || 'manual') === v ? 'selected' : ''}>${esc(REVIEW_LABEL[v])}</option>`).join('')}</select>
     <p class="muted" style="margin:2px 0 8px">Nunca se aprueban solas las tareas con «revisión obligatoria», las cortadas por tope o atasco, las que tocan ficheros sensibles ni las que el revisor devolvió dos veces: esas te esperan a ti.</p>
@@ -2880,6 +2987,14 @@ document.addEventListener('click', async (e) => {
       ${diffStatsHtml(t)}
       <pre>${html}</pre>${buttons(null)}`, null, 'wide');
   }
+  if (d.browserPair !== undefined) { // FT-118: código de un solo uso para emparejar la extensión
+    const r = await api('POST', '/api/browser/pair');
+    const el = $('#bx-code'); if (el) el.textContent = `Código: ${r.code} (caduca en 5 min; un solo uso)`;
+    return;
+  }
+  if (d.browserForget !== undefined) { await api('POST', '/api/browser/forget'); return toast('Extensión olvidada: tendrás que emparejarla de nuevo'); }
+  if (d.addSupervisor !== undefined) { await api('POST', `/api/projects/${projectId}/supervisor`); return toast('Coordinador añadido al equipo'); } // FT-122
+  if (d.depProposal !== undefined) { const [tid, acc] = d.depProposal.split(':'); await api('POST', `/api/tasks/${tid}/dep-proposal`, { accept: acc === '1' }); return toast(acc === '1' ? 'Dependencia quitada' : 'Dependencia mantenida'); }
   if (d.importFlow !== undefined) {
     const path = $('#import-flow')?.value;
     if (!path) return toast('Elige un flow', 'error');

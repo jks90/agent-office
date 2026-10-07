@@ -320,7 +320,42 @@ Fase A de la épica «Navegador del agente»: `server/browser/` con un contrato 
 - `snapshot()`: árbol de accesibilidad compacto (incluye iframes) con refs estables por pestaña (`e12`) `{ref, role, name, value, states}`; tope `AO_BROWSER_SNAPSHOT_NODES` (300) con `truncated`/`omitted`. `act`/`type`/`scroll` resuelven la ref por CDP (`backendNodeId`) y caen a `x,y`.
 - `screenshot()` ≤1280 px de ancho en `data/browser/captures`; `console()`/`network()` con anillo de 200 por pestaña y cabeceras sensibles a `***`; solo se navega a `http(s)`.
 - Los popups pasan a ser la pestaña activa. Prueba: `node scripts/browser-driver-e2e.mjs`.
-- Pendiente (siguientes fases): tools `browser.*` en `server/guide/tools.js` con política y `bin/ao-mcp.mjs`, respondiendo `{inside:true}` para flow-test/AgentOffice como `ui.*`. `puppeteer-core` sigue en `devDependencies`: mover a `dependencies` cuando se exponga al usuario.
+- Las tools `browser.*` ya existen (FT-115, abajo). Pendiente: `puppeteer-core` sigue en `devDependencies`; moverlo a `dependencies` cuando se despliegue a usuarios.
+
+### Tools `browser.*` del Guía y de los agentes (FT-115)
+
+Las 14 tools exponen el driver: `browser.tabs`, `navigate` (url o back/forward/reload), `snapshot`, `find` (rol y/o texto), `click`, `type`, `select`, `scroll`, `press`, `waitFor`, `screenshot`, `console`, `network` y `evaluate`. `browser.open` (xdg-open) sigue siendo «enseñar una web al usuario en su navegador normal».
+
+- **Flujo guiado por las descripciones**: `snapshot` primero (texto, barato), actuar siempre por `ref`, `screenshot` solo si hace falta ver el aspecto.
+- **Política**: lectura (`tabs`, `snapshot`, `find`, `waitFor`, `screenshot`, `console`, `network`) automática; `navigate`/`scroll` = navigate; `click`, `type`, `select`, `press` = execute (ajuste del Guía); `evaluate` = write (confirma). **Irreversible, confirma siempre**: `click` sobre un control destructivo (mismas palabras que `ui.act`), `type` con `submit` y `press` de Enter/Delete. El texto de `browser.type` nunca va al audit (solo `chars`).
+- **Solo fuera**: navegar o actuar con la pestaña activa en AgentOffice o flow-test responde `{inside:true}` sin tocar nada.
+- **`browser.screenshot` devuelve la imagen**: por MCP, `bin/ao-mcp.mjs` la entrega como contenido `type:image` (base64) además del texto con la ruta, así que Claude la ve (con claude-cli sustituye al 501 de `screen.describe`); por `POST /api/guide/tool` solo la ruta.
+- **Agentes worker**: la capacidad `browser` (`server/engines/toolscope.js`) está activa para los roles `qa-suite` y `office-flowtest` (otro rol la activa con `tools: …, browser` en su frontmatter; nunca en modo plan). `claude.js` les añade un MCP stdio `agentoffice-browser` con `AO_MCP_ONLY=browser`: solo ven `browser_*` (sin `browser_open`); política y auditoría siguen en el servidor. Solo motor Claude.
+- Prueba: `node scripts/browser-tools-e2e.mjs` (driver fake, MCP real); con `AO_E2E_REAL_BROWSER=1` repite lo esencial con Chromium real.
+
+## 🌐 Navegador — panel en vivo (FT-117)
+
+Vista **🌐 Navegador** (menú lateral, `?view=browser` y `app.navigate view=browser` del Guía): lo que ve el navegador dedicado del agente, en directo.
+
+- **Vídeo**: `driver.screencast(onFrame)` (CDP `Page.startScreencast`, JPEG, ≤10 fps, sigue a la pestaña activa) → SSE `GET /api/browser/stream` (`frame`, `mark`, `control`). Solo está abierto mientras la vista se ve; sin espectadores el screencast se para. El estado (control, pestañas, URL, handoffs) va en el snapshot SSE (`browser`).
+- **Barra**: quién controla (🤖 agente / 🧑 tú), atrás/adelante/recargar, URL, pestañas (seleccionar, cerrar, ＋), «Abrir/Cerrar navegador».
+- **Tomar el control** (`POST /api/browser/control {mode:'user'|'agent'}`): el agente queda en pausa y tus clics, rueda y teclas sobre el fotograma se reenvían (`POST /api/browser/input`), como en el modo Live de flow-test. «Devolver al agente» lo reanuda. Sin el control, la entrada responde 409.
+- **Marca**: `panel.agentDriver()` es el driver que deben usar las tools `browser.*` (A2): lanza 409 mientras controla el usuario y, antes de `act`/`type`/`scroll`, pinta 1 s un rectángulo sobre el ref (`driver.box()`).
+- **Handoff (A3)**: el panel lateral lista `browser.handoffs` (`panel.addHandoff({reason})` / `resolveHandoff(id)`); hoy vacío hasta que A3 los genere. «Tomar el control» desde la petición.
+- Responsive: ≤760 px el panel lateral pasa bajo la imagen.
+- Prueba: `node scripts/browser-panel-e2e.mjs [--real] [dir-capturas]` (driver fake por defecto; `--real` con Chromium headless). Capturas en `docs/FT-117/`.
+
+## 🧩 Navegador del agente — extensión MV3 «Mi navegador» (FT-118)
+
+Fase B: la carpeta `extension/` es una extensión Manifest V3 (Chrome/Brave, carga desempaquetada; instalación en `extension/README.md`) que cumple el **mismo `BrowserDriver`** con `chrome.debugger` sobre las pestañas del usuario.
+
+- **Ajustes ▸ Navegador del agente**: «Chromium dedicado» (FT-114, por defecto) o «Mi navegador (extensión)» (`settings.browserMode`, `POST /api/settings`). `getDriver()` devuelve el driver elegido; `AO_BROWSER=fake` sigue ganando (tests). El snapshot SSE trae `browser: { mode, ext: { connected, paired, tabs, pairing } }`.
+- **Emparejamiento**: `POST /api/browser/pair` da un código de 8 caracteres de un solo uso (5 min). La extensión lo manda en su `hello` por `ws://127.0.0.1:7420/api/browser/ext` y recibe una clave que guarda solo en `chrome.storage.session`; el servidor guarda su hash SHA-256 en `data/browser/ext.json`. `POST /api/browser/forget` la invalida. El upgrade solo se acepta desde loopback y sin `Origin` web; no usa el token `x-ao-token`.
+- **Pestañas cedidas**: el agente solo actúa en las que el usuario cede con «Dejar al agente esta pestaña» (grupo morado «AgentOffice»); sin ninguna, las operaciones dan 503. El banner de depuración de Chrome es esperado.
+- `server/browser/ws.js` (WebSocket RFC 6455 mínimo, sin dependencias) y `server/browser/extension.js` (hub + driver; las URL se validan también en el servidor y las cabeceras sensibles se enmascaran de nuevo).
+- **Panel en vivo (FT-117) con la extensión**: `panel.js` usa `getDriver()`, así que sirve con ambos modos. El snapshot `browser` combina `browserPanel.status()` con `mode`, `modes` y `ext`. `chrome.debugger` no da screencast fiable: el driver de la extensión degrada `screencast()` a capturas JPEG ~1 fps y expone `box()` para la marca del agente.
+- Prueba: `node scripts/extension-e2e.mjs` (cliente WebSocket que simula la extensión, y servidor real para pair/Ajustes/snapshot).
+- Pendiente: las tools `browser.*` con política (A3) todavía no existen en esta rama; cuando lleguen usarán `getDriver()` y se aplicarán igual a ambos modos. La extensión real solo se ha comprobado con `node --check`: falta la prueba manual en Brave.
 
 ## Estructura
 
@@ -602,7 +637,9 @@ Nunca toca a quien trabaja, tiene tareas suyas (asignadas o pausadas) ni al PO; 
 Rol de serie `coordinador` («Coordinador / Supervisor», `kind: supervisor`, modelo barato `haiku`; distinto del PO). **Cada proyecto nuevo lo trae en su equipo** (agente «Coordi», ocupa mesa; se puede quitar con el equipo) y no coge tareas de trabajo. Con él en la mesa, cada ~30 s (`AO_SUPERVISOR_MS`, `server/supervisor.js` decide y `team.js` aplica):
 
 - **Tareas en Revisión**: pone la rama al día con la base (FT-19; un choque de verdad la devuelve al agente), ejecuta sus checks y lee el diff acotado. Checks rojos → **devuelta con nota** (qué check falla). Verdes → si el proyecto **delega** (`supervisorApproves`, casilla en Ajustes del proyecto, apagada por defecto) la **aprueba** —también las de revisión obligatoria—; si no, deja `t.supervisor` = «✅ listo para aprobar», lo apunta en el historial de revisión y avisa (evento `SupervisorDecision`, Telegram). Con ficheros sensibles solo recomienda. Sin checks declarados usa un revisor de modelo barato con tope de gasto propio (`settings.supervisorMaxUsd`, 1 $ por proyecto por defecto).
-- **Dependencias que sobran**: una tarea sin empezar que depende de otra parada en revisión/fallida y no la menciona ni toca sus ficheros → propuesta con motivo (`t.depProposal`, en el registro del coordinador); con delegación se aplica sola (`dependsOn`).
+- **Aprobar con delegación no depende solo de los checks**: si el diff cambia más de 30 líneas, un revisor barato (tope `supervisorMaxUsd`) lo mira también; aprueba solo si pasan los checks Y el revisor; si este devuelve, la tarea vuelve con su nota.
+- **Dependencias que sobran**: una tarea sin empezar que depende de otra parada y no la menciona ni toca sus ficheros → propuesta con motivo (`t.depProposal`, botones **Quitar / Mantener** en Ajustes del proyecto; «Mantener» pone `t.depsKept` y no se vuelve a proponer). Nunca si la dependiente es `qa`/`docs` ni si la bloqueante es `planner`. Con la bloqueante en *Revisión* siempre es solo propuesta; con delegación se aplica sola únicamente si la bloqueante está *fallida*.
+- **Proyectos existentes**: botón «Añadir coordinador» en Ajustes del proyecto (`POST /api/projects/:id/supervisor`); sin mesa libre → «sin mesa libre: manda a alguien al banquillo».
 - **Reasignación**: aplica las reglas `retarget`/`restore` de FT-121 aunque el coordinador del equipo no esté en automático.
 - Herramientas (`engines/toolscope.js`, kind `supervisor`): solo lectura, checks y `git merge/add/commit` para resolver choques; sin Edit/Write: nunca edita código de producto.
 
@@ -656,3 +693,9 @@ La vista de planta sigue el panel 2 de `diseno-edificio-referencia.png`:
 - Más densidad: doble monitor por puesto, estanterías en la pared izquierda, plantas grandes en las esquinas y mesita auxiliar.
 
 Captura: `node scripts/preview.mjs out.png --width 1920 --height 1080`.
+
+## 🫧 Burbujas de estado en la oficina (FT-123)
+
+En la planta, cada agente lleva siempre una burbuja compacta: icono + código de tarea + estado (`✏️ FT-115 editando…`, `✋ FT-114 en revisión`, `⏳ en cola`, `⛔ bloqueado`, `💤 sin cuota`, `☕ libre`). Al pasar el ratón o seleccionar se expande con la actividad completa. Si dos se pisan (mesas contiguas) se apilan hacia arriba —sin tapar las píldoras de zona ni la pizarra— con una línea fina hasta el avatar. En el edificio no se ven y en pantallas estrechas (<640 px) solo llevan icono + código. El DOM solo se toca cuando cambia el texto.
+
+Ajustes → «Burbujas de estado» (`settings.officeBubbles`, `POST /api/settings`): `'todas'` (por defecto) o `'al pasar'`. Prueba: `node scripts/bubbles-e2e.mjs [captura.png]`.

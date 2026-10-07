@@ -9,7 +9,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { decide, trimDeps } from '../server/supervisor.js';
+import { decide, trimDeps, changedLines } from '../server/supervisor.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failed = 0;
@@ -28,6 +28,23 @@ const tr = trimDeps([
   { id: 'c', code: 'X-3', title: 'Sobre X-1', status: 'todo', dependsOn: ['a'] },
 ]);
 check('trimDeps: recorta la que no menciona a la bloqueante y respeta la que sí', tr.length === 1 && tr[0].code === 'X-2', JSON.stringify(tr));
+
+// FT-122 (revisión): reglas de recorte más estrictas
+const kinds = { qa1: 'qa', doc1: 'docs', dev: 'dev', plan: 'planner' };
+const kindOf = (t) => kinds[t.role] || 'dev';
+const T = (o) => ({ title: o.id, description: '', dependsOn: [], status: 'todo', role: 'dev', ...o });
+const rr = trimDeps([T({ id: 'd1', code: 'Y-1', status: 'review' }), T({ id: 'q', code: 'Y-2', role: 'qa1', dependsOn: ['d1'] })], kindOf);
+check('trimDeps: un QA que depende de un dev en review sin mencionarlo → sin recorte', rr.length === 0, JSON.stringify(rr));
+const rd = trimDeps([T({ id: 'd1', code: 'Y-1', status: 'review' }), T({ id: 'docs', code: 'Y-3', role: 'doc1', dependsOn: ['d1'] })], kindOf);
+check('trimDeps: docs tampoco', rd.length === 0);
+const rp = trimDeps([T({ id: 'pl', code: 'Y-4', role: 'plan', status: 'failed' }), T({ id: 'x', code: 'Y-5', dependsOn: ['pl'] })], kindOf);
+check('trimDeps: nunca si la bloqueante es planner', rp.length === 0);
+const rv = trimDeps([T({ id: 'd1', code: 'Y-1', status: 'review' }), T({ id: 'x', code: 'Y-6', dependsOn: ['d1'] })], kindOf);
+check('trimDeps: bloqueante en review → solo propuesta (auto=false)', rv.length === 1 && rv[0].auto === false);
+const rf = trimDeps([T({ id: 'f1', code: 'Y-7', status: 'failed' }), T({ id: 'x', code: 'Y-8', dependsOn: ['f1'] })], kindOf);
+check('trimDeps: dev que depende de otro dev failed sin relación → recorte automático', rf.length === 1 && rf[0].auto === true);
+check('trimDeps: depsKept (la persona dijo «Mantener») no se vuelve a proponer', trimDeps([T({ id: 'f1', code: 'Y-7', status: 'failed' }), T({ id: 'x', code: 'Y-8', dependsOn: ['f1'], depsKept: true })], kindOf).length === 0);
+check('changedLines cuenta +/- sin cabeceras', changedLines('--- a/x\n+++ b/x\n@@\n+a\n-b\n c\n') === 2);
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-sup-'));
 const dataDir = path.join(tmp, 'data'); fs.mkdirSync(dataDir, { recursive: true });
@@ -72,7 +89,19 @@ try {
   const reqD = await until(async () => { const t = await task(req.id); return t.status === 'done' ? t : null; });
   check('delegación on: también la de revisión obligatoria', !!reqD);
   const depD = await task(dep.id);
-  check('delegación on: la dependencia se recortó o ya estaba resuelta', depD.dependsOn.length === 0 || (await task(req.id)).status === 'done');
+  check('delegación on: con la bloqueante en review la dependencia NO se auto-recorta (solo propuesta)', depD.dependsOn.length === 1);
+  const kept = await call('POST', `/api/tasks/${dep.id}/dep-proposal`, { accept: false });
+  const depK = await task(dep.id);
+  check('«Mantener» marca depsKept y borra la propuesta', kept.ok && depK.depsKept && !depK.depProposal && depK.dependsOn.length === 1);
+  // Proyectos existentes: «Añadir coordinador»
+  await call('PATCH', `/api/projects/${p.id}/team`, { remove: [sup.id] });
+  const had = (await call('GET', '/api/state')).projects.find((x) => x.id === p.id).team.includes(sup.id);
+  if (!had) {
+    const add = await call('POST', `/api/projects/${p.id}/supervisor`);
+    check('POST /supervisor añade un coordinador al equipo', !!add.agentId, JSON.stringify(add));
+    const again = await call('POST', `/api/projects/${p.id}/supervisor`);
+    check('si ya hay coordinador, error claro', /ya tiene coordinador/.test(again.error || again.message || ''), JSON.stringify(again));
+  } else console.log('  (omitido: no se pudo quitar al coordinador por la API de equipo)');
 } catch (e) { failed++; console.error('Error:', e.message); }
 console.log(failed ? `✗ ${failed} fallos` : '✓ todo bien');
 process.exit(failed ? 1 : 0);
