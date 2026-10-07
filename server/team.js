@@ -170,6 +170,23 @@ async function resolveRepos({ repos, repoPath }) {
 // flow-test cuando la carpeta de un proyecto enlaza el repo agent-office entero. No son flows del proyecto: se ignoran.
 export const isWorktreeCopy = (p) => /(^|\/)data\/worktrees\//.test(String(p || ''));
 
+// FT-127 · Migración: borra los Coordi que el escaneo creó en proyectos sin repo y sin tareas. Nunca toca uno con tareas o historial.
+function pruneIdleSupervisors() {
+  const s = get(); const drop = new Set();
+  for (const p of s.projects) {
+    if ((p.repos || []).length || s.tasks.some((t) => t.projectId === p.id)) continue;
+    for (const a of teamOf(p)) {
+      if (roleOf(a.role)?.kind !== 'supervisor' || a.taskId || a.status === 'working') continue;
+      if (s.tasks.some((t) => t.agentId === a.id) || a.memory || a.notes) continue;
+      drop.add(a.id);
+    }
+  }
+  if (!drop.size) return;
+  for (const p of s.projects) p.team = (p.team || []).filter((id) => !drop.has(id));
+  s.agents = s.agents.filter((a) => !drop.has(a.id));
+  changed();
+}
+
 export async function syncWorkspace() {
   let files, dir, dirs;
   try {
@@ -178,6 +195,7 @@ export async function syncWorkspace() {
     const j = await r.json();
     files = j.files || []; dir = j.dir || null; dirs = j.dirs || [];
   } catch (e) { throw fail(502, `No pude leer el workspace de flow-test: ${e.message}`); }
+  pruneIdleSupervisors();
   const counts = new Map([['default', 0]]);
   // Toda carpeta de primer nivel es un proyecto aunque aún no tenga flows (solo documentos o subcarpetas, p. ej. «tareas/»);
   // flow-test ≥ 5.20 manda `dirs` (también las vacías). assets/ y privado/ son del sistema, no proyectos.
@@ -202,8 +220,7 @@ export async function syncWorkspace() {
       p = { id: newId(), name: folder === 'default' ? 'default' : folder, folder, repos: [], repoPath: null, baseBranch: null, running: false, team: [], coordinator: 'auto', createdAt: Date.now() }; // coordinador encendido de serie: que no queden tareas listas con agentes parados
       s.projects.push(p);
       if (!s.agents.length) DEFAULT_TEAM.forEach((m) => { const a = newAgent({ ...m, engine: 'auto' }); s.agents.push(a); p.team.push(a.id); }); // primer arranque: equipo base
-      addSupervisor(p); // FT-122
-      created++;
+      created++; // FT-127: sin Coordi aquí (solo createProject); «Añadir coordinador» lo da si hace falta
     }
     p.flows = n;
     p.orphan = false;
@@ -1223,7 +1240,12 @@ const supervising = new Set();
 export const supervisorOf = (p) => teamOf(p).find((a) => roleOf(a.role)?.kind === 'supervisor') || null;
 function addSupervisor(p, { strict = false } = {}) {
   const s = get();
+  if (supervisorOf(p)) return supervisorOf(p); // FT-127: nunca más de uno por proyecto
   if (p.team.length >= coord.MAX_DESKS) { if (strict) throw fail(409, 'sin mesa libre: manda a alguien al banquillo'); return; }
+  // FT-127: antes de crear otro, se reutiliza un Coordi libre del banquillo (en ningún equipo, sin tarea y sin historial)
+  const inTeam = new Set(s.projects.flatMap((x) => x.team || []));
+  const free = s.agents.find((x) => roleOf(x.role)?.kind === 'supervisor' && !inTeam.has(x.id) && !x.taskId && !s.tasks.some((t) => t.agentId === x.id));
+  if (free) { p.team.push(free.id); return free; }
   const a = newAgent({ name: s.agents.some((x) => x.name === 'Coordi') ? freeName() : 'Coordi', role: 'coordinador', engine: 'auto' });
   s.agents.push(a); p.team.push(a.id);
   return a;

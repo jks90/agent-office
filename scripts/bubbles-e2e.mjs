@@ -55,8 +55,13 @@ try {
   rs = await page.evaluate(rects);
   check("modo 'al pasar': ninguna burbuja", rs.length === 0, String(rs.length));
   // FT-126: proyecto nuevo con Coordi (kind supervisor): la Oficina entró en planta (espera inicial) y Coordi tiene burbuja.
+  // FT-127: el escaneo del workspace ya no crea Coordi; solo createProject (POST /api/projects) lo trae, y exactamente uno.
+  await fetch(base + '/api/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'bub', engine: 'demo' }) });
   const st = await (await fetch(base + '/api/state')).json();
-  check('el proyecto nuevo trae a Coordi', st.agents.some((a) => a.role === 'coordinador' && a.name === 'Coordi'));
+  await sleep(1500); // deja que el SSE del proyecto nuevo repinte antes de inyectar a Coordi
+  const cos = st.agents.filter((a) => a.role === 'coordinador');
+  check('el proyecto creado con POST /api/projects trae exactamente 1 Coordi', cos.length === 1 && cos[0].name === 'Coordi', String(cos.length));
+  check('la Oficina sigue en planta con el proyecto nuevo', await page.evaluate(() => document.querySelector('#office')?.dataset.officeMode === 'floor'));
   await page.evaluate(() => {
     const a = { id: 'co', name: 'Coordi', role: 'coordinador', engine: 'demo', status: 'working', taskId: 'FT-1', task: 'FT-1', activity: 'Revisando FT-1' };
     window.aoOffice.update({ agents: [a], tasks: [{ id: 'FT-1', code: 'FT-1', title: 'x', status: 'review', agentId: 'co', role: 'coordinador', projectId: 'p' }], questions: [], roles: { coordinador: { kind: 'supervisor', label: 'Coordinador' } }, title: 'T', bubbles: 'todas' });
