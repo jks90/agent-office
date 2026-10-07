@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "node bin/ao-run.mjs",
-    "dev": "node --watch server/index.js"
+    "dev": "node --watch server/index.js",
+    "test:unit": "node --test tests/*.test.mjs"
   },
   "engines": {
     "node": ">=20"
