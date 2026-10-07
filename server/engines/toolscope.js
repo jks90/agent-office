@@ -9,13 +9,15 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const READ_SHELL = ['ls *', 'cat *', 'head *', 'tail *', 'wc *', 'grep *', 'rg *', 'find *', 'sed *', 'awk *', 'sort *', 'uniq *', 'cut *', 'tr *', 'diff *', 'du *', 'file *', 'stat *', 'pwd', 'git status*', 'git diff*', 'git log*', 'git show*'];
 const PLAN_SHELL = ['ls *', 'cat *', 'head *', 'grep *', 'find *', 'wc *', 'sed *', 'git status*', 'git diff*', 'git log*'];
 const TEST_SHELL = ['npm *', 'npx *', 'node *', 'python3 *', 'curl *', 'timeout *', 'mkdir *', 'cp *', 'touch *', 'sleep *', 'echo *', 'printf *', 'mvn *', './mvnw *', 'gradle *', './gradlew *', 'make *'];
+// Resolver un choque con la base es parte del trabajo de CUALQUIER rol que confirma cambios (si no, la tarea vuelve en bucle)
+const GIT_MERGE = ['git merge *', 'git add*', 'git commit*', 'git restore *', 'git checkout -- *'];
 const ASK_RULE = `node ${path.join(ROOT, 'bin', 'ao-ask.mjs')} *`; // preguntar al cliente (bin/ao-ask.mjs)
 
 // builtin: herramientas integradas que se ENVÍAN al modelo (--tools); bash: reglas de `Bash(...)` permitidas; mcp: flow-test por MCP.
 const BY_KIND = {
   dev: { builtin: ['Read', 'Edit', 'MultiEdit', 'Write', 'Glob', 'Grep', 'TodoWrite', 'Bash'], bash: BASH_RULES, mcp: false }, // lo de siempre
-  docs: { builtin: ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash'], bash: [...READ_SHELL, 'git add*', 'git commit*', ASK_RULE], mcp: true },
-  qa: { builtin: ['Read', 'Grep', 'Glob', 'Write', 'Bash'], bash: [...READ_SHELL, ...TEST_SHELL, ASK_RULE], mcp: true }, // sin Edit; Write solo para scripts de prueba
+  docs: { builtin: ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash'], bash: [...READ_SHELL, ...GIT_MERGE, ASK_RULE], mcp: true },
+  qa: { builtin: ['Read', 'Grep', 'Glob', 'Write', 'Bash'], bash: [...READ_SHELL, ...TEST_SHELL, ...GIT_MERGE, ASK_RULE], mcp: true }, // sin Edit; Write solo para scripts de prueba
   planner: { builtin: ['Read', 'Glob', 'Grep', 'Bash'], bash: [...PLAN_SHELL, ASK_RULE], mcp: false },
 };
 

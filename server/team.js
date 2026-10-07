@@ -679,7 +679,7 @@ export async function reReview(id) {
   if (t.status !== 'review') throw fail(409, 'La tarea no está en revisión');
   const p = get().projects.find((x) => x.id === t.projectId);
   if (review.policyOf(get().settings, p) === 'manual') throw fail(409, 'La revisión de este proyecto es manual');
-  delete t.reviewNote; delete t.autoReviews; changed(); // lo pide una persona: nuevos intentos de revisión automática
+  delete t.reviewNote; delete t.autoReviews; delete t.conflictRejects; changed(); // lo pide una persona: nuevos intentos de revisión automática
   setImmediate(() => autoReview(p, t).catch(() => {}));
   return { ok: true };
 }
@@ -747,6 +747,7 @@ async function refreshReviews() {
 setInterval(refreshReviews, 10_000).unref();
 
 const CONFLICT_MARK = 'Tu rama choca con';
+const CONFLICT_MAX = 3; // devoluciones seguidas por el mismo choque antes de dejarla para una persona
 const conflictText = (base, files, x) => `${CONFLICT_MARK} ${base}${x && !x.main ? ` (repo ${x.key}, tu worktree ${x.dir})` : ''} en: ${files.join(', ')}; haz \`git merge ${base}\` en tu worktree, resuelve los conflictos conservando lo de ambos lados, verifica y vuelve a confirmar.`;
 
 // Mete la base en la rama de la tarea (merge dentro de su worktree). x = { repo, key, dir, branch }.
@@ -769,7 +770,16 @@ async function mergeBaseInto(p, x, t) {
 async function syncWithBase(p, x, t, { onConflict = 'reject' } = {}) {
   const r = await mergeBaseInto(p, x, t);
   const where = x.main ? '' : ` (repo ${x.key})`;
+  if (!r.conflicts.length) delete t.conflictRejects; // al día: el freno anti-bucle vuelve a cero
   if (r.conflicts.length && onConflict === 'reject') {
+    // Freno anti-bucle: si el agente ya ha recibido el mismo choque CONFLICT_MAX veces y no lo resuelve (sin permisos, sin
+    // saber…), deja de devolverse y espera a una persona (avisa por ReviewPending/Telegram) en vez de girar cada pocos segundos.
+    t.conflictRejects = (t.conflictRejects || 0) + 1;
+    if (t.conflictRejects > CONFLICT_MAX) {
+      t.reviewNote = `✋ no consigue resolver el choque con ${x.repo.baseBranch}${where} en ${r.conflicts.slice(0, 3).join(', ')} (${CONFLICT_MAX} intentos): la revisa una persona`;
+      reviewNote(t, 'auto', 'skipped', t.reviewNote); changed();
+      throw Object.assign(fail(409, t.reviewNote), { conflicts: r.conflicts, held: true });
+    }
     const msg = conflictText(x.repo.baseBranch, r.conflicts, x);
     await reject(t.id, msg);
     throw Object.assign(fail(409, `${t.code || t.id} choca con ${x.repo.baseBranch}${where} en ${r.conflicts.join(', ')}: devuelta al agente para que lo resuelva`), { conflicts: r.conflicts });
