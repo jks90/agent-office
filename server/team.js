@@ -1374,12 +1374,25 @@ function splitIfBig(p, t) {
 
 const teamRoles = (p) => [...new Set(teamOf(p).filter((a) => roleOf(a.role)?.kind !== 'planner').map((a) => a.role))];
 
+// FT-134: ¿el resumen final promete un aviso futuro / segundo plano? ¿y hay algo entregado (diff en algún repo)?
+// Solo si PROMETE un aviso o una espera futura («cuando termine» a secas es corriente y no cuenta).
+export const waitsForNotice = (txt) => /\b(me|te|os) avis(ar[aáeé]\w*|o)\b|(sigue|siguen|corre|queda|lanc[eé]|lo dej[eé])[^.\n]{0,60}en segundo plano|will notify|notify me|running in the background/i.test(String(txt || ''));
+// Entregable: diff en algún repo, o una ruta absoluta citada en el resumen (informes fuera del repo) modificada durante este intento.
+const hasDeliverable = (t) => {
+  if (t.diffStat || Object.values(t.repos || {}).some((r) => r?.diffStat)) return true;
+  for (const m of String(t.summary || '').matchAll(/(?:^|[\s`'"(])((?:~|\/)[\w.\-\/~ñáéíóúÑ]*\w\.\w+)/g)) {
+    try { if (fs.statSync(m[1].replace(/^~/, os.homedir())).mtimeMs > (t.startedAt || 0)) return true; } catch { /* no existe */ }
+  }
+  return false;
+};
+
 // Cómo preguntar al cliente desde la tarea (bin/ao-ask.mjs espera la respuesta y la imprime) + lo ya respondido.
 const askRules = () => [
     '',
     'PREGUNTAR AL CLIENTE: si una decisión es suya (no se resuelve leyendo el código ni el documento: reglas de negocio, nombres que verá el usuario, qué opción prefiere), pregunta ANTES de implementar con:',
     `  node ${path.join(store.ROOT, 'bin', 'ao-ask.mjs')} "¿Pregunta cerrada?" --opt "Opción A" --opt "Opción B" [--context "qué cambia con cada opción"]`,
     'El comando se queda esperando (puede tardar minutos) e imprime la respuesta elegida o escrita; úsala y sigue. Una pregunta cada vez, máximo 3 por tarea, con opciones concretas. Si imprime «SIN RESPUESTA», decide tú con el criterio más conservador y déjalo bien visible en el resumen final.',
+    'SEGUNDO PLANO (FT-134): no lances procesos en segundo plano ni esperes avisos (nadie te avisará: al terminar tu turno la sesión se cierra y el proceso muere). Los comandos largos van en primer plano con timeout (hasta 10 min).',
   ].join('\n');
 const askAnswers = (t) => { const prev = (t.questions || []).filter((q) => q.answer != null); return prev.length ? `Respuestas del cliente ya dadas en esta tarea (no vuelvas a preguntarlas):\n${prev.map((q) => `- ${q.question} → ${q.answer}`).join('\n')}` : ''; };
 const askBlock = (t) => [askRules(), askAnswers(t)].join('\n');
@@ -1495,7 +1508,7 @@ function economyBlock(codeIndexOn) {
 async function runTask(p, agent, t) {
   const s = get();
   jobs.set(agent.id, { stop() {}, taskId: t.id, engine: agent.engine === 'auto' ? null : agent.engine }); // ocupado DESDE YA (antes de cualquier await), o el mismo tick le daría dos tareas
-  Object.assign(t, { status: 'doing', agentId: agent.id, error: null, attempts: t.attempts + 1, updatedAt: Date.now() });
+  Object.assign(t, { status: 'doing', agentId: agent.id, error: null, attempts: t.attempts + 1, startedAt: Date.now(), updatedAt: Date.now() });
   Object.assign(agent, { status: 'working', taskId: t.id, activity: t.kind === 'plan' ? 'Leyendo el objetivo' : 'Preparando su copia del repo' });
   changed();
   log(agent.id, `▶ ${t.code || '#' + t.id} ${t.title}`);
@@ -1763,6 +1776,14 @@ async function runTask(p, agent, t) {
         t.diffStat = res.diffStat || '';
         events.emit('AgentArtifactCreated', ev, { kind: 'diff', diffStat: t.diffStat.slice(-500) });
       }
+      if (t.kind === 'work' && !t.nobgRequeued && waitsForNotice(t.summary) && !hasDeliverable(t)) { // FT-134: terminó esperando un aviso y sin entregable → otro intento, sin pasar por Revisión
+        t.status = 'todo'; t.error = null; t.agentId = null; t.nobgRequeued = true; // una sola vez por tarea
+        t.pendingMessages = [...(t.pendingMessages || []), { text: 'En tu intento anterior terminaste esperando un aviso («me avisará», «en segundo plano») y no entregaste nada: nadie te avisa. Ejecuta los comandos largos en primer plano con timeout (hasta 10 min) y entrega el resultado.', at: Date.now() }];
+        events.emit('AgentProgress', ev, { activity: 'Reencolada: terminó esperando un aviso que no llega' });
+        log(agent.id, '↻ Terminó esperando un aviso en segundo plano y sin entregable: vuelve a Por hacer (FT-134)');
+        return;
+      }
+      if (t.nobgRequeued && waitsForNotice(t.summary) && !hasDeliverable(t)) t.summary = `⚠️ terminó esperando un aviso dos veces (FT-134): sin entregable.\n\n${t.summary}`;
       t.status = 'review';
       Object.assign(t, { reviewAt: Date.now(), nudged: false, lastEngine: engineId }); delete t.autoApproved;
       setImmediate(() => autoReview(p, t).catch((e) => log(agent.id, `⚠ Revisión automática de ${t.code || t.id}: ${e.message}`))); // FT-56
