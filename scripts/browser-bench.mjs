@@ -185,8 +185,11 @@ function chat(text, { onEvent, timeout = SCEN_TIMEOUT } = {}) {
 // check(ctx) → {ok, why} comprobado en el servidor de pruebas o en el estado del navegador.
 const bstate = async () => (await call('GET', '/api/state')).body.browser || {};
 const activeUrl = async () => { const b = await bstate(); return (b.tabs || []).find((t) => t.active)?.url || b.url || ''; };
-const snapText = async () => JSON.stringify((await tool('browser.snapshot', {})).body).slice(0, 20000);
-const FILE_PATH = path.join(tmp, 'adjunto.txt'); fs.writeFileSync(FILE_PATH, `${FILE_MARK}\n`);
+// FT-133 · el snapshot recorta las páginas JSON (httpbin): se lee también con readPage (texto completo, FT-132)
+const snapText = async () => JSON.stringify((await tool('browser.snapshot', {})).body).slice(0, 20000) + '\n' + JSON.stringify((await tool('browser.readPage', {})).body).slice(0, 40000);
+// FT-133 · browser.upload solo acepta rutas dentro de data/uploads del servidor: el adjunto se crea ahí
+const UP_DIR = path.join(tmp, 'data', 'uploads', 'bench'); fs.mkdirSync(UP_DIR, { recursive: true });
+const FILE_PATH = path.join(UP_DIR, 'adjunto.txt'); fs.writeFileSync(FILE_PATH, `${FILE_MARK}\n`);
 let mark = 0; // posición en hits al empezar cada escenario
 const since = () => hits.slice(mark);
 const S = [
