@@ -416,10 +416,15 @@ dialog.question .q-context { color: var(--muted); font-size: 13px; margin-bottom
 /* FT-90 · adjuntos del chat */
 .guide .g-main { position: relative; }
 .guide .g-main.drag::after { content: '📎 Suelta aquí para adjuntar'; position: absolute; inset: 4px; border: 2px dashed var(--accent); border-radius: 10px; background: rgba(0,0,0,.55); color: var(--text); display: flex; align-items: center; justify-content: center; font-size: 14px; pointer-events: none; z-index: 5; }
-.guide .g-attach { display: flex; flex-wrap: wrap; gap: 6px; padding: var(--s-2) var(--s-3) 0; border-top: 1px solid var(--line-soft); }
+.guide .g-attach { display: block; padding: var(--s-2) var(--s-3) 0; border-top: 1px solid var(--line-soft); }
 .guide .g-attach[hidden] { display: none; }
-.guide .g-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 3px 6px; font-size: 12px; max-width: 100%; }
-.guide .g-chip img { width: 36px; height: 36px; object-fit: cover; border-radius: 5px; }
+.guide .g-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 0 6px 0 0; height: 40px; overflow: hidden; font-size: 12px; max-width: 100%; }
+.guide .g-chip img { width: 40px; height: 40px; object-fit: cover; border-radius: 7px 0 0 7px; }
+.guide .g-chip .g-ficon { width: 40px; text-align: center; font-size: 18px; }
+.guide .g-chips { display: flex; flex-wrap: wrap; gap: 6px; max-height: 92px; overflow-y: auto; }
+.guide .g-count { font-size: 11px; color: var(--muted); padding: 2px 0 4px; }
+.guide .g-count.warn { color: #fbbf24; }
+.guide .g-clip { width: 32px; height: 32px; padding: 0; flex: none; }
 .guide .g-cname { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .guide .g-chip button { background: none; border: 0; color: var(--err); padding: 0 2px; cursor: pointer; }
 .g-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
