@@ -267,7 +267,7 @@ try {
   const confirm = (await fq('botón para confirmar el pedido'))[0], campo = (await fq('el campo del nombre'))[0];
   check('find NL: «confirmar el pedido» y «campo del nombre»', /Confirmar pedido/.test(confirm?.name || '') && campo?.role === 'textbox', JSON.stringify([confirm, campo]));
   await tool('browser.snapshot', {});
-  const c6 = await chat('Acepta cookies y añade al carrito', [{ tool: 'browser.click', args: { ref: ck.ref } }, { tool: 'browser.click', args: { ref: add.ref } }, { tool: 'browser.snapshot', args: { diff: true } }, { tool: 'browser.readPage', args: { selector: 'body' } }]);
+  const c6 = await chat('Acepta cookies y añade al carrito', [{ tool: 'browser.click', args: { ref: ck.ref } }, { tool: 'browser.click', args: { ref: add.ref } }, { tool: 'browser.snapshot', args: { diff: true } }, { tool: 'browser.readPage', args: { selector: 'body' } }], { answers: ['Sí'] });
   const clk = c6.resultOf('browser.click')[1]?.data;
   check('la acción devuelve la espera inteligente (settle: red en reposo y DOM estable)', clk?.settle?.networkIdle === true && clk?.settle?.domStable === true && clk.settle.waitedMs >= 300, JSON.stringify(clk).slice(0, 200));
   check('tras la espera el carrito ya cuenta 1 (petición asíncrona terminada)', hits.some((h) => h.path === '/api/cart') && /Carrito: 1/.test(JSON.stringify(c6.resultOf('browser.readPage')[0]?.data)), JSON.stringify(c6.resultOf('browser.readPage')[0]?.data).slice(-300));
