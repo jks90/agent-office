@@ -22,6 +22,17 @@ Solo actúa en las pestañas que le **cedas**: abre la pestaña y pulsa **«Deja
 
 Chrome/Brave mostrará la barra «AgentOffice Navegador del agente está depurando este navegador»: es el aviso de `chrome.debugger` y es esperado; desaparece al quitar la pestaña.
 
+## Paridad con el driver CDP (FT-136)
+
+La extensión cumple el mismo contrato que `server/browser/cdp.js`:
+
+- **`browser.upload`** — `DOM.setFileInputFiles` sobre el `<input type=file>` (comprueba tipo y `multiple`; las rutas ya las valida AgentOffice). Ya no devuelve 501.
+- **`browser.readPage`** — el servidor evalúa en la pestaña cedida la misma expresión de modo lectura (`readPageExpr`) y pagina con `offset`/`max`/`section`.
+- **settle** — `act`, `type`, `upload` y `scroll` esperan red en reposo (~400 ms sin peticiones vivas) y DOM estable (~300 ms, tope 3 s; 1,5 s en scroll) y devuelven `settle: {networkIdle, domStable, waitedMs}`.
+- **`screenshot` `detail:'low'` / `region`** — `low` = JPEG q50 de ≤800 px; `region:{x,y,w,h}` (px CSS del viewport) hace zoom (hasta ×2) y devuelve `scale`, `originX`, `originY`.
+
+Se prueba con el cliente simulado de `node scripts/extension-e2e.mjs`; con Chromium real queda como prueba manual.
+
 ## Limitaciones conocidas
 
 - El snapshot cubre el documento principal de la pestaña (los iframes no se recorren, a diferencia del driver CDP).
