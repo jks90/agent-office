@@ -1876,6 +1876,15 @@ function logKind(line) {
 }
 
 // ── Diálogos ───────────────────────────────────────────────────────────────
+// FT-118: estado de la extensión y emparejamiento (Ajustes ▸ Navegador)
+function browserExtBlock() {
+  const x = S.browser?.ext || {};
+  const state = x.connected ? `🟢 conectada · ${x.tabs?.length || 0} pestaña(s) cedida(s)` : x.paired ? '⚪ emparejada, sin conexión (abre el navegador con la extensión)' : '⚪ sin emparejar';
+  return `<p class="muted" style="margin:2px 0 8px">Extensión «Mi navegador» (carpeta <code>extension/</code>): ${state}.
+    <button type="button" class="small" data-browser-pair>Generar código de emparejamiento</button>
+    ${x.paired ? '<button type="button" class="small" data-browser-forget>Olvidar extensión</button>' : ''}
+    <span id="bx-code" style="font-weight:600">${x.pairing ? `Código: ${esc(x.pairing.code)} (caduca en 5 min; un solo uso)` : ''}</span></p>`;
+}
 function dialog(html, onSubmit, cls = '') {
   const dlg = $('#dialog');
   dlg.className = cls;
@@ -1999,6 +2008,9 @@ Pasos, convenciones y ejemplos…</textarea>
     <div><label>Escalera de modelos · Codex (el mini sale de models_cache.json)</label><input name="ladder_codex" value="${esc((S.modelLadders?.codex || []).join(', '))}" placeholder="gpt-5.5" /></div></div>
     <p class="muted">Cada tarea empieza en el primer peldaño y sube uno al devolverla desde revisión o si el agente falla (máx. 2 veces). Un modelo fijado en el agente o el rol no entra en la cascada.</p>
     <label>Objetivo de costes (FT-76): coste por tarea aprobada ≤ X % del interactivo</label><input name="costTargetPct" type="number" min="10" max="500" step="5" value="${S.settings.costTargetPct || 100}" />
+    <label>Navegador del agente (FT-114 · FT-118)</label>
+    <select name="browserMode">${[['dedicated', 'Chromium dedicado (perfil propio de AgentOffice)'], ['extension', 'Mi navegador (extensión de extension/)']].map(([v, t]) => `<option value="${v}" ${(S.browser?.mode || 'dedicated') === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
+    ${browserExtBlock()}
     <label><input type="checkbox" name="cacheAffinity" ${S.settings.cacheAffinity !== false ? 'checked' : ''} /> Agrupar tareas del mismo repo y rol seguidas para aprovechar la caché del prompt (FT-64)</label>
     <label><input type="checkbox" name="stuckGuard" ${S.settings.stuckGuard !== false ? 'checked' : ''} /> Detectar agentes atascados: aviso y, si sigue, parar y pasar a Revisión (FT-62)</label>
     <div class="grid2"><div><label>Mismo comando/lectura (veces)</label><input name="stuckRepeat" type="number" min="2" max="20" value="${S.settings.stuckRepeat || 3}" /></div>
@@ -2878,6 +2890,12 @@ document.addEventListener('click', async (e) => {
       ${diffStatsHtml(t)}
       <pre>${html}</pre>${buttons(null)}`, null, 'wide');
   }
+  if (d.browserPair !== undefined) { // FT-118: código de un solo uso para emparejar la extensión
+    const r = await api('POST', '/api/browser/pair');
+    const el = $('#bx-code'); if (el) el.textContent = `Código: ${r.code} (caduca en 5 min; un solo uso)`;
+    return;
+  }
+  if (d.browserForget !== undefined) { await api('POST', '/api/browser/forget'); return toast('Extensión olvidada: tendrás que emparejarla de nuevo'); }
   if (d.importFlow !== undefined) {
     const path = $('#import-flow')?.value;
     if (!path) return toast('Elige un flow', 'error');
