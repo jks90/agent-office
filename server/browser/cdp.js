@@ -147,9 +147,78 @@ export function createCdpDriver() {
   const callOn = async (tab, backendNodeId, fn, ...args) => {
     const s = await cdp(tab);
     const { object } = await s.send('DOM.resolveNode', { backendNodeId });
-    const r = await s.send('Runtime.callFunctionOn', { objectId: object.objectId, functionDeclaration: fn, arguments: args.map((value) => ({ value })), returnByValue: true });
+    // FT-130: un nodo interno de un <input> nativo (spinbutton de date/time…) actúa sobre el input anfitrión
+    const wrapped = `function(...a){ let n=this; const h=n.getRootNode&&n.getRootNode().host; if(h&&h.tagName==='INPUT') n=h; return (${fn}).apply(n,a); }`;
+    const r = await s.send('Runtime.callFunctionOn', { objectId: object.objectId, functionDeclaration: wrapped, arguments: args.map((value) => ({ value })), returnByValue: true });
     return r.result?.value;
   };
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // FT-130 · funciones que corren en la página sobre el nodo (this)
+  const KIND_FN = `function(){ const t=this.tagName, ty=(this.type||'').toLowerCase(); const sub=(t==='BUTTON'&&ty!=='button'&&ty!=='reset')||(t==='INPUT'&&(ty==='submit'||ty==='image'))||(t==='A'&&!!this.href); return { tag:t, type:ty, multiple:!!this.multiple, ce:!!this.isContentEditable&&t!=='INPUT'&&t!=='TEXTAREA', submit:sub }; }`;
+  const NATIVE_SET_FN = `function(v){ Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(this,v); this.dispatchEvent(new Event('input',{bubbles:true})); this.dispatchEvent(new Event('change',{bubbles:true})); return { ok: this.value!==''||v==='', value:this.value }; }`;
+  const SELECT_FN = `function(vals){ if(this.tagName!=='SELECT') return { ok:false, error:'no es un <select>' }; const opts=[...this.options]; const pick=(v)=>opts.find(o=>o.value===v)||opts.find(o=>o.text.trim()===String(v).trim()); let want=vals.map(String); if(this.multiple&&want.length===1&&!pick(want[0])&&want[0].includes('|')) want=want[0].split('|').map(x=>x.trim()); const found=want.map(pick); const missing=want.filter((_,i)=>!found[i]); if(missing.length) return { ok:false, error:'no existe la opción: '+missing.join(', '), options:opts.slice(0,30).map(o=>o.text.trim()) }; if(this.multiple) opts.forEach(o=>{o.selected=found.includes(o)}); else this.value=found[0].value; this.dispatchEvent(new Event('input',{bubbles:true})); this.dispatchEvent(new Event('change',{bubbles:true})); return { ok:true, selected:[...this.selectedOptions].map(o=>o.text.trim()) }; }`;
+  const CARET_FN = `function(clear){ if(this.isContentEditable&&this.tagName!=='INPUT'&&this.tagName!=='TEXTAREA'){ const r=document.createRange(); r.selectNodeContents(this); const s=getSelection(); s.removeAllRanges(); s.addRange(r); if(!clear) s.collapseToEnd(); return; } try{ if(clear) this.select(); else this.setSelectionRange(this.value.length,this.value.length); }catch{} }`;
+  const VALID_FN = `function(){ const f=this&&(this.form||(this.closest&&this.closest('form'))); if(!f||f.checkValidity()) return null; return [...f.elements].filter(e=>e.willValidate&&!e.checkValidity()).slice(0,20).map(e=>({ field:(e.labels&&e.labels[0]?e.labels[0].textContent.trim():'')||e.getAttribute('aria-label')||e.name||e.id||e.type, type:e.type, message:e.validationMessage })); }`;
+
+  // Observa navegación y cambios del DOM tras una acción; settle(max) espera a lo primero que ocurra (hasta max ms).
+  async function watch(tab) {
+    const st = { nav: false, url0: tab.page.url() };
+    const on = (f) => { if (f === tab.page.mainFrame()) st.nav = true; };
+    tab.page.on('framenavigated', on);
+    await tab.page.evaluate('(()=>{window.__aoM=0;try{new MutationObserver(()=>{window.__aoM++}).observe(document,{subtree:true,childList:true,attributes:true,characterData:true})}catch{}})()').catch(() => {});
+    return {
+      async settle(max, grace = 300) {
+        const t0 = Date.now();
+        try {
+          for (;;) {
+            if (st.nav) break;
+            const m = await tab.page.evaluate('window.__aoM').catch(() => undefined);
+            if (m === undefined) { st.nav = true; break; } // el documento cambió bajo nuestros pies
+            if (m > 0) { await sleep(grace); break; }
+            if (Date.now() - t0 >= max) break;
+            await sleep(100);
+          }
+          if (st.nav) await tab.page.waitForFunction('document.readyState!=="loading"', { timeout: 4000 }).catch(() => {});
+        } finally { tab.page.off('framenavigated', on); }
+        return st.nav || tab.page.url() !== st.url0;
+      },
+    };
+  }
+  // Resultado común: {navigated, url, title} y, si un envío no navegó, los errores de validación del formulario.
+  async function outcome(tab, w, { long = false, backendNodeId } = {}) {
+    const navigated = await w.settle(long ? 5000 : 300, long ? 700 : 250);
+    const r = { navigated, ...(await navInfo(tab)) };
+    if (long && !navigated) {
+      let v = null;
+      try { v = backendNodeId ? await callOn(tab, backendNodeId, VALID_FN) : await tab.page.evaluate(`(${VALID_FN}).call(document.activeElement)`); } catch { /* nodo desaparecido */ }
+      if (v?.length) { r.submitted = false; r.validation = v; r.hint = 'El formulario no se envió: corrige los campos de «validation» y vuelve a pulsar enviar.'; }
+    }
+    return r;
+  }
+  // Rellena un campo según su tipo (date/time/range/color…, select, checkbox, contenteditable, texto) disparando input/change.
+  async function fill(tab, backendNodeId, text, clear) {
+    const s = await cdp(tab);
+    const k = await callOn(tab, backendNodeId, KIND_FN);
+    if (!k) throw bad(404, 'el nodo ya no existe (haz un snapshot nuevo)');
+    if (k.type === 'file') throw bad(400, 'es un campo de fichero: usa browser.upload');
+    if (k.tag === 'SELECT') { const r = await callOn(tab, backendNodeId, SELECT_FN, [String(text)]); if (!r?.ok) throw bad(400, `${r?.error || 'no puedo seleccionar'}${r?.options ? ` (opciones: ${r.options.join(' | ')})` : ''}`); return; }
+    if (k.type === 'checkbox' || k.type === 'radio') {
+      const want = !/^(false|0|off|no|desmarcado)$/i.test(String(text).trim());
+      const on = await callOn(tab, backendNodeId, 'function(){ return this.checked; }');
+      if (on !== want) await callOn(tab, backendNodeId, 'function(){ this.click(); }');
+      return;
+    }
+    if (['date', 'time', 'datetime-local', 'month', 'week', 'range', 'color'].includes(k.type)) {
+      const r = await callOn(tab, backendNodeId, NATIVE_SET_FN, String(text));
+      if (!r?.ok) throw bad(400, `valor no válido para ${k.type}: «${text}» (formato: ${({ date: 'AAAA-MM-DD', time: 'HH:MM', 'datetime-local': 'AAAA-MM-DDTHH:MM', month: 'AAAA-MM', week: 'AAAA-Www', color: '#rrggbb', range: 'número' })[k.type]})`);
+      return;
+    }
+    await s.send('DOM.focus', { backendNodeId });
+    await callOn(tab, backendNodeId, CARET_FN, !!clear);
+    if (text) await s.send('Input.insertText', { text: String(text) });
+    else if (clear) await tab.page.keyboard.press('Backspace');
+  }
 
   const driver = {
     id: 'cdp',
@@ -233,39 +302,61 @@ export function createCdpDriver() {
       return { tabId: tab.id, url: tab.page.url(), title: await tab.page.title().catch(() => ''), nodes: out.slice(0, max), total: out.length, truncated: out.length > max, omitted: Math.max(0, out.length - max) };
     },
 
-    // action: click | dblclick | hover | focus | select (value)
+    // action: click | dblclick | hover | focus | select (value; array o «a|b» en <select multiple>)
     async act({ ref, x, y, action = 'click', value, button = 'left' } = {}) {
       const tab = await cur();
       const t = await target(tab, { ref, x, y });
       const m = tab.page.mouse;
-      if (action === 'hover') await m.move(t.x, t.y);
-      else if (action === 'click') await m.click(t.x, t.y, { button });
-      else if (action === 'dblclick') await m.click(t.x, t.y, { clickCount: 2 });
-      else if (action === 'focus') { if (t.backendNodeId) await (await cdp(tab)).send('DOM.focus', { backendNodeId: t.backendNodeId }); else await m.click(t.x, t.y); }
-      else if (action === 'select') {
-        if (!t.backendNodeId) throw bad(400, 'select requiere ref');
-        const ok = await callOn(tab, t.backendNodeId, `function(v){ if(this.tagName!=='SELECT') return false; const o=[...this.options].find(o=>o.value===v||o.text===v); if(!o) return false; this.value=o.value; this.dispatchEvent(new Event('input',{bubbles:true})); this.dispatchEvent(new Event('change',{bubbles:true})); return true; }`, String(value));
-        if (!ok) throw bad(400, `no puedo seleccionar «${value}»`);
-      } else throw bad(400, `acción desconocida: ${action}`);
-      return { ok: true, via: t.via, ...(await navInfo(tab)) };
+      let long = false;
+      if (action === 'click' && t.backendNodeId) long = !!(await callOn(tab, t.backendNodeId, KIND_FN).catch(() => null))?.submit;
+      const w = await watch(tab);
+      try {
+        if (action === 'hover') await m.move(t.x, t.y);
+        else if (action === 'click') await m.click(t.x, t.y, { button });
+        else if (action === 'dblclick') await m.click(t.x, t.y, { clickCount: 2 });
+        else if (action === 'focus') { if (t.backendNodeId) await (await cdp(tab)).send('DOM.focus', { backendNodeId: t.backendNodeId }); else await m.click(t.x, t.y); }
+        else if (action === 'select') {
+          if (!t.backendNodeId) throw bad(400, 'select requiere ref');
+          const r = await callOn(tab, t.backendNodeId, SELECT_FN, Array.isArray(value) ? value : [value]);
+          if (!r?.ok) throw bad(400, `${r?.error || `no puedo seleccionar «${value}»`}${r?.options ? ` (opciones: ${r.options.join(' | ')})` : ''}`);
+        } else throw bad(400, `acción desconocida: ${action}`);
+      } catch (e) { await w.settle(0).catch(() => {}); throw e; }
+      return { ok: true, via: t.via, ...(await outcome(tab, w, { long, backendNodeId: t.backendNodeId })) };
     },
 
-    // Escribe en el nodo (ref) o en el foco actual; clear vacía antes; submit pulsa Enter; key pulsa una tecla.
+    // Escribe en el nodo (ref) o en el foco actual, según el tipo de campo (FT-130); clear vacía antes; submit pulsa Enter; key pulsa una tecla.
     async type({ ref, x, y, text = '', clear = false, submit = false, key } = {}) {
       const tab = await cur();
+      const s = await cdp(tab);
+      let t = null;
       if (ref || x != null) {
-        const t = await target(tab, { ref, x, y });
-        if (t.backendNodeId) await (await cdp(tab)).send('DOM.focus', { backendNodeId: t.backendNodeId }).catch(() => tab.page.mouse.click(t.x, t.y));
-        else await tab.page.mouse.click(t.x, t.y);
-        if (clear) {
-          if (t.backendNodeId) await callOn(tab, t.backendNodeId, `function(){ if('value' in this){ this.value=''; this.dispatchEvent(new Event('input',{bubbles:true})); } else if(this.isContentEditable){ this.textContent=''; } }`);
-          else { await tab.page.keyboard.down('Control'); await tab.page.keyboard.press('KeyA'); await tab.page.keyboard.up('Control'); await tab.page.keyboard.press('Backspace'); }
+        t = await target(tab, { ref, x, y });
+        if (t.backendNodeId) { if (text || clear) await fill(tab, t.backendNodeId, text, clear); else await s.send('DOM.focus', { backendNodeId: t.backendNodeId }).catch(() => tab.page.mouse.click(t.x, t.y)); }
+        else {
+          await tab.page.mouse.click(t.x, t.y);
+          if (clear) { await tab.page.keyboard.down('Control'); await tab.page.keyboard.press('KeyA'); await tab.page.keyboard.up('Control'); await tab.page.keyboard.press('Backspace'); }
+          if (text) await s.send('Input.insertText', { text: String(text) });
         }
-      }
-      if (text) await tab.page.keyboard.type(String(text));
+      } else if (text) await s.send('Input.insertText', { text: String(text) });
+      const enter = submit || /^(enter|numpadenter)$/i.test(key || '');
+      const w = await watch(tab);
       if (key) await tab.page.keyboard.press(key);
       if (submit) await tab.page.keyboard.press('Enter');
-      return { ok: true, ...(await navInfo(tab)) };
+      return { ok: true, ...(await outcome(tab, w, { long: enter, backendNodeId: t?.backendNodeId })) };
+    },
+
+    // FT-130 · Sube ficheros a un <input type=file> (DOM.setFileInputFiles: dispara input/change). `files`: rutas absolutas ya validadas.
+    async upload({ ref, files = [] } = {}) {
+      if (!ref) throw bad(400, 'falta ref del campo de fichero');
+      if (!files.length) throw bad(400, 'faltan ficheros');
+      const tab = await cur();
+      const e = tab.refs.get(ref);
+      if (!e) throw bad(404, `ref ${ref} desconocido (haz un snapshot nuevo)`);
+      const k = await callOn(tab, e.backendNodeId, KIND_FN);
+      if (k?.type !== 'file') throw bad(400, `${ref} no es un <input type=file>`);
+      if (files.length > 1 && !(await callOn(tab, e.backendNodeId, 'function(){ return this.multiple; }'))) throw bad(400, 'el campo no admite varios ficheros');
+      await (await cdp(tab)).send('DOM.setFileInputFiles', { files, backendNodeId: e.backendNodeId });
+      return { ok: true, files: files.map((f) => f.split('/').pop()), ...(await navInfo(tab)) };
     },
 
     // Scroll de la rueda sobre un nodo/punto (centro del viewport por defecto); devuelve la posición resultante.

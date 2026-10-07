@@ -71,6 +71,7 @@ export function createFakeDriver() {
       log.push({ op: 'type', ...a });
       return { ok: true, ...nav(t) };
     },
+    async upload(a = {}) { const t = cur(); log.push({ op: 'upload', ...a }); return { ok: true, files: (a.files || []).map((f) => f.split('/').pop()), ...nav(t) }; },
     async scroll(a = {}) { cur(); log.push({ op: 'scroll', ...a }); return { ok: true, scrollX: a.dx || 0, scrollY: a.dy || 0 }; },
     async screenshot() { const t = cur(); return { ...saveShot(PNG, 'png', t.id), width: 1, height: 1, tabId: t.id }; },
     // FT-117 · caja fija por ref (la página falsa apila los 4 elementos) o alrededor del punto
