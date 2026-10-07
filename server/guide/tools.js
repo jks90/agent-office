@@ -23,6 +23,7 @@ import { getDriver, renderSnapshot } from '../browser/index.js';
 import { agentDriver, addHandoff, resolveHandoff, setControl, status as browserStatus } from '../browser/panel.js';
 import * as bpolicy from '../browser/policy.js';
 import * as questions from '../questions.js';
+import * as secrets from './secrets.js'; // FT-137
 import { resolveRefs } from '../uploads.js'; // FT-130
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
@@ -177,6 +178,27 @@ const refDynamic = async (a0) => {
 };
 // ¿El último snapshot de la pestaña del nodo tiene un campo de contraseña/tarjeta?
 const pageHasSensitiveField = (n) => { const key = [...seenNodes].find(([, v]) => v === n)?.[0]; const tab = key?.slice(0, key.lastIndexOf(':')); for (const [k, x] of seenNodes) if (k.startsWith(`${tab}:`) && ['textbox', 'searchbox'].includes(x.role) && (x.states?.includes('protected') || bpolicy.SENSITIVE_FIELD.test(x.name || ''))) return true; return false; };
+
+// FT-137 · ¿browser.type apunta a un campo de contraseña (según el último snapshot)? Lo usa también guide/index.js para enmascarar el chat.
+export const isPasswordTarget = (name, args) => /^browser[._]type$/.test(name) && !!args?.ref && bpolicy.isPasswordNode(nodeOf(args.ref));
+// Política de browser.type: pago → 403 (requestHuman); contraseña → solo si la dio el usuario en este chat y con 🛡 siempre.
+async function typeDynamic(a, ctx) {
+  const n = nodeOf(a.ref);
+  if (bpolicy.isPaymentNode(n)) throw fail(403, `«${n.name}» es un campo de pago: no se teclea. Usa browser.requestHuman para que lo rellene el usuario`);
+  if (!a.ref) { // sin ref escribe donde esté el foco: si es una contraseña, exige el ref para poder tratarla
+    try { if ((await agentDriver().evaluate({ expression: `document.activeElement?.type === 'password'` })).value) throw fail(403, 'El foco está en un campo de contraseña: indica su ref para poder pedir la 🛡. Si no, usa browser.requestHuman'); } catch (e) { if (e.status === 403) throw e; }
+  }
+  if (!bpolicy.isPasswordNode(n)) return a.submit ? { policy: 'irreversible', context: `⚠ Escribir y pulsar Enter (puede enviar el formulario)\n${nodeInfo(a.ref)}` } : null;
+  if (!secrets.authorize(ctx.chatId, a.text)) throw fail(403, `«${n.name}» es un campo de contraseña y solo puedo teclear una que el usuario me haya dado en esta conversación. Usa browser.requestHuman para que la escriba él`);
+  const host = await pageUrl({}).then((u) => { try { return new URL(u).host; } catch { return '(página)'; } });
+  return {
+    policy: 'irreversible',
+    question: `¿Escribir la contraseña en «${host}» (campo ${n.name})?`,
+    context: `🔑 Contraseña que diste en esta conversación. Valor: ${secrets.MASK}${a.submit ? '\n⚠ Además pulsa Enter (puede enviar el formulario)' : ''}\n${nodeInfo(a.ref)}`,
+    args: { ref: a.ref, text: secrets.MASK, ...(a.clear ? { clear: true } : {}), ...(a.submit ? { submit: true } : {}) },
+    denied: 'El usuario no autoriza escribir la contraseña: ofrécele browser.requestHuman para que la escriba él',
+  };
+}
 
 // FT-132 · Coordenadas sobre la última captura: la captura guarda escala y origen (zoom de región) y `shot:true` los deshace.
 let lastShot = null;
@@ -398,8 +420,10 @@ export const tools = [
     obj({ diff: { type: 'boolean', description: 'FT-132: solo los cambios respecto al snapshot anterior de esta pestaña (mucho más barato tras actuar)' } }), 'read',
     async ({ diff } = {}) => {
       const s = await agentDriver().snapshot(); remember(s);
-      const d = diffSnapshot(s); // siempre actualiza la base, se pida diff o no
-      return bpolicy.untrusted({ tabId: s.tabId, url: s.url, title: s.title, total: s.total, truncated: s.truncated, mode: diff && d ? 'diff' : 'full', snapshot: bpolicy.wrapUntrusted(diff && d ? d : renderSnapshot(s)) });
+      // FT-137: el valor de un campo de contraseña nunca vuelve al modelo (ni al chat guardado); solo se indica que está relleno
+      const safe = { ...s, nodes: s.nodes.map((n) => (n.value && bpolicy.isPasswordNode(n) ? { ...n, value: secrets.MASK } : n)) };
+      const d = diffSnapshot(safe); // siempre actualiza la base, se pida diff o no
+      return bpolicy.untrusted({ tabId: s.tabId, url: s.url, title: s.title, total: s.total, truncated: s.truncated, mode: diff && d ? 'diff' : 'full', snapshot: bpolicy.wrapUntrusted(diff && d ? d : renderSnapshot(safe)) });
     },
     { precheck: browserPrecheck }),
   T('browser.readPage', 'FT-132 · Texto legible de la página (modo lectura: encabezados, párrafos, listas, tablas; sin menús ni scripts), paginado. Úsalo para LEER artículos, resultados o listados en vez del snapshot completo. Devuelve «next» (offset de la página siguiente) y las secciones (encabezados) para saltar con «section».',
@@ -423,11 +447,11 @@ export const tools = [
     obj({ ref: str('ref del nodo'), action: { type: 'string', enum: ['click', 'dblclick', 'rightclick', 'hover', 'focus', 'drag'] }, x: { type: 'integer' }, y: { type: 'integer' }, shot: { type: 'boolean', description: 'x,y (y toX,toY) están en píxeles de la última captura' }, toRef: str('Destino del drag (ref)'), toX: { type: 'integer' }, toY: { type: 'integer' } }), 'execute',
     async (a) => agentDriver().act({ ...fromShot(a), action: a.action || 'click' }),
     { precheck: browserPrecheck, dynamic: refDynamic }),
-  T('browser.type', 'Escribe texto en un campo por su ref (lo enfoca antes); rellena date/time/datetime-local/range/color/contenteditable según su tipo (formato nativo, p. ej. 2026-10-08, 19:30). El resultado trae {navigated,url,title} y, si un envío no se produjo, validation con el motivo. clear=true lo vacía antes; submit=true pulsa Enter después (irreversible: confirmación SIEMPRE). El texto NUNCA se guarda en el audit.',
+  T('browser.type', 'Escribe texto en un campo por su ref (lo enfoca antes); rellena date/time/datetime-local/range/color/contenteditable según su tipo (formato nativo, p. ej. 2026-10-08, 19:30). El resultado trae {navigated,url,title} y, si un envío no se produjo, validation con el motivo. clear=true lo vacía antes; submit=true pulsa Enter después (irreversible: confirmación SIEMPRE). El texto NUNCA se guarda en el audit. Contraseñas (FT-137): solo una que el usuario te dio en ESTA conversación (si no, 403); pide 🛡 siempre y el valor no se registra en ningún sitio. Tarjetas/pagos (número, CVV, IBAN): 403, usa browser.requestHuman.',
     obj({ ref: str('ref del campo'), text: str('Texto'), clear: { type: 'boolean' }, submit: { type: 'boolean' } }, ['text']), 'execute',
     async (a) => agentDriver().type(a),
     { precheck: browserPrecheck, auditArgs: ({ text, ...r }) => ({ ...r, chars: [...String(text ?? '')].length }),
-      dynamic: async (a) => (a.submit ? { policy: 'irreversible', context: `⚠ Escribir y pulsar Enter (puede enviar el formulario)\n${nodeInfo(a.ref)}` } : null) }),
+      dynamic: typeDynamic }),
   T('browser.select', 'Elige una opción de un <select> por su ref (value o texto visible). En <select multiple> varias separadas por «|» (p. ej. «Bacon|Onion»).',
     obj({ ref: str('ref del select'), value: str('Valor o texto de la opción (varias con «|» si es múltiple)') }, ['ref', 'value']), 'execute',
     async ({ ref, value }) => agentDriver().act({ ref, action: 'select', value }), { precheck: browserPrecheck }),
@@ -463,7 +487,7 @@ export const tools = [
     async ({ expression }) => { const r = await agentDriver().evaluate({ expression }); const v = typeof r.value === 'string' ? r.value : JSON.stringify(r.value); return bpolicy.untrusted({ value: String(v ?? '').slice(0, 20_000) }); },
     { precheck: browserPrecheck, auditArgs: ({ expression }) => ({ expression: /pass|contrase|token|secret|card|tarjeta/i.test(expression) ? `(oculta: ${String(expression).length} car.)` : summarize(expression) }),
       dynamic: async ({ expression }) => ({ policy: 'irreversible', context: `⚠ JavaScript arbitrario en la página: SIEMPRE pide confirmación\n\n\`\`\`js\n${String(expression).slice(0, 600)}\n\`\`\`` }) }),
-  T('browser.requestHuman', 'Pasa el control al usuario cuando necesitas algo que no debes hacer tú: captcha, login, 2FA, datos personales o de pago. Pausa tu trabajo, avisa al usuario (🛡 con «Listo»/«Cancelar») y vuelve cuando pulse «Listo» (done:true); después haz browser.snapshot. Nunca pidas ni teclees contraseñas por tu cuenta (FT-116).',
+  T('browser.requestHuman', 'Pasa el control al usuario cuando necesitas algo que no debes hacer tú: captcha, login, 2FA, datos personales o de pago. Pausa tu trabajo, avisa al usuario (🛡 con «Listo»/«Cancelar») y vuelve cuando pulse «Listo» (done:true); después haz browser.snapshot. No pidas contraseñas: solo puedes teclear (browser.type, con 🛡) una que el usuario te dio en esta conversación (FT-137).',
     obj({ motivo: str('Qué tiene que hacer el usuario, en una frase') }, ['motivo']), 'navigate',
     async ({ motivo }) => {
       if (!getDriver().isOpen()) throw fail(409, 'El navegador del agente está cerrado: ábrelo con browser.navigate antes');
@@ -597,9 +621,9 @@ export async function run(name, args = {}, ctx = {}) {
     // FT-29 · política dinámica por llamada (ui.act: destructivo → irreversible)
     const dyn = tool.dynamic ? await tool.dynamic(args, ctx) : null;
     if (dyn) entry.policy = dyn.policy;
-    const g = await gate(dyn ? { ...tool, policy: dyn.policy } : tool, args, dyn ? { ...ctx, modalContext: dyn.context } : ctx);
+    const g = await gate(dyn ? { ...tool, policy: dyn.policy } : tool, args, dyn ? { ...ctx, modalContext: dyn.context, modalQuestion: dyn.question, modalArgs: dyn.args } : ctx);
     Object.assign(entry, g);
-    if (g.confirmed === false) throw fail(403, `El usuario rechazó «${name}»`);
+    if (g.confirmed === false) throw fail(403, dyn?.denied || `El usuario rechazó «${name}»`);
     const out = await tool.handler(args, ctx);
     done('ok');
     return out ?? { ok: true };

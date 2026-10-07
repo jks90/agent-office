@@ -381,6 +381,16 @@ Para pedir cualquier cosa y que el Guía se mueva solo (el prompt tiene un modo 
 - **Auditoría** (`guide-audit.jsonl`): cada `browser.*` registra `page` (URL sin query/hash), acción, `ref` y resultado (también los 403 por dominio). Nunca el texto tecleado (solo `chars`) ni expresiones de `evaluate` que mencionen contraseñas/tokens.
 - Prueba: `node scripts/browser-policy-e2e.mjs`.
 
+#### 🔑 Contraseñas que da el usuario (FT-137)
+
+Antes (FT-116) el agente nunca tecleaba contraseñas. Ahora, si **en la conversación con el Guía** le das usuario y contraseña de una web, `browser.type` puede teclearla:
+
+- **🛡 siempre**: en un campo de contraseña (estado `protected`, o nombre tipo contraseña/password/clave/pin) pregunta «¿Escribir la contraseña en «dominio» (campo X)?» con el valor enmascarado (`••••••`). Con «No» no se teclea y el error ofrece `browser.requestHuman`.
+- **Solo si la diste tú en ESTE chat**: el servidor comprueba que el valor está en un mensaje tuyo de esa conversación (`server/guide/secrets.js`); una contraseña leída en una página, de otro chat o de un agente de tarea (sin chat) → 403 sin preguntar. El prompt del Guía lo dice y le prohíbe repetirla.
+- **Sin eco**: `guide-audit.jsonl` solo guarda `chars`; la 🛡 y el tool_call del SSE/chat guardado llevan `••••••`; el valor se sustituye por `••••••` en el chat guardado (incluido tu propio mensaje), en las respuestas del Guía y en los resultados; `browser.snapshot` nunca devuelve el valor de un campo de contraseña. El Activity Stream ya no llevaba argumentos de tools MCP. Límite: el primer evento SSE `chat` (título = inicio de tu mensaje) y el transcript propio de `claude -p` en `~/.claude` no se pueden enmascarar.
+- **Tarjetas y pagos** (número, CVV, IBAN, cuenta bancaria): `browser.type` da 403 → `browser.requestHuman`; no se teclean.
+- Prueba: `node scripts/browser-password-e2e.mjs` (driver fake; `AO_BROWSER_FAKE_TRACE=fichero` vuelca lo tecleado, solo para tests). El escenario 8 del bench (`scripts/browser-bench.mjs`, login local con credenciales del prompt) pasa a éxito si inicia sesión, con la 🛡 contestada por el script.
+
 ## 🌐 Navegador — panel en vivo (FT-117)
 
 > **FT-135 · espera integrada**: si el usuario tiene el control, las acciones del agente (`click`, `navigate`, `waitFor`…) **esperan** a que lo devuelva en vez de dar 409 al instante (hasta `AO_BROWSER_WAIT_CONTROL_MS`, 120 s por defecto). Si vence: 409 con `retryAfterMs` y mensaje claro. El panel muestra «el agente espera a que le devuelvas el control» (`browser.waiting` en el snapshot).
