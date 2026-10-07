@@ -278,7 +278,7 @@ function guideMount(el, panel) {
       <div class="g-msgs"></div>
       <div class="g-voice" hidden><span class="g-vtxt"></span><i class="g-vlevel"></i></div>
       <div class="g-attach" hidden></div>
-      <form class="g-form"><button type="button" class="ghost g-mic" data-g="mic" title="Mantén pulsado para hablar (o barra espaciadora con la caja vacía)">🎤</button><textarea rows="1" placeholder="Pídeme algo…" title="Intro envía · Mayús+Intro salto de línea · barra espaciadora con la caja vacía = hablar"></textarea><button type="button" class="ghost g-clip" data-g="clip" title="Adjuntar" aria-label="Adjuntar imágenes o ficheros (también Ctrl+V o arrastrar sobre el chat)">📎</button><input type="file" class="g-file" multiple hidden /><button class="g-send">Enviar</button><button type="button" class="ghost g-stop" data-g="stop" hidden>■ Parar</button></form>
+      <form class="g-form"><button type="button" class="ghost g-mic" data-g="mic" title="Mantén pulsado para hablar · desde cualquier sitio: mantén Ctrl+Espacio · o la barra espaciadora con la caja vacía">🎤</button><textarea rows="1" placeholder="Pídeme algo…" title="Intro envía · Mayús+Intro salto de línea · mantén Ctrl+Espacio (o Espacio con la caja vacía) = hablar"></textarea><button type="button" class="ghost g-clip" data-g="clip" title="Adjuntar" aria-label="Adjuntar imágenes o ficheros (también Ctrl+V o arrastrar sobre el chat)">📎</button><input type="file" class="g-file" multiple hidden /><button class="g-send">Enviar</button><button type="button" class="ghost g-stop" data-g="stop" hidden>■ Parar</button></form>
     </div></div>`;
   guideRoots.push({ el, panel });
   const ta = el.querySelector('textarea');
@@ -490,6 +490,22 @@ function guideToggle(open = !G.panelOpen) {
 }
 $('#guide-fab').addEventListener('click', (e) => { if (e.target.closest('.fab-ear')) wakeSet(false); else guideToggle(true); }); // la marca 👂 apaga la escucha (FT-36)
 document.addEventListener('keydown', (e) => { if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'g') { e.preventDefault(); guideToggle(); } });
+// Hablar desde cualquier sitio: mantener Ctrl+Espacio (abre el Guía si está cerrado); al soltar se envía como el 🎤.
+// Embebido en flow-test, el padre reenvía la tecla por postMessage (`flowtest:voice`) cuando el foco no está en el iframe.
+const guideVisibleRoot = () => guideRoots.find((r) => (activeTab === 'guide' ? !r.panel : r.panel))?.el;
+function voiceHotkey(down) {
+  if (!down) { if (V.holding) voiceHold(false); return; }
+  if (activeTab !== 'guide' && !G.panelOpen) guideToggle(true);
+  const el = guideVisibleRoot();
+  if (el) voiceHold(true, el);
+}
+document.addEventListener('keydown', (e) => { if (e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'Space') { e.preventDefault(); if (!e.repeat) voiceHotkey(true); } });
+document.addEventListener('keyup', (e) => { if (V.holding && (e.code === 'Space' || e.key === 'Control')) { e.preventDefault(); voiceHotkey(false); } });
+window.addEventListener('blur', () => { if (V.holding) voiceHotkey(false); }); // soltar fuera de la ventana no deja el micro abierto
+window.addEventListener('message', (e) => {
+  if (e.origin !== location.origin || e.source !== window.parent || window.parent === window || e.data?.type !== 'flowtest:voice') return;
+  voiceHotkey(!!e.data.down);
+});
 
 async function guideSend(text) {
   voiceSpeak(null); // callar lo que estuviera leyendo (FT-9)
