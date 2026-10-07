@@ -14,7 +14,7 @@ const loadWaiters = new Map();    // tabId → [fn]
 
 const bad = (status, error) => Object.assign(new Error(error), { status });
 const sess = chrome.storage.session;
-const ts = (id) => { if (!tabState.has(id)) tabState.set(id, { refs: new Map(), byNode: new Map(), next: 1, console: [], network: [], reqs: new Map() }); return tabState.get(id); };
+const ts = (id) => { if (!tabState.has(id)) tabState.set(id, { refs: new Map(), byNode: new Map(), next: 1, console: [], network: [], reqs: new Map(), pending: new Set() }); return tabState.get(id); };
 const ring = (a, x) => { a.push(x); if (a.length > RING) a.splice(0, a.length - RING); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const okUrl = (u) => /^https?:\/\//i.test(u || '');
@@ -66,7 +66,8 @@ chrome.debugger.onEvent.addListener((src, method, p) => {
   const s = ts(id);
   if (method === 'Runtime.consoleAPICalled') ring(s.console, { ts: Date.now(), level: p.type, text: p.args.map((a) => a.value ?? a.description ?? '').join(' ').slice(0, 1000) });
   else if (method === 'Runtime.exceptionThrown') ring(s.console, { ts: Date.now(), level: 'error', text: (p.exceptionDetails.exception?.description || p.exceptionDetails.text || '').slice(0, 1000) });
-  else if (method === 'Network.requestWillBeSent') { const e = { ts: Date.now(), method: p.request.method, url: p.request.url.slice(0, 500), type: (p.type || '').toLowerCase(), status: null, requestHeaders: mask(p.request.headers) }; s.reqs.set(p.requestId, e); ring(s.network, e); }
+  else if (method === 'Network.requestWillBeSent') { const e = { ts: Date.now(), method: p.request.method, url: p.request.url.slice(0, 500), type: (p.type || '').toLowerCase(), status: null, requestHeaders: mask(p.request.headers) }; s.reqs.set(p.requestId, e); s.pending.add(p.requestId); ring(s.network, e); }
+  else if (method === 'Network.loadingFinished' || method === 'Network.loadingFailed') s.pending.delete(p.requestId);
   else if (method === 'Network.responseReceived') { const e = s.reqs.get(p.requestId); if (e) e.status = p.response.status; }
   else if (method === 'Page.loadEventFired') (loadWaiters.get(id) || []).splice(0).forEach((f) => f());
 });
@@ -109,6 +110,26 @@ const callOn = async (id, node, fn) => {
   const { object } = await cmd(id, 'DOM.resolveNode', { backendNodeId: node });
   return cmd(id, 'Runtime.callFunctionOn', { objectId: object.objectId, functionDeclaration: fn, returnByValue: true });
 };
+
+// FT-136 · Espera tras una acción, como settle() de cdp.js: red en reposo (~400 ms sin peticiones vivas) y DOM estable (~300 ms),
+// con tope (3 s). Nunca falla: devuelve { networkIdle, domStable, waitedMs }.
+async function settle(id, timeout = 3000) {
+  const t0 = Date.now(), s = ts(id);
+  await sleep(120);
+  let quiet = Date.now();
+  while (Date.now() - t0 < timeout) {
+    if (s.pending.size) quiet = Date.now(); else if (Date.now() - quiet >= 400) break;
+    await sleep(60);
+  }
+  const networkIdle = !s.pending.size;
+  let domStable = true;
+  try {
+    const cap = Math.max(300, timeout - (Date.now() - t0));
+    domStable = await evalIn(id, `new Promise((res)=>{let t;const done=(v)=>{mo.disconnect();clearTimeout(t);clearTimeout(c);res(v)};const mo=new MutationObserver(()=>{clearTimeout(t);t=setTimeout(()=>done(true),300)});mo.observe(document,{subtree:true,childList:true,attributes:true,characterData:true});t=setTimeout(()=>done(true),300);const c=setTimeout(()=>done(false),${cap})})`);
+  } catch { domStable = true; } // el documento cambió durante la espera
+  return { networkIdle, domStable, waitedMs: Date.now() - t0 };
+}
+const navS = async (id) => ({ ...(await nav(id)), settle: await settle(id) });
 
 // ───────── operaciones del contrato ─────────
 const ops = {
@@ -169,8 +190,7 @@ const ops = {
         for (let i = 1; i <= n; i++) { await mouse(id, 'mousePressed', c.x, c.y, { clickCount: i }); await mouse(id, 'mouseReleased', c.x, c.y, { clickCount: i }); }
       }
     }
-    await sleep(150);
-    return { ok: true, via, ...(await nav(id)) };
+    return { ok: true, via, ...(await navS(id)) };
   },
   async type({ ref, text = '', clear = false, submit = false, key } = {}) {
     const id = cur();
@@ -182,7 +202,19 @@ const ops = {
     if (text) await cmd(id, 'Input.insertText', { text });
     if (key) await press(id, key);
     if (submit) await press(id, 'Enter');
-    return { ok: true, ...(await nav(id)) };
+    return { ok: true, ...(await navS(id)) };
+  },
+  // FT-136 · como cdp.js: DOM.setFileInputFiles sobre un <input type=file> (dispara input/change). `files`: rutas absolutas ya validadas por AgentOffice.
+  async upload({ ref, files = [] } = {}) {
+    if (!ref) throw bad(400, 'falta ref del campo de fichero');
+    if (!files.length) throw bad(400, 'faltan ficheros');
+    const id = cur(); const node = ts(id).refs.get(ref);
+    if (node == null) throw bad(404, `ref ${ref} desconocida (haz un snapshot nuevo)`);
+    const k = (await callOn(id, node, 'function(){ return { type: this.tagName === "INPUT" ? this.type : "", multiple: !!this.multiple }; }')).result?.value;
+    if (k?.type !== 'file') throw bad(400, `${ref} no es un <input type=file>`);
+    if (files.length > 1 && !k.multiple) throw bad(400, 'el campo no admite varios ficheros');
+    await cmd(id, 'DOM.setFileInputFiles', { files, backendNodeId: node });
+    return { ok: true, files: files.map((f) => String(f).split(/[\\/]/).pop()), ...(await navS(id)) };
   },
   async box(a = {}) {
     const id = cur(); const node = ts(id).refs.get(a.ref);
@@ -195,17 +227,22 @@ const ops = {
     if (a.ref || a.x != null) ({ x, y } = await center(id, a));
     else { const v = await evalIn(id, '({w:innerWidth,h:innerHeight})'); x = v.w / 2; y = v.h / 2; }
     await cmd(id, 'Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: Number(a.dx || 0), deltaY: Number(a.dy || 0) });
-    await sleep(100);
+    await settle(id, 1500); // contenido perezoso
     return { ok: true, ...(await evalIn(id, '({scrollX:Math.round(scrollX),scrollY:Math.round(scrollY)})')) };
   },
-  async screenshot({ format = 'png', fullPage = false } = {}) {
-    const id = cur(); const f = format === 'jpeg' ? 'jpeg' : 'png';
+  // FT-136 · detail:'low' → JPEG q50 de ≤800 px; region:{x,y,w,h} (px CSS del viewport) → zoom (hasta ×2). Devuelve scale/originX/originY como cdp.js.
+  async screenshot({ format = 'png', fullPage = false, detail, region, maxWidth } = {}) {
+    const id = cur(); const low = detail === 'low';
     const m = await cmd(id, 'Page.getLayoutMetrics');
     const vp = m.cssVisualViewport, cs = m.cssContentSize;
-    const w = fullPage ? cs.width : vp.clientWidth, h = fullPage ? cs.height : vp.clientHeight;
-    const scale = Math.min(1, MAX_W / w);
-    const r = await cmd(id, 'Page.captureScreenshot', { format: f, captureBeyondViewport: !!fullPage, clip: { x: fullPage ? 0 : vp.pageX, y: fullPage ? 0 : vp.pageY, width: w, height: h, scale } });
-    return { data: r.data, format: f, width: Math.round(w * scale), height: Math.round(h * scale), tabId: String(id) };
+    const R = !fullPage && region && Number(region.w) > 0 && Number(region.h) > 0 ? { x: Number(region.x) || 0, y: Number(region.y) || 0, w: Number(region.w), h: Number(region.h) } : null;
+    const w = R ? R.w : fullPage ? cs.width : vp.clientWidth, h = R ? R.h : fullPage ? cs.height : vp.clientHeight;
+    const cap = Math.min(MAX_W, Number(maxWidth) || (low ? 800 : MAX_W));
+    const scale = R ? Math.min(2, cap / w) : Math.min(1, cap / w);
+    const f = low || format === 'jpeg' || format === 'jpg' ? 'jpeg' : 'png';
+    const ox = R ? R.x : 0, oy = R ? R.y : 0;
+    const r = await cmd(id, 'Page.captureScreenshot', { format: f, quality: f === 'jpeg' ? (low ? 50 : 70) : undefined, captureBeyondViewport: !!fullPage, clip: { x: fullPage ? 0 : vp.pageX + ox, y: fullPage ? 0 : vp.pageY + oy, width: w, height: h, scale } });
+    return { data: r.data, format: f, width: Math.round(w * scale), height: Math.round(h * scale), tabId: String(id), scale, originX: ox, originY: oy };
   },
   async evaluate({ expression } = {}) { if (!expression) throw bad(400, 'falta expression'); return { value: await evalIn(cur(), expression) }; },
   async console({ limit = 50, clear = false } = {}) { const id = cur(); const s = ts(id); const entries = s.console.slice(-limit); if (clear) s.console.length = 0; return { tabId: String(id), entries }; },
