@@ -2,6 +2,9 @@
 // Tarjetas HTML semitransparentes dentro de la capa de etiquetas del Office (mismas coordenadas que las burbujas). El hueco se calcula con
 // la proyección del volumen de la planta (office.floorHull()) y los obstáculos vivos (burbujas, píldoras, pizarra: office.obstacles()),
 // así que nunca pisan el suelo. Si el hueco no da (ventana estrecha/móvil) se pliegan en una barra lateral desplegable.
+// FT-138: los paneles se ven ENTEROS, sin scroll interno: cada uno mide lo que su contenido necesita. Si una columna no cabe en el alto del
+// lienzo, los paneles se apilan y se salen por abajo, y la vista de la oficina (el contenedor del lienzo) hace scroll como página.
+// Plegar/desplegar por la cabecera (recordado en localStorage por panel) deja solo la cabecera con un resumen corto.
 // Los datos salen del estado SSE (S) y de `inboxItems` (FT-124): aquí no hay polling ni lógica duplicada.
 
 const MIN_W = 170, MAX_W = 268, GAP = 8;
@@ -26,7 +29,7 @@ const PANELS = [
 ];
 
 export function createOfficePanels({ office, S, projectId, esc, inboxItems, inboxKind, openAgent, openTask, openInbox, quota, api }) {
-  const root = office.labelRoot;
+  const root = office.labelRoot.parentElement || office.labelRoot; // FT-138: fuera de labelRoot (overflow:hidden) para poder salirse por abajo
   const box = document.createElement('div');
   box.className = 'op-root';
   const toggle = document.createElement('button');
@@ -34,12 +37,11 @@ export function createOfficePanels({ office, S, projectId, esc, inboxItems, inbo
   const style = document.createElement('style');
   style.textContent = `
     .op-root{position:absolute;inset:0;pointer-events:none;font-family:system-ui,sans-serif}
-    .o3d-labels.building .op-root{display:none}
     .op{position:absolute;box-sizing:border-box;display:flex;flex-direction:column;pointer-events:auto;color:#e5e7eb;font-size:11.5px;line-height:1.35;
-      background:rgba(17,24,39,.78);border:1px solid rgba(148,163,184,.28);border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.25);backdrop-filter:blur(3px);overflow:hidden}
+      background:rgba(17,24,39,.78);border:1px solid rgba(148,163,184,.28);border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.25);backdrop-filter:blur(3px)}
     .op-h{display:flex;align-items:center;gap:6px;padding:5px 9px;font-weight:700;font-size:12px;color:#f8fafc;cursor:pointer;user-select:none;flex:none}
     .op-h span{margin-left:auto;color:#94a3b8;font-weight:400}
-    .op-b{padding:0 9px 7px;overflow:auto;min-height:0}
+    .op-b{padding:0 9px 7px}
     .op.col .op-b{display:none}
     .op-r{display:flex;gap:6px;align-items:baseline;padding:2px 0;border-top:1px solid rgba(148,163,184,.12)}
     .op-r:first-child{border-top:0}
@@ -150,18 +152,18 @@ export function createOfficePanels({ office, S, projectId, esc, inboxItems, inbo
     return `<div class="op-r"><span>Hoy en el proyecto</span><span class="op-t"><b>${money(cost)}</b></span></div>${rows}${warn}`;
   }
   const BUILD = {
-    team: [teamHtml, (st) => `${st.agents.filter((a) => (st.projects.find((x) => x.id === projectId())?.team || []).includes(a.id) && a.status === 'working').length} activos`],
-    feed: [feedHtml, () => ''],
-    progress: [progressHtml, () => ''],
+    team: [teamHtml, (st) => { const ag = st.agents.filter((a) => (st.projects.find((x) => x.id === projectId())?.team || []).includes(a.id)); return `${ag.length} · ${ag.filter((a) => a.status === 'working').length} trabajando`; }],
+    feed: [feedHtml, () => (feed.filter((e) => EV_FEED[e.type]).length ? `${Math.min(8, feed.filter((e) => EV_FEED[e.type]).length)} recientes` : '')],
+    progress: [progressHtml, (st) => { const ts = st.tasks.filter((t) => t.projectId === projectId() && t.status !== 'discarded'); return ts.length ? `${ts.filter((t) => t.status === 'done').length}/${ts.length} hechas` : ''; }],
     mine: [mineHtml, () => String(mineItems().length || '')],
-    usage: [usageHtml, () => ''],
+    usage: [usageHtml, (st) => `hoy ${money(st.tasks.filter((t) => t.projectId === projectId() && (t.updatedAt || 0) >= today0()).reduce((n, t) => n + (t.costUsd || 0), 0))}`],
   };
 
   // ── Pintado ────────────────────────────────────────────────────────────────
   function update() {
     const st = S();
     enabled = st.settings?.officePanels !== false && !!projectId();
-    box.style.display = enabled ? '' : 'none';
+    box.style.display = enabled && office.mode !== 'building' ? '' : 'none';
     if (!enabled) return;
     if (feedPid !== projectId()) { feedPid = projectId(); feed.length = 0; if (feedPid) api('GET', `/api/events?projectId=${encodeURIComponent(feedPid)}&limit=300`).then((r) => { if (feedPid === projectId() && Array.isArray(r)) { for (const e of r) if (!feed.some((x) => x.id === e.id)) feed.push(e); feed.sort((a, b) => a.ts - b.ts); update(); } }).catch(() => {}); }
     for (const p of PANELS) {
@@ -194,26 +196,42 @@ export function createOfficePanels({ office, S, projectId, esc, inboxItems, inbo
     return { lo, hi };
   }
   function layout() {
-    if (!enabled || !office.labelRoot || office.mode === 'building') return;
+    if (!enabled || !office.labelRoot) return;
+    if (office.mode === 'building') { box.style.display = 'none'; return; }
+    box.style.display = '';
     const W = office.cv.clientWidth, H = office.cv.clientHeight;
     const hull = office.floorHull(), obs = office.obstacles();
     sideMode = W < 760 || !hull.length;
-    const fit = !sideMode && placeAll(W, H, hull, obs);
+    const fit = !sideMode && (placeAll(W, H, hull, obs) || placeAll(W, H, hull, obs, true));
     sideMode = !fit;
     box.classList.toggle('side', sideMode);
     toggle.hidden = !sideMode;
-    if (sideMode) { for (const x of els.values()) { x.el.style.cssText = ''; } return; }
+    if (sideMode) { for (const x of els.values()) { x.el.style.cssText = ''; } const wr = office.cv.parentElement; if (wr) wr.style.overflowY = ''; return; }
   }
   let why = ''; // por qué no cupo (QA: aoOffice.panels.why())
   const fail = (msg) => { why = msg; return false; };
-  function placeAll(W, H, hull, obs) {
+  function placeAll(W, H, hull, obs, forceFlow) {
     why = '';
     const spots = [];
     for (const col of ['l', 'r']) {
       const list = PANELS.filter((p) => p.col === col), placed = [];
       // 1) alturas con anchura provisional; 2) top → arriba, bottom → abajo, mid → centrado entre ambos
-      for (const p of list) { const x = els.get(p.id); x.el.style.cssText = `width:${MAX_W}px;max-height:${Math.round(H * 0.4)}px;visibility:hidden`; }
+      for (const p of list) { const x = els.get(p.id); x.el.style.cssText = `width:${MAX_W}px;visibility:hidden`; }
       let topY = GAP, botY = H - GAP;
+      const flow = list.reduce((n, p) => n + els.get(p.id).el.offsetHeight + GAP, GAP) > H || forceFlow; // FT-138: no caben en el alto → se apilan y la vista hace scroll
+      if (flow) for (const p of list) { // orden de lectura: arriba, centro, abajo
+        const x = els.get(p.id);
+        const freeAt = (yy, hh) => { const q = extent(hull, obs, yy, yy + hh); return col === 'l' ? q.lo - GAP * 2 : W - q.hi - GAP * 2; };
+        let y = topY, h = x.el.offsetHeight, w = MAX_W;
+        for (; y < H + 3000; y += 8) { // baja hasta el primer hueco con ancho suficiente (por debajo del suelo siempre lo hay)
+          w = Math.min(MAX_W, freeAt(y, h));
+          if (w < MIN_W) continue;
+          x.el.style.width = w + 'px'; h = x.el.offsetHeight;
+          if (freeAt(y, h) >= w) break;
+        }
+        spots.push({ x, col, y, w }); topY = y + h + GAP;
+      }
+      if (flow) continue;
       const order = ['top', 'bottom', 'mid'];
       for (const at of order) for (const p of list.filter((q) => q.at === at)) {
         const x = els.get(p.id);
@@ -237,6 +255,8 @@ export function createOfficePanels({ office, S, projectId, esc, inboxItems, inbo
         spots.push({ x, col, y, w });
       }
     }
+    let low = 0; for (const s of spots) low = Math.max(low, s.y + s.x.el.offsetHeight + GAP);
+    const wrap = office.cv.parentElement; if (wrap) wrap.style.overflowY = low > H + 1 ? 'auto' : ''; // FT-138: lo que se sale por abajo se alcanza con scroll de la vista
     for (const s of spots) { const st = s.x.el.style; st.visibility = ''; st.top = s.y + 'px'; st.bottom = 'auto'; st.left = s.col === 'l' ? GAP + 'px' : 'auto'; st.right = s.col === 'r' ? GAP + 'px' : 'auto'; st.width = s.w + 'px'; }
     return true;
   }

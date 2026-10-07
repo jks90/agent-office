@@ -792,6 +792,8 @@ El hueco que deja el diorama a izquierda y derecha se aprovecha con tarjetas HTM
 
 Colocación: se proyecta el volumen de la planta (`office.floorHull()`) y los obstáculos vivos (`office.obstacles()`); cada tarjeta ocupa el ancho libre de su franja (170–268 px). Si alguna no cabe o la ventana mide < 760 px, todas pasan a una barra lateral desplegable («☰ Paneles»). Cada panel se pliega con su cabecera (se recuerda en `localStorage` `ao:opCollapsed`). Se desactivan en Ajustes (`settings.officePanels`, por defecto on) y no se muestran en la vista Edificio. «Coste de hoy» suma las tareas tocadas desde las 00:00 (aproximación). `aoOffice.panels.why()` dice por qué no cupieron.
 
+**Paneles enteros, sin scroll (FT-138).** Cada panel crece hasta su contenido completo (nunca `overflow:auto`): todos los agentes del equipo y todas las épicas se ven siempre, sin compactar ni cambiar la fuente. Si una columna no cabe en el alto del lienzo, los paneles se apilan hacia abajo (buscando el primer hueco sin pisar el suelo) y la vista de la oficina hace scroll como página. Cada panel se pliega/despliega por su cabecera (recordado por panel en `localStorage`, `ao:opCollapsed`); plegado muestra solo la cabecera con un resumen corto (`👥 8 · 1 trabajando`, `🗂 6/16 hechas`, `⚡ hoy 2.91 $`). Check: `scripts/office-panels-e2e.mjs` (8 agentes y 10 épicas a 1920×1080 y 1366×768).
+
 También (FT-125): la burbuja de la oficina muestra el código `FT-n` de la tarea (antes podía salir su id interno) y un agente libre pone su nombre: `☕ Marta libre`.
 
 Prueba: `node scripts/office-panels-e2e.mjs [carpeta]` (1920×1080, 1366×768 y 600 px; guarda capturas).
