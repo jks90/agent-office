@@ -1,0 +1,238 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="title desc"><title id="title">FT-146 · Oficina v3 · cenital</title><desc id="desc">Diseño de nueve zonas; cinco agentes de ejemplo en estados distintos y dos personajes decorativos rotulados AMBIENTE. Mesa Tú prioritaria, PO vacío y paneles fuera del suelo.</desc><defs><pattern id="carpet" width="9" height="9" patternUnits="userSpaceOnUse"><path d="M0 9V0H9" fill="none" stroke="#417EA6" stroke-opacity=".09"/></pattern><pattern id="tile" width="22" height="22" patternUnits="userSpaceOnUse"><path d="M0 22V0H22" fill="none" stroke="#B07B25" stroke-opacity=".18"/></pattern><pattern id="wood" width="28" height="12" patternUnits="userSpaceOnUse"><path d="M0 0H28M0 12H28M14 0V12" stroke="#8A6A47" stroke-opacity=".12"/></pattern><pattern id="ambient" width="6" height="6" patternUnits="userSpaceOnUse"><path d="M0 6L6 0" stroke="#52657A" stroke-width="2"/></pattern></defs><g font-family="DejaVu Sans,Arial,sans-serif">
+<rect x="0" y="0" width="1920" height="1080" rx="0" fill="#101827" stroke="none" />
+<rect x="28" y="28" width="1864" height="94" rx="18" fill="#1C293C" stroke="#53677D" />
+<text x="54" y="69" font-size="30" fill="#F3F6FA" font-weight="700">FT-146 / OFICINA v3</text>
+<text x="54" y="101" font-size="18" fill="#B8C6D7" >Diseño, no implementación · flowtest · equipo de ejemplo: 5 agentes + 2 personajes de ambiente</text>
+<text x="1848" y="69" font-size="22" fill="#F3F6FA" text-anchor="end" font-weight="700">PLANTA CENITAL</text>
+<text x="1848" y="101" font-size="17" fill="#B8C6D7" text-anchor="end">Contrato team-6 · 14 × 13 u · 1920 × 1080</text>
+<rect x="32" y="152" width="268" height="390" rx="14" fill="#1C293C" stroke="#53677D" />
+<text x="50" y="182" font-size="19" fill="#F3F6FA" font-weight="700">EQUIPO · FIXTURE</text>
+<circle cx="54" cy="207" r="6" fill="#2F80ED"/>
+<text x="70" y="212" font-size="18" fill="#F3F6FA" font-weight="700">Ana · front</text>
+<text x="70" y="236" font-size="14" fill="#2F80ED" >TRABAJANDO</text>
+<circle cx="54" cy="271" r="6" fill="#EF8F35"/>
+<text x="70" y="276" font-size="18" fill="#F3F6FA" font-weight="700">Bruno · qa</text>
+<text x="70" y="300" font-size="14" fill="#EF8F35" >EN REVISIÓN</text>
+<circle cx="54" cy="335" r="6" fill="#F6C744"/>
+<text x="70" y="340" font-size="18" fill="#F3F6FA" font-weight="700">Carla · back</text>
+<text x="70" y="364" font-size="14" fill="#F6C744" >EN COLA</text>
+<circle cx="54" cy="399" r="6" fill="#D9A21B"/>
+<text x="70" y="404" font-size="18" fill="#F3F6FA" font-weight="700">Diego · docs</text>
+<text x="70" y="428" font-size="14" fill="#D9A21B" >BLOQUEADO</text>
+<circle cx="54" cy="463" r="6" fill="#E33B3B"/>
+<text x="70" y="468" font-size="18" fill="#F3F6FA" font-weight="700">Elena · back</text>
+<text x="70" y="492" font-size="14" fill="#E33B3B" >FALLO</text>
+<rect x="32" y="566" width="268" height="213" rx="14" fill="#1C293C" stroke="#53677D" />
+<text x="50" y="596" font-size="19" fill="#F3F6FA" font-weight="700">ACTIVIDAD · FIXTURE</text>
+<text x="50" y="625" font-size="15" fill="#CBD6E4" >DEMO-1 · Ana edita</text>
+<text x="50" y="653" font-size="15" fill="#CBD6E4" >DEMO-2 · Bruno revisa</text>
+<text x="50" y="681" font-size="15" fill="#CBD6E4" >DEMO-3 · Carla espera</text>
+<text x="50" y="709" font-size="15" fill="#CBD6E4" >DEMO-4 · Diego bloqueado</text>
+<text x="50" y="737" font-size="15" fill="#CBD6E4" >DEMO-5 · Elena falló</text>
+<rect x="32" y="803" width="268" height="113" rx="14" fill="#1C293C" stroke="#53677D" />
+<text x="50" y="833" font-size="19" fill="#F3F6FA" font-weight="700">CONSERVAR</text>
+<text x="50" y="858" font-size="15" fill="#CBD6E4" >Burbujas + ficha al clic</text>
+<text x="50" y="884" font-size="15" fill="#CBD6E4" >Márgenes sin invadir suelo</text>
+<rect x="1620" y="152" width="268" height="186" rx="14" fill="#1C293C" stroke="#53677D" />
+<text x="1638" y="182" font-size="19" fill="#F3F6FA" font-weight="700">PROGRESO · FIXTURE</text>
+<text x="1638" y="212" font-size="16" fill="#CBD6E4" >Kanban siempre visible</text>
+<text x="1638" y="244" font-size="16" fill="#CBD6E4" >No inferir trabajo por rol</text>
+<text x="1638" y="276" font-size="16" fill="#CBD6E4" >Sin actividad ficticia</text>
+<rect x="1620" y="362" width="268" height="159" rx="14" fill="#1C293C" stroke="#53677D" />
+<text x="1638" y="392" font-size="19" fill="#F3F6FA" font-weight="700">PARA TI · FIXTURE</text>
+<text x="1638" y="423" font-size="24" fill="#FFF0BF" font-weight="700">TÚ · 2 AVISOS</text>
+<text x="1638" y="456" font-size="16" fill="#CBD6E4" >Pregunta + revisión</text>
+<text x="1638" y="489" font-size="15" fill="#CBD6E4" >Mismo inbox de FT-124</text>
+<rect x="1620" y="545" width="268" height="200" rx="14" fill="#1C293C" stroke="#53677D" />
+<text x="1638" y="575" font-size="19" fill="#F3F6FA" font-weight="700">AMBIENTE ≠ AGENTES</text>
+<text x="1638" y="603" font-size="18" fill="#CDD8E3" font-weight="700">◇ VISITA</text>
+<text x="1638" y="637" font-size="18" fill="#CDD8E3" font-weight="700">◇ LIMPIEZA</text>
+<text x="1638" y="680" font-size="15" fill="#CBD6E4" >Gris, rayas y rótulo fijo</text>
+<text x="1638" y="711" font-size="15" fill="#CBD6E4" >No cuentan como equipo</text>
+<rect x="1620" y="769" width="268" height="147" rx="14" fill="#1C293C" stroke="#53677D" />
+<text x="1638" y="799" font-size="19" fill="#F3F6FA" font-weight="700">CONSUMO Y CUOTA</text>
+<text x="1638" y="831" font-size="16" fill="#CBD6E4" >Panel existente FT-138</text>
+<text x="1638" y="863" font-size="14" fill="#CBD6E4" >Datos reales al implementar</text>
+<text x="1638" y="891" font-size="14" fill="#CBD6E4" >Aquí: solo una maqueta</text>
+<polygon points="435.0,166.0 1457.0,166.0 1457.0,868.0 435.0,868.0" fill="#E8E4DC" stroke="#53677D" />
+<polygon points="464.2,348.8 858.4,348.8 858.4,651.3 464.2,651.3" fill="#DDECF5" stroke="#417EA6" stroke-width="2"/>
+<polygon points="464.2,348.6 858.4,348.6 858.4,651.0 464.2,651.0" fill="url(#carpet)" stroke="none" />
+<polygon points="931.4,348.8 1179.6,348.8 1179.6,651.3 931.4,651.3" fill="#DDECF5" stroke="#417EA6" stroke-width="2"/>
+<polygon points="931.4,348.6 1179.6,348.6 1179.6,651.0 931.4,651.0" fill="url(#carpet)" stroke="none" />
+<polygon points="1252.6,348.8 1427.8,348.8 1427.8,651.3 1252.6,651.3" fill="#F7E8C8" stroke="#B07B25" stroke-width="2"/>
+<polygon points="1252.6,348.6 1427.8,348.6 1427.8,651.0 1252.6,651.0" fill="url(#tile)" stroke="none" />
+<polygon points="464.2,186.8 858.4,186.8 858.4,294.9 464.2,294.9" fill="#DDECF5" stroke="#417EA6" stroke-width="2"/>
+<polygon points="464.2,186.6 858.4,186.6 858.4,294.6 464.2,294.6" fill="url(#carpet)" stroke="none" />
+<polygon points="931.4,186.8 1128.5,186.8 1128.5,294.9 931.4,294.9" fill="#ECE2F5" stroke="#8C68BD" stroke-width="2"/>
+<polygon points="931.4,186.6 1128.5,186.6 1128.5,294.6 931.4,294.6" fill="url(#wood)" stroke="none" />
+<polygon points="1201.5,186.8 1427.8,186.8 1427.8,294.9 1201.5,294.9" fill="#FFF0BF" stroke="#B38A27" stroke-width="2"/>
+<polygon points="1201.5,186.6 1427.8,186.6 1427.8,294.6 1201.5,294.6" fill="url(#wood)" stroke="none" />
+<polygon points="1201.5,186.1 1427.8,186.1 1427.8,294.1 1201.5,294.1" fill="none" stroke="#B38A27" stroke-width="5"/>
+<polygon points="464.2,705.3 734.3,705.3 734.3,845.7 464.2,845.7" fill="#DDECE2" stroke="#43836B" stroke-width="2"/>
+<polygon points="464.2,705.0 734.3,705.0 734.3,845.4 464.2,845.4" fill="url(#wood)" stroke="none" />
+<polygon points="807.3,705.3 1106.6,705.3 1106.6,845.7 807.3,845.7" fill="#DDECE2" stroke="#43836B" stroke-width="2"/>
+<polygon points="807.3,705.0 1106.6,705.0 1106.6,845.4 807.3,845.4" fill="url(#wood)" stroke="none" />
+<polygon points="1179.6,705.3 1427.8,705.3 1427.8,845.7 1179.6,845.7" fill="#F7E8C8" stroke="#B07B25" stroke-width="2"/>
+<polygon points="1179.6,705.0 1427.8,705.0 1427.8,845.4 1179.6,845.4" fill="url(#tile)" stroke="none" />
+<polyline points="1369.4,866.0 1369.4,793.1 1369.4,677.0 894.9,677.0 894.9,320.6 818.3,320.6 818.3,266.6" fill="none" stroke="#8896A5" stroke-width="2" stroke-dasharray="6 8" opacity=".6"/>
+<polyline points="1369.4,866.0 1369.4,793.1 1369.4,677.0 894.9,677.0 894.9,320.6 1216.1,320.6 1216.1,677.0 1369.4,677.0 1369.4,866.0" fill="none" stroke="#8896A5" stroke-width="2" stroke-dasharray="6 8" opacity=".6"/>
+<polygon points="602.9,193.7 632.1,193.7 632.1,215.3 602.9,215.3" fill="#8D9FAD" stroke="#8A705A" />
+<polygon points="582.8,219.4 739.8,219.4 739.8,254.4 582.8,254.4" fill="#D7B18A" stroke="#8A705A" />
+<polygon points="602.9,258.5 632.1,258.5 632.1,280.1 602.9,280.1" fill="#8D9FAD" stroke="#8A705A" />
+<polygon points="690.5,193.7 719.7,193.7 719.7,215.3 690.5,215.3" fill="#8D9FAD" stroke="#8A705A" />
+<polygon points="506.2,366.5 597.4,366.5 597.4,398.9 506.2,398.9" fill="#D7B18A" stroke="#8A705A" />
+<polygon points="530.4,373.0 573.2,373.0 573.2,379.5 530.4,379.5" fill="#38576B" stroke="#254354" />
+<path d="M542.8 389.71999999999997h18" stroke="#F7F3E7" stroke-width="4"/>
+<polygon points="690.5,258.5 719.7,258.5 719.7,280.1 690.5,280.1" fill="#8D9FAD" stroke="#8A705A" />
+<polygon points="506.2,452.9 597.4,452.9 597.4,485.3 506.2,485.3" fill="#D7B18A" stroke="#8A705A" />
+<polygon points="530.4,459.4 573.2,459.4 573.2,465.9 530.4,465.9" fill="#38576B" stroke="#254354" />
+<path d="M542.8 476.12h18" stroke="#F7F3E7" stroke-width="4"/>
+<polygon points="787.2,291.4 849.3,291.4 849.3,295.8 787.2,295.8" fill="#687B8F" stroke="#8A705A" />
+<polygon points="725.2,366.5 816.4,366.5 816.4,398.9 725.2,398.9" fill="#D7B18A" stroke="#8A705A" />
+<polygon points="749.4,373.0 792.2,373.0 792.2,379.5 749.4,379.5" fill="#38576B" stroke="#254354" />
+<path d="M761.8 389.71999999999997h18" stroke="#F7F3E7" stroke-width="4"/>
+<polygon points="506.2,539.3 597.4,539.3 597.4,571.7 506.2,571.7" fill="#D7B18A" stroke="#8A705A" />
+<polygon points="530.4,545.8 573.2,545.8 573.2,552.3 530.4,552.3" fill="#38576B" stroke="#254354" />
+<path d="M542.8 562.52h18" stroke="#F7F3E7" stroke-width="4"/>
+<polygon points="978.9,215.3 1081.0,215.3 1081.0,247.7 978.9,247.7" fill="#D7B18A" stroke="#8A705A" />
+<polygon points="1005.9,221.8 1054.0,221.8 1054.0,228.3 1005.9,228.3" fill="#38576B" stroke="#254354" />
+<path d="M1020.95 238.51999999999998h18" stroke="#F7F3E7" stroke-width="4"/>
+<polygon points="1013.5,251.8 1046.4,251.8 1046.4,276.1 1013.5,276.1" fill="#8D9FAD" stroke="#8A705A" />
+<polygon points="725.2,452.9 816.4,452.9 816.4,485.3 725.2,485.3" fill="#D7B18A" stroke="#8A705A" />
+<polygon points="749.4,459.4 792.2,459.4 792.2,465.9 749.4,465.9" fill="#38576B" stroke="#254354" />
+<path d="M761.8 476.12h18" stroke="#F7F3E7" stroke-width="4"/>
+<polygon points="944.2,366.5 1013.5,366.5 1013.5,398.9 944.2,398.9" fill="#D7B18A" stroke="#8A705A" />
+<polygon points="962.6,373.0 995.1,373.0 995.1,379.5 962.6,379.5" fill="#38576B" stroke="#254354" />
+<path d="M969.85 389.71999999999997h18" stroke="#F7F3E7" stroke-width="4"/>
+<polygon points="725.2,539.3 816.4,539.3 816.4,571.7 725.2,571.7" fill="#D7B18A" stroke="#8A705A" />
+<polygon points="749.4,545.8 792.2,545.8 792.2,552.3 749.4,552.3" fill="#38576B" stroke="#254354" />
+<path d="M761.8 562.52h18" stroke="#F7F3E7" stroke-width="4"/>
+<polygon points="471.5,721.6 581.0,721.6 581.0,756.6 471.5,756.6" fill="#D7B18A" stroke="#8A705A" />
+<polygon points="944.2,452.9 1013.5,452.9 1013.5,485.3 944.2,485.3" fill="#D7B18A" stroke="#8A705A" />
+<polygon points="962.6,459.4 995.1,459.4 995.1,465.9 962.6,465.9" fill="#38576B" stroke="#254354" />
+<path d="M969.85 476.12h18" stroke="#F7F3E7" stroke-width="4"/>
+<polygon points="1247.1,213.9 1382.2,213.9 1382.2,249.1 1247.1,249.1" fill="#D7B18A" stroke="#8A705A" />
+<polygon points="1282.9,221.8 1346.4,221.8 1346.4,228.3 1282.9,228.3" fill="#38576B" stroke="#254354" />
+<path d="M1305.65 238.51999999999998h18" stroke="#F7F3E7" stroke-width="4"/>
+<polygon points="1093.8,366.5 1163.2,366.5 1163.2,398.9 1093.8,398.9" fill="#D7B18A" stroke="#8A705A" />
+<polygon points="1112.2,373.0 1144.8,373.0 1144.8,379.5 1112.2,379.5" fill="#38576B" stroke="#254354" />
+<path d="M1119.5 389.71999999999997h18" stroke="#F7F3E7" stroke-width="4"/>
+<polygon points="599.3,728.3 679.5,728.3 679.5,760.7 599.3,760.7" fill="#D7B18A" stroke="#8A705A" />
+<polygon points="1298.2,254.4 1331.1,254.4 1331.1,278.8 1298.2,278.8" fill="#8D9FAD" stroke="#8A705A" />
+<polygon points="624.8,763.4 654.0,763.4 654.0,785.0 624.8,785.0" fill="#8D9FAD" stroke="#8A705A" />
+<polygon points="528.1,797.2 692.3,797.2 692.3,832.3 528.1,832.3" fill="#709C94" stroke="#8A705A" />
+<polygon points="944.2,539.3 1013.5,539.3 1013.5,571.7 944.2,571.7" fill="#D7B18A" stroke="#8A705A" />
+<polygon points="962.6,545.8 995.1,545.8 995.1,552.3 962.6,552.3" fill="#38576B" stroke="#254354" />
+<path d="M969.85 562.52h18" stroke="#F7F3E7" stroke-width="4"/>
+<polygon points="1093.8,452.9 1163.2,452.9 1163.2,485.3 1093.8,485.3" fill="#D7B18A" stroke="#8A705A" />
+<polygon points="1112.2,459.4 1144.8,459.4 1144.8,465.9 1112.2,465.9" fill="#38576B" stroke="#254354" />
+<path d="M1119.5 476.12h18" stroke="#F7F3E7" stroke-width="4"/>
+<polygon points="1265.4,352.5 1415.0,352.5 1415.0,358.9 1265.4,358.9" fill="#D7B18A" stroke="#8A705A" />
+<rect x="1298.2" y="345.7" width="84" height="24" rx="4" fill="#34485C" stroke="#22374B" />
+<rect x="1303.2" y="349.7" width="16" height="16" rx="1" fill="#82B4E1" stroke="none" />
+<rect x="1323.2" y="349.7" width="16" height="16" rx="1" fill="#68B793" stroke="none" />
+<rect x="1343.2" y="349.7" width="16" height="16" rx="1" fill="#DFA95A" stroke="none" />
+<rect x="1363.2" y="349.7" width="16" height="16" rx="1" fill="#9CBDA4" stroke="none" />
+<polygon points="1093.8,539.3 1163.2,539.3 1163.2,571.7 1093.8,571.7" fill="#D7B18A" stroke="#8A705A" />
+<polygon points="1112.2,545.8 1144.8,545.8 1144.8,552.3 1112.2,552.3" fill="#38576B" stroke="#254354" />
+<path d="M1119.5 562.52h18" stroke="#F7F3E7" stroke-width="4"/>
+<polygon points="836.5,724.3 946.0,724.3 946.0,770.2 836.5,770.2" fill="#D7B18A" stroke="#8A705A" />
+<polygon points="852.9,731.8 929.6,731.8 929.6,761.6 852.9,761.6" fill="#43836B" stroke="#2A6451" />
+<text x="891.25" y="754.2" font-size="12" fill="#FFFFFF" text-anchor="middle">│ ● │</text>
+<polygon points="884.0,797.2 1081.0,797.2 1081.0,832.3 884.0,832.3" fill="#709C94" stroke="#8A705A" />
+<polygon points="1201.5,724.3 1318.3,724.3 1318.3,759.3 1201.5,759.3" fill="#D7B18A" stroke="#8A705A" />
+<polygon points="1329.3,797.2 1409.6,797.2 1409.6,832.3 1329.3,832.3" fill="#D7B18A" stroke="#8A705A" />
+<polygon points="1332.9,863.3 1405.9,863.3 1405.9,868.7 1332.9,868.7" fill="#687B8F" stroke="#8A705A" />
+<polygon points="487.9,724.3 535.4,724.3 535.4,754.0 487.9,754.0" fill="#D7B18A" stroke="#8A705A" />
+<rect x="499.65" y="702.1" width="24" height="28" rx="3" fill="#4F6271" stroke="#334453" />
+<text x="511.65" y="721.1" font-size="14" fill="#F7F3E7" text-anchor="middle">C</text>
+<polygon points="464.2,186.1 858.4,186.1 858.4,294.1 464.2,294.1" fill="none" stroke="#A9DBE2" stroke-width="3" stroke-dasharray="12 6"/>
+<rect x="619.3" y="343.82" width="84" height="26" rx="8" fill="#FAFCF9" stroke="#417EA6" />
+<text x="661.3" y="362.82" font-size="16" fill="#203247" text-anchor="middle" font-weight="700">Trabajo</text>
+<rect x="989.5" y="343.82" width="132" height="26" rx="8" fill="#FAFCF9" stroke="#417EA6" />
+<text x="1055.5" y="362.82" font-size="16" fill="#203247" text-anchor="middle" font-weight="700">Revisión / QA</text>
+<rect x="1266.2" y="316.82" width="148" height="26" rx="8" fill="#FAFCF9" stroke="#B07B25" />
+<text x="1340.2" y="335.82" font-size="16" fill="#203247" text-anchor="middle" font-weight="700">Kanban / espera</text>
+<rect x="611.3" y="181.82" width="100" height="26" rx="8" fill="#FAFCF9" stroke="#417EA6" />
+<text x="661.3" y="200.82" font-size="16" fill="#203247" text-anchor="middle" font-weight="700">Reuniones</text>
+<rect x="963.95" y="181.82" width="132" height="26" rx="8" fill="#FAFCF9" stroke="#8C68BD" />
+<text x="1029.95" y="200.82" font-size="16" fill="#203247" text-anchor="middle" font-weight="700">PO · despacho</text>
+<text x="1029.95" y="285.88" font-size="13" fill="#203247" text-anchor="middle">VACÍO · sin PO en la fixture</text>
+<rect x="1256.65" y="181.82" width="116" height="26" rx="8" fill="#FFF0BF" stroke="#B38A27" />
+<text x="1314.65" y="200.82" font-size="16" fill="#203247" text-anchor="middle" font-weight="700">Tú · avisos</text>
+<rect x="525.25" y="700.22" width="148" height="26" rx="8" fill="#FAFCF9" stroke="#43836B" />
+<text x="599.25" y="719.22" font-size="16" fill="#203247" text-anchor="middle" font-weight="700">Café / descanso</text>
+<rect x="918.95" y="700.22" width="76" height="26" rx="8" fill="#FAFCF9" stroke="#43836B" />
+<text x="956.95" y="719.22" font-size="16" fill="#203247" text-anchor="middle" font-weight="700">Recreo</text>
+<rect x="1213.7" y="700.22" width="180" height="26" rx="8" fill="#FAFCF9" stroke="#B07B25" />
+<text x="1303.7" y="719.22" font-size="16" fill="#203247" text-anchor="middle" font-weight="700">Recepción / entrada</text>
+<rect x="735.8" y="430.4" width="70" height="20" rx="4" fill="#EAF2F7" stroke="#417EA6" stroke-dasharray="3 2"/>
+<text x="770.8" y="444.4" font-size="12" fill="#203247" text-anchor="middle">FRONTEND</text>
+<rect x="560" y="516.8" width="42" height="20" rx="4" fill="#EAF2F7" stroke="#417EA6" stroke-dasharray="3 2"/>
+<text x="581" y="530.8" font-size="12" fill="#203247" text-anchor="middle">DOCS</text>
+<rect x="783.1" y="614" width="63" height="20" rx="4" fill="#EAF2F7" stroke="#417EA6" stroke-dasharray="3 2"/>
+<text x="814.6" y="628" font-size="12" fill="#203247" text-anchor="middle">BACKEND</text>
+<rect x="533.8" y="387.4" width="36" height="34" rx="5" fill="#6D8497" stroke="#415A70" stroke-width="2"/>
+<ellipse cx="551.8" cy="418.4" rx="16" ry="7" fill="#203247" opacity=".18"/>
+<rect x="539.8" y="388.4" width="24" height="28" rx="6" fill="#2F80ED" stroke="#FFFFFF" />
+<circle cx="551.8" cy="377.4" r="12" fill="#E3B692" stroke="#664D42" stroke-width="2"/><path d="M540.8 373.4q11 -16 22 0" fill="#435064"/>
+<circle cx="565.8" cy="399.4" r="7" fill="#2F80ED" stroke="#FFFFFF" stroke-width="2"/>
+<rect x="463.44999999999993" y="426.4" width="176.70000000000002" height="27" rx="7" fill="#FBFCFE" stroke="#2F80ED" stroke-width="2"/>
+<text x="551.8" y="444.4" font-size="12" fill="#203247" text-anchor="middle" font-weight="700">Ana · EDITANDO · DEMO-1</text>
+<ellipse cx="818.25" cy="326.6" rx="16" ry="7" fill="#203247" opacity=".18"/>
+<polygon points="818.3,280.6 828.3,290.6 818.3,300.6 808.3,290.6" fill="#CFD7DF" stroke="#657586" stroke-width="2"/>
+<rect x="807.25" y="299.6" width="22" height="25" rx="3" fill="#CFD7DF" stroke="#657586" />
+<rect x="807.25" y="299.6" width="22" height="25" rx="3" fill="url(#ambient)" stroke="none" />
+<rect x="740.25" y="334.6" width="156" height="27" rx="7" fill="#D4DCE4" stroke="#657586" stroke-dasharray="4 3"/>
+<text x="818.25" y="352.6" font-size="12" fill="#203247" text-anchor="middle" font-weight="700">VISITA · AMBIENTE</text>
+<rect x="533.8" y="560.2" width="36" height="34" rx="5" fill="#6D8497" stroke="#415A70" stroke-width="2"/>
+<ellipse cx="551.8" cy="591.2" rx="16" ry="7" fill="#203247" opacity=".18"/>
+<rect x="539.8" y="561.2" width="24" height="28" rx="6" fill="#E33B3B" stroke="#FFFFFF" />
+<circle cx="551.8" cy="550.2" r="12" fill="#E3B692" stroke="#664D42" stroke-width="2"/><path d="M540.8 546.2q11 -16 22 0" fill="#435064"/>
+<circle cx="565.8" cy="572.2" r="7" fill="#E33B3B" stroke="#FFFFFF" stroke-width="2"/>
+<rect x="466.9" y="599.2" width="169.8" height="27" rx="7" fill="#FBFCFE" stroke="#E33B3B" stroke-width="2"/>
+<text x="551.8" y="617.2" font-size="12" fill="#203247" text-anchor="middle" font-weight="700">Elena · ERROR · DEMO-5</text>
+<rect x="752.8" y="473.8" width="36" height="34" rx="5" fill="#6D8497" stroke="#415A70" stroke-width="2"/>
+<ellipse cx="770.8" cy="504.8" rx="16" ry="7" fill="#203247" opacity=".18"/>
+<rect x="758.8" y="474.8" width="24" height="28" rx="6" fill="#D9A21B" stroke="#FFFFFF" />
+<circle cx="770.8" cy="463.8" r="12" fill="#E3B692" stroke="#664D42" stroke-width="2"/><path d="M759.8 459.8q11 -16 22 0" fill="#435064"/>
+<circle cx="784.8" cy="485.8" r="7" fill="#D9A21B" stroke="#FFFFFF" stroke-width="2"/>
+<rect x="679" y="512.8" width="183.60000000000002" height="27" rx="7" fill="#FBFCFE" stroke="#D9A21B" stroke-width="2"/>
+<text x="770.8" y="530.8" font-size="12" fill="#203247" text-anchor="middle" font-weight="700">Diego · BLOQUEO · DEMO-4</text>
+<rect x="960.85" y="387.4" width="36" height="34" rx="5" fill="#6D8497" stroke="#415A70" stroke-width="2"/>
+<ellipse cx="978.85" cy="418.4" rx="16" ry="7" fill="#203247" opacity=".18"/>
+<rect x="966.85" y="388.4" width="24" height="28" rx="6" fill="#EF8F35" stroke="#FFFFFF" />
+<circle cx="978.85" cy="377.4" r="12" fill="#E3B692" stroke="#664D42" stroke-width="2"/><path d="M967.85 373.4q11 -16 22 0" fill="#435064"/>
+<circle cx="992.85" cy="399.4" r="7" fill="#EF8F35" stroke="#FFFFFF" stroke-width="2"/>
+<rect x="883.6" y="426.4" width="190.5" height="27" rx="7" fill="#FBFCFE" stroke="#EF8F35" stroke-width="2"/>
+<text x="978.85" y="444.4" font-size="12" fill="#203247" text-anchor="middle" font-weight="700">Bruno · REVISIÓN · DEMO-2</text>
+<ellipse cx="1292.75" cy="413" rx="16" ry="7" fill="#203247" opacity=".18"/>
+<rect x="1280.75" y="383" width="24" height="28" rx="6" fill="#F6C744" stroke="#FFFFFF" />
+<circle cx="1292.75" cy="372" r="12" fill="#E3B692" stroke="#664D42" stroke-width="2"/><path d="M1281.75 368q11 -16 22 0" fill="#435064"/>
+<circle cx="1306.75" cy="394" r="7" fill="#F6C744" stroke="#FFFFFF" stroke-width="2"/>
+<rect x="1200.95" y="421" width="183.60000000000002" height="27" rx="7" fill="#FBFCFE" stroke="#F6C744" stroke-width="2"/>
+<text x="1292.75" y="439" font-size="12" fill="#203247" text-anchor="middle" font-weight="700">Carla · EN COLA · DEMO-3</text>
+<ellipse cx="1216.1" cy="683" rx="16" ry="7" fill="#203247" opacity=".18"/>
+<polygon points="1216.1,637.0 1226.1,647.0 1216.1,657.0 1206.1,647.0" fill="#CFD7DF" stroke="#657586" stroke-width="2"/>
+<rect x="1205.1" y="656" width="22" height="25" rx="3" fill="#CFD7DF" stroke="#657586" />
+<rect x="1205.1" y="656" width="22" height="25" rx="3" fill="url(#ambient)" stroke="none" />
+<path d="M1158 704L1216.1 681" stroke="#657586" fill="none"/>
+<rect x="1002" y="691" width="156" height="27" rx="7" fill="#D4DCE4" stroke="#657586" stroke-dasharray="4 3"/>
+<text x="1080" y="709" font-size="12" fill="#203247" text-anchor="middle" font-weight="700">LIMPIEZA · AMBIENTE</text>
+<rect x="1231.65" y="285" width="166" height="31" rx="11" fill="#FFF0BF" stroke="#B38A27" stroke-width="3"/>
+<text x="1314.65" y="306" font-size="18" fill="#203247" text-anchor="middle" font-weight="700">TÚ · 2 AVISOS</text>
+<rect x="330" y="920" width="1260" height="130" rx="14" fill="#1C293C" stroke="#53677D" />
+<text x="350" y="949" font-size="15" fill="#F3F6FA" font-weight="700">LEYENDA · EL COLOR DEL SUELO ES TIPO; EL INDICADOR DEL AGENTE ES ESTADO</text>
+<rect x="350" y="968" width="18" height="18" rx="4" fill="#DDECF5" stroke="#417EA6" />
+<text x="376" y="983" font-size="14" fill="#D7E0EB" >Trabajo / QA / reunión</text>
+<rect x="595" y="968" width="18" height="18" rx="4" fill="#F7E8C8" stroke="#B07B25" />
+<text x="621" y="983" font-size="14" fill="#D7E0EB" >Espera / entrada</text>
+<rect x="840" y="968" width="18" height="18" rx="4" fill="#DDECE2" stroke="#43836B" />
+<text x="866" y="983" font-size="14" fill="#D7E0EB" >Descanso / recreo</text>
+<rect x="1085" y="968" width="18" height="18" rx="4" fill="#ECE2F5" stroke="#8C68BD" />
+<text x="1111" y="983" font-size="14" fill="#D7E0EB" >PO</text>
+<rect x="1330" y="968" width="18" height="18" rx="4" fill="#FFF0BF" stroke="#B38A27" />
+<text x="1356" y="983" font-size="14" fill="#D7E0EB" >Tú · prioridad 1</text>
+<text x="350" y="1020" font-size="15" fill="#B8C6D7" >Moqueta: trabajo · Baldosa: espera · Madera: descanso y perfiles · Ambiente: gris rayado, sin tareas ni métricas</text>
+<text x="350" y="1041" font-size="13" fill="#B8C6D7" >Recorridos discontinuos: solo ambiente · cifras DEMO ilustrativas · reuniones vacías salvo evidencia real</text>
+</g></svg>
