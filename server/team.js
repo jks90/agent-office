@@ -1492,7 +1492,7 @@ async function runTask(p, agent, t) {
       images: (t.feedbackImages || []).filter((f) => fs.existsSync(f)),
       system: role.system,
       model,
-      kind: role.kind, roleTools: role.tools, hasSkills: !!role.skills?.length, // FT-59: herramientas acotadas por rol
+      kind: role.kind, roleId: agent.role, roleTools: role.tools, hasSkills: !!role.skills?.length, // FT-59: herramientas acotadas por rol
       // Reintento de la MISMA tarea en su worktree (<50 min o tras pausa por cuota) y solo con una sesión DEL MISMO motor (FT-57); en un relanzamiento por compactación (seg>0, FT-63) se empieza limpio.
       resumeSession: seg === 0 && t.reused && t.sessionId && (t.sessionEngine || 'claude') === engineId && (t.resumeAfterQuota || Date.now() - (t.sessionAt || 0) < 50 * 60_000) ? t.sessionId : null,
       maxTokens: Number(s.settings.maxTaskTokens) > 0 ? Number(s.settings.maxTaskTokens) : null, // FT-57: tope en tokens (Codex; por defecto el equivalente a budgetUsd)

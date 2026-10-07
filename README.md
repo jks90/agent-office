@@ -320,7 +320,18 @@ Fase A de la épica «Navegador del agente»: `server/browser/` con un contrato 
 - `snapshot()`: árbol de accesibilidad compacto (incluye iframes) con refs estables por pestaña (`e12`) `{ref, role, name, value, states}`; tope `AO_BROWSER_SNAPSHOT_NODES` (300) con `truncated`/`omitted`. `act`/`type`/`scroll` resuelven la ref por CDP (`backendNodeId`) y caen a `x,y`.
 - `screenshot()` ≤1280 px de ancho en `data/browser/captures`; `console()`/`network()` con anillo de 200 por pestaña y cabeceras sensibles a `***`; solo se navega a `http(s)`.
 - Los popups pasan a ser la pestaña activa. Prueba: `node scripts/browser-driver-e2e.mjs`.
-- Pendiente (siguientes fases): tools `browser.*` en `server/guide/tools.js` con política y `bin/ao-mcp.mjs`, respondiendo `{inside:true}` para flow-test/AgentOffice como `ui.*`. `puppeteer-core` sigue en `devDependencies`: mover a `dependencies` cuando se exponga al usuario.
+- Las tools `browser.*` ya existen (FT-115, abajo). Pendiente: `puppeteer-core` sigue en `devDependencies`; moverlo a `dependencies` cuando se despliegue a usuarios.
+
+### Tools `browser.*` del Guía y de los agentes (FT-115)
+
+Las 14 tools exponen el driver: `browser.tabs`, `navigate` (url o back/forward/reload), `snapshot`, `find` (rol y/o texto), `click`, `type`, `select`, `scroll`, `press`, `waitFor`, `screenshot`, `console`, `network` y `evaluate`. `browser.open` (xdg-open) sigue siendo «enseñar una web al usuario en su navegador normal».
+
+- **Flujo guiado por las descripciones**: `snapshot` primero (texto, barato), actuar siempre por `ref`, `screenshot` solo si hace falta ver el aspecto.
+- **Política**: lectura (`tabs`, `snapshot`, `find`, `waitFor`, `screenshot`, `console`, `network`) automática; `navigate`/`scroll` = navigate; `click`, `type`, `select`, `press` = execute (ajuste del Guía); `evaluate` = write (confirma). **Irreversible, confirma siempre**: `click` sobre un control destructivo (mismas palabras que `ui.act`), `type` con `submit` y `press` de Enter/Delete. El texto de `browser.type` nunca va al audit (solo `chars`).
+- **Solo fuera**: navegar o actuar con la pestaña activa en AgentOffice o flow-test responde `{inside:true}` sin tocar nada.
+- **`browser.screenshot` devuelve la imagen**: por MCP, `bin/ao-mcp.mjs` la entrega como contenido `type:image` (base64) además del texto con la ruta, así que Claude la ve (con claude-cli sustituye al 501 de `screen.describe`); por `POST /api/guide/tool` solo la ruta.
+- **Agentes worker**: la capacidad `browser` (`server/engines/toolscope.js`) está activa para los roles `qa-suite` y `office-flowtest` (otro rol la activa con `tools: …, browser` en su frontmatter; nunca en modo plan). `claude.js` les añade un MCP stdio `agentoffice-browser` con `AO_MCP_ONLY=browser`: solo ven `browser_*` (sin `browser_open`); política y auditoría siguen en el servidor. Solo motor Claude.
+- Prueba: `node scripts/browser-tools-e2e.mjs` (driver fake, MCP real); con `AO_E2E_REAL_BROWSER=1` repite lo esencial con Chromium real.
 
 ## 🌐 Navegador — panel en vivo (FT-117)
 
