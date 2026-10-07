@@ -9,7 +9,7 @@ import * as context from '../context.js';
 import * as activity from '../events.js';
 import { SYSTEM } from './prompt.js';
 import * as review from '../review.js';
-import { resolveRefs } from '../uploads.js'; // FT-95
+import { resolveRefs, dirOf } from '../uploads.js'; // FT-95
 import * as claudeCli from './providers/claude-cli.js';
 import * as anthropicApi from './providers/anthropic-api.js';
 import * as openaiApi from './providers/openai-api.js';
@@ -54,11 +54,20 @@ export function listChats() {
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 export const getChat = (id) => readChat(id);
+// FT-96 · texto de todo lo que referencia adjuntos (estado + chats): lo que no aparezca aquí es temporal y se puede borrar
+export function uploadsInUse() {
+  let txt = JSON.stringify(store.get());
+  try { for (const n of fs.readdirSync(DIR())) if (n.endsWith('.json')) txt += fs.readFileSync(path.join(DIR(), n), 'utf8'); } catch { /* sin chats */ }
+  return txt;
+}
 export function deleteChat(id) {
-  readChat(id);
+  const c = readChat(id);
   stop(id);
   providers.delete(id);
   fs.rmSync(file(id), { force: true });
+  // FT-96: sus adjuntos se borran si ninguna tarea ni otro chat los usa
+  const used = uploadsInUse();
+  for (const d of new Set(c.messages.flatMap((m) => (m.attachments || []).map((a) => dirOf(a.path))).filter(Boolean))) if (!used.includes(d)) fs.rmSync(d, { recursive: true, force: true });
   return { ok: true };
 }
 

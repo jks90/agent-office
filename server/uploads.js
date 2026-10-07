@@ -46,6 +46,28 @@ export function save(files, extract = () => null) {
   });
 }
 
+// FT-96 · limpieza: borra las carpetas de data/uploads cuya ruta no aparece en `inUse` (texto con el estado y los chats)
+// y que tienen más de `maxAgeMs` (por defecto 1 día: da margen a un adjunto recién subido y aún sin enviar).
+export function sweep(inUse, maxAgeMs = 24 * 3600e3) {
+  let names = [];
+  try { names = fs.readdirSync(root()); } catch { return 0; }
+  let n = 0;
+  for (const d of names) {
+    const dir = path.join(root(), d);
+    try {
+      if (Date.now() - fs.statSync(dir).mtimeMs < maxAgeMs || inUse.includes(dir)) continue;
+      fs.rmSync(dir, { recursive: true, force: true }); n++;
+    } catch { /* otro proceso lo tocó: se verá en la siguiente pasada */ }
+  }
+  return n;
+}
+// Carpeta de subida de una ruta de adjunto (data/uploads/<hex>) o null si no es de aquí.
+export function dirOf(p) {
+  const rel = path.relative(root(), String(p || ''));
+  const d = rel.split(path.sep)[0];
+  return rel && !rel.startsWith('..') && d && rel !== d ? path.join(root(), d) : null;
+}
+
 // Referencias que llegan en un mensaje ([{name?, path}]) → solo las que existen dentro de data/uploads.
 export function resolveRefs(list) {
   if (list == null) return [];
