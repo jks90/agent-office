@@ -77,7 +77,7 @@ export function reviewPrompt(t, base, checks) {
     'CÓMO DECIDES (el objetivo es que el trabajo avance; una devolución cuesta otro intento completo):',
     '- DEVUELVE (approve:false) SOLO por algo que BLOQUEA: lo que pide la descripción no está hecho o está mal, hay un error claro (no compila, un test que se puede ejecutar aquí falla, rompe algo que ya funcionaba, un fallo de seguridad o de datos), o el cambio deja el repo inconsistente.',
     '- NO devuelvas por comprobaciones que no puedes hacer en este entorno (levantar la API o servicios, docker/docker compose, e2e contra un servidor en marcha, bases de datos): anótalas en "pending" y decide con lo que SÍ puedes comprobar.',
-    '- NO devuelvas por mejoras, ampliaciones o cosas que la descripción no pedía (endpoints nuevos, pantallas extra, refactors, estilo): apruébala y propónlas en "followups" para que se hagan en otra tarea.',
+    '- NO devuelvas por mejoras, ampliaciones o cosas que la descripción no pedía (endpoints nuevos, pantallas extra, refactors, estilo): apruébala y, si de verdad merece la pena, apúntalo en "followups" (máximo 2, solo lo importante; quedan como sugerencia, no se crean tareas).',
     '- NO devuelvas por choques con la base (merge): eso se gestiona aparte.',
     '- Si devuelves, "feedback" dice exactamente qué corregir, en pocos puntos y solo lo bloqueante.',
     '',

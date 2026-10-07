@@ -668,12 +668,10 @@ export async function autoReview(p, t) {
     if (t.status !== 'review') return; // un humano decidió mientras tanto
     if (!v) return hold('✋ el revisor no devolvió un veredicto válido: la revisa una persona');
     if (v.approve) {
-      // Lo que el revisor ve mejorable pero no bloquea va a tareas nuevas en el backlog (no se encadenan solas)
-      const made = [];
-      for (const f of v.followups || []) {
-        try { made.push(createTask({ projectId: p.id, title: f.title, description: `${f.description || ''}\n\n_(Propuesta por la revisión automática de ${t.code || t.id}.)_`, role: t.role, status: 'backlog', sizeChecked: false }).code); } catch { /* rol desaparecido: se omite */ }
-      }
-      const extra = [v.pending?.length ? `pendiente de comprobar fuera: ${v.pending.join('; ')}` : '', made.length ? `mejoras al backlog: ${made.join(', ')}` : ''].filter(Boolean).join(' · ');
+      // Lo que el revisor ve mejorable pero no bloquea se APUNTA en el veredicto (historial de la tarea), sin crear tareas:
+      // creándolas, cada aprobación añadía 1–4 tarjetas al backlog y el proyecto «nunca se acababa» (22 en una tarde).
+      const sug = (v.followups || []).map((f) => f.title).filter(Boolean);
+      const extra = [v.pending?.length ? `pendiente de comprobar fuera: ${v.pending.join('; ')}` : '', sug.length ? `sugerencias (no se han creado tareas): ${sug.join('; ')}` : ''].filter(Boolean).join(' · ');
       await approve(t.id, { by: 'auto-qa', verdict: { approve: true, text: [v.reasons.join('; ') || 'sin objeciones', extra].filter(Boolean).join(' · ') } });
     }
     else await reject(t.id, v.feedback || v.reasons.join('\n') || 'El revisor automático pide cambios.', [], [], 'auto-qa');
