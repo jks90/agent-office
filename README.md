@@ -383,6 +383,8 @@ Para pedir cualquier cosa y que el Guía se mueva solo (el prompt tiene un modo 
 
 ## 🌐 Navegador — panel en vivo (FT-117)
 
+> **FT-135 · espera integrada**: si el usuario tiene el control, las acciones del agente (`click`, `navigate`, `waitFor`…) **esperan** a que lo devuelva en vez de dar 409 al instante (hasta `AO_BROWSER_WAIT_CONTROL_MS`, 120 s por defecto). Si vence: 409 con `retryAfterMs` y mensaje claro. El panel muestra «el agente espera a que le devuelvas el control» (`browser.waiting` en el snapshot).
+
 Vista **🌐 Navegador** (menú lateral, `?view=browser` y `app.navigate view=browser` del Guía): lo que ve el navegador dedicado del agente, en directo.
 
 - **Vídeo**: `driver.screencast(onFrame)` (CDP `Page.startScreencast`, JPEG, ≤10 fps, sigue a la pestaña activa) → SSE `GET /api/browser/stream` (`frame`, `mark`, `control`). Solo está abierto mientras la vista se ve; sin espectadores el screencast se para. El estado (control, pestañas, URL, handoffs) va en el snapshot SSE (`browser`).
