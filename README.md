@@ -342,7 +342,7 @@ Fase A de la épica «Navegador del agente»: `server/browser/` con un contrato 
 
 ### Tools `browser.*` del Guía y de los agentes (FT-115)
 
-Las 15 tools exponen el driver (la 15.ª, `browser.requestHuman`, es de FT-116): `browser.tabs`, `navigate` (url o back/forward/reload), `snapshot`, `find` (rol y/o texto), `click`, `type`, `select`, `scroll`, `press`, `waitFor`, `screenshot`, `console`, `network` y `evaluate`. `browser.open` (xdg-open) sigue siendo «enseñar una web al usuario en su navegador normal».
+Las 16 tools exponen el driver (`browser.requestHuman` es de FT-116; `browser.upload`, de FT-130): `browser.tabs`, `navigate` (url o back/forward/reload), `snapshot`, `find` (rol y/o texto), `click`, `type`, `select`, `scroll`, `press`, `waitFor`, `screenshot`, `console`, `network` y `evaluate`. `browser.open` (xdg-open) sigue siendo «enseñar una web al usuario en su navegador normal».
 
 - **Flujo guiado por las descripciones**: `snapshot` primero (texto, barato), actuar siempre por `ref`, `screenshot` solo si hace falta ver el aspecto.
 - **Política**: lectura (`tabs`, `snapshot`, `find`, `waitFor`, `screenshot`, `console`, `network`) automática; `navigate`/`scroll` = navigate; `click`, `type`, `select`, `press` = execute (ajuste del Guía); `evaluate` = write (confirma). **Irreversible, confirma siempre**: `click` sobre un control destructivo (mismas palabras que `ui.act`), `type` con `submit` y `press` de Enter/Delete. El texto de `browser.type` nunca va al audit (solo `chars`).
@@ -350,6 +350,16 @@ Las 15 tools exponen el driver (la 15.ª, `browser.requestHuman`, es de FT-116):
 - **`browser.screenshot` devuelve la imagen**: por MCP, `bin/ao-mcp.mjs` la entrega como contenido `type:image` (base64) además del texto con la ruta, así que Claude la ve (con claude-cli sustituye al 501 de `screen.describe`); por `POST /api/guide/tool` solo la ruta.
 - **Agentes worker**: la capacidad `browser` (`server/engines/toolscope.js`) está activa para los roles `qa-suite` y `office-flowtest` (otro rol la activa con `tools: …, browser` en su frontmatter; nunca en modo plan). `claude.js` les añade un MCP stdio `agentoffice-browser` con `AO_MCP_ONLY=browser`: solo ven `browser_*` (sin `browser_open`); política y auditoría siguen en el servidor. Solo motor Claude.
 - Prueba: `node scripts/browser-tools-e2e.mjs` (driver fake, MCP real); con `AO_E2E_REAL_BROWSER=1` repite lo esencial con Chromium real.
+
+### 📝 Formularios robustos y envíos que se envían (FT-130)
+
+Nació de la demo sobre `httpbin.org/forms/post`: el agente rellenó todo y pulsó «Submit order», pero la página seguía en el formulario (la hora `min/max` era inválida y nadie lo dijo).
+
+- **`browser.type` / `select` según el tipo de campo** (driver CDP, sin `browser.evaluate`): `date`, `time`, `datetime-local`, `month`, `week`, `range`, `color` (valor en formato nativo, p. ej. `2026-10-08T14:30`; si el navegador lo rechaza → 400 con el formato esperado), `<select>` nativo y `multiple` (varias opciones con «|», p. ej. `Bacon|Onion`; si no existe lista las disponibles), checkbox/radio (`true`/`false`), `contenteditable`, texto (`Input.insertText`, añade al final o `clear`). Siempre dispara `input`/`change`. Funciona también si el ref es un `spinbutton` interno de un `<input type=date>`.
+- **`browser.upload({ref, paths})`**: `DOM.setFileInputFiles` en un `<input type=file>`; las rutas deben estar en `data/uploads` (adjuntos del chat o de la tarea), si no → 400. Pide la confirmación de `execute`. Con la extensión «Mi navegador» responde 501 (pendiente).
+- **Resultado de click / type / press**: `{navigated, url, title}`. Espera la navegación o un cambio del DOM (hasta 5 s si el control es de envío: botón submit o enlace; 300 ms en el resto, para no frenar clics normales).
+- **Envío que no se envía**: si tras pulsar enviar (clic en submit, Enter o `submit:true`) no hubo navegación y el formulario es inválido, el resultado trae `submitted:false`, `validation:[{field, type, message}]` (`form.checkValidity` + `validationMessage` de cada campo inválido) y una `hint`.
+- Prueba: `node scripts/browser-forms-e2e.mjs` (Chromium headless real: todos los tipos, el HTML de httpbin servido en local —se rechaza la hora fuera de rango y, corregida, se envía— y validación por Enter).
 
 ### 🛡 Seguridad del navegador del agente (FT-116)
 
@@ -768,3 +778,10 @@ El escaneo del workspace ya no crea un Coordi por carpeta descubierta: solo `cre
 - `questions.confirm/choose` deduplica: una confirmación idéntica pendiente se reutiliza (varias tools esperan a la misma respuesta).
 - Sin respuesta en `AO_CONFIRM_TIMEOUT_MS` (servidor, 10 min) la pregunta se retira de 🔔 y la tool falla con 408 «el usuario no ha contestado a la confirmación» (antes contaba como «No»).
 - Prueba: `node scripts/confirm-timeout-e2e.mjs`.
+
+### 🛡 visibles también embebido en flow-test (FT-131)
+
+- El manejador SSE de `state` aísla `render()` y `renderQuestions()`: si un panel lanza una excepción dentro del iframe, el modal 🛡 y la barra `#questions-bar` se pintan igualmente (el error queda en la consola).
+- Una orden `ui` del Guía (p. ej. `app.navigate`) ya no cierra una 🛡/pregunta abierta (antes la «Más tarde» implícita la silenciaba).
+- La 🔔 abre primero la 🛡/pregunta pendiente (aunque la hubieras pospuesto); sin ninguna, va a «Para ti».
+- Prueba: `node scripts/embedded-e2e.mjs [captura.png]` (flow-test simulado con iframe + proxy `/agents/` como `agents-proxy.js`, vista 🌐, contestar, 🔔, textos y fotogramas).

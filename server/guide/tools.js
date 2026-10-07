@@ -23,6 +23,7 @@ import { getDriver, renderSnapshot } from '../browser/index.js';
 import { agentDriver, addHandoff, resolveHandoff, setControl, status as browserStatus } from '../browser/panel.js';
 import * as bpolicy from '../browser/policy.js';
 import * as questions from '../questions.js';
+import { resolveRefs } from '../uploads.js'; // FT-130
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
 const VIEWS = ['office', 'summary', 'tasks', 'agents', 'guide', 'browser', 'settings'];
@@ -340,14 +341,19 @@ export const tools = [
     obj({ ref: str('ref del nodo'), action: { type: 'string', enum: ['click', 'dblclick', 'hover', 'focus'] }, x: { type: 'integer' }, y: { type: 'integer' } }), 'execute',
     async (a) => agentDriver().act({ ...a, action: a.action || 'click' }),
     { precheck: browserPrecheck, dynamic: refDynamic }),
-  T('browser.type', 'Escribe texto en un campo por su ref (lo enfoca antes). clear=true lo vacía antes; submit=true pulsa Enter después (irreversible: confirmación SIEMPRE). El texto NUNCA se guarda en el audit.',
+  T('browser.type', 'Escribe texto en un campo por su ref (lo enfoca antes); rellena date/time/datetime-local/range/color/contenteditable según su tipo (formato nativo, p. ej. 2026-10-08, 19:30). El resultado trae {navigated,url,title} y, si un envío no se produjo, validation con el motivo. clear=true lo vacía antes; submit=true pulsa Enter después (irreversible: confirmación SIEMPRE). El texto NUNCA se guarda en el audit.',
     obj({ ref: str('ref del campo'), text: str('Texto'), clear: { type: 'boolean' }, submit: { type: 'boolean' } }, ['text']), 'execute',
     async (a) => agentDriver().type(a),
     { precheck: browserPrecheck, auditArgs: ({ text, ...r }) => ({ ...r, chars: [...String(text ?? '')].length }),
       dynamic: async (a) => (a.submit ? { policy: 'irreversible', context: `⚠ Escribir y pulsar Enter (puede enviar el formulario)\n${nodeInfo(a.ref)}` } : null) }),
-  T('browser.select', 'Elige una opción de un <select> por su ref (value o texto visible).',
-    obj({ ref: str('ref del select'), value: str('Valor o texto de la opción') }, ['ref', 'value']), 'execute',
+  T('browser.select', 'Elige una opción de un <select> por su ref (value o texto visible). En <select multiple> varias separadas por «|» (p. ej. «Bacon|Onion»).',
+    obj({ ref: str('ref del select'), value: str('Valor o texto de la opción (varias con «|» si es múltiple)') }, ['ref', 'value']), 'execute',
     async ({ ref, value }) => agentDriver().act({ ref, action: 'select', value }), { precheck: browserPrecheck }),
+  T('browser.upload', 'FT-130 · Adjunta ficheros a un <input type=file> por su ref (dispara input/change). «paths»: rutas absolutas dentro de data/uploads (adjuntos del chat o de la tarea). Pide confirmación. Después, snapshot.',
+    obj({ ref: str('ref del campo de fichero'), paths: { type: 'array', items: { type: 'string' }, description: 'Rutas absolutas de data/uploads' } }, ['ref', 'paths']), 'execute',
+    async ({ ref, paths }) => agentDriver().upload({ ref, files: resolveRefs((Array.isArray(paths) ? paths : [paths]).map((p) => ({ path: p }))).map((f) => f.path) }),
+    { precheck: browserPrecheck, auditArgs: ({ paths, ...r }) => ({ ...r, files: [].concat(paths || []).map((p) => String(p).split('/').pop()) }),
+      dynamic: async (a) => ({ policy: 'execute', context: `Subir ${[].concat(a.paths || []).length} fichero(s) a la página\n${nodeInfo(a.ref)}` }) }),
   T('browser.scroll', 'Desplaza la rueda sobre un nodo (por ref) o el centro de la página: dy>0 baja, dx>0 a la derecha (píxeles). Devuelve la posición. Después, snapshot si buscas algo más abajo.',
     obj({ ref: str('ref del nodo (opcional)'), dx: { type: 'integer' }, dy: { type: 'integer' } }), 'navigate',
     async (a) => agentDriver().scroll(a), { precheck: browserPrecheck }),
