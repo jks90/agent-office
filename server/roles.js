@@ -66,7 +66,8 @@ function loadDir(dir, source, out) {
   try { files = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
   for (const f of files) {
     const full = path.join(dir, f.name);
-    if (f.isDirectory()) { loadDir(full, source, out); continue; }
+    // Enlaces a carpetas también (el hub de flows enlaza los roles de cada proyecto: _agentes/roles/<proyecto> → JksDocs)
+    if (f.isDirectory() || (f.isSymbolicLink() && (() => { try { return fs.statSync(full).isDirectory(); } catch { return false; } })())) { loadDir(full, source, out); continue; }
     if (!f.name.endsWith('.md')) continue;
     try {
       const { meta, body } = parseFrontmatter(fs.readFileSync(full, 'utf8'));
