@@ -6,7 +6,7 @@
 //   tabs.list() · tabs.new({url?}) · tabs.select({id}) · tabs.close({id?})   → { id, url, title, active }
 //   navigate({url}) · back() · forward() · reload()          → { url, title }   (solo http/https)
 //   snapshot() → { tabId, url, title, nodes:[{ref, role, name, value, states[], frame?}], total, truncated, omitted }
-//   act({ref|x,y, action:'click'|'dblclick'|'hover'|'focus'|'select', value?}) · type({ref?, text, clear?, submit?, key?}) · scroll({ref|x,y, dx, dy})
+//   upload({ref, files}) (FT-130) · act({ref|x,y, action:'click'|'dblclick'|'hover'|'focus'|'select', value?}) · type({ref?, text, clear?, submit?, key?}) · scroll({ref|x,y, dx, dy})
 //   screenshot({format?, fullPage?}) → { path, width≤1280, height, bytes, format }   en data/browser/captures
 //   evaluate({expression}) → { value } · console({limit?, clear?}) · network({limit?, clear?}) → { entries } (anillo de 200, cabeceras sensibles a ***)
 //   waitFor({text|selector|url|ms, timeout?})

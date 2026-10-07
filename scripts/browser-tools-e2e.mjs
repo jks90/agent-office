@@ -158,7 +158,7 @@ try {
   section('ao-mcp para agentes worker (AO_MCP_ONLY=browser)');
   const w = mcpClient(A.base, { AO_MCP_ONLY: 'browser' });
   const names = (await w.rpc('tools/list')).result.tools.map((t) => t.name);
-  check('lista solo browser_* (15), sin browser_open ni task_* ni terminal_*', names.length === 15 && names.every((n) => n.startsWith('browser_')) && !names.includes('browser_open'), names.join());
+  check('lista solo browser_* (17), sin browser_open ni task_* ni terminal_*', names.length === 17 && names.every((n) => n.startsWith('browser_')) && !names.includes('browser_open'), names.join());
   check('una tool fuera de la lista → error', !!(await w.rpc('tools/call', { name: 'task_list', arguments: {} })).error);
   w.close();
 

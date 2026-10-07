@@ -71,6 +71,7 @@ export function createFakeDriver() {
       log.push({ op: 'type', ...a });
       return { ok: true, ...nav(t) };
     },
+    async upload(a = {}) { const t = cur(); log.push({ op: 'upload', ...a }); return { ok: true, files: (a.files || []).map((f) => f.split('/').pop()), ...nav(t) }; },
     async scroll(a = {}) { cur(); log.push({ op: 'scroll', ...a }); return { ok: true, scrollX: a.dx || 0, scrollY: a.dy || 0 }; },
     async screenshot(a = {}) { const t = cur(); log.push({ op: 'screenshot', ...a }); return { ...saveShot(PNG, 'png', t.id), width: 1, height: 1, tabId: t.id, scale: 1, originX: a.region?.x || 0, originY: a.region?.y || 0 }; },
     // FT-132 · texto de lectura de la página falsa: un encabezado y una línea por nodo

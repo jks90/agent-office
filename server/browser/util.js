@@ -62,7 +62,7 @@ export function readPageExpr(selector) {
       while (a && a !== root) { if (seen.has(a)) { dup = true; break; } a = a.parentElement; }
       if (dup) continue;
       const tag = el.tagName;
-      let t = tag === 'TR' ? [...el.children].map((c) => norm(c.innerText)).filter(Boolean).join(' | ') : norm(el.innerText);
+      let t = tag === 'TR' ? [...el.children].map((c) => norm(c.innerText)).filter(Boolean).join(' | ') : tag === 'PRE' ? String(el.innerText || '').trim() : norm(el.innerText);
       if (!t) continue;
       seen.add(el);
       if (/^H[1-6]$/.test(tag)) t = '#'.repeat(Number(tag[1])) + ' ' + t;
@@ -88,7 +88,7 @@ export function paginateRead(raw, { offset = 0, max = 6000, section } = {}) {
   const size = Math.min(20000, Math.max(500, Number(max) || 6000));
   let to = Math.min(text.length, from + size);
   if (to < text.length) { const nl = text.lastIndexOf('\n', to); if (nl > from + size / 2) to = nl; } // corta en fin de línea
-  return { text: text.slice(from, to), offset: from, end: to, total: text.length, next: to < text.length ? to : null, sections: sections.slice(0, 40) };
+  return { text: text.slice(from, to), offset: from, end: to, total: text.length, next: to < text.length ? to : null, ...(to < text.length ? { truncated: true, hint: `Texto recortado: quedan ${text.length - to} caracteres; vuelve a llamar con offset=${to}` } : {}), sections: sections.slice(0, 40) };
 }
 
 export function saveShot(buf, format, tabId) {

@@ -57,8 +57,9 @@ function connectEvents() {
     S = JSON.parse(e.data);
     if (hadState) for (const t of S.tasks) if (t.status === 'review' && !was.has(t.id)) toast(`${S.agents.find((a) => a.id === t.agentId)?.name || 'Un agente'} terminó ${t.code || '#' + t.id}: ${t.reviewing ? 'se está revisando sola' : 'revísala'}`, 'review'); // FT-56
     if (!S.projects.some((p) => p.id === projectId)) projectId = S.projects[0]?.id ?? null;
-    render();
-    renderQuestions();
+    // FT-131: una excepción en render() (p. ej. WebGL o un panel dentro del iframe de flow-test) no puede dejar sin 🛡 ni barra de preguntas
+    try { render(); } catch (err) { console.error('render()', err); }
+    try { renderQuestions(); } catch (err) { console.error('renderQuestions()', err); }
     if (!officeInit) { officeInit = true; if (activeTab === 'office') applyOfficeDefault(); } // FT-47
     if (SETTINGS_EMBED && !settingsEmbedOpened) { settingsEmbedOpened = true; openSettingsEmbed(); }
   });
@@ -84,7 +85,7 @@ function connectEvents() {
   es.addEventListener('ui', (e) => {
     const c = JSON.parse(e.data);
     if (c.client && c.client !== CLIENT_ID) return; // dirigida a otra pestaña
-    if ($('#dialog').open && c.type !== 'flowtest.show') $('#dialog').close();
+    if ($('#dialog').open && c.type !== 'flowtest.show' && $('#dialog').className !== 'question') $('#dialog').close(); // FT-131: una 🛡/pregunta pendiente no se cierra porque el Guía navegue
     // Con proyecto y vista Oficina se entra directo a su planta (FT-47); sin proyecto se respeta el modo que haya.
     if (c.type === 'navigate' && c.view === 'office') { showTab('office'); goProject(c.projectId); if (c.projectId && S.projects.some((p) => p.id === c.projectId)) setOfficeMode('floor'); }
     else if (c.type === 'navigate') { goProject(c.projectId); showTab(c.view); }
@@ -3082,7 +3083,11 @@ function publishContext() {
     fetch(BASE + 'api/context', { method: 'POST', keepalive: true, headers: { 'content-type': 'application/json', 'x-ao-client': CLIENT_ID }, body: JSON.stringify({ ...JSON.parse(key), at: Date.now() }) }).catch(() => { ctxSent = ''; });
   }, 300);
 }
-$('#review-chip').addEventListener('click', () => showTab('inbox')); // 🔔 → «Para ti»
+$('#review-chip').addEventListener('click', () => { // 🔔 → primero las preguntas/🛡 pendientes (FT-131), si no «Para ti»
+  const q = (S.questions || [])[0];
+  if (q) { qSnoozed.delete(q.id); if ($('#dialog').open && $('#dialog').className !== 'question') $('#dialog').close(); if (!$('#dialog').open) { openQuestion(q.id); return; } }
+  showTab('inbox');
+});
 $('#dialog').addEventListener('close', () => { openTaskId = null; publishContext(); });
 $('#project').addEventListener('change', publishContext);
 window.addEventListener('message', (e) => {
