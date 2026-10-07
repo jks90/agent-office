@@ -9,6 +9,7 @@ import { orderTodo, CACHE_WINDOW_MS } from './affinity.js';
 import * as codes from './codes.js';
 import * as questions from './questions.js';
 import * as events from './events.js';
+import { classifyReject } from './scores.js'; // FT-152
 import * as git from './git.js';
 import { allRoles, roleOf } from './roles.js';
 import { parseTasks } from './engines/describe.js';
@@ -587,6 +588,8 @@ export async function reject(id, feedback = '', images = [], attachments = [], b
   // La rama y el worktree se conservan: el agente corrige sobre su intento anterior.
   t.returns = (t.returns || 0) + 1; // FT-76: devoluciones (KPI «aprobadas a la primera»)
   if (feedback.trim()) t.feedback = [t.feedback, feedback.trim()].filter(Boolean).join('\n');
+  (t.rejectReasons ||= []).push(classifyReject(feedback)); // FT-152: motivo de cada devolución (puntuación de agentes)
+  if (t.budgetHit || t.stuck) t.cuts = (t.cuts || 0) + 1; // FT-152: se cortó por tope o atasco (budgetHit se borra más abajo)
   // FT-60: devolver desde revisión = el modelo barato no bastó → el reintento sube de peldaño (desde «fallida» ya subió al fallar;
   // y si se cortó por el tope de gasto, un modelo más caro no arregla nada: sigue con el mismo).
   if (t.status === 'review' && !t.budgetHit) escalate(t, 'devuelta desde revisión');

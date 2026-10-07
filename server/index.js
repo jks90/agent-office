@@ -12,6 +12,7 @@ import * as review from './review.js'; // FT-56
 import * as toolcat from './toolcatalog.js';
 import * as costs from './costs.js'; // FT-76
 import * as ponytail from './ponytail.js'; // FT-86
+import * as scores from './scores.js'; // FT-152
 import * as uploads from './uploads.js'; // FT-95
 import { allRoles } from './roles.js';
 import { checkSuite, suiteInfo } from './suite.js';
@@ -132,6 +133,8 @@ const routes = [
   ['POST', /^\/api\/browser\/pair$/, () => browserExt.newPairingCode()], // FT-118: código de un solo uso para la extensión
   ['POST', /^\/api\/browser\/forget$/, () => browserExt.forget()],
   ['GET', /^\/api\/state$/, () => snapshot()],
+// FT-152: ficha de rendimiento por agente, rol y modelo (?projectId=&days=)
+['GET', /^\/api\/scores$/, (_, __, q) => scores.cached(store.get(), { projectId: q.projectId || '', days: q.days, estimates: team.costEstimates(), events: activity.list({ projectId: q.projectId || undefined }) })],
   // Cuota restante de las suscripciones de Claude y Codex (FT-45); ?force=1 se salta la caché de 60 s
   ['GET', /^\/api\/quota$/, (_, __, q) => quota.readAll({ force: q.force === '1' })],
   // Panel del navegador del agente (FT-117): estado, abrir/cerrar, control agente↔usuario, navegación, pestañas y entrada (el vídeo va por /api/browser/stream)
@@ -311,6 +314,7 @@ const routes = [
     if (b.maxTaskUsd !== undefined) st.maxTaskUsd = Math.max(0.5, Math.min(50, Number(b.maxTaskUsd) || 3)); // tope de gasto por intento de tarea
     if (b.compactAt !== undefined) st.compactAt = Number(b.compactAt) > 0 ? Math.min(90, Math.max(30, Number(b.compactAt))) / 100 : 0; // FT-63: % de contexto que dispara la compactación (0 = apagada)
     if (['plan', 'suggest', 'off'].includes(b.bigTasks)) st.bigTasks = b.bigTasks; // FT-63: qué hacer con las tareas grandes
+    if (b.scoreWeights && typeof b.scoreWeights === 'object') st.scoreWeights = Object.fromEntries(Object.keys(scores.DEFAULT_WEIGHTS).filter((k) => Number(b.scoreWeights[k]) >= 0).map((k) => [k, Math.min(100, Number(b.scoreWeights[k]))])); // FT-152
     if (typeof b.stuckGuard === 'boolean') st.stuckGuard = b.stuckGuard; // FT-62: umbrales del detector de atascos
     for (const [k, lo, hi] of [['stuckRepeat', 2, 20], ['stuckErrors', 2, 30], ['stuckNoEdit', 5, 200], ['stuckTokens', 5000, 5_000_000]]) if (b[k] !== undefined && Number(b[k]) > 0) st[k] = Math.max(lo, Math.min(hi, Math.round(Number(b[k]))));
     if (b.maxTaskTokens !== undefined) st.maxTaskTokens = Math.max(0, Math.min(50_000_000, Math.round(Number(b.maxTaskTokens) || 0))); // FT-57: tope en tokens por intento (0 = el equivalente al de US$)
@@ -430,5 +434,6 @@ server.on('upgrade', (req, socket) => { // FT-118: WebSocket de la extensión (s
 });
 server.listen(PORT, HOST, () => {
   console.log(`🏢 AgentOffice en http://${HOST}:${PORT}`);
+  try { const r = scores.cached(store.get(), { estimates: team.costEstimates() }); console.log(`📊 Puntuación (FT-152): ${r.tasks.length} tareas hechas en ${r.days} días, ${r.agents.filter((a) => a.scored).length} agentes puntuados`); } catch (e) { console.log('Puntuación no calculada:', e.message); }
   if (TOKEN) console.log(`🔑 Token para el proxy de flow-test (FLOW_AGENTS_TOKEN): ${TOKEN}`);
 });

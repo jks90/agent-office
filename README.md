@@ -845,4 +845,16 @@ La posición de cada agente REAL la decide solo su estado: `working` → su mesa
 - **⬇ Instalar**: lista los ficheros; skill con código exige 🛡 (`confirmCode`); agente con memoria exige proyecto destino; si ya existe, casilla de sobrescribir.
 - **API local**: `GET /api/marketplace/status`, `GET /api/marketplace/items?scope=&kind=&q=`, `GET|DELETE /api/marketplace/items/:id`, `POST /api/marketplace/items/:id/install {overwrite?, confirmCode?, projectId?}`, `POST /api/marketplace/preview` y `POST /api/marketplace/publish {kind,id,scope,version?,summary?}`.
 - **Guía**: `marketplace.search` (lectura) y `marketplace.install` (siempre 🛡 con la lista de ficheros); `app.navigate` acepta `view=marketplace`.
-- e2e con flow-test y nube simulados: `node scripts/marketplace-cloud-e2e.mjs` (módulo) y `node scripts/marketplace-ui-e2e.mjs [captura.png]` (UI con Chrome; usa catálogo temporal).
+- e2e con flow-test y nube simulados: `node scripts/marketplace-cloud-e2e.mjs` (módulo) y `node scr
+- (FT-152: ver la sección «📊 Puntuación de agentes» al final.)
+
+## 📊 Puntuación de agentes (FT-152)
+
+`server/scores.js` puntúa a la plantilla con funciones puras sobre el historial (tareas + eventos), sin IA.
+
+- **Ficha por tarea terminada**: aprobada a la primera, nº de devoluciones y motivo, coste frente a la estimación de su rol, duración, si se cortó (`stuck`/`budgetHit`/`cuts`), si la aprobó el revisor automático o una persona y si causó una regresión (otra tarea la cita como «Regresión FT-xxx» / «rompe FT-xxx»).
+- **Motivo de cada devolución** (reglas sobre la nota): `tests-rojos`, `test-inestable`, `seguridad`, `regresion`, `choque-main`, `sin-entregable`, `informe-falso`, `alcance`, `otro`. `reject()` lo guarda en `t.rejectReasons` (y `t.cuts` si se cortó); en el histórico se deduce de `reviewLog`, eventos `TaskReviewed` y `feedback`.
+- **Puntuación 0-100** con `settings.scoreWeights` (`POST /api/settings`): calidad 35 · limpieza (sin regresiones ni seguridad) 20 · coste 15 · tiempo 10 · fiabilidad 10 · honestidad 10. Ventana de 30 días con tendencia frente a los 30 anteriores; menos de 3 tareas → sin puntuar.
+- **Agregados** por agente, rol, modelo (`motor/modelo`) y rol+modelo (qa-suite con haiku frente a sonnet).
+- `GET /api/scores?projectId=&days=` → `{agents, roles, models, roleModels, tasks, weights}` con desglose. Se calcula al arrancar sobre todo el histórico y se cachea hasta que cambia la última tarea.
+- Prueba: `node scripts/scores-e2e.mjs`.ipts/marketplace-ui-e2e.mjs [captura.png]` (UI con Chrome; usa catálogo temporal).
