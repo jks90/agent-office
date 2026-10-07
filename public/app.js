@@ -2158,6 +2158,9 @@ Pasos, convenciones y ejemplos…</textarea>
     <select name="reviewPolicy">${[['', `Igual que la empresa (${REVIEW_LABEL[S.settings.reviewPolicy || 'manual']})`], ['manual', REVIEW_LABEL.manual], ['auto-qa', REVIEW_LABEL['auto-qa']], ['auto', REVIEW_LABEL.auto]].map(([v, l]) => `<option value="${v}" ${(project()?.reviewPolicy || '') === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
     <label>🧑‍✈️ Coordinador del equipo de «${esc(project()?.name)}» (reglas fijas, sin IA: refuerza el rol que tiene trabajo listo y nadie libre, cambia a motor automático a quien se queda sin cuota y manda al banquillo a quien lleva rato sin nada que hacer)</label>
     <select name="coordinator">${[['', 'Apagado'], ['suggest', 'Solo sugerir (en 🔔 Para ti, con «Aplicar»)'], ['auto', 'Automático (lo hace solo y lo apunta en 🔔 Para ti)']].map(([v, l]) => `<option value="${v}" ${(project()?.coordinator || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="supervisorApproves" ${project()?.supervisorApproves ? 'checked' : ''}><span>🧑‍⚖️ Delegar en el Coordinador / Supervisor de «${esc(project()?.name)}» (FT-122): aprueba las tareas en revisión (también las de revisión obligatoria) si sus verificaciones pasan con la rama al día (y, con diffs de más de 30 líneas, un revisor barato lo confirma), y quita dependencias que sobran solo si la bloqueante falló. Sin marcar solo deja «✅ listo para aprobar» y avisa.</span></label>
+    ${(project()?.team || []).some((id) => S.agents.find((a) => a.id === id)?.role === 'coordinador') ? '' : `<div><button type="button" class="small" data-add-supervisor>🧑‍⚖️ Añadir coordinador</button></div>`}
+    ${S.tasks.filter((t) => t.projectId === projectId && t.depProposal).map((t) => `<p class="muted" style="margin:2px 0">🧑‍⚖️ ${esc(t.depProposal.why)} <button type="button" class="small" data-dep-proposal="${t.id}:1">Quitar</button> <button type="button" class="small" data-dep-proposal="${t.id}:0">Mantener</button></p>`).join('')}
     <label>🫧 Burbujas de estado en la oficina 3D (FT-123)</label>
     <select name="officeBubbles">${[['todas', 'Todas visibles (icono + tarea + estado)'], ['al pasar', 'Solo al pasar el ratón / seleccionar']].map(([v, l]) => `<option value="${v}" ${(S.settings.officeBubbles || 'todas') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
     <label>Revisión por defecto de la empresa (proyectos con «Igual que la empresa»)</label>
@@ -2182,6 +2185,7 @@ Pasos, convenciones y ejemplos…</textarea>
     { const hidden = S.projects.filter((x) => !f['vis_' + x.id]).map((x) => x.id); if (hidden.join() !== (S.settings.hiddenProjects || []).join()) await api('POST', '/api/settings', { hiddenProjects: hidden }); }
     if ((f.reviewPolicyAll || 'manual') !== (S.settings.reviewPolicy || 'manual')) await api('POST', '/api/settings', { reviewPolicy: f.reviewPolicyAll });
     if ((f.coordinator || '') !== (project()?.coordinator || '')) await api('PATCH', `/api/projects/${projectId}`, { coordinator: f.coordinator || '' });
+    if (!!f.supervisorApproves !== !!project()?.supervisorApproves) await api('PATCH', `/api/projects/${projectId}`, { supervisorApproves: !!f.supervisorApproves });
     if ((f.reviewPolicy || '') !== (project()?.reviewPolicy || '')) await api('PATCH', `/api/projects/${projectId}`, { reviewPolicy: f.reviewPolicy || '' });
   }),
 };
@@ -2989,6 +2993,8 @@ document.addEventListener('click', async (e) => {
     return;
   }
   if (d.browserForget !== undefined) { await api('POST', '/api/browser/forget'); return toast('Extensión olvidada: tendrás que emparejarla de nuevo'); }
+  if (d.addSupervisor !== undefined) { await api('POST', `/api/projects/${projectId}/supervisor`); return toast('Coordinador añadido al equipo'); } // FT-122
+  if (d.depProposal !== undefined) { const [tid, acc] = d.depProposal.split(':'); await api('POST', `/api/tasks/${tid}/dep-proposal`, { accept: acc === '1' }); return toast(acc === '1' ? 'Dependencia quitada' : 'Dependencia mantenida'); }
   if (d.importFlow !== undefined) {
     const path = $('#import-flow')?.value;
     if (!path) return toast('Elige un flow', 'error');
