@@ -761,3 +761,10 @@ Desde FT-122 todo proyecto (también los descubiertos en el workspace) lleva a C
 ### Coordi solo en proyectos creados a mano (FT-127)
 
 El escaneo del workspace ya no crea un Coordi por carpeta descubierta: solo `createProject` lo añade (reutilizando antes un Coordi libre del banquillo; nunca más de uno por proyecto). En los demás sirve «Añadir coordinador» (FT-122). Al arrancar, una migración borra los Coordi de proyectos sin repo y sin tareas (nunca uno con tareas o historial). Prueba: `node scripts/supervisor-e2e.mjs`.
+
+### Confirmaciones 🛡 largas del Guía (FT-128)
+
+- `bin/ao-mcp.mjs` habla con `node:http` sin los 300 s de undici (antes «fetch failed» y el modelo reintentaba, duplicando la pregunta). Tope propio: `AO_MCP_TOOL_TIMEOUT_MS` (30 min).
+- `questions.confirm/choose` deduplica: una confirmación idéntica pendiente se reutiliza (varias tools esperan a la misma respuesta).
+- Sin respuesta en `AO_CONFIRM_TIMEOUT_MS` (servidor, 10 min) la pregunta se retira de 🔔 y la tool falla con 408 «el usuario no ha contestado a la confirmación» (antes contaba como «No»).
+- Prueba: `node scripts/confirm-timeout-e2e.mjs`.
