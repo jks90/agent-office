@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="title desc">
+  <title id="title">FT-147 · Un minuto de oficina: estado real y vida ambiental</title>
+  <desc id="desc">Cuatro viñetas cenitales de diseño, a cero, quince, treinta y sesenta segundos. Ana trabaja, Bruno revisa y Carla pasa de libre a esperar una pregunta junto a Tú. Visita y limpieza son grises; ceden el paso y salen al subir la carga. Un repartidor posterior entrega una caja decorativa. Son fixtures, no actividad real.</desc>
+  <defs>
+    <style>
+      text{font-family:Arial,Helvetica,sans-serif;fill:#F3F6FA} .heading{font-size:25px;font-weight:700}.caption{font-size:19px}.small{font-size:16px}.zone{font-size:16px;fill:#203247;font-weight:700}.tiny{font-size:14px;fill:#203247}.label{font-size:16px;font-weight:700}.path{fill:none;stroke:#657586;stroke-width:3;stroke-dasharray:7 5;marker-end:url(#arrow)}.realpath{fill:none;stroke:#B38A27;stroke-width:4;marker-end:url(#gold)}
+    </style>
+    <marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0L7 3.5L0 7" fill="#657586"/></marker>
+    <marker id="gold" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0L7 3.5L0 7" fill="#B38A27"/></marker>
+    <g id="floor">
+      <rect width="790" height="277" rx="12" fill="#E8E4DC"/>
+      <rect x="10" y="10" width="295" height="67" rx="6" fill="#DDECF5"/><text x="22" y="31" class="zone">REUNIONES</text>
+      <rect x="329" y="10" width="154" height="67" rx="6" fill="#ECE2F5"/><text x="341" y="31" class="zone">PO · DESPACHO</text>
+      <rect x="507" y="10" width="271" height="67" rx="6" fill="#FFF0BF" stroke="#B38A27" stroke-width="3"/><rect x="513" y="16" width="259" height="55" rx="4" fill="none" stroke="#B38A27"/><text x="524" y="33" class="zone">TÚ · AVISOS</text>
+      <rect x="10" y="107" width="295" height="74" rx="6" fill="#DDECF5"/><text x="22" y="127" class="zone">TRABAJO</text>
+      <rect x="329" y="107" width="230" height="74" rx="6" fill="#DDECF5"/><text x="341" y="127" class="zone">REVISIÓN / QA</text>
+      <rect x="583" y="107" width="195" height="74" rx="6" fill="#F7E8C8"/><text x="595" y="127" class="zone">KANBAN / ESPERA</text>
+      <rect x="10" y="211" width="223" height="56" rx="6" fill="#DDECE2"/><text x="22" y="232" class="zone">CAFÉ</text>
+      <rect x="257" y="211" width="254" height="56" rx="6" fill="#DDECE2"/><text x="269" y="232" class="zone">RECREO</text>
+      <rect x="535" y="211" width="243" height="56" rx="6" fill="#F7E8C8"/><text x="547" y="232" class="zone">RECEPCIÓN</text>
+      <rect x="83" y="41" width="115" height="20" rx="4" fill="#D7B18A"/>
+      <rect x="374" y="43" width="57" height="18" rx="3" fill="#D7B18A"/>
+      <rect x="621" y="42" width="90" height="19" rx="3" fill="#D7B18A"/><circle cx="718" cy="51" r="6" fill="#B38A27"/>
+      <rect x="74" y="136" width="82" height="14" rx="3" fill="#D7B18A"/><rect x="104" y="132" width="22" height="6" rx="2" fill="#417EA6"/>
+      <rect x="384" y="136" width="82" height="14" rx="3" fill="#D7B18A"/><rect x="414" y="132" width="22" height="6" rx="2" fill="#EF8F35"/>
+      <rect x="630" y="138" width="116" height="10" rx="2" fill="#B07B25"/>
+      <rect x="114" y="248" width="84" height="12" rx="4" fill="#43836B"/><rect x="380" y="248" width="99" height="12" rx="4" fill="#43836B"/>
+      <rect x="603" y="237" width="67" height="11" rx="3" fill="#D7B18A"/><rect x="687" y="250" width="43" height="13" rx="3" fill="#657586"/>
+      <path d="M317 82V204M571 82V204M5 94H780M5 196H780" stroke="#C7C2B9" fill="none" stroke-width="2"/>
+      <text x="742" y="268" class="tiny">↓ entrada</text>
+    </g>
+    <g id="working"><circle r="13" fill="#2F80ED" stroke="#203247" stroke-width="2"/><path d="M-7 5L-10-2M7 5L10-2" stroke="white" stroke-width="3"/></g>
+    <g id="review"><circle r="13" fill="#EF8F35" stroke="#203247" stroke-width="2"/><path d="M-6-5H6V7H-6Z" fill="none" stroke="white" stroke-width="2"/></g>
+    <g id="idle"><circle r="13" fill="#94A3B8" stroke="#203247" stroke-width="2"/><path d="M-5 3Q0 7 5 3" stroke="white" fill="none" stroke-width="2"/></g>
+    <g id="question"><circle r="13" fill="#B38A27" stroke="#203247" stroke-width="2"/><text x="-5" y="6" fill="white" font-size="19" font-weight="bold">?</text></g>
+    <g id="ambient"><path d="M0-12L12 0L0 12L-12 0Z" fill="#CFD7DF" stroke="#657586" stroke-width="2"/><path d="M-6-1L1-8M-3 5L6-4" stroke="#657586" stroke-width="2"/></g>
+    <g id="team"><use href="#working" x="114" y="163"/><use href="#review" x="425" y="163"/><use href="#idle" x="434" y="249"/><text x="163" y="157" class="tiny">Ana · teclea</text><text x="465" y="172" class="tiny">Bruno</text></g>
+  </defs>
+  <rect width="1920" height="1080" fill="#101827"/>
+  <text x="48" y="49" font-size="31" font-weight="700">FT-147 · Vida sin mentir</text>
+  <text x="48" y="80" font-size="20" fill="#CFD7DF">Storyboard de diseño · fixtures · planta cenital esquemática; implementación final isométrica low-poly</text>
+  <g transform="translate(48 108)">
+    <rect width="896" height="424" rx="16" fill="#1C293C" stroke="#53677D"/>
+    <text x="24" y="36" class="heading">01 · 00 s — El estado se lee primero</text>
+    <text x="24" y="64" class="small">4 agentes reales · 2 ocupados → cupo ambiental 2</text>
+    <g transform="translate(48 83)">
+      <use href="#floor"/><use href="#team"/><use href="#idle" x="156" y="249"/>
+      <use href="#ambient" x="708" y="253"/><use href="#ambient" x="317" y="94"/>
+      <rect x="299" y="105" width="11" height="14" rx="2" fill="#CFD7DF" stroke="#657586"/>
+      <path class="path" d="M708 244V200H317V109"/>
+      <text x="549" y="175" class="tiny">Visita: sofá → sala</text>
+      <text x="30" y="91" class="tiny">Limpieza · suelo vacío</text>
+    </g>
+    <text x="24" y="390" class="caption">Ana trabaja. Bruno revisa. Carla y Diego están libres.</text>
+    <text x="24" y="414" class="small">Los dos rombos grises son visita y limpieza; no pertenecen al equipo.</text>
+  </g>
+  <g transform="translate(976 108)">
+    <rect width="896" height="424" rx="16" fill="#1C293C" stroke="#53677D"/>
+    <text x="24" y="36" class="heading">02 · 15 s — Una pregunta cambia el destino</text>
+    <text x="24" y="64" class="small">Carla espera respuesta · 3/4 ocupados → sin nuevas entradas</text>
+    <g transform="translate(48 83)">
+      <use href="#floor"/><use href="#team"/><use href="#question" x="571" y="113"/>
+      <use href="#ambient" x="317" y="182"/><use href="#ambient" x="317" y="94"/>
+      <rect x="299" y="105" width="11" height="14" rx="2" fill="#CFD7DF" stroke="#657586"/>
+      <path class="realpath" d="M156 237V196H571V94H647"/>
+      <text x="516" y="88" class="tiny">→ Tú · pregunta</text>
+      <text x="335" y="197" class="tiny">Visita cede el paso</text>
+      <text x="735" y="57" class="tiny">1</text>
+    </g>
+    <text x="24" y="390" class="caption">La burbuja cambia al llegar el snapshot; Carla camina.</text>
+    <text x="24" y="414" class="small">Ambiente espera sin tapar avisos. Los dos figurantes preparan la salida.</text>
+  </g>
+  <g transform="translate(48 552)">
+    <rect width="896" height="424" rx="16" fill="#1C293C" stroke="#53677D"/>
+    <text x="24" y="36" class="heading">03 · 30 s — El usuario reconoce su intervención</text>
+    <text x="24" y="64" class="small">Carla junto a «Tú» · ambiente saliente cuenta dentro del límite absoluto 3</text>
+    <g transform="translate(48 83)">
+      <use href="#floor"/><use href="#team"/><use href="#question" x="647" y="92"/>
+      <text x="507" y="89" class="tiny">Carla · pregunta</text><text x="735" y="57" class="tiny">1</text>
+      <use href="#ambient" x="750" y="197"/>
+      <rect x="732" y="205" width="11" height="14" rx="2" fill="#CFD7DF" stroke="#657586"/>
+      <path class="path" d="M750 210V265"/>
+      <text x="42" y="91" class="tiny">Visita ya salió; limpieza vuelve a entrada</text>
+    </g>
+    <text x="24" y="390" class="caption">Trabajo y revisión continúan; una sola figura gris sale.</text>
+    <text x="24" y="414" class="small">Sin nueva reunión decorativa con carga alta. La sala puede estar vacía.</text>
+  </g>
+  <g transform="translate(976 552)">
+    <rect width="896" height="424" rx="16" fill="#1C293C" stroke="#53677D"/>
+    <text x="24" y="36" class="heading">04 · 60 s — Movimiento discreto, señales constantes</text>
+    <text x="24" y="64" class="small">Aviso sigue pendiente · cupo 1 · repartidor admitido tras salida anterior</text>
+    <g transform="translate(48 83)">
+      <use href="#floor"/><use href="#team"/><use href="#question" x="647" y="92"/>
+      <text x="507" y="89" class="tiny">Carla · pregunta</text><text x="735" y="57" class="tiny">1</text>
+      <use href="#ambient" x="637" y="257"/><rect x="645" y="240" width="16" height="12" fill="#A58C72" stroke="#657586"/>
+      <text x="535" y="199" class="tiny">Caja gris: decoración, ningún evento real</text>
+      <path d="M408 242H451" stroke="#94A3B8" stroke-width="2"/>
+    </g>
+    <text x="24" y="390" class="caption">Diego descansa. Ana teclea. Nadie activo toma café.</text>
+    <text x="24" y="414" class="small">La respuesta del usuario, no el reloj ambiental, decidirá el próximo destino.</text>
+  </g>
+  <text x="48" y="1015" font-size="20">● Agente real: nombre + estado real     ◇ Ambiente: uniforme neutro, sin burbuja ni tarea     ═ Tú: prioridad visual</text>
+  <text x="48" y="1048" class="small">Ventana ilustrativa de episodios ya en curso; segundos aproximados, no prueba del scheduler. Las rutas finales dependen de colisiones Kenney.</text>
+</svg>
