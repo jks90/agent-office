@@ -311,6 +311,17 @@ Tools del Guide (`tools.js`): `ui.getTree` y `ui.find` (política `read`) y `ui.
 
 Prueba: `node -e "import('./server/desktop/index.js').then(async m=>{const p=m.getProvider();console.log(p.session,p.available(),await p.getActive(),(await p.list()).length)})"`.
 
+## 🌐 Navegador del agente — driver CDP (FT-114)
+
+Fase A de la épica «Navegador del agente»: `server/browser/` con un contrato `BrowserDriver` (documentado en `index.js`) y dos implementaciones: `cdp.js` (Chromium/Chrome/Brave dedicado por CDP con `puppeteer-core`, que se importa en el primer `launch()`) y `fake.js` (`AO_BROWSER=fake`, sin Chromium). `getDriver()` devuelve la instancia compartida única.
+
+- **Perfil persistente** en `data/browser/profile` (las sesiones iniciadas sobreviven); `close()` y el cierre por inactividad (`AO_BROWSER_IDLE_MS`, 15 min) no lo borran.
+- **Visible** por defecto si hay escritorio; headless con `AO_BROWSER_HEADLESS=1` (o sin `DISPLAY`). `AO_BROWSER_PATH` fuerza el binario; `AO_BROWSER_NO_SANDBOX=1` (automático como root).
+- `snapshot()`: árbol de accesibilidad compacto (incluye iframes) con refs estables por pestaña (`e12`) `{ref, role, name, value, states}`; tope `AO_BROWSER_SNAPSHOT_NODES` (300) con `truncated`/`omitted`. `act`/`type`/`scroll` resuelven la ref por CDP (`backendNodeId`) y caen a `x,y`.
+- `screenshot()` ≤1280 px de ancho en `data/browser/captures`; `console()`/`network()` con anillo de 200 por pestaña y cabeceras sensibles a `***`; solo se navega a `http(s)`.
+- Los popups pasan a ser la pestaña activa. Prueba: `node scripts/browser-driver-e2e.mjs`.
+- Pendiente (siguientes fases): tools `browser.*` en `server/guide/tools.js` con política y `bin/ao-mcp.mjs`, respondiendo `{inside:true}` para flow-test/AgentOffice como `ui.*`. `puppeteer-core` sigue en `devDependencies`: mover a `dependencies` cuando se exponga al usuario.
+
 ## Estructura
 
 ```
