@@ -1,0 +1,162 @@
+{
+  "task": "FT-147",
+  "version": 1,
+  "status": "design-only",
+  "geometry": "visual-contract-v3.json",
+  "precedence": "FT-147 replaces FT-146 ambient and statePlacement behavior; geometry and persistent home assignment remain FT-146",
+  "scope": "floor only; building keeps real counts and existing miniatures",
+  "identity": {
+    "namespace": "ambient:",
+    "source": "local decorative entities, never S.agents",
+    "interactive": false,
+    "affectsTasksEventsCostsTeamCounts": false,
+    "nameplate": false,
+    "stateBubble": false,
+    "optionalIcon": { "color": "#657586", "shape": "hollow diamond", "text": "Ambiente" },
+    "floorMarker": "small dashed grey ring; agents retain solid state rings",
+    "legend": "Rombo gris: ambiente decorativo; no indica trabajo real"
+  },
+  "scheduler": {
+    "clock": "visible elapsed seconds in existing requestAnimationFrame; pause while hidden; cap resume delta at 0.1s",
+    "determinism": "stable project.id hash (FNV-1a unsigned UTF-8) modulo 60 gives initial phase; fixed catalog order; no Math.random",
+    "admissionWindowSeconds": 30,
+    "busyRatio": "non-idle real agents / real team size, using fidelity adapter; unknown counts busy; empty team disables ambient",
+    "bands": [
+      { "id": "quiet", "maxBusyRatioExclusive": 0.34, "maxCharacters": 3, "cadenceMultiplier": 1 },
+      { "id": "mixed", "maxBusyRatioExclusive": 0.67, "maxCharacters": 2, "cadenceMultiplier": 1.5 },
+      { "id": "busy", "maxBusyRatioExclusive": 1.01, "maxCharacters": 1, "cadenceMultiplier": 2 }
+    ],
+    "characterBudgetIncludes": "visitors, cleaner, courier, maintenance, all meeting participants, and exiting actors",
+    "admission": "at window boundary, choose oldest overdue eligible episode, tie by catalog order; whole group must fit; reserve seats and route before entry; initial lastStart=0",
+    "frequency": "earliest next start = last start + basePeriodSeconds * current cadenceMultiplier; not a guaranteed appointment; holds never trigger catch-up spawns",
+    "loadIncrease": "stop admissions immediately; existing groups leave by return route after current dwell; budget is an admission limit during graceful drain, absolute hard cap stays 3",
+    "oneEpisodePerKind": true,
+    "reducedMotion": "disable moving episodes; at most one static grey maintenance figure on reception handoff, only if unoccluded; no clock catch-up"
+  },
+  "bindings": {
+    "entry": { "anchor": "reception-door" },
+    "entry-inside": { "route": "visitor", "index": 1 },
+    "south-east": { "route": "visitor", "index": 2 },
+    "south-west": { "route": "visitor", "index": 3 },
+    "north-west": { "route": "visitor", "index": 4 },
+    "meeting-approach": { "route": "visitor", "index": 5 },
+    "meeting-threshold": { "anchor": "meeting-door", "offset": { "x": 0, "z": -0.5 } },
+    "north-east": { "route": "cleaner", "index": 5 },
+    "south-spine-east": { "route": "cleaner", "index": 6 },
+    "handoff": { "anchor": "reception-counter", "offset": { "x": 0, "z": 0.85 }, "kind": "standing-slot" },
+    "visitor-sofa": { "anchor": "reception-counter", "offset": { "x": -0.3, "z": 1.75 }, "kind": "ambient-sofa", "footprint": { "w": 1.2, "d": 0.55 } },
+    "visitor-seat": { "node": "visitor-sofa", "offset": { "x": 0, "z": 0 }, "kind": "ambient-seat" },
+    "reception-side": { "node": "entry-inside", "offset": { "x": -0.45, "z": 0 } },
+    "sofa-approach": { "node": "visitor-seat", "offset": { "x": 0, "z": -0.65 } },
+    "meeting-lane-east": { "anchor": "meeting-door", "offset": { "x": -0.35, "z": 0.15 } },
+    "meeting-lane-0": { "anchor": "meeting-chair-0", "offset": { "x": 0, "z": 0.6 } },
+    "meeting-lane-1": { "anchor": "meeting-chair-1", "offset": { "x": 0, "z": 0.6 } },
+    "meeting-east-inner": { "anchor": "meeting-door", "offset": { "x": -0.35, "z": -1.65 } },
+    "meeting-seat-0": { "anchor": "meeting-chair-0" },
+    "meeting-seat-1": { "anchor": "meeting-chair-1" },
+    "meeting-seat-2": { "anchor": "meeting-chair-3" },
+    "plant": { "node": "south-east", "offset": { "x": 0.7, "z": -0.6 }, "kind": "ambient-plant", "footprint": { "w": 0.35, "d": 0.35 } },
+    "plant-service": { "node": "south-east", "offset": { "x": 0.7, "z": 0 } },
+    "printer": { "node": "south-west", "offset": { "x": 0.85, "z": 1.1 }, "kind": "ambient-printer", "footprint": { "w": 0.55, "d": 0.45 } },
+    "printer-service": { "node": "south-west", "offset": { "x": 0.85, "z": 0.5 } }
+  },
+  "paths": {
+    "to-reception": ["entry", "entry-inside", "reception-side", "handoff"],
+    "to-sofa": ["handoff", "reception-side", "sofa-approach", "visitor-seat"],
+    "sofa-to-meeting": ["visitor-seat", "sofa-approach", "reception-side", "entry-inside", "south-east", "south-west", "north-west", "meeting-approach", "meeting-threshold"],
+    "to-meeting": ["entry", "entry-inside", "south-east", "south-west", "north-west", "meeting-approach", "meeting-threshold"],
+    "meeting-seat-0": ["meeting-threshold", "meeting-lane-east", "meeting-lane-0", "meeting-seat-0"],
+    "meeting-seat-1": ["meeting-threshold", "meeting-lane-east", "meeting-lane-1", "meeting-seat-1"],
+    "meeting-seat-2": ["meeting-threshold", "meeting-lane-east", "meeting-east-inner", "meeting-seat-2"],
+    "cleaning-loop": ["entry", "entry-inside", "south-east", "south-west", "north-west", "north-east", "south-spine-east", "south-east", "entry-inside", "entry"],
+    "plant-service": ["entry", "entry-inside", "south-east", "plant-service"],
+    "printer-service": ["plant-service", "south-east", "south-west", "printer-service"]
+  },
+  "catalog": [
+    {
+      "id": "cleaner", "characters": 1,
+      "appearance": "stone-grey apron #CFD7DF, striped hem, muted teal gloves #648C88, compact cart following behind; no agent badge",
+      "prop": { "id": "cart", "w": 0.4, "d": 0.45, "behindDistance": 0.45 },
+      "basePeriodSeconds": 150, "nominalDurationSeconds": 90,
+      "phases": [
+        { "kind": "walk", "path": "cleaning-loop", "seconds": 66 },
+        { "kind": "dwellAlongPath", "nodes": ["south-west", "north-east"], "secondsEach": 12, "pose": "small mop strokes on unoccupied floor" }
+      ],
+      "condition": "clean only empty floor patches in corridors beside zones; never enter desks; skip occupied patch and continue; cart counts as obstacle, not character"
+    },
+    {
+      "id": "visitor", "characters": 1,
+      "appearance": "sand coat #B9AF9E, charcoal trousers, grey diamond lapel; no agent badge",
+      "basePeriodSeconds": 120, "nominalDurationSeconds": 110,
+      "phases": [
+        { "kind": "walk", "path": "to-reception", "seconds": 6 },
+        { "kind": "dwell", "node": "handoff", "seconds": 6, "pose": "quiet greeting" },
+        { "kind": "walk", "path": "to-sofa", "seconds": 4 },
+        { "kind": "dwell", "node": "visitor-seat", "seconds": 15, "pose": "seated waiting, no phone or task bubble" },
+        { "kind": "walk", "path": "sofa-to-meeting", "seconds": 26 },
+        { "kind": "walk", "path": "meeting-seat-1", "seconds": 4 },
+        { "kind": "dwell", "node": "meeting-seat-1", "seconds": 15, "pose": "look at empty meeting table" },
+        { "kind": "return", "paths": ["meeting-seat-1", "to-meeting"], "seconds": 34 }
+      ],
+      "condition": "reserve reception sofa and meeting chair; postpone if unavailable; visits never use idle seats reserved for real agents"
+    },
+    {
+      "id": "courier", "characters": 1,
+      "appearance": "muted brown jacket #A58C72, grey cap, cardboard parcel; no bright error/working colors",
+      "basePeriodSeconds": 210, "nominalDurationSeconds": 26,
+      "phases": [
+        { "kind": "walk", "path": "to-reception", "seconds": 6 },
+        { "kind": "dwell", "node": "handoff", "seconds": 14, "pose": "place parcel on reception counter, then take it away" },
+        { "kind": "return", "paths": ["to-reception"], "seconds": 6 }
+      ],
+      "condition": "handoff unoccupied; parcel is local decoration, never an attachment, task delivery, or notification"
+    },
+    {
+      "id": "ambient-meeting", "characters": 2, "quietCharacters": 3,
+      "appearance": "grey-beige striped vests #CFD7DF / #B9AF9E, neutral papers; all participants have hollow grey diamond",
+      "basePeriodSeconds": 180, "nominalDurationSeconds": 100,
+      "phases": [
+        { "kind": "walk", "path": "to-meeting", "seconds": 26 },
+        { "kind": "fanOut", "paths": ["meeting-seat-0", "meeting-seat-1", "meeting-seat-2"], "seconds": 6 },
+        { "kind": "dwell", "nodes": ["meeting-seat-0", "meeting-seat-1", "meeting-seat-2"], "seconds": 36, "pose": "alternate slow head turn and paper gesture; no work indicators" },
+        { "kind": "returnGroup", "paths": ["meeting-seat-0", "meeting-seat-1", "meeting-seat-2", "to-meeting"], "seconds": 32 }
+      ],
+      "condition": "2 people in mixed band, 3 in quiet band, disabled in busy band; atomic reservation; unused third path omitted; no real meeting without explicit SSE evidence"
+    },
+    {
+      "id": "maintenance", "characters": 1,
+      "appearance": "slate overalls #7B8993, grey tool bag, neutral cap; no badge, state bubble, or alert ring",
+      "basePeriodSeconds": 240, "nominalDurationSeconds": 88,
+      "phases": [
+        { "kind": "walk", "path": "plant-service", "seconds": 12 },
+        { "kind": "dwell", "node": "plant-service", "seconds": 12, "pose": "water decorative plant" },
+        { "kind": "walk", "path": "printer-service", "seconds": 12 },
+        { "kind": "dwell", "node": "printer-service", "seconds": 22, "pose": "open and close decorative printer tray" },
+        { "kind": "return", "paths": ["printer-service", "plant-service"], "seconds": 30 }
+      ],
+      "condition": "service anchors free; skip occupied service dwell; printer never signals a real incident"
+    }
+  ],
+  "movement": {
+    "maxSpeedUnitsPerSecond": 0.8,
+    "characterRadiusUnits": 0.18,
+    "realAgentClearanceUnits": 0.55,
+    "routeDuration": "phase seconds are nominal minima; duration=max(seconds, path length / maxSpeed); dwell and yield add time; never accelerate to catch up",
+    "turn": "face next segment with 0.25s eased turn; no diagonal shortcuts across furniture",
+    "yield": "real agents reserve segment first; ambient waits at last clear node; same-priority ambient FIFO then stable id; groups walk single file with 0.6u spacing",
+    "blockedExit": "wait visibly at last safe point; no timeout teleport; cancel only before spawning",
+    "earlyExit": "finish current dwell then reverse recorded traversed segments to entry from current interpolated position; no jump to nominal return-path start",
+    "groupReturn": "each participant reverses its own fanOut path, then common entry path; never concatenate other participants' chair paths; unused third chair omitted",
+    "occupancy": "reserve seats atomically for complete episode; real agents always preempt ambient, who walks out without displacing agent",
+    "screenOcclusion": "project bubble and user-desk rectangles each camera frame; inflate by 16px; hide ambient mesh, icon, props and shadows only while intersecting protected region; logical route continues",
+    "labels": "preserve FT-146 48px real label separation; no ambient label competes with agent bubbles"
+  },
+  "adapter": {
+    "status": "required, not implemented by FT-147",
+    "newGeometry": "bindings with kind are additions relative to FT-146 anchors; resolve in each selected layout; add reception sofa, plant, printer and service nodes without modifying agent desks",
+    "collisionGate": "before enabling episode, sweep body + cart/props along every segment against actual Kenney bounds, glass, walls and reserved slots; turn space included; invalid path disables that episode and reports debug reason",
+    "agentGraph": "future graph needs desk side-access, QA access, user waiting slots and recreation slots; these are specified in fidelidad.md and must not be confused with ambient paths",
+    "snapshot": "S.projects, S.agents, S.tasks, S.questions only; /api/events can supply existing real activity detail, never decorative events",
+    "noNewEndpoints": true
+  }
+}
