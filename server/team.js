@@ -588,6 +588,7 @@ export async function reject(id, feedback = '', images = [], attachments = [], b
   // La rama y el worktree se conservan: el agente corrige sobre su intento anterior.
   t.returns = (t.returns || 0) + 1; // FT-76: devoluciones (KPI «aprobadas a la primera»)
   if (feedback.trim()) t.feedback = [t.feedback, feedback.trim()].filter(Boolean).join('\n');
+  (t.rejectAt ||= []).push(Date.now()); // FT-152: cuándo, para atribuir la devolución al intento (modelo) que la provocó
   (t.rejectReasons ||= []).push(classifyReject(feedback)); // FT-152: motivo de cada devolución (puntuación de agentes)
   if (t.budgetHit || t.stuck) t.cuts = (t.cuts || 0) + 1; // FT-152: se cortó por tope o atasco (budgetHit se borra más abajo)
   // FT-60: devolver desde revisión = el modelo barato no bastó → el reintento sube de peldaño (desde «fallida» ya subió al fallar;
@@ -1511,7 +1512,7 @@ function economyBlock(codeIndexOn) {
 async function runTask(p, agent, t) {
   const s = get();
   jobs.set(agent.id, { stop() {}, taskId: t.id, engine: agent.engine === 'auto' ? null : agent.engine }); // ocupado DESDE YA (antes de cualquier await), o el mismo tick le daría dos tareas
-  Object.assign(t, { status: 'doing', agentId: agent.id, error: null, attempts: t.attempts + 1, startedAt: Date.now(), updatedAt: Date.now() });
+  Object.assign(t, { status: 'doing', agentId: agent.id, error: null, attempts: t.attempts + 1, startedAt: Date.now(), updatedAt: Date.now(), agentName: agent.name }); // FT-152: el nombre sobrevive al agente retirado
   Object.assign(agent, { status: 'working', taskId: t.id, activity: t.kind === 'plan' ? 'Leyendo el objetivo' : 'Preparando su copia del repo' });
   changed();
   log(agent.id, `▶ ${t.code || '#' + t.id} ${t.title}`);
@@ -1610,6 +1611,7 @@ async function runTask(p, agent, t) {
     let detector = newDetector();
     if (pickedModel.model) { // FT-60: historial de modelos de la tarea (la tarjeta enseña «haiku → sonnet»)
       (t.modelHistory ||= []).push({ model: pickedModel.model, engine: engineId, attempt: t.attempts, why: pickedModel.why, at: Date.now() });
+      (t.attemptsLog ||= []).push({ attempt: t.attempts, agentId: agent.id, agentName: agent.name, engine: engineId, model: pickedModel.model, startedAt: Date.now() }); // FT-152: quién y con qué modelo hizo CADA intento (la puntuación lo atribuye por entrega)
       t.modelHistory = t.modelHistory.slice(-10);
       log(agent.id, `🧠 Modelo ${pickedModel.model} (${pickedModel.why}${t.escalations ? `, escalada ${t.escalations}` : ''})`);
     }
@@ -1704,6 +1706,8 @@ async function runTask(p, agent, t) {
       res.ok = true; res.stopped = false;
       res.summary = `⚠️ atascado: ${entry.stuck}. ${agent.name} no avanzaba (se le avisó y siguió igual), así que se cortó antes de agotar el tope; lo hecho queda en la rama. Revisa: «Devolver» con otra indicación le da otro intento partiendo de aquí.${res.summary ? '\n\n' + res.summary : ''}`;
       t.stuck = entry.stuck;
+      t.stuckCount = (t.stuckCount || 0) + 1; // FT-152: acumulado (t.stuck se limpia al reintentar)
+      if (t.attemptsLog?.length) t.attemptsLog[t.attemptsLog.length - 1].cut = 'stuck';
       events.emit('AgentBlocked', ev, { reason: 'stuck', signal: entry.stuck, costUsd: t.costUsd });
     }
     // Tope de gasto alcanzado: NO es un fallo. Lo hecho se confirma y la tarea va a Revisión con el aviso; «Devolver» le da
@@ -1713,6 +1717,8 @@ async function runTask(p, agent, t) {
       res.ok = true;
       res.summary = `⚠️ TOPE DE GASTO ALCANZADO (${capText} por intento): ${agent.name} se cortó a medias y lo hecho queda en la rama. Revisa: «Devolver» le da otro intento partiendo de aquí; «Aprobar» solo si ya vale.${res.summary ? '\n\n' + res.summary : ''}`;
       t.budgetHit = true;
+      t.budgetHitCount = (t.budgetHitCount || 0) + 1; // FT-152
+      if (t.attemptsLog?.length) t.attemptsLog[t.attemptsLog.length - 1].cut = 'budget';
       log(agent.id, `⚠️ ${t.code || t.id}: tope de gasto de ${capText} alcanzado → a revisión`);
       events.emit('AgentBlocked', ev, { reason: 'budget', capUsd: cap, costUsd: t.costUsd });
     }
