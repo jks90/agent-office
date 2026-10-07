@@ -13,6 +13,14 @@ npm start            # http://127.0.0.1:7420
 npm run dev          # igual, reiniciando al cambiar el servidor
 ```
 
+**Se actualiza solo.** Cada 15 min (`AO_UPDATE_MIN`) hace `git fetch`; si va por detrás de su rama remota, el árbol está limpio,
+el avance es *fast-forward* y no hay ningún agente trabajando ni revisando, hace `git pull --ff-only`, avisa por Telegram y se
+reinicia (sale con 75: lo relanza `npm start` vía `bin/ao-run.mjs`, o systemd con `Restart=on-failure`). Con cambios locales o
+ramas divergentes no toca nada. Estado en `GET /api/version`; `POST /api/version/check` comprueba ya; `AO_AUTOUPDATE=off` lo apaga.
+
+**Avisos por Telegram** (revisión pendiente, preguntas, cuota, atascos, tope de gasto, fallos): `data/telegram.json` con
+`{ "enabled": true, "botToken": "…", "chatIds": ["…"] }` (o `AO_TELEGRAM_TOKEN` + `AO_TELEGRAM_CHATS`); prueba con `POST /api/telegram/test`.
+
 El primer arranque crea **«Demo — Tienda online»** con el motor `demo` (simulado, no gasta tokens):
 escribe un objetivo, pulsa **Encargar al PO** y luego **▶ Poner a trabajar**.
 

@@ -5,7 +5,7 @@
   "description": "Oficina 2D de agentes de IA (Claude Code / Codex) que trabajan en equipo sobre tus proyectos",
   "type": "module",
   "scripts": {
-    "start": "node server/index.js",
+    "start": "node bin/ao-run.mjs",
     "dev": "node --watch server/index.js"
   },
   "engines": {
