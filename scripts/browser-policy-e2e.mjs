@@ -57,7 +57,7 @@ try {
   fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ settings: { flowTestUrl: `http://127.0.0.1:${stubPort}`, maxParallel: 4, workspaceHostDir: path.join(tmp, 'sin-workspace'), browserPolicy: { default: 'ask', domains: { 'ok.test': 'allow', 'mal.test': 'block' } } } }));
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
-  proc = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, HOME: homeDir, AO_PORT: String(port), AO_HOST: '127.0.0.1', AO_DATA_DIR: dir, AO_GUIDE_FAKE: '1', AO_DESKTOP: 'fake', AO_BROWSER: 'fake' } });
+  proc = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, HOME: homeDir, AO_PORT: String(port), AO_HOST: '127.0.0.1', AO_DATA_DIR: dir, AO_GUIDE_FAKE: '1', AO_DESKTOP: 'fake', AO_BROWSER: 'fake', AO_BROWSER_WAIT_CONTROL_MS: '1500' } });
   proc.stdout.on('data', (d) => { serverLog += d; });
   proc.stderr.on('data', (d) => { serverLog += d; });
   const call = async (method, p, body) => { const r = await fetch(base + p, { method, headers: { 'content-type': 'application/json', 'x-ao-client': 'bp-e2e' }, body: body === undefined ? undefined : JSON.stringify(body) }); return { status: r.status, ok: r.ok, body: await r.json().catch(() => ({})) }; };

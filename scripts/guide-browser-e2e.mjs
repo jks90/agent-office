@@ -91,7 +91,7 @@ const startServer = ({ dir, port, env, settings }) => {
   return p;
 };
 delete process.env.AO_BROWSER; // Chromium real
-const server = startServer({ dir: path.join(tmp, 'data'), port: aoPort, env: { HOME: homeDir, AO_GUIDE_FAKE: '1' } });
+const server = startServer({ dir: path.join(tmp, 'data'), port: aoPort, env: { HOME: homeDir, AO_GUIDE_FAKE: '1', AO_BROWSER_WAIT_CONTROL_MS: '1500' } }); // FT-135: espera corta de las acciones con el control en user
 let server2 = null, pbrowser = null;
 const cleanup = () => { for (const p of [server, server2]) try { p?.kill('SIGTERM'); } catch { /* parado */ } try { web.close(); stub.close(); } catch { /* nada */ } try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* nada */ } };
 process.on('exit', cleanup);
@@ -234,7 +234,7 @@ try {
   const during = await bstate();
   check('mientras espera: control=user y 1 petición de handoff en el panel', during?.control === 'user' && (during.handoffs || []).length === 1, JSON.stringify({ c: during?.control, h: during?.handoffs }));
   const blocked = await tool('browser.click', { x: 10, y: 10 });
-  check('el agente queda en pausa: browser.click → 409', blocked.status === 409, `${blocked.status} ${JSON.stringify(blocked.body)}`);
+  check('el agente queda en pausa: browser.click → 409 (tras esperar) con retryAfterMs', blocked.status === 409 && blocked.body?.retryAfterMs > 0, `${blocked.status} ${JSON.stringify(blocked.body)}`);
   check('el Guía sigue bloqueado (no ha terminado) mientras el usuario no pulsa Listo', hres === null);
   await shot('3-handoff-captcha.png');
   if (q) await call('POST', `/api/questions/${q.id}/answer`, { answer: 'Listo' });
@@ -243,6 +243,11 @@ try {
   const back = await bstate();
   check('el control vuelve al agente y no quedan handoffs', back?.control === 'agent' && (back.handoffs || []).length === 0, JSON.stringify({ c: back?.control, h: back?.handoffs }));
   check('el agente vuelve a poder actuar (click por coordenadas ya no da 409)', (await tool('browser.click', { x: 10, y: 10 })).status !== 409);
+  await call('POST', '/api/browser/control', { mode: 'user' }); // FT-135: el click espera y se completa al devolver el control
+  const waitedClick = tool('browser.click', { x: 10, y: 10 });
+  await sleep(500);
+  await call('POST', '/api/browser/control', { mode: 'agent' });
+  check('FT-135: click con el control en user + devuelto a los 500 ms → se completa (200)', (await waitedClick).status === 200);
   // Cancelar
   const hc = chat('Otra vez', [{ tool: 'browser.requestHuman', args: { motivo: 'Inicia sesión' } }]);
   const q2 = await until(async () => (await pendingQs()).find((x) => /sesi/i.test(JSON.stringify(x))), 15_000);

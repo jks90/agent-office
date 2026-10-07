@@ -918,6 +918,7 @@ function renderBrowser() {
   if (!b || $('#view-browser').hidden) return;
   const mine = b.control === 'user';
   $('#br-who').textContent = mine ? '🧑 Controlas tú' : '🤖 Controla el agente';
+  if (mine && b.waiting) $('#br-who').textContent = '🧑 Controlas tú · ⏳ el agente espera a que le devuelvas el control'; // FT-135
   $('#br-who').className = 'br-who ' + (mine ? 'user' : 'agent');
   const ctl = $('#br-control');
   ctl.textContent = mine ? '↩ Devolver al agente' : '✋ Tomar el control';

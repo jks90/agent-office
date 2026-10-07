@@ -14,6 +14,7 @@ let stopCast = null, casting = null;
 let cache = { open: false, tabs: [], url: '', title: '', tabId: null };
 let handoffs = []; // peticiones de handoff de A3 ({id, reason, at}); hueco hasta que A3 exista
 let lastKey = '';
+let waiters = []; // FT-135: acciones del agente esperando a que el usuario devuelva el control
 
 const send = (type, data) => { const m = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`; for (const r of subs) if (!r.writableEnded) r.write(m); };
 
@@ -22,7 +23,7 @@ export function status() {
   const d = getDriver();
   let av = { ok: false, missing: [] };
   try { av = d.available(); } catch { /* sin driver */ }
-  return { driver: d.id || 'cdp', available: !!av.ok, missing: av.missing || [], open: cache.open, control, tabs: cache.tabs, url: cache.url, title: cache.title, tabId: cache.tabId, handoffs, lastRequest };
+  return { driver: d.id || 'cdp', available: !!av.ok, missing: av.missing || [], open: cache.open, control, tabs: cache.tabs, url: cache.url, title: cache.title, tabId: cache.tabId, handoffs, lastRequest, waiting: waiters.length };
 }
 // FT-132 · coste/tokens de la última petición del Guía que usó el navegador (la rellena guide/index.js al terminar el turno)
 let lastRequest = null;
@@ -39,7 +40,7 @@ export async function refresh() {
     const a = tabs.find((t) => t.active) || tabs[0];
     cache = { open: true, tabs, url: a?.url || '', title: a?.title || '', tabId: a?.id || null };
   }
-  const key = JSON.stringify([cache, control, handoffs]);
+  const key = JSON.stringify([cache, control, handoffs, waiters.length]);
   if (key !== lastKey) { lastKey = key; store.changed(); } // → evento `state` con `browser`
   return status();
 }
@@ -69,6 +70,7 @@ export const mark = (box) => { if (box) send('mark', { ...box, ms: MARK_MS, at: 
 export async function setControl(mode) {
   if (!['agent', 'user'].includes(mode)) throw fail(400, 'mode debe ser agent o user');
   control = mode;
+  if (mode === 'agent') { const w = waiters; waiters = []; for (const f of w) f(); } // FT-135: despierta a los que esperaban
   send('control', { control });
   return refresh();
 }
@@ -79,12 +81,25 @@ const ACTIONS = ['act', 'type', 'scroll', 'upload']; // FT-130: upload
 const MUTATING = ['navigate', 'back', 'forward', 'reload', 'evaluate', 'waitFor'];
 export function agentDriver() {
   const d = getDriver();
-  const paused = () => { if (control === 'user') throw fail(409, 'El usuario tiene el control del navegador: espera a que lo devuelva'); };
+  // FT-135: con el control en manos del usuario la acción ESPERA a que lo devuelva (AO_BROWSER_WAIT_CONTROL_MS, 120 s); si vence → 409 con retryAfterMs
+  const paused = async () => {
+    if (control !== 'user') return;
+    const ms = Number(process.env.AO_BROWSER_WAIT_CONTROL_MS) || 120000;
+    let release;
+    const ok = await new Promise((res) => {
+      const timer = setTimeout(() => { waiters = waiters.filter((f) => f !== release); res(false); }, ms);
+      release = () => { clearTimeout(timer); res(true); };
+      waiters.push(release);
+      refresh().catch(() => {});
+    });
+    refresh().catch(() => {});
+    if (!ok) throw Object.assign(fail(409, `El usuario sigue teniendo el control del navegador (esperé ${Math.round(ms / 1000)} s): reintenta en unos segundos o pídele que lo devuelva`), { retryAfterMs: 5000 });
+  };
   return new Proxy(d, {
     get(t, k) {
-      if (k === 'tabs') return new Proxy(t.tabs, { get: (tt, kk) => (kk === 'list' ? tt.list : async (...a) => { paused(); const r = await tt[kk](...a); refreshSoon(); return r; }) });
-      if (ACTIONS.includes(k)) return async (a = {}) => { paused(); if (a.ref || a.x != null) mark(await t.box?.(a).catch(() => null)); const r = await t[k](a); refreshSoon(); return r; };
-      if (MUTATING.includes(k)) return async (...a) => { paused(); const r = await t[k](...a); refreshSoon(); return r; };
+      if (k === 'tabs') return new Proxy(t.tabs, { get: (tt, kk) => (kk === 'list' ? tt.list : async (...a) => { await paused(); const r = await tt[kk](...a); refreshSoon(); return r; }) });
+      if (ACTIONS.includes(k)) return async (a = {}) => { await paused(); if (a.ref || a.x != null) mark(await t.box?.(a).catch(() => null)); const r = await t[k](a); refreshSoon(); return r; };
+      if (MUTATING.includes(k)) return async (...a) => { await paused(); const r = await t[k](...a); refreshSoon(); return r; };
       return t[k]?.bind ? t[k].bind(t) : t[k];
     },
   });

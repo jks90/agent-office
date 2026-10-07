@@ -90,7 +90,7 @@ try {
   check('mode=plan nunca la lleva', !claudeScope({ kind: 'qa', roleId: 'qa-suite', mode: 'plan' }).browser);
   check('`tools: …, browser` la activa y no cuenta como herramienta integrada', (() => { const s = claudeScope({ kind: 'dev', roleId: 'x', roleTools: ['Read', 'browser'] }); return s.browser && s.builtin.join() === 'Read'; })());
 
-  const A = await startServer('fake', { AO_BROWSER: 'fake' });
+  const A = await startServer('fake', { AO_BROWSER: 'fake', AO_BROWSER_WAIT_CONTROL_MS: '1500' });
 
   section('registro y política');
   const list = (await A.get('/api/guide/tools')).body;
@@ -132,7 +132,12 @@ try {
 
   section('control compartido (FT-117): con «user» al mando el agente espera');
   await A.post('/api/browser/control', { mode: 'user' });
-  check('browser.click con el control en «user» → 409', (await A.tool('browser.click', { ref: 'e4' })).status === 409);
+  const waited = A.tool('browser.click', { ref: 'e4' }); // FT-135: espera y se completa al devolver el control
+  await new Promise((r) => setTimeout(r, 400));
+  await A.post('/api/browser/control', { mode: 'agent' });
+  check('FT-135: browser.click espera a que el usuario devuelva el control y se completa', (await waited).ok);
+  await A.post('/api/browser/control', { mode: 'user' });
+  check('browser.click con el control en «user» → 409 al vencer la espera', (await A.tool('browser.click', { ref: 'e4' })).status === 409);
   check('browser.navigate con el control en «user» → 409', (await A.tool('browser.navigate', { url: 'http://example.test/x' })).status === 409);
   check('browser.snapshot (lectura) sigue funcionando', (await A.tool('browser.snapshot')).ok);
   await A.post('/api/browser/control', { mode: 'agent' });

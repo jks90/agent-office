@@ -104,8 +104,19 @@ try {
   check('el usuario controla', await until(async () => (await call('GET', '/api/state')).body.browser.control === 'user') && await until(async () => (await txt('#br-who')).includes('Controlas tú')));
   check('botón pasa a «Devolver al agente» y la URL se habilita', await until(async () => (await txt('#br-control')).includes('Devolver')) && await until(() => page.$eval('#br-url', (i) => !i.disabled)));
   let paused = 0;
-  try { await ag.act({ ref: btn.ref }); } catch (e) { paused = e.status; }
-  check('el agente queda en pausa (409)', paused === 409);
+  process.env.AO_BROWSER_WAIT_CONTROL_MS = '300'; // FT-135: espera corta para el caso de vencimiento
+  const tw = Date.now();
+  try { await ag.act({ ref: btn.ref }); } catch (e) { paused = e.status; check('FT-135: 409 con retryAfterMs al vencer', e.retryAfterMs > 0); }
+  check('el agente queda en pausa (409) tras esperar', paused === 409 && Date.now() - tw >= 250);
+  process.env.AO_BROWSER_WAIT_CONTROL_MS = '20000';
+  const pend = ag.act({ ref: btn.ref }).then(() => 'ok', (e) => 'err ' + e.status);
+  check('FT-135: el estado dice que el agente espera', await until(async () => (await call('GET', '/api/state')).body.browser.waiting === 1) && await until(async () => (await txt('#br-who')).includes('espera')));
+  const early = await Promise.race([pend, new Promise((r) => setTimeout(() => r('pendiente'), 1500))]);
+  check('FT-135: sigue pendiente mientras el usuario controla (5 s simulados)', early === 'pendiente');
+  await call('POST', '/api/browser/control', { mode: 'agent' });
+  check('FT-135: al devolver el control la acción se completa', await pend === 'ok');
+  await call('POST', '/api/browser/control', { mode: 'user' });
+  process.env.AO_BROWSER_WAIT_CONTROL_MS = '300';
   try { await ag.navigate({ url: WEB }); paused = 0; } catch (e) { paused = e.status; }
   check('navegar tampoco (409)', paused === 409);
   check('leer (snapshot) sigue permitido', (await ag.snapshot()).nodes.length > 0);

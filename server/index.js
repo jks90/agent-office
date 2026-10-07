@@ -407,7 +407,7 @@ const server = http.createServer(async (req, res) => {
     const out = await route[2](pathname.match(route[1]).slice(1), req.method === 'GET' ? {} : await readBody(req), Object.fromEntries(new URL(req.url, 'http://x').searchParams), req);
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(out ?? { ok: true }));
   } catch (e) {
-    res.writeHead(e.status || 500, { 'content-type': 'application/json' }).end(JSON.stringify({ error: e.message, gated: e.gated, suite: e.suite, missing: e.missing }));
+    res.writeHead(e.status || 500, { 'content-type': 'application/json' }).end(JSON.stringify({ error: e.message, gated: e.gated, suite: e.suite, missing: e.missing, retryAfterMs: e.retryAfterMs }));
   }
 });
 server.on('upgrade', (req, socket) => { // FT-118: WebSocket de la extensión (solo loopback; se autentica con código/clave)
