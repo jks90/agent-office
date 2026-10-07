@@ -737,3 +737,19 @@ Cada planta tiene una mesa «Tú» (avatar naranja con corona, en la franja libr
 - Vista Edificio: cada planta con avisos muestra un punto naranja con tu número de pendientes.
 
 Prueba: `node scripts/mydesk-e2e.mjs [captura.png]`.
+
+## 🗂 Paneles en los márgenes de la planta (FT-125)
+
+El hueco que deja el diorama a izquierda y derecha se aprovecha con tarjetas HTML semitransparentes (`public/office-panels.js`), siempre fuera del suelo, la pizarra y las burbujas:
+
+- **👥 Equipo** (arriba-izq): agente, rol, motor/modelo, estado, tarea actual (`FT-n` + título), minutos en ella y coste de hoy; clic → ficha del agente.
+- **📜 Actividad** (abajo-izq): últimos 8 eventos del Activity Stream del proyecto (aprobada, devuelta, fusionada, empieza, pregunta…), en vivo por SSE.
+- **🗂 Progreso** (arriba-dcha): hechas/total con barra, en curso, cola siguiente con «⏳ espera a FT-n» y épicas agrupadas por prefijo del título (`Épica: …` o `[Épica] …`).
+- **🔔 Para ti** (centro-dcha): lo de `inboxItems(projectId)` (el mismo de la mesa «Tú»); clic en una fila abre la tarea o la bandeja.
+- **⚡ Consumo y cuota** (abajo-dcha): coste de hoy del proyecto y cuota de Claude/Codex (FT-45) con aviso cerca del tope.
+
+Colocación: se proyecta el volumen de la planta (`office.floorHull()`) y los obstáculos vivos (`office.obstacles()`); cada tarjeta ocupa el ancho libre de su franja (170–268 px). Si alguna no cabe o la ventana mide < 760 px, todas pasan a una barra lateral desplegable («☰ Paneles»). Cada panel se pliega con su cabecera (se recuerda en `localStorage` `ao:opCollapsed`). Se desactivan en Ajustes (`settings.officePanels`, por defecto on) y no se muestran en la vista Edificio. «Coste de hoy» suma las tareas tocadas desde las 00:00 (aproximación). `aoOffice.panels.why()` dice por qué no cupieron.
+
+También (FT-125): la burbuja de la oficina muestra el código `FT-n` de la tarea (antes podía salir su id interno) y un agente libre pone su nombre: `☕ Marta libre`.
+
+Prueba: `node scripts/office-panels-e2e.mjs [carpeta]` (1920×1080, 1366×768 y 600 px; guarda capturas).

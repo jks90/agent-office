@@ -279,6 +279,7 @@ const routes = [
     const st = store.get().settings;
     if (typeof b.flowTestUrl === 'string' && b.flowTestUrl.trim()) st.flowTestUrl = b.flowTestUrl.trim().replace(/\/+$/, '').replace(/\/mcp$/, '');
     if (typeof b.workspaceHostDir === 'string') st.workspaceHostDir = b.workspaceHostDir.trim();
+    if (typeof b.officePanels === 'boolean') st.officePanels = b.officePanels; // FT-125: paneles de los márgenes de la planta (por defecto on)
     if (['todas', 'al pasar'].includes(b.officeBubbles)) st.officeBubbles = b.officeBubbles; // FT-123
     if (typeof b.quotaGuard === 'boolean') st.quotaGuard = b.quotaGuard; // FT-45
     if (review.POLICIES.includes(b.reviewPolicy) && b.reviewPolicy !== st.reviewPolicy) { st.reviewPolicy = b.reviewPolicy; for (const p of store.get().projects) if (!p.reviewPolicy) team.reviewPending(p); } // FT-56: manual | auto-qa | auto
