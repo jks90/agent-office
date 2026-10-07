@@ -311,6 +311,24 @@ Tools del Guide (`tools.js`): `ui.getTree` y `ui.find` (política `read`) y `ui.
 
 Prueba: `node -e "import('./server/desktop/index.js').then(async m=>{const p=m.getProvider();console.log(p.session,p.available(),await p.getActive(),(await p.list()).length)})"`.
 
+## 🌐 Navegador del agente: visión general (FT-120)
+
+El Guía y los agentes pueden **manejar un navegador** (abrir webs, leer, rellenar formularios, capturar), al estilo «Claude en Chrome» pero dentro de AgentOffice. Dos fases con el **mismo contrato de tools `browser.*`**:
+
+| | Fase A · Chromium dedicado (FT-114) | Fase B · Extensión MV3 «Mi navegador» (FT-118) |
+|---|---|---|
+| Qué controla | Un Chromium propio, con perfil persistente en `data/browser/profile`, vía CDP (`puppeteer-core`) | Tu Brave/Chrome real, con tus sesiones, mediante una extensión emparejada |
+| Cuándo | Por defecto; automatizar sin tocar tu navegador | Cuando necesitas tus logins o Chrome 136+ (no deja depurar el perfil por defecto) |
+| Límite | Cloudflare, captchas y login de Google detectan la automatización | Solo actúa en las pestañas que le cedes |
+
+No se usan iframes: `X-Frame-Options`/CSP lo impiden; la vista 🌐 es un vídeo del navegador (FT-117).
+
+**Elegir modo:** Ajustes ▸ Navegador del agente (`settings.browserMode`: `dedicated` | `extension`). `AO_BROWSER=fake` solo existe para los tests. Variables `AO_BROWSER_*`: ver la subsección FT-114.
+
+Subsecciones: [driver CDP (FT-114)](#-navegador-del-agente--driver-cdp-ft-114) · [tools `browser.*` (FT-115)](#tools-browser-del-guía-y-de-los-agentes-ft-115) · [seguridad (FT-116)](#-seguridad-del-navegador-del-agente-ft-116) · [panel en vivo (FT-117)](#-navegador--panel-en-vivo-ft-117) · [extensión (FT-118)](#-navegador-del-agente--extensión-mv3-mi-navegador-ft-118).
+
+Guía de uso para el usuario: `~/JksDocs/workspace/flowtest/guide-navegador.md`. Informe QA: `qa-navegador/INFORME-FT-119.md`. Arquitectura: nota Mermaid en el flow `flowtest/arquitectura-guide`.
+
 ## 🌐 Navegador del agente — driver CDP (FT-114)
 
 Fase A de la épica «Navegador del agente»: `server/browser/` con un contrato `BrowserDriver` (documentado en `index.js`) y dos implementaciones: `cdp.js` (Chromium/Chrome/Brave dedicado por CDP con `puppeteer-core`, que se importa en el primer `launch()`) y `fake.js` (`AO_BROWSER=fake`, sin Chromium). `getDriver()` devuelve la instancia compartida única.
