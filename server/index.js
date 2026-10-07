@@ -25,6 +25,8 @@ import { saveRole, deleteRole } from './roles.js';
 import { ladders, normalizeLadder } from './model-ladder.js'; // FT-60
 import * as activity from './events.js';
 import * as browserPanel from './browser/panel.js'; // FT-117
+import * as browser from './browser/index.js'; // FT-118
+import * as browserExt from './browser/extension.js';
 import * as telegram from './telegram.js'; // avisos al móvil (ReviewPending, bloqueos, fallos)
 import * as selfupdate from './selfupdate.js'; // se pone al día solo con GitHub cuando no hay nadie trabajando
 import * as context from './context.js';
@@ -102,7 +104,7 @@ const inputStatus = () => {
   return inputCache.v;
 };
 // FT-50: cada tarea sin empezar lleva `plannedAgentId`/`plannedReason` (calculados en cada snapshot, no persistidos).
-const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), tasks: review.decorate(team.withPlannedAgents(st)), modelLadders: ladders(st.settings), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), costEstimates: team.costEstimates(), rtk: claudeEngine.rtkAvailable(), codeIndexInstalled: codeindex.available(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot(), browser: browserPanel.status() }; };
+const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), tasks: review.decorate(team.withPlannedAgents(st)), modelLadders: ladders(st.settings), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), costEstimates: team.costEstimates(), rtk: claudeEngine.rtkAvailable(), codeIndexInstalled: codeindex.available(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot(), browser: { ...browserPanel.status(), mode: browser.getMode(), modes: browser.MODES, ext: browserExt.status() } }; };
 
 async function readBody(req) {
   const limit = req.url.startsWith('/api/upload') ? 40e6 : req.url.startsWith('/api/guide/stt') ? 12e6 : 1e6; // adjuntos y audio del Guide (FT-9) en base64
@@ -122,7 +124,11 @@ const gated = (fn) => async (m, b) => {
 const findProject = (id) => store.get().projects.find((p) => p.id === id) || (() => { throw Object.assign(new Error('Proyecto no encontrado'), { status: 404 }); })();
 const repoPath = (id, key) => { const rs = findProject(id).repos || []; const r = rs.find((x) => x.key === key) || (!key && rs[0]); if (!r) throw Object.assign(new Error('Repo no encontrado'), { status: 404 }); return r.path; };
 
+browser.setMode(store.get().settings.browserMode); // FT-118
+browserExt.onChange(() => store.changed());
 const routes = [
+  ['POST', /^\/api\/browser\/pair$/, () => browserExt.newPairingCode()], // FT-118: código de un solo uso para la extensión
+  ['POST', /^\/api\/browser\/forget$/, () => browserExt.forget()],
   ['GET', /^\/api\/state$/, () => snapshot()],
   // Cuota restante de las suscripciones de Claude y Codex (FT-45); ?force=1 se salta la caché de 60 s
   ['GET', /^\/api\/quota$/, (_, __, q) => quota.readAll({ force: q.force === '1' })],
@@ -247,6 +253,8 @@ const routes = [
   ['DELETE', /^\/api\/projects\/(\w+)\/schedules\/(\w+)$/, ([id, sid]) => team.deleteSchedule(id, sid)],
   ['POST', /^\/api\/projects\/(\w+)\/schedules\/(\w+)\/run$/, ([id, sid]) => team.runScheduleNow(id, sid)],
   ['POST', /^\/api\/hooks\/([\w-]{16,})$/, ([token], b) => team.fireHook(token, b)],
+  ['POST', /^\/api\/projects\/(\w+)\/supervisor$/, ([id]) => team.addSupervisorTo(id)], // FT-122
+  ['POST', /^\/api\/tasks\/(\w+)\/dep-proposal$/, ([id], b) => team.resolveDepProposal(id, b)], // FT-122
   ['POST', /^\/api\/projects\/(\w+)\/coordinate$/, ([id]) => team.coordinateNow(id)], // 🧑‍✈️ aplicar la sugerencia / pasada ahora
   ['POST', /^\/api\/tasks\/([\w-]+)\/review-again$/, ([id]) => team.reReview(id)], // relanzar la revisión automática
   ['POST', /^\/api\/tasks\/(\w+)\/resume-now$/, ([id]) => team.resumeNow(id)], // FT-66: «Reanudar ya» una tarea pausada por cuota
@@ -282,6 +290,7 @@ const routes = [
     if (typeof b.claudeMemory === 'boolean') st.claudeMemory = b.claudeMemory;
     if (Array.isArray(b.hiddenProjects)) st.hiddenProjects = b.hiddenProjects.map(String).filter((id) => /^\w+$/.test(id)).slice(0, 500); // proyectos ocultos en la UI (siguen funcionando)
     if (typeof b.codeIndex === 'boolean') st.codeIndex = b.codeIndex; // FT-58
+    if (browser.MODES.includes(b.browserMode)) { st.browserMode = b.browserMode; browser.setMode(b.browserMode); } // FT-118
     if (typeof b.cacheAffinity === 'boolean') st.cacheAffinity = b.cacheAffinity; // FT-64
     if (b.maxTaskUsd !== undefined) st.maxTaskUsd = Math.max(0.5, Math.min(50, Number(b.maxTaskUsd) || 3)); // tope de gasto por intento de tarea
     if (b.compactAt !== undefined) st.compactAt = Number(b.compactAt) > 0 ? Math.min(90, Math.max(30, Number(b.compactAt))) / 100 : 0; // FT-63: % de contexto que dispara la compactación (0 = apagada)
@@ -379,7 +388,7 @@ async function guideTts(req, res) {
   } catch (e) { res.writeHead(e.status || 500, { 'content-type': 'application/json' }).end(JSON.stringify({ error: e.message })); }
 }
 
-http.createServer(async (req, res) => {
+const server = http.createServer(async (req, res) => {
   const { pathname } = new URL(req.url, 'http://x');
   if (TOKEN && !isLoopback(req) && req.headers['x-ao-token'] !== TOKEN && !/^\/api\/hooks\/[\w-]{16,}$/.test(pathname)) { // 🪝 el webhook se autentica con el token de su URL
     return res.writeHead(401, { 'content-type': 'application/json' }).end('{"error":"AgentOffice: falta el token (x-ao-token)"}');
@@ -398,7 +407,11 @@ http.createServer(async (req, res) => {
   } catch (e) {
     res.writeHead(e.status || 500, { 'content-type': 'application/json' }).end(JSON.stringify({ error: e.message, gated: e.gated, suite: e.suite, missing: e.missing }));
   }
-}).listen(PORT, HOST, () => {
+});
+server.on('upgrade', (req, socket) => { // FT-118: WebSocket de la extensión (solo loopback; se autentica con código/clave)
+  if (new URL(req.url, 'http://x').pathname === '/api/browser/ext') browserExt.handleUpgrade(req, socket); else socket.destroy();
+});
+server.listen(PORT, HOST, () => {
   console.log(`🏢 AgentOffice en http://${HOST}:${PORT}`);
   if (TOKEN) console.log(`🔑 Token para el proxy de flow-test (FLOW_AGENTS_TOKEN): ${TOKEN}`);
 });

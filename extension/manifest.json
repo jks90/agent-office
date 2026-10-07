@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "AgentOffice · Navegador del agente",
+  "description": "Deja a un agente de AgentOffice usar las pestañas que tú le cedas (FT-118).",
+  "version": "0.1.0",
+  "minimum_chrome_version": "116",
+  "permissions": ["debugger", "tabs", "tabGroups", "storage"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "AgentOffice", "default_popup": "popup.html" }
+}

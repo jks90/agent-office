@@ -14,7 +14,7 @@ const activityLoaded = new Set();
 
 import { Office } from './office3d.js';
 import { dictationSupported, createDictation, insertAtCursor } from './dictation.js'; // dictado por voz (FT-43)
-const office = new Office($('#office'), { onAgentClick: (id) => enterAgent(id), onFloorClick: (id) => enterFloor(id), onGuideClick: () => showTab('guide') }); // clic planta/agente → navegación continua (FT-47/FT-71)
+const office = new Office($('#office'), { onAgentClick: (id) => enterAgent(id), onFloorClick: (id) => enterFloor(id), onGuideClick: () => showTab('guide'), onMineClick: (pid) => { inboxProject = pid || null; showTab('inbox'); renderInbox(); } }); // clic planta/agente → navegación continua (FT-47/FT-71)
 window.aoOffice = office; // para QA: aoOffice.debugState() / setMode() (FT-46)
 
 function safeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
@@ -1029,7 +1029,7 @@ function render() {
   run.classList.toggle('on', !!p?.running);
   run.disabled = !p;
 
-  office.update({ agents: team(), tasks: tasks(), questions: S.questions || [], roles: S.roles, title: p?.name || '', selected: drawerAgent, projects: visibleProjects(), allAgents: S.agents, allTasks: S.tasks, projectId, quota: S.quota || {}, bubbles: S.settings?.officeBubbles }); // FT-123: burbujas; projects/allAgents/allTasks: modo edificio (FT-46); projectId: planta resaltada (FT-47)
+  office.update({ agents: team(), tasks: tasks(), questions: S.questions || [], roles: S.roles, title: p?.name || '', selected: drawerAgent, projects: visibleProjects(), allAgents: S.agents, allTasks: S.tasks, projectId, quota: S.quota || {}, bubbles: S.settings?.officeBubbles, mine: mineSummary(projectId), mineByProject: Object.fromEntries(visibleProjects().map((q) => [q.id, mineSummary(q.id).total])) }); // FT-124: mi mesa y puntos del edificio // FT-123: burbujas; projects/allAgents/allTasks: modo edificio (FT-46); projectId: planta resaltada (FT-47)
   renderSuite();
   renderTeam();
   renderRepos();
@@ -1592,7 +1592,18 @@ function compactCard(t) {
 const policyFor = (p) => p?.reviewPolicy || S.settings?.reviewPolicy || 'manual';
 const isManualTask = (t) => /^\s*👤|\bMANUAL\b/.test(t.title || '');
 let inboxOpen = (() => { try { return JSON.parse(localStorage.getItem('ao:inboxOpen') || '{}'); } catch { return {}; } })();
-function inboxItems() {
+function inboxItems(projectId) { // FT-124: con projectId, solo los de ese proyecto (la misma lógica sirve a «Para ti» y a la mesa de la oficina)
+  const all = inboxAll();
+  return projectId ? all.filter((i) => (i.p?.id || i.t?.projectId) === projectId) : all;
+}
+// FT-124: resumen de lo que espera al usuario en un proyecto (sin avisos ya resueltos de coordlog/importadas) para la mesa «Tú».
+function mineSummary(projectId) {
+  const items = inboxItems(projectId).filter((i) => !['coordlog'].includes(i.kind) && !i.imported);
+  const counts = {};
+  for (const i of items) counts[i.kind] = (counts[i.kind] || 0) + 1;
+  return { total: items.length, counts, items: items.map((i) => ({ kind: i.kind, taskId: i.t?.id || i.q?.taskId || null, agentId: i.t?.agentId || null })) };
+}
+function inboxAll() {
   const vis = new Map(visibleProjects().map((p) => [p.id, p]));
   const items = [];
   for (const q of S.questions || []) {
@@ -1624,8 +1635,10 @@ const INBOX_KIND = {
   coord: ['🧑‍✈️', 'Sugerencias del coordinador', 'Cambios de plantilla o de motor para que el tablero avance'],
   coordlog: ['🧑‍✈️', 'Lo que hizo el coordinador (24 h)', 'Cambios que aplicó solo (solo aviso)'],
 };
+let inboxProject = null; // FT-124: «Para ti» filtrado por proyecto (desde la mesa de la oficina); null = todos
 function renderInbox() {
-  const items = inboxItems();
+  if (inboxProject && !(S.projects || []).some((p) => p.id === inboxProject)) inboxProject = null;
+  const items = inboxItems(inboxProject);
   const urgent = items.filter((i) => !['quota', 'coordlog'].includes(i.kind) && !i.imported).length;
   const badge = $('#tab-inbox-count'); if (badge) badge.textContent = urgent || '';
   const el = $('#inbox');
@@ -1652,7 +1665,7 @@ function renderInbox() {
     return `<div class="inbox-row"><div class="inbox-main"><div class="inbox-what">${t && i.kind !== 'question' ? `<span class="task-id">${esc(tcode(t))}</span> ` : ''}${what}</div><div class="muted inbox-why">${i.p ? `${esc(i.p.name)} · ` : ''}${why}${blocks}</div></div><div class="inbox-acts">${act(i)}</div></div>`;
   };
   const groups = Object.keys(INBOX_KIND).map((k) => [k, items.filter((i) => i.kind === k)]).filter(([, l]) => l.length);
-  el.innerHTML = `<div class="inbox"><div class="inbox-head"><h2>🔔 Para ti</h2><span class="muted">${urgent ? `${urgent} cosas te esperan` : 'Nada urgente: los agentes no te necesitan ahora mismo.'}</span></div>
+  el.innerHTML = `<div class="inbox"><div class="inbox-head"><h2>🔔 Para ti</h2>${inboxProject ? `<span class="chip" data-inbox-filter>📁 ${esc((S.projects.find((p) => p.id === inboxProject) || {}).name || '')} <button class="small ghost" data-inbox-clear title="Quitar el filtro">✕</button></span>` : ''}<span class="muted">${urgent ? `${urgent} cosas te esperan` : 'Nada urgente: los agentes no te necesitan ahora mismo.'}</span></div>
     ${groups.map(([k, list]) => {
       const [ico, title, hint] = INBOX_KIND[k];
       // dentro de cada tipo, por proyecto; las importadas de un tablero (muchas, sin agente) en un grupo plegado aparte
@@ -1665,6 +1678,7 @@ function renderInbox() {
       return `<section class="inbox-group"><h3>${ico} ${title} <span class="muted">(${list.length})</span></h3><p class="muted">${hint}</p>${blocks}</section>`;
     }).join('') || '<p class="empty">Todo al día 🎉</p>'}</div>`;
 }
+document.addEventListener('click', (e) => { if (e.target.closest('[data-inbox-clear]')) { inboxProject = null; renderInbox(); } }); // FT-124: quitar el filtro por proyecto
 document.addEventListener('toggle', (e) => { const d = e.target.closest?.('[data-inbox-key]'); if (!d || e.target !== d) return; inboxOpen[d.dataset.inboxKey] = d.open; try { localStorage.setItem('ao:inboxOpen', JSON.stringify(inboxOpen)); } catch { /* sin almacenamiento */ } }, true);
 
 // FT-56 · revisión visible
@@ -1967,6 +1981,15 @@ function logKind(line) {
 }
 
 // ── Diálogos ───────────────────────────────────────────────────────────────
+// FT-118: estado de la extensión y emparejamiento (Ajustes ▸ Navegador)
+function browserExtBlock() {
+  const x = S.browser?.ext || {};
+  const state = x.connected ? `🟢 conectada · ${x.tabs?.length || 0} pestaña(s) cedida(s)` : x.paired ? '⚪ emparejada, sin conexión (abre el navegador con la extensión)' : '⚪ sin emparejar';
+  return `<p class="muted" style="margin:2px 0 8px">Extensión «Mi navegador» (carpeta <code>extension/</code>): ${state}.
+    <button type="button" class="small" data-browser-pair>Generar código de emparejamiento</button>
+    ${x.paired ? '<button type="button" class="small" data-browser-forget>Olvidar extensión</button>' : ''}
+    <span id="bx-code" style="font-weight:600">${x.pairing ? `Código: ${esc(x.pairing.code)} (caduca en 5 min; un solo uso)` : ''}</span></p>`;
+}
 function dialog(html, onSubmit, cls = '') {
   const dlg = $('#dialog');
   dlg.className = cls;
@@ -2090,6 +2113,9 @@ Pasos, convenciones y ejemplos…</textarea>
     <div><label>Escalera de modelos · Codex (el mini sale de models_cache.json)</label><input name="ladder_codex" value="${esc((S.modelLadders?.codex || []).join(', '))}" placeholder="gpt-5.5" /></div></div>
     <p class="muted">Cada tarea empieza en el primer peldaño y sube uno al devolverla desde revisión o si el agente falla (máx. 2 veces). Un modelo fijado en el agente o el rol no entra en la cascada.</p>
     <label>Objetivo de costes (FT-76): coste por tarea aprobada ≤ X % del interactivo</label><input name="costTargetPct" type="number" min="10" max="500" step="5" value="${S.settings.costTargetPct || 100}" />
+    <label>Navegador del agente (FT-114 · FT-118)</label>
+    <select name="browserMode">${[['dedicated', 'Chromium dedicado (perfil propio de AgentOffice)'], ['extension', 'Mi navegador (extensión de extension/)']].map(([v, t]) => `<option value="${v}" ${(S.browser?.mode || 'dedicated') === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
+    ${browserExtBlock()}
     <label><input type="checkbox" name="cacheAffinity" ${S.settings.cacheAffinity !== false ? 'checked' : ''} /> Agrupar tareas del mismo repo y rol seguidas para aprovechar la caché del prompt (FT-64)</label>
     <label><input type="checkbox" name="stuckGuard" ${S.settings.stuckGuard !== false ? 'checked' : ''} /> Detectar agentes atascados: aviso y, si sigue, parar y pasar a Revisión (FT-62)</label>
     <div class="grid2"><div><label>Mismo comando/lectura (veces)</label><input name="stuckRepeat" type="number" min="2" max="20" value="${S.settings.stuckRepeat || 3}" /></div>
@@ -2152,6 +2178,9 @@ Pasos, convenciones y ejemplos…</textarea>
     <select name="reviewPolicy">${[['', `Igual que la empresa (${REVIEW_LABEL[S.settings.reviewPolicy || 'manual']})`], ['manual', REVIEW_LABEL.manual], ['auto-qa', REVIEW_LABEL['auto-qa']], ['auto', REVIEW_LABEL.auto]].map(([v, l]) => `<option value="${v}" ${(project()?.reviewPolicy || '') === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
     <label>🧑‍✈️ Coordinador del equipo de «${esc(project()?.name)}» (reglas fijas, sin IA: refuerza el rol que tiene trabajo listo y nadie libre, cambia a motor automático a quien se queda sin cuota y manda al banquillo a quien lleva rato sin nada que hacer)</label>
     <select name="coordinator">${[['', 'Apagado'], ['suggest', 'Solo sugerir (en 🔔 Para ti, con «Aplicar»)'], ['auto', 'Automático (lo hace solo y lo apunta en 🔔 Para ti)']].map(([v, l]) => `<option value="${v}" ${(project()?.coordinator || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="supervisorApproves" ${project()?.supervisorApproves ? 'checked' : ''}><span>🧑‍⚖️ Delegar en el Coordinador / Supervisor de «${esc(project()?.name)}» (FT-122): aprueba las tareas en revisión (también las de revisión obligatoria) si sus verificaciones pasan con la rama al día (y, con diffs de más de 30 líneas, un revisor barato lo confirma), y quita dependencias que sobran solo si la bloqueante falló. Sin marcar solo deja «✅ listo para aprobar» y avisa.</span></label>
+    ${(project()?.team || []).some((id) => S.agents.find((a) => a.id === id)?.role === 'coordinador') ? '' : `<div><button type="button" class="small" data-add-supervisor>🧑‍⚖️ Añadir coordinador</button></div>`}
+    ${S.tasks.filter((t) => t.projectId === projectId && t.depProposal).map((t) => `<p class="muted" style="margin:2px 0">🧑‍⚖️ ${esc(t.depProposal.why)} <button type="button" class="small" data-dep-proposal="${t.id}:1">Quitar</button> <button type="button" class="small" data-dep-proposal="${t.id}:0">Mantener</button></p>`).join('')}
     <label>🫧 Burbujas de estado en la oficina 3D (FT-123)</label>
     <select name="officeBubbles">${[['todas', 'Todas visibles (icono + tarea + estado)'], ['al pasar', 'Solo al pasar el ratón / seleccionar']].map(([v, l]) => `<option value="${v}" ${(S.settings.officeBubbles || 'todas') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
     <label>Revisión por defecto de la empresa (proyectos con «Igual que la empresa»)</label>
@@ -2176,6 +2205,7 @@ Pasos, convenciones y ejemplos…</textarea>
     { const hidden = S.projects.filter((x) => !f['vis_' + x.id]).map((x) => x.id); if (hidden.join() !== (S.settings.hiddenProjects || []).join()) await api('POST', '/api/settings', { hiddenProjects: hidden }); }
     if ((f.reviewPolicyAll || 'manual') !== (S.settings.reviewPolicy || 'manual')) await api('POST', '/api/settings', { reviewPolicy: f.reviewPolicyAll });
     if ((f.coordinator || '') !== (project()?.coordinator || '')) await api('PATCH', `/api/projects/${projectId}`, { coordinator: f.coordinator || '' });
+    if (!!f.supervisorApproves !== !!project()?.supervisorApproves) await api('PATCH', `/api/projects/${projectId}`, { supervisorApproves: !!f.supervisorApproves });
     if ((f.reviewPolicy || '') !== (project()?.reviewPolicy || '')) await api('PATCH', `/api/projects/${projectId}`, { reviewPolicy: f.reviewPolicy || '' });
   }),
 };
@@ -2977,6 +3007,14 @@ document.addEventListener('click', async (e) => {
       ${diffStatsHtml(t)}
       <pre>${html}</pre>${buttons(null)}`, null, 'wide');
   }
+  if (d.browserPair !== undefined) { // FT-118: código de un solo uso para emparejar la extensión
+    const r = await api('POST', '/api/browser/pair');
+    const el = $('#bx-code'); if (el) el.textContent = `Código: ${r.code} (caduca en 5 min; un solo uso)`;
+    return;
+  }
+  if (d.browserForget !== undefined) { await api('POST', '/api/browser/forget'); return toast('Extensión olvidada: tendrás que emparejarla de nuevo'); }
+  if (d.addSupervisor !== undefined) { await api('POST', `/api/projects/${projectId}/supervisor`); return toast('Coordinador añadido al equipo'); } // FT-122
+  if (d.depProposal !== undefined) { const [tid, acc] = d.depProposal.split(':'); await api('POST', `/api/tasks/${tid}/dep-proposal`, { accept: acc === '1' }); return toast(acc === '1' ? 'Dependencia quitada' : 'Dependencia mantenida'); }
   if (d.importFlow !== undefined) {
     const path = $('#import-flow')?.value;
     if (!path) return toast('Elige un flow', 'error');

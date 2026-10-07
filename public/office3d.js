@@ -62,6 +62,13 @@ function zonesFor(size = DEFAULT_FLOOR_SIZE) {
   return zones;
 }
 
+// FT-124: «mi mesa». Iconos por tipo de aviso (mismos que 🔔 Para ti) en el orden del desglose de la burbuja.
+const MINE_NONE = { total: 0, counts: {}, items: [] };
+const MINE_ICON = [['question', '❓'], ['review', '✋'], ['cut', '⚠️'], ['failed', '❌'], ['manual', '👤'], ['quota', '⏸'], ['coord', '🧑‍✈️']];
+const mineText = (m) => m.total ? `🔔 ${m.total} · ${MINE_ICON.filter(([k]) => m.counts[k]).map(([k, i]) => i + m.counts[k]).join(' ')}` : '✅ nada te espera';
+// La mesa va en la franja libre a la derecha de QA (sigue a floorZones, así que se adapta al tamaño de la planta).
+const deskSpot = (zones) => ({ x: zones.qa.x + zones.qa.w / 2 + 0.8, z: 1.7 });
+
 const STATE_COLOR = {
   working: 0x2f80ed, waiting: 0xf6c744, reviewing: 0xef8f35,
   blocked: 0xd9a21b, failed: 0xe33b3b, idle: 0x94a3b8,
@@ -168,8 +175,12 @@ const FURN_DIR = 'assets/3d/furniture/';
 const CHAR_DIR = 'assets/3d/characters/';
 
 export class Office3D {
-  constructor(canvas, { onAgentClick, onFloorClick, onGuideClick } = {}) {
+  constructor(canvas, { onAgentClick, onFloorClick, onGuideClick, onMineClick } = {}) {
     this.cv = canvas;
+    this.onMineClick = onMineClick;     // FT-124: clic en «mi mesa» o su burbuja → app.js abre 🔔 Para ti filtrado por (projectId)
+    this.mine = MINE_NONE;              // FT-124: lo que espera al usuario en el proyecto activo (lo calcula app.js con inboxItems)
+    this.mineByProject = {};
+    this.waitOn = new Map();            // agentId → 'question' | 'review' (agentes que esperan al usuario)
     this.onAgentClick = onAgentClick;
     this.onGuideClick = onGuideClick;   // clic en la planta Dirección / Guía → app.js abre la pestaña del Guía
     this.onFloorClick = onFloorClick;   // clic en una planta del edificio → (projectId); app.js entra en esa planta (FT-47)
@@ -295,6 +306,39 @@ export class Office3D {
         rail.castShadow = true;
         this.room.add(rail);
       }
+    }
+  }
+
+  // FT-124: la mesa del usuario («Tú»): tablero, avatar naranja (distinto de los agentes) y la pila de papeles de sus avisos.
+  buildMyDesk() {
+    const s = deskSpot(this.floorZones || zonesFor(this.currentFloorSize));
+    this.deskPos = s;
+    const g = new THREE.Group();
+    const mat = (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 });
+    const box = (w, h, d, c, x, y, z) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(c)); m.position.set(x, y, z); m.castShadow = true; g.add(m); return m; };
+    box(1.1, 0.06, 0.6, 0xb98a5a, s.x, 0.42, s.z);
+    box(0.06, 0.4, 0.55, 0x8a6a45, s.x - 0.5, 0.2, s.z);
+    box(0.06, 0.4, 0.55, 0x8a6a45, s.x + 0.5, 0.2, s.z);
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.17, 0.4, 14), mat(0xff7a1a)); body.position.set(s.x, 0.32, s.z - 0.55); body.castShadow = true; g.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 14, 10), mat(0xffd7b0)); head.position.set(s.x, 0.62, s.z - 0.55); g.add(head);
+    const hat = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.16, 4), mat(0xffc400)); hat.position.set(s.x, 0.82, s.z - 0.55); g.add(hat); // corona: «el jefe»
+    this.deskPapers = new THREE.Group(); this.deskPapers.position.set(s.x - 0.25, 0.45, s.z + 0.02); g.add(this.deskPapers);
+    this.deskN = -1;
+    this.room.add(g);
+    this.syncDeskPapers();
+  }
+
+  // Pila de papeles proporcional a los avisos (máx. 14 hojas, ligeramente desordenadas).
+  syncDeskPapers() {
+    const n = Math.min(14, this.mine?.total || 0);
+    if (!this.deskPapers || n === this.deskN) return;
+    this.deskN = n;
+    this.deskPapers.clear();
+    for (let i = 0; i < n; i++) {
+      const sheet = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.012, 0.22), new THREE.MeshStandardMaterial({ color: i % 3 ? 0xffffff : 0xfff3c4, roughness: 0.9 }));
+      sheet.position.set(((i * 7) % 5 - 2) * 0.008, 0.007 + i * 0.013, ((i * 3) % 5 - 2) * 0.008);
+      sheet.rotation.y = ((i * 5) % 7 - 3) * 0.05;
+      this.deskPapers.add(sheet);
     }
   }
 
@@ -442,6 +486,7 @@ export class Office3D {
     this.buildFloor();
     this.buildZones();
     this.buildBoard();
+    this.buildMyDesk();
     if (this.furnCache.size) {
       this.buildWalls();
       this.buildWorkstations();
@@ -486,8 +531,14 @@ export class Office3D {
   // `agents`/`tasks` son los del proyecto activo (modo `floor`); `projects`/`allAgents`/`allTasks`, todo el
   // estado, para el edificio (modo `building`, FT-46). Si no llegan, se conservan los últimos.
   // `projectId` (FT-47) es el proyecto activo del desplegable: en el edificio su planta va resaltada.
-  update({ agents, tasks, questions, roles, title, selected, projects, allAgents, allTasks, projectId, quota, bubbles }) {
+  update({ agents, tasks, questions, roles, title, selected, projects, allAgents, allTasks, projectId, quota, bubbles, mine, mineByProject }) {
     if (bubbles !== undefined) this.bubbleMode = bubbles === 'al pasar' ? 'al pasar' : 'todas'; // FT-123
+    if (mine !== undefined) { // FT-124
+      this.mine = mine || MINE_NONE;
+      this.waitOn = new Map();
+      for (const i of this.mine.items || []) if (i.agentId && !this.waitOn.has(i.agentId)) this.waitOn.set(i.agentId, i.kind === 'question' ? 'question' : 'review');
+    }
+    if (mineByProject !== undefined) this.mineByProject = mineByProject || {};
     if (quota !== undefined) this.quota = quota || {};
     this.agents = agents || [];
     this.tasks = tasks || [];
@@ -511,6 +562,7 @@ export class Office3D {
     } else this.currentFloorSize = nextSize;
     const sig = JSON.stringify(this.tasks.map((t) => [t.id, t.status, t.updatedAt]));
     if (sig !== this.boardSig) { this.boardSig = sig; this.drawBoard(); }
+    this.syncDeskPapers();
     this.rebuildFloors();
     if (activeChanged) this.refreshFloorTint();
   }
@@ -601,6 +653,7 @@ export class Office3D {
           review: ts.filter((t) => t.status === 'review').length,
           failed: ts.filter((t) => t.status === 'failed').length,
           running: !!p.running,
+          mine: this.mineByProject?.[p.id] || 0, // FT-124: avisos 🔔 que esperan al usuario en esta planta
         };
       });
     if (list.length > maxProjectFloors) {
@@ -859,7 +912,7 @@ export class Office3D {
     const esc2 = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const line2 = f.guide ? `<span class="m"><i style="background:#34d399"></i>${esc2(f.guide.status)} · ${f.review} decisiones</span>`
       : `<span class="m"><i style="background:#34d399"></i>${f.working} trabajando · ${f.queued} en cola</span>${f.review ? `<span class="m"><i style="background:#fbbf24"></i>${f.review} en revisión</span>` : ''}${f.failed ? `<span class="m bad"><i style="background:#f87171"></i>${f.failed} fallidos</span>` : ''}`;
-    el.innerHTML = `<b class="pn">P${i + 1}</b><span class="body"><span class="n">${f.running ? '' : '⏸ '}${esc2(f.name)}</span>${line2}</span>`;
+    el.innerHTML = `<b class="pn">P${i + 1}</b><span class="body"><span class="n">${f.running ? '' : '⏸ '}${esc2(f.name)}</span>${line2}</span>${f.mine ? `<b class="mine" title="Te esperan ${f.mine} cosas en este proyecto">${f.mine}</b>` : ''}`;
     el.title = `${f.running ? '' : '⏸ '}${f.name} · ${parts.join(' · ')}`; // texto completo (lo usan el tooltip y las pruebas)
     el.dataset.floor = String(i);
     if (f.projectId) el.dataset.projectId = f.projectId;
@@ -1344,6 +1397,12 @@ export class Office3D {
       .o3d-floor .m{font-size:11px;color:#cbd5e1;display:flex;align-items:center;gap:5px}
       .o3d-floor .m i{width:7px;height:7px;border-radius:50%;display:inline-block}
       .o3d-floor .m.bad{color:#fca5a5}
+      .o3d-floor .mine{margin-left:auto;min-width:18px;height:18px;border-radius:9px;background:#f97316;color:#fff;font-size:11px;line-height:18px;text-align:center;padding:0 5px}
+      .o3d-bubble.me,.o3d-pill.me{pointer-events:auto;cursor:pointer}
+      .o3d-bubble.me{background:#fff7ed;color:#9a3412;border-color:#fb923c;font-weight:700}
+      .o3d-bubble.me.calm{background:#f0fdf4;color:#166534;border-color:#86efac}
+      .o3d-mine-lines{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+      .o3d-labels.building .o3d-mine-lines{display:none}
       .o3d-floor.hover{outline:2px solid #3ad0a0;outline-offset:1px}
       .o3d-floor.active{border-color:#3ad0a0;box-shadow:0 0 0 2px rgba(58,208,160,.45),0 2px 10px rgba(0,0,0,.3)}
       .o3d-floor.grouped{color:#64748b;font-style:italic}
@@ -1354,6 +1413,10 @@ export class Office3D {
     this.labelRoot.className = 'o3d-labels';   // con la clase `building` solo se ven las etiquetas de las plantas (FT-47)
     (wrap || document.body).appendChild(this.labelRoot);
     this.labelEls = new Map();
+    this.mineSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); // FT-124: líneas discontinuas agente → mi mesa
+    this.mineSvg.setAttribute('class', 'o3d-mine-lines');
+    this.mineLines = new Map();
+    this.labelRoot.appendChild(this.mineSvg);
     this.boardLabel = document.createElement('div');
     this.boardLabel.className = 'o3d-el o3d-board';
     this.labelRoot.appendChild(this.boardLabel);
@@ -1440,8 +1503,54 @@ export class Office3D {
         e.pos = { x: head.x, y: head.y - 2, vis: head.visible, hover: !!full };
       } else if (e.text !== null) { e.text = null; e.bubble.style.opacity = '0'; }
     });
+    this.updateDesk(seen);
     this.stackBubbles();
     for (const id of this.labelEls.keys()) if (!seen.has(id)) this.removeLabel(id);
+  }
+
+  // FT-124: píldora «Tú» + burbuja de avisos de mi mesa (entra en stackBubbles como una más) y líneas de los agentes que me esperan.
+  updateDesk(seen) {
+    if (!this.deskPos) return;
+    const d = this.deskPos, m = this.mine || MINE_NONE;
+    seen.add('__me');
+    const e = this.labelFor('__me');
+    if (!e.wired) {
+      e.wired = true;
+      for (const el of [e.bubble, e.pill]) { el.classList.add('me'); el.addEventListener('click', () => this.onMineClick?.(this.activeProjectId)); }
+      e.pill.textContent = 'Tú'; e.pill.className = 'o3d-el o3d-pill me';
+      e.bubble.dataset.me = '1';
+    }
+    const text = mineText(m), cls = 'o3d-el o3d-bubble me' + (m.total ? '' : ' calm');
+    if (e.text !== text) { e.bubble.textContent = text; e.text = text; e.w = 0; }
+    if (e.cls !== cls) { e.bubble.className = cls; e.cls = cls; e.w = 0; }
+    if (!e.w) { e.w = e.bubble.offsetWidth || 60; e.h = e.bubble.offsetHeight || 20; }
+    const head = this.project(d.x, 1.05, d.z - 0.55), foot = this.project(d.x, 0.02, d.z + 0.3);
+    e.pill.style.left = foot.x + 'px'; e.pill.style.top = (foot.y + 4) + 'px'; e.pill.style.opacity = foot.visible ? '1' : '0';
+    e.pos = { x: head.x, y: head.y - 2, vis: head.visible, hover: false };
+    // líneas discontinuas: una por agente que espera al usuario
+    const target = this.project(d.x, 0.6, d.z - 0.2);
+    for (const [id, kind] of this.waitOn) {
+      const a = this.actors.get(id);
+      if (!a?.group.visible) continue;
+      let ln = this.mineLines.get(id);
+      if (!ln) {
+        ln = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        ln.setAttribute('stroke-dasharray', '7 5'); ln.setAttribute('stroke-width', '2.5'); ln.setAttribute('stroke-linecap', 'round');
+        ln.dataset.agent = id; this.mineSvg.appendChild(ln); this.mineLines.set(id, ln);
+      }
+      const p = this.project(a.x, 0.7, a.z);
+      ln.setAttribute('stroke', kind === 'question' ? '#f97316' : '#d97706');
+      ln.dataset.kind = kind;
+      ln.setAttribute('x1', p.x); ln.setAttribute('y1', p.y); ln.setAttribute('x2', target.x); ln.setAttribute('y2', target.y);
+      ln.style.opacity = p.visible && target.visible ? '0.9' : '0';
+    }
+    for (const [id, ln] of this.mineLines) if (!this.waitOn.has(id) || !this.actors.get(id)?.group.visible) { ln.remove(); this.mineLines.delete(id); }
+  }
+
+  nearDesk(e) {
+    if (!this.deskPos) return false;
+    const r = this.cv.getBoundingClientRect(), p = this.project(this.deskPos.x, 0.5, this.deskPos.z);
+    return p.visible && Math.hypot((e.clientX - r.left) - p.x, (e.clientY - r.top) - p.y) < 55;
   }
 
   // FT-123: anti-solape. Ordena las burbujas de abajo arriba y sube cada una hasta que no pise a otra ni a las píldoras de zona/pizarra;
@@ -1482,6 +1591,8 @@ export class Office3D {
     if (a.moving && a.wander) return { text: '→ ' + a.wander.label, kind: '' };
     if (a.moving) return { text: '→ ' + ((this.floorZones || BASE_ZONE_STYLE)[a.dest?.zone]?.label || 'zona'), kind: '' };
     if (visual.status === 'failed') return { text: `⚠ #${visual.taskId || agent.taskId || '?'} falló`, kind: 'error' };
+    const wait = this.waitOn.get(agent.id); // FT-124: el agente espera al usuario
+    if (wait) return { text: wait === 'question' ? '❓ te pregunta' : '✋ espera tu revisión', kind: 'review' };
     if (a.fuel === false && agent.status !== 'paused') return { text: '💤 sin cuota', kind: 'review' };
     if (a.wander && hov) return { text: a.wander.label, kind: '' };
     if (hov) {
@@ -1540,9 +1651,10 @@ export class Office3D {
       return;
     }
     const id = this.pickActor(e);
+    const desk = !id && this.nearDesk(e); // FT-124: clic en mi mesa → Para ti filtrado
     if (!click) this.hoverActor = id;
-    if (click) { if (id) this.onAgentClick?.(id); }
-    else this.cv.style.cursor = id ? 'pointer' : 'default';
+    if (click) { if (id) this.onAgentClick?.(id); else if (desk) this.onMineClick?.(this.activeProjectId); }
+    else this.cv.style.cursor = id || desk ? 'pointer' : 'default';
   }
 
   onKey(e) {

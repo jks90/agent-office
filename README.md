@@ -354,6 +354,18 @@ Vista **🌐 Navegador** (menú lateral, `?view=browser` y `app.navigate view=br
 - Responsive: ≤760 px el panel lateral pasa bajo la imagen.
 - Prueba: `node scripts/browser-panel-e2e.mjs [--real] [dir-capturas]` (driver fake por defecto; `--real` con Chromium headless). Capturas en `docs/FT-117/`.
 
+## 🧩 Navegador del agente — extensión MV3 «Mi navegador» (FT-118)
+
+Fase B: la carpeta `extension/` es una extensión Manifest V3 (Chrome/Brave, carga desempaquetada; instalación en `extension/README.md`) que cumple el **mismo `BrowserDriver`** con `chrome.debugger` sobre las pestañas del usuario.
+
+- **Ajustes ▸ Navegador del agente**: «Chromium dedicado» (FT-114, por defecto) o «Mi navegador (extensión)» (`settings.browserMode`, `POST /api/settings`). `getDriver()` devuelve el driver elegido; `AO_BROWSER=fake` sigue ganando (tests). El snapshot SSE trae `browser: { mode, ext: { connected, paired, tabs, pairing } }`.
+- **Emparejamiento**: `POST /api/browser/pair` da un código de 8 caracteres de un solo uso (5 min). La extensión lo manda en su `hello` por `ws://127.0.0.1:7420/api/browser/ext` y recibe una clave que guarda solo en `chrome.storage.session`; el servidor guarda su hash SHA-256 en `data/browser/ext.json`. `POST /api/browser/forget` la invalida. El upgrade solo se acepta desde loopback y sin `Origin` web; no usa el token `x-ao-token`.
+- **Pestañas cedidas**: el agente solo actúa en las que el usuario cede con «Dejar al agente esta pestaña» (grupo morado «AgentOffice»); sin ninguna, las operaciones dan 503. El banner de depuración de Chrome es esperado.
+- `server/browser/ws.js` (WebSocket RFC 6455 mínimo, sin dependencias) y `server/browser/extension.js` (hub + driver; las URL se validan también en el servidor y las cabeceras sensibles se enmascaran de nuevo).
+- **Panel en vivo (FT-117) con la extensión**: `panel.js` usa `getDriver()`, así que sirve con ambos modos. El snapshot `browser` combina `browserPanel.status()` con `mode`, `modes` y `ext`. `chrome.debugger` no da screencast fiable: el driver de la extensión degrada `screencast()` a capturas JPEG ~1 fps y expone `box()` para la marca del agente.
+- Prueba: `node scripts/extension-e2e.mjs` (cliente WebSocket que simula la extensión, y servidor real para pair/Ajustes/snapshot).
+- Pendiente: las tools `browser.*` con política (A3) todavía no existen en esta rama; cuando lleguen usarán `getDriver()` y se aplicarán igual a ambos modos. La extensión real solo se ha comprobado con `node --check`: falta la prueba manual en Brave.
+
 ## Estructura
 
 ```
@@ -629,6 +641,19 @@ Ajustes ▸ Proyecto: apagado · solo sugerir · automático. Reglas fijas, sin 
 
 Nunca toca a quien trabaja, tiene tareas suyas (asignadas o pausadas) ni al PO; un cambio de plantilla cada 10 min. Sugerencias con «Aplicar» y registro de 24 h en 🔔 Para ti; evento `TeamAdjusted`; `POST /api/projects/:id/coordinate`. Pruebas: `scripts/coordinator-unit.mjs`, `scripts/coordinator-e2e.mjs`.
 
+### 🧑‍⚖️ Coordinador / Supervisor de serie (FT-122)
+
+Rol de serie `coordinador` («Coordinador / Supervisor», `kind: supervisor`, modelo barato `haiku`; distinto del PO). **Cada proyecto nuevo lo trae en su equipo** (agente «Coordi», ocupa mesa; se puede quitar con el equipo) y no coge tareas de trabajo. Con él en la mesa, cada ~30 s (`AO_SUPERVISOR_MS`, `server/supervisor.js` decide y `team.js` aplica):
+
+- **Tareas en Revisión**: pone la rama al día con la base (FT-19; un choque de verdad la devuelve al agente), ejecuta sus checks y lee el diff acotado. Checks rojos → **devuelta con nota** (qué check falla). Verdes → si el proyecto **delega** (`supervisorApproves`, casilla en Ajustes del proyecto, apagada por defecto) la **aprueba** —también las de revisión obligatoria—; si no, deja `t.supervisor` = «✅ listo para aprobar», lo apunta en el historial de revisión y avisa (evento `SupervisorDecision`, Telegram). Con ficheros sensibles solo recomienda. Sin checks declarados usa un revisor de modelo barato con tope de gasto propio (`settings.supervisorMaxUsd`, 1 $ por proyecto por defecto).
+- **Aprobar con delegación no depende solo de los checks**: si el diff cambia más de 30 líneas, un revisor barato (tope `supervisorMaxUsd`) lo mira también; aprueba solo si pasan los checks Y el revisor; si este devuelve, la tarea vuelve con su nota.
+- **Dependencias que sobran**: una tarea sin empezar que depende de otra parada y no la menciona ni toca sus ficheros → propuesta con motivo (`t.depProposal`, botones **Quitar / Mantener** en Ajustes del proyecto; «Mantener» pone `t.depsKept` y no se vuelve a proponer). Nunca si la dependiente es `qa`/`docs` ni si la bloqueante es `planner`. Con la bloqueante en *Revisión* siempre es solo propuesta; con delegación se aplica sola únicamente si la bloqueante está *fallida*.
+- **Proyectos existentes**: botón «Añadir coordinador» en Ajustes del proyecto (`POST /api/projects/:id/supervisor`); sin mesa libre → «sin mesa libre: manda a alguien al banquillo».
+- **Reasignación**: aplica las reglas `retarget`/`restore` de FT-121 aunque el coordinador del equipo no esté en automático.
+- Herramientas (`engines/toolscope.js`, kind `supervisor`): solo lectura, checks y `git merge/add/commit` para resolver choques; sin Edit/Write: nunca edita código de producto.
+
+Prueba: `node scripts/supervisor-e2e.mjs`.
+
 ## ⏰ Tareas programadas, 🔎 comprobación sin IA y 🪝 webhook
 
 Tareas ▸ ⏰ Programadas (por proyecto, `project.schedules`): una plantilla de tarea (título, descripción, rol, revisión obligatoria) que se crea sola **cada N minutos**, **cada día a una hora** o **cuando llega un aviso**:
@@ -683,3 +708,14 @@ Captura: `node scripts/preview.mjs out.png --width 1920 --height 1080`.
 En la planta, cada agente lleva siempre una burbuja compacta: icono + código de tarea + estado (`✏️ FT-115 editando…`, `✋ FT-114 en revisión`, `⏳ en cola`, `⛔ bloqueado`, `💤 sin cuota`, `☕ libre`). Al pasar el ratón o seleccionar se expande con la actividad completa. Si dos se pisan (mesas contiguas) se apilan hacia arriba —sin tapar las píldoras de zona ni la pizarra— con una línea fina hasta el avatar. En el edificio no se ven y en pantallas estrechas (<640 px) solo llevan icono + código. El DOM solo se toca cuando cambia el texto.
 
 Ajustes → «Burbujas de estado» (`settings.officeBubbles`, `POST /api/settings`): `'todas'` (por defecto) o `'al pasar'`. Prueba: `node scripts/bubbles-e2e.mjs [captura.png]`.
+
+## 🪑 Mi mesa en la oficina (FT-124)
+
+Cada planta tiene una mesa «Tú» (avatar naranja con corona, en la franja libre a la derecha de QA, calculada desde `floorZones`) con lo que te espera en ESE proyecto: pila de papeles proporcional (máx. 14) y burbuja siempre visible `🔔 3 · ❓1 ✋2` con el desglose por tipo (❓ pregunta · ✋ revisión · ⚠️ cortada · ❌ fallida · 👤 manual · ⏸ cuota · 🧑‍✈️ coordinador). Sin pendientes: `✅ nada te espera`.
+
+- Fuente: la misma lógica que 🔔 Para ti (`inboxItems(projectId)` en `public/app.js`; `mineSummary()` la resume y llega a `office.update({mine, mineByProject})` por el snapshot SSE, sin polling). La burbuja usa el apilado anti-solape de FT-123.
+- Un agente que te espera muestra `❓ te pregunta` / `✋ espera tu revisión` y una línea discontinua une su avatar con tu mesa.
+- Clic en la mesa, en «Tú» o en la burbuja → abre 🔔 Para ti filtrado por ese proyecto (chip con ✕ para quitar el filtro); cada fila lleva sus acciones (contestar / ver la tarea).
+- Vista Edificio: cada planta con avisos muestra un punto naranja con tu número de pendientes.
+
+Prueba: `node scripts/mydesk-e2e.mjs [captura.png]`.

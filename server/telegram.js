@@ -48,6 +48,7 @@ export function message(ev) {
     const blocks = (d.blocks || []).length ? `\nBloquea: ${d.blocks.map(esc).join(', ')}` : '';
     return `👀 ${task} espera tu revisión desde hace ${d.minutes} min\n${head}${blocks}`;
   }
+  if (ev.type === 'SupervisorDecision') return d.action === 'recommend' ? `🧑‍⚖️ ${task}: ${esc(d.text)}\n${head}` : null;
   if (ev.type === 'ReviewBlocking') return `🚧 ${task} lleva ${d.minutes} min en revisión y bloquea a ${(d.blocks || []).length} tarea(s): ${(d.blocks || []).map(esc).join(', ')}${d.required ? '\n(revisión obligatoria: solo tú puedes aprobarla)' : ''}\n${head}`;
   if (ev.type === 'AgentBlocked') {
     if (d.question) return `❓ ${task} tiene una pregunta para ti:\n<i>${esc(String(d.question).slice(0, 400))}</i>\n${head}`;

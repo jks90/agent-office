@@ -23,7 +23,7 @@ const stop = () => { try { server.kill('SIGTERM'); } catch { /* noop */ } try { 
 process.on('exit', stop);
 const base = `http://127.0.0.1:${port}`;
 
-const rects = () => [...document.querySelectorAll('.o3d-bubble')].filter((b) => b.style.opacity === '1').map((b) => { const r = b.getBoundingClientRect(); return { t: b.textContent, l: r.left, r: r.right, top: r.top, b: r.bottom }; });
+const rects = () => [...document.querySelectorAll('.o3d-bubble:not(.me)')].filter((b) => b.style.opacity === '1').map((b) => { const r = b.getBoundingClientRect(); return { t: b.textContent, l: r.left, r: r.right, top: r.top, b: r.bottom }; });
 const inter = (a, c) => a.l < c.r && a.r > c.l && a.top < c.b && a.b > c.top;
 let browser;
 try {
