@@ -68,6 +68,10 @@ quota.setOnChange(() => store.changed()); // FT-45: cuota de las suscripciones �
 quota.startPolling();
 auth.cachedEnginesStatus(); // precargar las sesiones de los motores para el motor automático
 setInterval(sync, 5 * 60 * 1000).unref();
+// FT-96: adjuntos subidos que ningún chat ni tarea usa (chips quitados, modales cancelados): fuera pasado 1 día; al arrancar y cada hora.
+const sweepUploads = () => { try { const n = uploads.sweep(guide.uploadsInUse()); if (n) console.log(`🧹 ${n} carpeta(s) de adjuntos temporales borradas`); } catch { /* sin uploads */ } };
+sweepUploads();
+setInterval(sweepUploads, 3600e3).unref();
 // Tableros online con autoSync: cada 5 min.
 setInterval(() => { for (const p of store.get().projects) if (p.board?.autoSync) team.syncBoard(p.id).catch(() => {}); }, 5 * 60 * 1000).unref();
 
