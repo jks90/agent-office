@@ -778,3 +778,10 @@ El escaneo del workspace ya no crea un Coordi por carpeta descubierta: solo `cre
 - `questions.confirm/choose` deduplica: una confirmación idéntica pendiente se reutiliza (varias tools esperan a la misma respuesta).
 - Sin respuesta en `AO_CONFIRM_TIMEOUT_MS` (servidor, 10 min) la pregunta se retira de 🔔 y la tool falla con 408 «el usuario no ha contestado a la confirmación» (antes contaba como «No»).
 - Prueba: `node scripts/confirm-timeout-e2e.mjs`.
+
+### 🛡 visibles también embebido en flow-test (FT-131)
+
+- El manejador SSE de `state` aísla `render()` y `renderQuestions()`: si un panel lanza una excepción dentro del iframe, el modal 🛡 y la barra `#questions-bar` se pintan igualmente (el error queda en la consola).
+- Una orden `ui` del Guía (p. ej. `app.navigate`) ya no cierra una 🛡/pregunta abierta (antes la «Más tarde» implícita la silenciaba).
+- La 🔔 abre primero la 🛡/pregunta pendiente (aunque la hubieras pospuesto); sin ninguna, va a «Para ti».
+- Prueba: `node scripts/embedded-e2e.mjs [captura.png]` (flow-test simulado con iframe + proxy `/agents/` como `agents-proxy.js`, vista 🌐, contestar, 🔔, textos y fotogramas).
