@@ -293,6 +293,55 @@ export function createCdpDriver() {
       return { ...saveShot(Buffer.from(data, 'base64'), fmt, tab.id), width: Math.round(w * scale), height: Math.round(h * scale), tabId: tab.id };
     },
 
+    // FT-117 · Caja (viewport, px CSS) de un ref o de un punto: para la marca visual del panel. null si no hay.
+    async box({ ref, x, y } = {}) {
+      const tab = await cur();
+      const e = ref && tab.refs.get(ref);
+      if (e) {
+        try {
+          const s = await cdp(tab);
+          const { quads } = await s.send('DOM.getContentQuads', { backendNodeId: e.backendNodeId });
+          const q = quads.find((k) => k.length === 8);
+          if (q) {
+            const xs = [q[0], q[2], q[4], q[6]], ys = [q[1], q[3], q[5], q[7]];
+            const r = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+            if (r.w > 0 && r.h > 0) return r;
+          }
+        } catch { /* nodo desaparecido */ }
+      }
+      return x != null && y != null ? { x: Number(x) - 12, y: Number(y) - 12, w: 24, h: 24 } : null;
+    },
+
+    // FT-117 · Screencast en vivo de la pestaña activa (Page.startScreencast), ≤10 fps; sigue a la pestaña activa.
+    // onFrame({mime, data(base64), w, h, tabId, url}); devuelve stop().
+    async screencast(onFrame, { fps = 10 } = {}) {
+      await ready();
+      const gap = 1000 / Math.min(10, Math.max(1, fps));
+      let stopped = false, att = null, last = 0, pending = null, flush = null;
+      const emit = (f) => { last = Date.now(); pending = null; try { onFrame(f); } catch { /* el consumidor se ocupa */ } };
+      const detach = async () => { const a = att; att = null; if (a) { await a.s.send('Page.stopScreencast').catch(() => {}); await a.s.detach().catch(() => {}); } };
+      const attach = async (tab) => {
+        await detach();
+        if (!tab) return;
+        const s = await tab.page.createCDPSession();
+        const a = { tab, s };
+        s.on('Page.screencastFrame', (fr) => {
+          s.send('Page.screencastFrameAck', { sessionId: fr.sessionId }).catch(() => {});
+          const f = { mime: 'image/jpeg', data: fr.data, w: Math.round(fr.metadata.deviceWidth), h: Math.round(fr.metadata.deviceHeight), tabId: tab.id, url: tab.page.url() };
+          const wait = gap - (Date.now() - last);
+          if (wait <= 0) return emit(f);
+          pending = f; // el último fotograma no se pierde: sale al cumplirse el hueco
+          if (!flush) flush = setTimeout(() => { flush = null; if (pending && !stopped) emit(pending); }, wait);
+        });
+        await s.send('Page.startScreencast', { format: 'jpeg', quality: 60, maxWidth: 1280, maxHeight: 900, everyNthFrame: 1 });
+        att = a;
+      };
+      await attach(active);
+      const watch = setInterval(() => { if (stopped) return; if (!browser) return stop(); if ((att?.tab || null) !== active) attach(active).catch(() => {}); }, 200);
+      function stop() { if (stopped) return; stopped = true; clearInterval(watch); clearTimeout(flush); detach().catch(() => {}); }
+      return stop;
+    },
+
     async evaluate({ expression }) {
       if (!expression) throw bad(400, 'falta expression');
       const tab = await cur();
