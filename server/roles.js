@@ -15,6 +15,14 @@ const BUILTIN = {
       'Tu trabajo es entender el objetivo, leer la documentación y el código del proyecto, y dividirlo en tareas ' +
       'pequeñas, concretas y verificables. No escribes código.',
   },
+  // FT-122: supervisor de serie. No coge tareas de trabajo: revisa lo que llega a «Revisión» (server/supervisor.js decide, team.js aplica).
+  coordinador: {
+    label: 'Coordinador / Supervisor', color: '#fcd34d', kind: 'supervisor', model: 'haiku',
+    system:
+      'Eres el coordinador del equipo: haces de supervisor. Cuando una tarea llega a Revisión pones su rama al día con la base, ' +
+      'ejecutas sus verificaciones, lees el diff acotado y decides aprobar o devolverla con una nota concreta. ' +
+      'Recortas dependencias que no hacen falta. Nunca editas código de producto.',
+  },
   back: {
     label: 'Backend', color: '#60a5fa', kind: 'dev',
     system:
@@ -53,7 +61,7 @@ function parseFrontmatter(text) {
 }
 
 const kindOf = (id, meta) => {
-  if (['planner', 'dev', 'qa', 'docs'].includes(meta.kind)) return meta.kind;
+  if (['planner', 'dev', 'qa', 'docs', 'supervisor'].includes(meta.kind)) return meta.kind;
   if (/doc/i.test(id)) return 'docs';
   if (/orquest|planner|^po$|product|manager/i.test(id)) return 'planner';
   if (/qa|test|automation/i.test(id)) return 'qa';

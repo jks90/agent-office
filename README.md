@@ -632,6 +632,19 @@ Ajustes ▸ Proyecto: apagado · solo sugerir · automático. Reglas fijas, sin 
 
 Nunca toca a quien trabaja, tiene tareas suyas (asignadas o pausadas) ni al PO; un cambio de plantilla cada 10 min. Sugerencias con «Aplicar» y registro de 24 h en 🔔 Para ti; evento `TeamAdjusted`; `POST /api/projects/:id/coordinate`. Pruebas: `scripts/coordinator-unit.mjs`, `scripts/coordinator-e2e.mjs`.
 
+### 🧑‍⚖️ Coordinador / Supervisor de serie (FT-122)
+
+Rol de serie `coordinador` («Coordinador / Supervisor», `kind: supervisor`, modelo barato `haiku`; distinto del PO). **Cada proyecto nuevo lo trae en su equipo** (agente «Coordi», ocupa mesa; se puede quitar con el equipo) y no coge tareas de trabajo. Con él en la mesa, cada ~30 s (`AO_SUPERVISOR_MS`, `server/supervisor.js` decide y `team.js` aplica):
+
+- **Tareas en Revisión**: pone la rama al día con la base (FT-19; un choque de verdad la devuelve al agente), ejecuta sus checks y lee el diff acotado. Checks rojos → **devuelta con nota** (qué check falla). Verdes → si el proyecto **delega** (`supervisorApproves`, casilla en Ajustes del proyecto, apagada por defecto) la **aprueba** —también las de revisión obligatoria—; si no, deja `t.supervisor` = «✅ listo para aprobar», lo apunta en el historial de revisión y avisa (evento `SupervisorDecision`, Telegram). Con ficheros sensibles solo recomienda. Sin checks declarados usa un revisor de modelo barato con tope de gasto propio (`settings.supervisorMaxUsd`, 1 $ por proyecto por defecto).
+- **Aprobar con delegación no depende solo de los checks**: si el diff cambia más de 30 líneas, un revisor barato (tope `supervisorMaxUsd`) lo mira también; aprueba solo si pasan los checks Y el revisor; si este devuelve, la tarea vuelve con su nota.
+- **Dependencias que sobran**: una tarea sin empezar que depende de otra parada y no la menciona ni toca sus ficheros → propuesta con motivo (`t.depProposal`, botones **Quitar / Mantener** en Ajustes del proyecto; «Mantener» pone `t.depsKept` y no se vuelve a proponer). Nunca si la dependiente es `qa`/`docs` ni si la bloqueante es `planner`. Con la bloqueante en *Revisión* siempre es solo propuesta; con delegación se aplica sola únicamente si la bloqueante está *fallida*.
+- **Proyectos existentes**: botón «Añadir coordinador» en Ajustes del proyecto (`POST /api/projects/:id/supervisor`); sin mesa libre → «sin mesa libre: manda a alguien al banquillo».
+- **Reasignación**: aplica las reglas `retarget`/`restore` de FT-121 aunque el coordinador del equipo no esté en automático.
+- Herramientas (`engines/toolscope.js`, kind `supervisor`): solo lectura, checks y `git merge/add/commit` para resolver choques; sin Edit/Write: nunca edita código de producto.
+
+Prueba: `node scripts/supervisor-e2e.mjs`.
+
 ## ⏰ Tareas programadas, 🔎 comprobación sin IA y 🪝 webhook
 
 Tareas ▸ ⏰ Programadas (por proyecto, `project.schedules`): una plantilla de tarea (título, descripción, rol, revisión obligatoria) que se crea sola **cada N minutos**, **cada día a una hora** o **cuando llega un aviso**:
