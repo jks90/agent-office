@@ -28,9 +28,9 @@ const RTK_BIN = [process.env.AO_RTK_BIN, path.join(os.homedir(), '.local/bin/rtk
 export const rtkBin = () => RTK_BIN;
 export const rtkAvailable = () => !!RTK_BIN && process.env.AO_RTK !== 'off';
 
-export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kind, roleTools, hasSkills, budgetUsd, effort, resumeSession, addDirs = [], extraMcp = {}, extraBash = [], env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {}, onEvent = () => {} }) {
+export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kind, roleId, roleTools, hasSkills, budgetUsd, effort, resumeSession, addDirs = [], extraMcp = {}, extraBash = [], env: extraEnv = {}, onActivity, onLog, onTool = () => {}, onUsage = () => {}, onEvent = () => {} }) {
   // FT-59: --tools limita las herramientas DISPONIBLES (sus definiciones no se envían); --allowedTools, lo que se permite sin preguntar.
-  const scope = claudeScope({ kind, mode, roleTools, hasSkills });
+  const scope = claudeScope({ kind, mode, roleTools, hasSkills, roleId });
   const tools = [...scope.allowed];
   // FT-5: entrada stream-json con stdin abierto → se pueden inyectar mensajes del cliente en caliente.
   const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--append-system-prompt', system];
@@ -47,6 +47,10 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kin
   if (mcpUrl && scope.mcp) {
     mcpServers['flow-test'] = { type: 'http', url: mcpUrl };
     tools.push('mcp__flow-test');
+  }
+  if (scope.browser) { // FT-115: tools browser.* del Guía (solo ellas) por ao-mcp; la política y la auditoría viven en el servidor
+    mcpServers['agentoffice-browser'] = { type: 'stdio', command: process.execPath, args: [path.join(ROOT, 'bin', 'ao-mcp.mjs')], env: { AO_URL: extraEnv.AO_URL || `http://127.0.0.1:${process.env.AO_PORT || 7420}`, AO_MCP_ONLY: 'browser', ...(extraEnv.AO_TASK ? { AO_CHAT_ID: `task:${extraEnv.AO_TASK}` } : {}) } };
+    tools.push('mcp__agentoffice-browser');
   }
   if (addDirs.length) args.push('--add-dir', ...addDirs); // FT-44: worktrees de los demás repos del proyecto
   if (codeIndex) { // FT-58: índice de código local (stdio); solo lectura de símbolos
