@@ -12,6 +12,7 @@ export const TYPES = [
   'TaskUpdatedFromBase', 'TaskConflict', // FT-19
   'TaskSplitRequested', // FT-63: tarea grande enviada al PO para trocearla
   'ReviewPending', // FT-56: tarea esperando revisión más de reviewNudgeMin minutos {taskCode, minutes, blocks[]}
+  'ReviewBlocking', // FT-121: revisión que bloquea a otras tareas y necesita a una persona {taskCode, minutes, blocks[], required}
   'TeamAdjusted', // 🧑‍✈️ el coordinador cambió la plantilla o el motor de un agente {type, why, auto}
 ];
 

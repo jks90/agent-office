@@ -1139,7 +1139,8 @@ function coordSnapshot(p) {
   const st = cachedEnginesStatus();
   const engineOk = Object.fromEntries(['claude', 'codex'].map((e) => [e, (st ? !!st[e]?.loggedIn : e === 'claude') && !quota.gate(e).block]));
   const onTeam = new Set(s.projects.flatMap((x) => x.team || []));
-  return { team, bench: s.agents.filter((a) => !onTeam.has(a.id)), tasks: s.tasks.filter((t) => t.projectId === p.id), roles: allRoles(), engineOk,
+  return { team, bench: s.agents.filter((a) => !onTeam.has(a.id)), tasks: s.tasks.filter((t) => t.projectId === p.id), roles: allRoles(), engineOk, repos: p.repos || [],
+    reviewPolicy: review.policyOf(s.settings, p), reviewNudgeMin: review.nudgeMin(s.settings),
     busy: new Set(team.filter((a) => jobs.has(a.id)).map((a) => a.id)), idleSince: Object.fromEntries(team.map((a) => [a.id, busySeen.get(a.id)])), now,
     margin: { claude: quota.margin('claude'), codex: quota.margin('codex') } };
 }
@@ -1154,7 +1155,15 @@ export function applyCoordination(p, actions) {
   const s = get();
   for (const x of actions) {
     const a = x.agentId && s.agents.find((y) => y.id === x.agentId);
+    const rt = x.taskId && s.tasks.find((y) => y.id === x.taskId);
     if (x.type === 'engine' && a) a.engine = 'auto';
+    else if (x.type === 'retarget' && a) { a.homeRole ||= a.role; a.role = x.role; } // FT-121: prestado a otro rol del mismo kind
+    else if (x.type === 'restore' && a) { a.role = a.homeRole; delete a.homeRole; }
+    else if (x.type === 'review-now' && rt?.status === 'review') { rt.blockKicked = true; setImmediate(() => autoReview(p, rt).catch(() => {})); }
+    else if (x.type === 'review-alert' && rt?.status === 'review') {
+      rt.blockAlerted = true;
+      events.emit('ReviewBlocking', events.ctxOf(rt), { taskCode: rt.code || rt.id, minutes: x.minutes, blocks: x.blocks, required: !!x.required });
+    }
     else if (x.type === 'bench' && a) p.team = p.team.filter((id) => id !== a.id);
     else if (x.type === 'sign' && a && p.team.length < coord.MAX_DESKS && !p.team.includes(a.id)) p.team.push(a.id);
     else if (x.type === 'hire' && p.team.length < coord.MAX_DESKS) {
@@ -1174,11 +1183,16 @@ function coordinate(p) {
   const now = Date.now();
   if (now - (p.coordCheckAt || 0) < COORD_EVERY) return;
   p.coordCheckAt = now;
-  const actions = coord.plan(coordSnapshot(p));
-  const staffing = actions.some((x) => x.type !== 'engine');
+  const snap = coordSnapshot(p);
+  const actions = [...coord.plan(snap), ...coord.reviewPlan(snap)];
+  const staffing = actions.some((x) => ['sign', 'hire', 'bench'].includes(x.type));
   if (staffing && now - (p.coordAt || 0) < COORD_COOLDOWN) return; // un cambio de plantilla cada 10 min como mucho
   if (!actions.length) { if (p.coordSuggest) { delete p.coordSuggest; changed(); } return; }
   if (p.coordinator === 'suggest') {
+    const alerts = actions.filter((x) => x.type === 'review-alert'); // los avisos de bloqueo no son una propuesta: salen siempre
+    if (alerts.length) applyCoordination(p, alerts);
+    actions.splice(0, actions.length, ...actions.filter((x) => x.type !== 'review-alert'));
+    if (!actions.length) return;
     const sig = actions.map((x) => x.why).join('|');
     if ((p.coordSuggest || []).map((x) => x.why).join('|') !== sig) { p.coordSuggest = actions.map((x) => ({ ...x, at: now })); log(null, `🧑‍✈️ ${p.name} (sugerencia): ${actions.map((x) => x.why).join(' · ')}`); changed(); }
     return;
@@ -1189,7 +1203,8 @@ function coordinate(p) {
 // «Aplicar» una sugerencia (Para ti) o forzar una pasada ahora.
 export function coordinateNow(projectId) {
   const p = findOr404(get().projects, projectId, 'Proyecto');
-  const actions = p.coordSuggest?.length ? p.coordSuggest : coord.plan(coordSnapshot(p));
+  const snap = p.coordSuggest?.length ? null : coordSnapshot(p);
+  const actions = p.coordSuggest?.length ? p.coordSuggest : [...coord.plan(snap), ...coord.reviewPlan(snap)];
   if (actions.length) { p.coordAt = Date.now(); applyCoordination(p, actions); tick(); }
   return { applied: actions.map((x) => x.why) };
 }

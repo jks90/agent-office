@@ -333,6 +333,18 @@ Las 14 tools exponen el driver: `browser.tabs`, `navigate` (url o back/forward/r
 - **Agentes worker**: la capacidad `browser` (`server/engines/toolscope.js`) está activa para los roles `qa-suite` y `office-flowtest` (otro rol la activa con `tools: …, browser` en su frontmatter; nunca en modo plan). `claude.js` les añade un MCP stdio `agentoffice-browser` con `AO_MCP_ONLY=browser`: solo ven `browser_*` (sin `browser_open`); política y auditoría siguen en el servidor. Solo motor Claude.
 - Prueba: `node scripts/browser-tools-e2e.mjs` (driver fake, MCP real); con `AO_E2E_REAL_BROWSER=1` repite lo esencial con Chromium real.
 
+## 🌐 Navegador — panel en vivo (FT-117)
+
+Vista **🌐 Navegador** (menú lateral, `?view=browser` y `app.navigate view=browser` del Guía): lo que ve el navegador dedicado del agente, en directo.
+
+- **Vídeo**: `driver.screencast(onFrame)` (CDP `Page.startScreencast`, JPEG, ≤10 fps, sigue a la pestaña activa) → SSE `GET /api/browser/stream` (`frame`, `mark`, `control`). Solo está abierto mientras la vista se ve; sin espectadores el screencast se para. El estado (control, pestañas, URL, handoffs) va en el snapshot SSE (`browser`).
+- **Barra**: quién controla (🤖 agente / 🧑 tú), atrás/adelante/recargar, URL, pestañas (seleccionar, cerrar, ＋), «Abrir/Cerrar navegador».
+- **Tomar el control** (`POST /api/browser/control {mode:'user'|'agent'}`): el agente queda en pausa y tus clics, rueda y teclas sobre el fotograma se reenvían (`POST /api/browser/input`), como en el modo Live de flow-test. «Devolver al agente» lo reanuda. Sin el control, la entrada responde 409.
+- **Marca**: `panel.agentDriver()` es el driver que deben usar las tools `browser.*` (A2): lanza 409 mientras controla el usuario y, antes de `act`/`type`/`scroll`, pinta 1 s un rectángulo sobre el ref (`driver.box()`).
+- **Handoff (A3)**: el panel lateral lista `browser.handoffs` (`panel.addHandoff({reason})` / `resolveHandoff(id)`); hoy vacío hasta que A3 los genere. «Tomar el control» desde la petición.
+- Responsive: ≤760 px el panel lateral pasa bajo la imagen.
+- Prueba: `node scripts/browser-panel-e2e.mjs [--real] [dir-capturas]` (driver fake por defecto; `--real` con Chromium headless). Capturas en `docs/FT-117/`.
+
 ## Estructura
 
 ```
@@ -602,6 +614,9 @@ Agentes ▸ 🔌 MCP / 📜 Scripts, junto a las skills:
 Ajustes ▸ Proyecto: apagado · solo sugerir · automático. Reglas fijas, sin IA (`server/coordinator.js`), cada 2 min en proyectos en marcha:
 - agente parado porque su motor no tiene cuota, con trabajo listo y el otro motor con margen → **motor automático**;
 - rol con tareas **listas** (por hacer, dependencias hechas) y nadie que pueda hacerlas (o ≥3 por agente) → vuelve uno de ese rol del **banquillo** o se **contrata** (motor con más margen, modelo de ese motor); sin mesa libre (8 por proyecto), antes va al banquillo un ocioso (≥10 min sin trabajo listo) que no sea imprescindible.
+- **(FT-121) Reasignar antes que contratar**: si un rol tiene tareas listas y nadie libre, y hay un agente **ocioso ≥ 10 min** de otro rol del **mismo kind** (dev↔dev) que comparte repo (`p.repos[].roles`), la acción `retarget` le cambia el rol (guarda `homeRole`); cuando ya no queda trabajo listo del rol prestado, `restore` lo devuelve a su `homeRole`. Nunca al PO, a quien trabaja o tiene tareas suyas, ni a un prestado.
+- **(FT-121) Revisión que bloquea** (`reviewPlan()`): tarea en revisión con otras esperándola más de `reviewNudgeMin` → con política automática y sin `reviewRequired` se **lanza ya** la revisión (`review-now`); si es `reviewRequired`, la política es manual o la automática la retuvo → **aviso prioritario** (`review-alert`: evento `ReviewBlocking` + Telegram si está configurado) con «bloquea a N tareas». Una vez por tarea; en «solo sugerir» los avisos salen igualmente.
+- Cada acción lleva su `why` en `coordLog` y se ve en 📊 Resumen («Lo que hizo el coordinador»). Prueba: `scripts/coordinator-reassign-e2e.mjs` (snapshots sintéticos).
 
 Nunca toca a quien trabaja, tiene tareas suyas (asignadas o pausadas) ni al PO; un cambio de plantilla cada 10 min. Sugerencias con «Aplicar» y registro de 24 h en 🔔 Para ti; evento `TeamAdjusted`; `POST /api/projects/:id/coordinate`. Pruebas: `scripts/coordinator-unit.mjs`, `scripts/coordinator-e2e.mjs`.
 

@@ -66,6 +66,28 @@ export function createFakeDriver() {
     },
     async scroll(a = {}) { cur(); log.push({ op: 'scroll', ...a }); return { ok: true, scrollX: a.dx || 0, scrollY: a.dy || 0 }; },
     async screenshot() { const t = cur(); return { ...saveShot(PNG, 'png', t.id), width: 1, height: 1, tabId: t.id }; },
+    // FT-117 · caja fija por ref (la página falsa apila los 4 elementos) o alrededor del punto
+    async box({ ref, x, y } = {}) {
+      const m = /^e([1-4])$/.exec(ref || '');
+      if (m) return { x: 40, y: 60 + (m[1] - 1) * 70, w: 300, h: 50 };
+      return x != null && y != null ? { x: Number(x) - 12, y: Number(y) - 12, w: 24, h: 24 } : null;
+    },
+    // FT-117 · fotogramas SVG (800×500) a 10 fps con la URL, el valor tecleado y el último clic
+    async screencast(onFrame) {
+      cur(); // abre el navegador si hace falta
+      const draw = () => {
+        const t = active;
+        if (!t) return;
+        const last = log.at(-1);
+        const esc = (s) => String(s).replace(/[<&>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+        const rows = TREE.map((n, i) => `<rect x="40" y="${60 + i * 70}" width="300" height="50" rx="6" fill="#fff" stroke="#8aa"/><text x="52" y="${90 + i * 70}" font-size="18" fill="#123">${esc(n.role)}: ${esc(n.name)} ${esc(t.values[`e${i + 1}`] || '')}</text>`).join('');
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500"><rect width="800" height="500" fill="#eef3f8"/><text x="40" y="36" font-size="20" fill="#345">${esc(url(t))}</text>${rows}<text x="40" y="420" font-size="14" fill="#567">${last ? esc(JSON.stringify(last)) : ''}</text></svg>`;
+        onFrame({ mime: 'image/svg+xml', data: Buffer.from(svg).toString('base64'), w: 800, h: 500, tabId: t.id, url: url(t) });
+      };
+      const iv = setInterval(() => { if (!open) return clearInterval(iv); draw(); }, 100);
+      return () => clearInterval(iv);
+    },
+
     async evaluate({ expression }) { if (!expression) throw bad(400, 'falta expression'); cur(); return { value: `fake:${expression}` }; },
     async console({ limit = 50, clear = false } = {}) { const t = cur(); const entries = t.console.slice(-limit); if (clear) t.console.length = 0; return { tabId: t.id, entries }; },
     async network({ limit = 50, clear = false } = {}) { const t = cur(); const entries = t.network.slice(-limit); if (clear) t.network.length = 0; return { tabId: t.id, entries }; },

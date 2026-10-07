@@ -36,7 +36,8 @@ check('las que esperan dependencias no cuentan como listas', a.length === 0, JSO
 console.log('Mesas llenas');
 const full = (extra = {}) => [ag('PO', 'po'), ag('Q1', 'qa', 'codex'), ag('Q2', 'qa', 'claude'), ag('W1', 'web'), ag('W2', 'web'), ag('D1', 'web'), ag('D2', 'web'), ag('X', 'web', 'claude', extra)];
 const idle = (min) => Object.fromEntries(full().map((x) => [x.id, now - min * 60_000]));
-a = plan({ team: full(), tasks: [tk('t1', 'java'), tk('q', 'qa', 'backlog')], roles, engineOk: both, idleSince: idle(IDLE_MIN + 5), now });
+// FT-121: con repos separados por rol no se puede reasignar (web no trabaja en el repo de java) → banquillo + contratación
+a = plan({ team: full(), tasks: [tk('t1', 'java'), tk('q', 'qa', 'backlog')], roles, engineOk: both, idleSince: idle(IDLE_MIN + 5), repos: [{ roles: ['java'] }, { roles: ['web'] }], now });
 check('sin mesa: un ocioso al banquillo y se contrata java', types(a) === 'bench,hire' && a[1].role === 'java', JSON.stringify(a.map((x) => x.why)));
 a = plan({ team: full(), tasks: [tk('t1', 'java')], roles, engineOk: both, idleSince: idle(IDLE_MIN - 5), now });
 check('ociosos de hace poco (< IDLE_MIN) → no se toca a nadie', a.length === 0, JSON.stringify(a));
