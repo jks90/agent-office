@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-mkt-'));
@@ -104,6 +105,33 @@ assert.match(memory.read('p2', null), /pnpm/);
 const ap2 = mkt.exportPackage('agent', out.agent.id, 'team', { projectId: 'p2' });
 assert.deepEqual(ap2.memory, ap.memory); assert.deepEqual(ap2.files, ap.files); assert.deepEqual(ap2.meta, { ...ap.meta, agentName: 'Rev Dos' });
 ok('agente: banquillo + memoria en el proyecto elegido, round-trip idéntico');
+
+// 7 · el cliente se protege solo: path traversal, nombres, topes y enlaces → 422 y nada escrito fuera del catálogo
+const mkf = (p, text = 'x') => { const b = Buffer.from(text); return { path: p, content: b.toString('base64'), sha256: crypto.createHash('sha256').update(b).digest('hex') }; };
+const skillOk = mkf('SKILL.md', '---\nname: evil\ndescription: d\n---\nok\n');
+const mkp = (files, extra = {}) => ({ format: 'ao-pkg/1', kind: 'skill', name: 'evil', version: '1.0.0', summary: '', author: { name: 'x' }, files, meta: {}, ...extra });
+const before422 = (pkg, opts = {}) => { const er = rejects(() => mkt.importPackage(pkg, { confirmCode: true, overwrite: true, ...opts }), /./); assert.equal(er.status, 422, er.message); };
+for (const bad of ['../x', '/etc/x', 'a/../../x', 'a\\..\\x', 'a/./../../x', 'ok\0.txt']) before422(mkp([skillOk, mkf(bad)]));
+assert(!fs.existsSync(cat('catB/skills/evil')), 'no escribe a medias (SKILL.md válido antes del malo)');
+assert(!fs.existsSync(cat('x')) && !fs.existsSync(path.join(cat('catB'), 'x')) && !fs.existsSync('/etc/x'));
+for (const name of ['../evil', '..', '.', 'a/b', '', '-x']) before422(mkp([skillOk], { name }));
+before422(mkp([skillOk]), { org: '../fuera' }); // la org solo afecta a roles
+before422({ ...rp, name: '../evil' });
+before422({ ...rp }, { org: '../../fuera' });
+assert(!fs.existsSync(cat('catB/evil')) && !fs.existsSync(cat('fuera')));
+before422(mkp([skillOk, ...Array.from({ length: 200 }, (_, i) => mkf(`f${i}.txt`))])); // > 200 ficheros
+before422(mkp([skillOk, mkf('big.txt', 'a'.repeat(512 * 1024 + 1))])); // fichero > 512 KB
+before422(mkp([skillOk, { ...mkf('c.txt'), sha256: 'bad' }]));
+before422(mkp([skillOk, skillOk])); // repetido
+// destino symlink (skill) y directorio de org symlink (rol): nada se escribe en el destino real
+const outside = cat('outside'); fs.mkdirSync(outside);
+fs.symlinkSync(outside, cat('catB/skills/lnk'));
+before422(mkp([skillOk], { name: 'lnk' }));
+fs.mkdirSync(cat('catB/roles/marketplace'), { recursive: true });
+fs.symlinkSync(outside, cat('catB/roles/marketplace/org-link'));
+before422({ ...rp, name: 'zz' }, { org: 'org-link' });
+assert.deepEqual(fs.readdirSync(outside), [], 'nada escrito tras el enlace');
+ok('path traversal, nombres, topes, sha y symlinks → 422 sin escribir');
 
 store.flush?.();
 fs.rmSync(tmp, { recursive: true, force: true });

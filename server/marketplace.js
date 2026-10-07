@@ -160,23 +160,50 @@ function record(key, entry) {
   fs.writeFileSync(registryFile(), JSON.stringify(reg, null, 1));
 }
 
-const safeRel = (p) => typeof p === 'string' && p && !path.isAbsolute(p) && !p.split(/[\\/]/).includes('..') && !p.includes('\0');
+export const MAX_FILES = 200;
+const okName = (n) => typeof n === 'string' && /^[a-z0-9][a-z0-9._-]{0,63}$/i.test(n) && n !== '.' && n !== '..';
+// Ruta relativa segura dentro de un paquete: sin absolutas, «..», «\» ni bytes nulos.
+const safeRel = (p) => typeof p === 'string' && !!p && !path.isAbsolute(p) && !p.includes('\\') && !p.includes('\0') && !p.split('/').some((x) => x === '..' || x === '');
+// ¿dest queda dentro de root? (comprobación léxica, sin seguir enlaces)
+const inside = (root, dest) => path.resolve(dest).startsWith(path.resolve(root) + path.sep);
+// Rechaza si dest o algún directorio entre base y dest es un enlace simbólico.
+function assertNoLink(base, dest) {
+  const stop = path.resolve(base);
+  let cur = path.resolve(dest);
+  while (cur.startsWith(stop + path.sep)) {
+    let st = null; try { st = fs.lstatSync(cur); } catch { /* no existe: bien */ }
+    if (st?.isSymbolicLink()) throw fail(422, `Destino con enlace simbólico: ${path.relative(stop, cur)}`);
+    cur = path.dirname(cur);
+  }
+}
 
 export function validate(pkg) {
   if (!pkg || pkg.format !== FORMAT) throw fail(400, `Formato no soportado (se espera ${FORMAT})`);
   if (!['role', 'skill', 'agent'].includes(pkg.kind)) throw fail(400, 'Tipo de paquete desconocido');
-  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(String(pkg.name || ''))) throw fail(400, 'Nombre de paquete no válido');
+  if (!okName(pkg.name)) throw fail(422, 'Nombre de paquete no válido');
   if (!/^\d+\.\d+\.\d+/.test(String(pkg.version || ''))) throw fail(400, 'Versión no válida (semver)');
   if (Buffer.byteLength(JSON.stringify(pkg)) > MAX_PKG) throw fail(413, 'El paquete supera los 2 MB');
   if (!Array.isArray(pkg.files)) throw fail(400, 'El paquete no trae ficheros');
+  if (pkg.files.length > MAX_FILES) throw fail(422, `Demasiados ficheros (máximo ${MAX_FILES})`);
+  const seen = new Set();
+  // Todo se valida ANTES de escribir nada: un solo fallo rechaza el paquete entero.
   for (const f of pkg.files) {
-    if (!safeRel(f.path)) throw fail(400, `Ruta no permitida en el paquete: ${f.path}`);
-    if (sha(Buffer.from(String(f.content || ''), 'base64')) !== f.sha256) throw fail(422, `sha256 no coincide en ${f.path}: paquete corrupto o alterado`);
+    if (!f || !safeRel(f.path)) throw fail(422, `Ruta no permitida en el paquete: ${f?.path}`);
+    if (seen.has(f.path)) throw fail(422, `Fichero repetido en el paquete: ${f.path}`);
+    seen.add(f.path);
+    if (typeof f.content !== 'string') throw fail(422, `Contenido no válido en ${f.path}`);
+    const buf = Buffer.from(f.content, 'base64');
+    if (buf.length > MAX_FILE) throw fail(422, `${f.path} pesa más de 512 KB`);
+    if (sha(buf) !== f.sha256) throw fail(422, `sha256 no coincide en ${f.path}: paquete corrupto o alterado`);
   }
   return pkg;
 }
 
-const orgDir = (org) => slug(org) || 'public';
+const orgDir = (org) => {
+  if (org == null || org === '') return 'public';
+  if (!okName(org)) throw fail(422, 'Organización no válida');
+  return String(org).toLowerCase();
+};
 const roleTarget = (pkg, org) => path.join(rolesDir(), 'marketplace', orgDir(org), `${pkg.name}.md`);
 const skillTarget = (pkg) => path.join(skillsDir(), pkg.name);
 const bytes = (f) => Buffer.from(f.content, 'base64');
@@ -200,7 +227,9 @@ const isLink = (p) => { try { return !!fs.lstatSync(p); } catch { return false; 
 
 function writeFiles(root, files, rewrite = true) {
   for (const f of files) {
-    const dest = path.join(root, f.path);
+    const dest = path.resolve(root, f.path);
+    if (!inside(root, dest)) throw fail(422, `Ruta fuera del destino: ${f.path}`);
+    assertNoLink(root, dest);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     const buf = bytes(f);
     fs.writeFileSync(dest, rewrite && isText(buf) ? expandText(buf.toString('utf8')) : buf, f.exec ? { mode: 0o755 } : undefined);
@@ -210,7 +239,10 @@ function writeFiles(root, files, rewrite = true) {
 function installRole(pkg, org, overwrite, files = pkg.files) {
   const f = files.find((x) => x.path.startsWith('roles/') && x.path.endsWith('.md'));
   if (!f) throw fail(400, 'El paquete no trae el .md del rol');
+  if (!okName(pkg.name)) throw fail(422, 'Nombre de rol no válido');
   const target = roleTarget(pkg, org);
+  if (!inside(path.join(rolesDir(), 'marketplace'), target)) throw fail(422, 'Destino fuera del catálogo');
+  assertNoLink(rolesDir(), target);
   if (fs.existsSync(target) && !overwrite) throw fail(409, `Ya existe el rol ${path.relative(rolesDir(), target)}: confirma para sobrescribirlo`, { needsConfirm: 'overwrite', target });
   ensureCatalog();
   fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -234,6 +266,8 @@ export function importPackage(pkg, opts = {}) {
   if (pkg.kind === 'skill') {
     if (info.hasCode && !opts.confirmCode) throw fail(409, 'Esta skill trae código ejecutable: confirma (🛡) para instalarla', { needsConfirm: 'code', hasCode: true });
     const target = skillTarget(pkg);
+    if (!inside(skillsDir(), target)) throw fail(422, 'Destino fuera del catálogo');
+    assertNoLink(skillsDir(), target);
     if (info.exists && !opts.overwrite) throw fail(409, `Ya existe la skill ${pkg.name}: confirma para sobrescribirla`, { needsConfirm: 'overwrite', target });
     ensureCatalog();
     if (info.exists) fs.rmSync(target, { recursive: true, force: true }); // un enlace se quita sin tocar su destino
