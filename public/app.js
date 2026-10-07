@@ -2055,6 +2055,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <select name="reviewPolicy">${[['', `Igual que la empresa (${REVIEW_LABEL[S.settings.reviewPolicy || 'manual']})`], ['manual', REVIEW_LABEL.manual], ['auto-qa', REVIEW_LABEL['auto-qa']], ['auto', REVIEW_LABEL.auto]].map(([v, l]) => `<option value="${v}" ${(project()?.reviewPolicy || '') === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
     <label>🧑‍✈️ Coordinador del equipo de «${esc(project()?.name)}» (reglas fijas, sin IA: refuerza el rol que tiene trabajo listo y nadie libre, cambia a motor automático a quien se queda sin cuota y manda al banquillo a quien lleva rato sin nada que hacer)</label>
     <select name="coordinator">${[['', 'Apagado'], ['suggest', 'Solo sugerir (en 🔔 Para ti, con «Aplicar»)'], ['auto', 'Automático (lo hace solo y lo apunta en 🔔 Para ti)']].map(([v, l]) => `<option value="${v}" ${(project()?.coordinator || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="supervisorApproves" ${project()?.supervisorApproves ? 'checked' : ''}><span>🧑‍⚖️ Delegar en el Coordinador / Supervisor de «${esc(project()?.name)}» (FT-122): aprueba las tareas en revisión (también las de revisión obligatoria) si sus verificaciones pasan con la rama al día, y quita dependencias que sobran. Sin marcar solo deja «✅ listo para aprobar» y avisa.</span></label>
     <label>Revisión por defecto de la empresa (proyectos con «Igual que la empresa»)</label>
     <select name="reviewPolicyAll">${['manual', 'auto-qa', 'auto'].map((v) => `<option value="${v}" ${(S.settings.reviewPolicy || 'manual') === v ? 'selected' : ''}>${esc(REVIEW_LABEL[v])}</option>`).join('')}</select>
     <p class="muted" style="margin:2px 0 8px">Nunca se aprueban solas las tareas con «revisión obligatoria», las cortadas por tope o atasco, las que tocan ficheros sensibles ni las que el revisor devolvió dos veces: esas te esperan a ti.</p>
@@ -2077,6 +2078,7 @@ Pasos, convenciones y ejemplos…</textarea>
     { const hidden = S.projects.filter((x) => !f['vis_' + x.id]).map((x) => x.id); if (hidden.join() !== (S.settings.hiddenProjects || []).join()) await api('POST', '/api/settings', { hiddenProjects: hidden }); }
     if ((f.reviewPolicyAll || 'manual') !== (S.settings.reviewPolicy || 'manual')) await api('POST', '/api/settings', { reviewPolicy: f.reviewPolicyAll });
     if ((f.coordinator || '') !== (project()?.coordinator || '')) await api('PATCH', `/api/projects/${projectId}`, { coordinator: f.coordinator || '' });
+    if (!!f.supervisorApproves !== !!project()?.supervisorApproves) await api('PATCH', `/api/projects/${projectId}`, { supervisorApproves: !!f.supervisorApproves });
     if ((f.reviewPolicy || '') !== (project()?.reviewPolicy || '')) await api('PATCH', `/api/projects/${projectId}`, { reviewPolicy: f.reviewPolicy || '' });
   }),
 };

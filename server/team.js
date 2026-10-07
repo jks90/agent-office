@@ -34,6 +34,7 @@ import * as stuck from './stuck.js';
 import * as review from './review.js'; // FT-56
 import * as toolcat from './toolcatalog.js';
 import * as coord from './coordinator.js';
+import * as sup from './supervisor.js'; // FT-122
 import * as ladder from './model-ladder.js';
 
 const ENGINES = { demo, claude, codex, local }; // FT-54: local = IA local (LM Studio/Ollama) por el runner de Codex
@@ -201,6 +202,7 @@ export async function syncWorkspace() {
       p = { id: newId(), name: folder === 'default' ? 'default' : folder, folder, repos: [], repoPath: null, baseBranch: null, running: false, team: [], coordinator: 'auto', createdAt: Date.now() }; // coordinador encendido de serie: que no queden tareas listas con agentes parados
       s.projects.push(p);
       if (!s.agents.length) DEFAULT_TEAM.forEach((m) => { const a = newAgent({ ...m, engine: 'auto' }); s.agents.push(a); p.team.push(a.id); }); // primer arranque: equipo base
+      addSupervisor(p); // FT-122
       created++;
     }
     p.flows = n;
@@ -241,6 +243,7 @@ export async function createProject({ name, repoPath, repos, engine = 'demo', fo
   const project = { id: newId(), name: name.trim(), folder: folder || null, repos: list, repoPath: list[0]?.path || null, baseBranch: list[0]?.baseBranch || null, running: false, team: [], coordinator: 'auto', createdAt: Date.now() };
   s.projects.push(project);
   if (!s.agents.length) DEFAULT_TEAM.forEach((m) => { const a = newAgent({ ...m, engine }); s.agents.push(a); project.team.push(a.id); });
+  addSupervisor(project); // FT-122: el coordinador viene de serie (ocupa mesa; se puede quitar)
   changed();
   return project;
 }
@@ -251,6 +254,7 @@ export async function updateProject(id, patch) {
   if (patch.folder !== undefined) p.folder = patch.folder || null;
   if (patch.prefix !== undefined) p.prefix = codes.normalizePrefix(patch.prefix) || null; // las tareas ya numeradas conservan su código
   if (patch.coordinator !== undefined) p.coordinator = ['suggest', 'auto'].includes(patch.coordinator) ? patch.coordinator : null; // 🧑‍✈️ apagado | sugerir | automático
+  if (patch.supervisorApproves !== undefined) p.supervisorApproves = !!patch.supervisorApproves; // FT-122: delega aprobar y recortar dependencias
   if (patch.reviewPolicy !== undefined) { // '' = la de la empresa · manual | auto-qa | auto
     p.reviewPolicy = review.POLICIES.includes(patch.reviewPolicy) ? patch.reviewPolicy : null;
     reviewPending(p);
@@ -1019,6 +1023,7 @@ export function tick() {
       runTask(p, agent, t);
     }
     coordinate(p);
+    supervise(p).catch(() => {}); // FT-122
   }
   runSchedules();
 }
@@ -1207,6 +1212,86 @@ export function coordinateNow(projectId) {
   const actions = p.coordSuggest?.length ? p.coordSuggest : [...coord.plan(snap), ...coord.reviewPlan(snap)];
   if (actions.length) { p.coordAt = Date.now(); applyCoordination(p, actions); tick(); }
   return { applied: actions.map((x) => x.why) };
+}
+
+// ── 🧑‍⚖️ Coordinador / Supervisor de serie (FT-122): rol 'coordinador' (kind 'supervisor') en el equipo de cada proyecto nuevo ──────
+// Con él en la mesa, cada ~30 s (AO_SUPERVISOR_MS): pone al día las ramas en revisión, ejecuta sus checks y decide (supervisor.decide);
+// recorta dependencias que sobran (supervisor.trimDeps) y aplica los retarget/restore del coordinador. Aprobar y recortar solo con
+// p.supervisorApproves (delegación); sin ella deja la recomendación en t.supervisor y avisa. Nunca edita código.
+const SUP_EVERY = Number(process.env.AO_SUPERVISOR_MS) || sup.SUPERVISE_EVERY_MS;
+const supervising = new Set();
+export const supervisorOf = (p) => teamOf(p).find((a) => roleOf(a.role)?.kind === 'supervisor') || null;
+function addSupervisor(p) {
+  const s = get();
+  if (p.team.length >= coord.MAX_DESKS) return;
+  const a = newAgent({ name: s.agents.some((x) => x.name === 'Coordi') ? freeName() : 'Coordi', role: 'coordinador', engine: 'auto' });
+  s.agents.push(a); p.team.push(a.id);
+}
+function supNote(p, t, entry) {
+  t.supervisor = { at: Date.now(), sig: t.updatedAt, deleg: !!p.supervisorApproves, ...entry };
+  reviewNote(t, 'coordinador', entry.action === 'approve' ? 'approved' : entry.action === 'reject' ? 'rejected' : 'skipped', entry.text);
+  log(null, `🧑‍⚖️ ${t.code || t.id}: ${entry.text}`);
+  events.emit('SupervisorDecision', events.ctxOf(t), { taskCode: t.code || t.id, action: entry.action, text: entry.text });
+}
+async function superviseTask(p, t) {
+  const s = get(), repo = repoOfTask(p, t), delegated = !!p.supervisorApproves;
+  for (const x of taskRepos(p, t)) { // rama al día con la base; un choque de verdad vuelve al agente (FT-19)
+    try { await syncWithBase(p, x, t, { onConflict: 'reject' }); } catch (e) { if (e.conflicts) return; throw e; }
+  }
+  if (t.status !== 'review') return;
+  const checks = review.declaredChecks(t);
+  const dirOk = t.branch && fs.existsSync(git.worktreeDir(p, t));
+  const cwd = dirOk ? git.worktreeDir(p, t) : (repo?.path || store.DATA_DIR);
+  let patch = '';
+  if (t.branch && repo) { try { patch = (await git.diff(repo, t)).slice(0, 200_000); } catch { /* sin diff */ } } // diff acotado
+  const files = patch ? [...patch.matchAll(BASE_FILES)].map((m) => m[1]) : [...String(t.diffStat || '').matchAll(/^\s*(\S+)\s+\|/gm)].map((m) => m[1]);
+  const sensitive = review.sensitiveHits(files, patch, review.sensitiveList(s.settings));
+  let res = checks.length ? await runChecks(cwd, checks) : null;
+  let d;
+  if (res) d = sup.decide({ checks: res, sensitive, delegated, reviewRequired: t.reviewRequired });
+  else if ((p.supervisorUsd || 0) < (Number(s.settings.supervisorMaxUsd) > 0 ? Number(s.settings.supervisorMaxUsd) : 1)) {
+    // Sin checks declarados: un revisor de modelo barato (el del rol) con tope de gasto propio por proyecto
+    const before = t.costUsd || 0;
+    const v = await runReviewer(p, t, repo, cwd, checks).catch(() => null);
+    p.supervisorUsd = (p.supervisorUsd || 0) + Math.max(0, (t.costUsd || 0) - before);
+    d = !v ? { action: 'skip', text: 'el revisor no devolvió veredicto' } : v.approve ? sup.decide({ checks: { ok: true }, sensitive, delegated, reviewRequired: t.reviewRequired }) : { action: 'reject', text: v.feedback || v.reasons.join('\n') || 'El supervisor pide cambios.' };
+  } else d = { action: 'skip', text: 'tope de gasto del supervisor alcanzado: la revisa una persona' };
+  if (t.status !== 'review') return; // una persona decidió mientras tanto
+  if (d.action === 'skip') { t.supervisor = { at: Date.now(), sig: t.updatedAt, deleg: delegated, action: 'skip', text: d.text }; return; }
+  supNote(p, t, d);
+  if (d.action === 'approve') await approve(t.id, { by: 'coordinador', verdict: { approve: true, text: d.text } });
+  else if (d.action === 'reject') await reject(t.id, d.text, [], [], 'coordinador');
+}
+async function superviseDeps(p) {
+  const tasks = get().tasks.filter((t) => t.projectId === p.id);
+  for (const pr of sup.trimDeps(tasks)) {
+    const t = tasks.find((x) => x.id === pr.taskId);
+    if (p.supervisorApproves) {
+      updateTask(t.id, { dependsOn: t.dependsOn.filter((d) => !pr.drop.includes(d)) });
+      t.depsKept = true; // ya recortada: no se vuelve a tocar
+      coordNote(p, { type: 'deps', why: `🧑‍⚖️ ${pr.why}: dependencia quitada`, auto: true });
+    } else if (t.depProposal?.why !== pr.why) {
+      t.depProposal = { ...pr, at: Date.now() };
+      coordNote(p, { type: 'deps-proposal', why: `🧑‍⚖️ propuesta: ${pr.why} (se aplica si delegas en el supervisor)`, auto: false });
+    }
+  }
+}
+export async function supervise(p, { force = false } = {}) {
+  if (!supervisorOf(p) || supervising.has(p.id)) return;
+  const now = Date.now();
+  if (!force && now - (p.supAt || 0) < SUP_EVERY) return;
+  p.supAt = now; supervising.add(p.id);
+  try {
+    const rt = coord.plan(coordSnapshot(p)).filter((x) => ['retarget', 'restore'].includes(x.type)); // reglas de reasignación (FT-121)
+    if (rt.length) applyCoordination(p, rt);
+    await superviseDeps(p); // antes de revisar: una dependencia que sobra se quita mientras la bloqueante aún está en revisión
+    for (const t of get().tasks.filter((x) => x.projectId === p.id && x.status === 'review' && x.kind !== 'plan' && !x.budgetHit && !x.stuck && !x.reviewing && !reviewing.has(x.id))) {
+      const last = t.supervisor;
+      if (last && last.sig === t.updatedAt && last.deleg === !!p.supervisorApproves) continue; // ya decidida y nada ha cambiado
+      try { await superviseTask(p, t); } catch (e) { log(null, `🧑‍⚖️ ${t.code || t.id}: el supervisor no pudo revisarla (${e.message})`); }
+    }
+    changed();
+  } finally { supervising.delete(p.id); }
 }
 
 // FT-63: una tarea nueva que parece grande (muchas piezas, «y además…», estimación cercana al tope) no se lanza entera: se manda al PO

@@ -19,6 +19,8 @@ const BY_KIND = {
   docs: { builtin: ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash'], bash: [...READ_SHELL, ...GIT_MERGE, ASK_RULE], mcp: true },
   qa: { builtin: ['Read', 'Grep', 'Glob', 'Write', 'Bash'], bash: [...READ_SHELL, ...TEST_SHELL, ...GIT_MERGE, ASK_RULE], mcp: true }, // sin Edit; Write solo para scripts de prueba
   planner: { builtin: ['Read', 'Glob', 'Grep', 'Bash'], bash: [...PLAN_SHELL, ASK_RULE], mcp: false },
+  // FT-122: supervisor. Solo lee, ejecuta checks y fusiona la base en la rama (resolver choques); sin Edit/Write: no toca código de producto
+  supervisor: { builtin: ['Read', 'Glob', 'Grep', 'Bash'], bash: [...READ_SHELL, 'npm test*', 'npm run *', 'node --check *', 'node scripts/*', ...GIT_MERGE, ASK_RULE], mcp: false },
 };
 
 // → { builtin (para --tools), allowed (para --allowedTools, sin MCP ni RTK), mcp }
