@@ -2159,6 +2159,12 @@ Pasos, convenciones y ejemplos…</textarea>
     <p class="muted">Leer y navegar son siempre automáticos; las acciones irreversibles (borrar) siempre piden confirmación.</p>
     <label><input type="checkbox" name="guideInputFallback" ${S.guidePolicy?.guideInputFallback ? 'checked' : ''} /> Permitir ratón y teclado (último recurso)</label>
     <p class="muted">Entrada «ciega» del Guide cuando ni la API interna, ni ui.find/ui.act ni application.open bastan. Apagado de serie; las teclas destructivas siempre piden confirmación (FT-30, FT-32).${S.guidePolicy?.input && !S.guidePolicy.input.ok ? ` <span class="bad">Faltan herramientas: ${esc(S.guidePolicy.input.missing.join(', ') || 'xdotool (X11) / ydotool (Wayland)')}. Instálalas para que funcione.</span>` : ''}</p>
+    <div class="section-title">🌐 Navegador del agente — dominios (FT-116)</div>
+    <label>Dominio sin regla</label>
+    <select name="browserDefault">${[['ask', 'Preguntar la 1.ª vez por dominio y sesión'], ['allow', 'Permitir'], ['block', 'Bloquear']].map(([v, l]) => `<option value="${v}" ${(S.settings.browserPolicy?.default || 'ask') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    <label>Reglas por dominio (una por línea: <code>dominio allow|block|ask</code>)</label>
+    <textarea name="browserDomains" rows="4" placeholder="example.com allow&#10;banco.es block&#10;localhost allow">${esc(Object.entries(S.settings.browserPolicy?.domains || {}).map(([d, m]) => `${d} ${m}`).join('\n'))}</textarea>
+    <p class="muted">file://, chrome:// y similares se bloquean siempre; localhost y la red local, salvo que los permitas aquí de forma explícita. Enviar, pagar, borrar, <code>evaluate</code> y formularios con contraseña/tarjeta siempre piden confirmación. El texto de las páginas se trata como datos no confiables.</p>
     <hr style="border-color:var(--line);margin:16px 0" />
     <div class="section-title">🔗 Tablero online del proyecto «${esc(project()?.name)}»</div>
     <div id="board-cfg" class="board-cfg"><p class="muted">Cargando…</p></div>
@@ -2190,7 +2196,7 @@ Pasos, convenciones y ejemplos…</textarea>
     safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0'); (SETTINGS_EMBED ? safeSet('ao:voice-wake', f.voiceWake ? '1' : '0') : wakeSet(!!f.voiceWake)); // en el panel de flow-test no se abre el micro: el iframe principal lo recoge por el evento `storage`
     refreshSttLocal();
     ttsStop();
-    await api('POST', '/api/settings', { ...f, ponytailRoles: Object.fromEntries(Object.keys(S.roles).map((id) => [id, !!f['pt_' + id]])), quotaGuard: !!f.quotaGuard, stuckGuard: !!f.stuckGuard, cacheAffinity: !!f.cacheAffinity, agentMemory: !!f.agentMemory, claudeMemory: !!f.claudeMemory, modelLadder: { claude: f.ladder_claude || '', codex: f.ladder_codex || '' }, codeIndex: !!f.codeIndex, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback });
+    await api('POST', '/api/settings', { ...f, ponytailRoles: Object.fromEntries(Object.keys(S.roles).map((id) => [id, !!f['pt_' + id]])), quotaGuard: !!f.quotaGuard, stuckGuard: !!f.stuckGuard, cacheAffinity: !!f.cacheAffinity, agentMemory: !!f.agentMemory, claudeMemory: !!f.claudeMemory, modelLadder: { claude: f.ladder_claude || '', codex: f.ladder_codex || '' }, codeIndex: !!f.codeIndex, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite }, guideInputFallback: !!f.guideInputFallback, browserPolicy: { default: f.browserDefault, domains: Object.fromEntries(String(f.browserDomains || '').split('\n').map((l) => l.trim().split(/\s+/)).filter((p) => p[0]).map((p) => [p[0], p[1] || 'allow'])) } });
     ttsInfoLoad();
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
