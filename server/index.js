@@ -40,6 +40,7 @@ import * as wake from './guide/stt/wake.js';
 import * as tts from './guide/tts/index.js'; // FT-52
 import * as quota from './quota.js';
 import * as memory from './memory.js';
+import * as marketplace from './marketplace.js'; // FT-141
 import * as codeindex from './codeindex.js'; // FT-58
 import * as claudeEngine from './engines/claude.js';
 
@@ -209,6 +210,11 @@ const routes = [
   ['POST', /^\/api\/skills\/read$/, (_, b) => skills.readSkillFile(b.dir)],
   ['POST', /^\/api\/skills\/write$/, (_, b) => skills.writeSkillFile(b.dir, b.content)],
   ['POST', /^\/api\/skills\/new$/, (_, b) => skills.createSkill(b)],
+  // FT-141 · Marketplace: paquetes ao-pkg/1 (el reenvío a la nube lo hace flow-test)
+  ['POST', /^\/api\/marketplace\/export$/, (_, b) => marketplace.exportPackage(b.kind, b.id, b.scope, b)],
+  ['POST', /^\/api\/marketplace\/inspect$/, (_, b) => marketplace.inspect(b.package, b)],
+  ['POST', /^\/api\/marketplace\/import$/, (_, b) => { const r = marketplace.importPackage(b.package, b); store.changed(); return r; }],
+  ['GET', /^\/api\/marketplace\/installed$/, () => marketplace.installed()],
   // Catálogos de MCP y scripts para los agentes (server/toolcatalog.js)
   ['GET', /^\/api\/tools$/, () => ({ mcp: { catalog: toolcat.mcpCatalog(), inventory: toolcat.mcpInventory() }, scripts: { catalog: toolcat.scriptCatalog(), inventory: toolcat.scriptInventory() } })],
   ['POST', /^\/api\/tools\/mcp$/, (_, b) => toolcat.addMcp(b)],

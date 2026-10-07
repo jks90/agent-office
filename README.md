@@ -792,6 +792,8 @@ El hueco que deja el diorama a izquierda y derecha se aprovecha con tarjetas HTM
 
 Colocación: se proyecta el volumen de la planta (`office.floorHull()`) y los obstáculos vivos (`office.obstacles()`); cada tarjeta ocupa el ancho libre de su franja (170–268 px). Si alguna no cabe o la ventana mide < 760 px, todas pasan a una barra lateral desplegable («☰ Paneles»). Cada panel se pliega con su cabecera (se recuerda en `localStorage` `ao:opCollapsed`). Se desactivan en Ajustes (`settings.officePanels`, por defecto on) y no se muestran en la vista Edificio. «Coste de hoy» suma las tareas tocadas desde las 00:00 (aproximación). `aoOffice.panels.why()` dice por qué no cupieron.
 
+**Paneles enteros, sin scroll (FT-138).** Cada panel crece hasta su contenido completo (nunca `overflow:auto`): todos los agentes del equipo y todas las épicas se ven siempre, sin compactar ni cambiar la fuente. Si una columna no cabe en el alto del lienzo, los paneles se apilan hacia abajo (buscando el primer hueco sin pisar el suelo) y la vista de la oficina hace scroll como página. Cada panel se pliega/despliega por su cabecera (recordado por panel en `localStorage`, `ao:opCollapsed`); plegado muestra solo la cabecera con un resumen corto (`👥 8 · 1 trabajando`, `🗂 6/16 hechas`, `⚡ hoy 2.91 $`). Check: `scripts/office-panels-e2e.mjs` (8 agentes y 10 épicas a 1920×1080 y 1366×768).
+
 También (FT-125): la burbuja de la oficina muestra el código `FT-n` de la tarea (antes podía salir su id interno) y un agente libre pone su nombre: `☕ Marta libre`.
 
 Prueba: `node scripts/office-panels-e2e.mjs [carpeta]` (1920×1080, 1366×768 y 600 px; guarda capturas).
@@ -821,3 +823,15 @@ El escaneo del workspace ya no crea un Coordi por carpeta descubierta: solo `cre
 ## 🎯 Oficina fiel al estado (FT-148)
 
 La posición de cada agente REAL la decide solo su estado: `working` → su mesa sentado (sin paseos); `reviewing` → Revisión; esperando o bloqueado por dependencia → Kanban; espera al usuario (❓/✋) → junto a la mesa «Tú»; `failed` y sin cuota → su mesa; libre → Descanso. Solo los libres pasean (`WANDER_SPOTS`: café, nevera, planta, charla). Al cambiar de estado caminan a su sitio nuevo. QA: `aoOffice.simulate(s)` acelera el reloj y `debugState()` da la posición real. Prueba: `node scripts/office-fidelity-e2e.mjs`.
+
+## 🛒 Marketplace: paquetes `ao-pkg/1` de roles, skills y agentes (FT-141)
+
+`server/marketplace.js` exporta e importa paquetes JSON `{format:"ao-pkg/1", kind, name, version, summary, author, files:[{path, content(base64), sha256}], meta, memory?}` (tope 2 MB). No habla con la nube: flow-test hace de puerta (`/account-link/marketplace/*`).
+
+- **Ámbitos**: `team` (roles, skills y agentes con memoria) y `public` (solo roles y skills; nunca memoria ni agentes).
+- **Exportar** (`POST /api/marketplace/export {kind,id,scope,projectId?}`): rol → su `.md`; skill → su carpeta (sin `node_modules`, `.git` ni ficheros > 512 KB, listados en `meta.skipped`); agente → rol + `meta` (engine, model) + memoria `agent-<id>.md` y `project.md` solo en `team`.
+- **Saneado**: rutas del usuario → `{{HOME}}` (se expanden al importar) y escáner de secretos (patrones de flow-test + claves privadas, JWT, Bearer, `password=`…). Si encuentra algo, error 422 que dice qué y dónde (sin el valor).
+- **Importar** (`POST /api/marketplace/import {package, org?, overwrite?, confirmCode?, projectId?, agentName?}`): verifica sha256; rol → `_agentes/roles/marketplace/<org|public>/<name>.md`; skill → `_agentes/skills/<name>/`; agente → banquillo con su rol (si falta se instala) y memoria en `data/memory/<projectId>/agent-<nuevo id>.md`. Nunca sobrescribe sin `overwrite` (409 `needsConfirm:'overwrite'`). Skills con scripts: `meta.hasCode` y 409 `needsConfirm:'code'` hasta que la UI confirme con 🛡.
+- `POST /api/marketplace/inspect` previsualiza (existe, versión instalada, código, secretos); `GET /api/marketplace/installed` da las versiones instaladas (`data/marketplace-installed.json`) para «actualizar».
+- **El cliente se protege solo** (no se fía de la nube): antes de escribir nada valida todo el paquete y rechaza con 422 rutas absolutas, con `..`, `\` o bytes nulos, ficheros repetidos, `name`/`org` fuera de `/^[a-z0-9][a-z0-9._-]{0,63}$/i` (ni `.` ni `..`), más de 200 ficheros, ficheros > 512 KB, sha256 que no coincide y destinos que sean (o cuelguen de) un enlace simbólico. Un fallo rechaza el paquete entero.
+- e2e: `node scripts/marketplace-e2e.mjs`.
