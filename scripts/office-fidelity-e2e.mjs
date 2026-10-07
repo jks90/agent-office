@@ -55,8 +55,8 @@ try {
   const S = d.slots;
   const at = (id) => { const s = S[id]; return s && Math.hypot(s.ax - s.x, s.az - s.z) < 0.12 && !s.moving; };
   // Cada estado → su zona, y el avatar ya en su hueco.
-  // FT-149 (v3): revisión → qa; bloqueado por dependencia se queda en su mesa; el libre se sienta en el sofá y NO pasea (el ambiente son personajes aparte).
-  const expect = { work: 'development', rev: 'qa', wait: 'board', dep: 'development', fail: 'development', quota: 'development' };
+  // FT-149 (v3): revisión → qa; bloqueado por dependencia → Kanban (wait-i); el libre se sienta en el sofá y NO pasea (el ambiente son personajes aparte).
+  const expect = { work: 'development', rev: 'qa', wait: 'board', dep: 'board', fail: 'development', quota: 'development' };
   for (const [id, zone] of Object.entries(expect)) check(`${id}: zona ${zone} y en su sitio`, S[id]?.zone === zone && at(id), JSON.stringify(S[id]));
   check('work: sentado tecleando', S.work?.sit === true && S.work.wander === null, JSON.stringify(S.work));
   check('fail: sentado en su mesa (aro rojo)', S.fail?.status === 'failed', JSON.stringify(S.fail));

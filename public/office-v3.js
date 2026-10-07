@@ -60,7 +60,7 @@ export function layoutV3(agents, raw, layout, prev = null) {
   for (const a of sorted) if (a.status === 'reviewing') qa[a.id] = take(pv.qa, pools.qa, a.id, cap.qa);
   for (const a of sorted) {
     if (a.status === 'reviewing' && qa[a.id] != null) { qaSeat(a, qa[a.id]); continue; }
-    if (a.status === 'waiting') {
+    if (a.status === 'waiting' || (a.status === 'blocked' && !a.quota)) { // FT-149: dependencia pendiente → frente al Kanban (fidelidad.md); sin cuota → su mesa
       wait[a.id] = take(pv.wait, pools.wait, a.id, cap.waiting);
       if (wait[a.id] != null) { put(a, 'board', wait[a.id], A.get('wait-' + wait[a.id])); continue; }
     }
