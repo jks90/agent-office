@@ -753,3 +753,7 @@ Colocación: se proyecta el volumen de la planta (`office.floorHull()`) y los ob
 También (FT-125): la burbuja de la oficina muestra el código `FT-n` de la tarea (antes podía salir su id interno) y un agente libre pone su nombre: `☕ Marta libre`.
 
 Prueba: `node scripts/office-panels-e2e.mjs [carpeta]` (1920×1080, 1366×768 y 600 px; guarda capturas).
+
+### Entrada directa a la planta con Coordi de serie (FT-126)
+
+Desde FT-122 todo proyecto (también los descubiertos en el workspace) lleva a Coordi (kind `supervisor`). La Oficina decide «un solo proyecto con equipo → planta» contando equipos, así que con varios proyectos nunca entraba en `floor`. `teamProjects()` (`public/app.js`) ya no cuenta a los supervisores: un proyecto solo con Coordi no cuenta como equipo. Prueba: `node scripts/bubbles-e2e.mjs` (Coordi tiene burbuja en la planta).

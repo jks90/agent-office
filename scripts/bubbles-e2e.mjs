@@ -54,6 +54,16 @@ try {
   await sleep(600);
   rs = await page.evaluate(rects);
   check("modo 'al pasar': ninguna burbuja", rs.length === 0, String(rs.length));
+  // FT-126: proyecto nuevo con Coordi (kind supervisor): la Oficina entró en planta (espera inicial) y Coordi tiene burbuja.
+  const st = await (await fetch(base + '/api/state')).json();
+  check('el proyecto nuevo trae a Coordi', st.agents.some((a) => a.role === 'coordinador' && a.name === 'Coordi'));
+  await page.evaluate(() => {
+    const a = { id: 'co', name: 'Coordi', role: 'coordinador', engine: 'demo', status: 'working', taskId: 'FT-1', task: 'FT-1', activity: 'Revisando FT-1' };
+    window.aoOffice.update({ agents: [a], tasks: [{ id: 'FT-1', code: 'FT-1', title: 'x', status: 'review', agentId: 'co', role: 'coordinador', projectId: 'p' }], questions: [], roles: { coordinador: { kind: 'supervisor', label: 'Coordinador' } }, title: 'T', bubbles: 'todas' });
+  });
+  await sleep(2500);
+  rs = await page.evaluate(rects);
+  check('Coordi (supervisor) tiene burbuja en la planta', rs.length === 1, String(rs.length));
   check('consola limpia', errors.length === 0, errors.join('; '));
 } catch (e) { failed++; console.error(e); } finally { await browser?.close(); stop(); }
 console.log(failed ? `FALLÓ (${failed})` : 'OK');

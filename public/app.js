@@ -127,7 +127,8 @@ function projectOfFlow(flow) {
 let officeMode = safeGet('ao:officeMode') === 'floor' ? 'floor' : 'building';
 let officeLevel = officeMode; // FT-71: building → floor → agent, publicado para el Guide.
 let officeInit = false; // el modo por defecto se decide con el primer estado (hace falta saber cuántos proyectos tienen equipo)
-const teamProjects = () => S.projects.filter((p) => (p.team || []).length);
+// FT-126: el coordinador de serie (kind supervisor, FT-122) lo llevan hasta los proyectos recién descubiertos; no cuenta como equipo.
+const teamProjects = () => S.projects.filter((p) => (p.team || []).some((id) => { const a = S.agents.find((x) => x.id === id); return a && S.roles?.[a.role]?.kind !== 'supervisor'; }));
 function setOfficeMode(mode, { remember = true } = {}) {
   officeMode = mode === 'floor' ? 'floor' : 'building';
   officeLevel = officeMode;
