@@ -757,7 +757,9 @@ export class Office3D {
     g.add(model);
     // Vivo como en la planta (teclear, respirar, mirar, gestos); quieto solo si su motor no tiene cuota
     const a = { mixer, actions: {}, current: clip ? mixer.clipAction(clip) : null, clip: clip?.name || null, bones: {}, sitSpot: !!sit, moving: false,
-      phase: Math.random() * 10, nextGesture: Math.random() * 6, emote: null, wander: null, visual, base: clip?.name || null };
+      phase: Math.random() * 10, nextGesture: Math.random() * 6, emote: null, wander: null, visual, base: clip?.name || null,
+      amp: 1.8, model, home: { x, z, ry, sit: !!sit, y: model.position.y }, standY: SLAB_H - box.min.y * sc, dot: null, ring: null,
+      walk: null, nextWalk: 3 + Math.random() * 8 };
     for (const c of gltf.animations) { const act = mixer.clipAction(c); if (/^emote|^pick-up|^jump|^interact/.test(c.name)) { act.loop = THREE.LoopOnce; act.clampWhenFinished = true; } a.actions[c.name] = act; }
     for (const n of BONES) { const b = model.getObjectByName(n); if (b) a.bones[n] = { b, rest: b.quaternion.clone() }; }
     this.miniActors.push(a);
@@ -765,6 +767,7 @@ export class Office3D {
     const col = STATE_COLOR[visual.status] || 0x94a3b8;
     const dot = own(new THREE.SphereGeometry(0.075, 10, 8), new THREE.MeshBasicMaterial({ color: col }));
     dot.position.set(x, SLAB_H + CHAR_H * 1.32 + 0.18, z); g.add(dot);
+    if (this.miniActors.at(-1)?.model === model) this.miniActors.at(-1).dot = dot;
     if (visual.status === 'failed') { const ring = own(new THREE.TorusGeometry(0.13, 0.025, 6, 16), new THREE.MeshBasicMaterial({ color: 0xff3030 })); ring.rotation.x = Math.PI / 2; ring.position.copy(dot.position); g.add(ring); }
   }
 
@@ -1179,8 +1182,10 @@ export class Office3D {
     for (const a of this.miniActors) {
       const v = a.visual;
       a.fuel = !this.quota?.[v.tool]?.limitReached;
+      this.miniWalk(a, v, dt, now);
       this.scheduleGesture(a, v, now);
-      const name = a.emote && now < a.emote.until && a.actions[a.emote.name] ? a.emote.name : a.base;
+      const rest = a.moving ? 'walk' : a.sitSpot ? 'sit' : 'idle';
+      const name = a.emote && now < a.emote.until && a.actions[a.emote.name] ? a.emote.name : (a.actions[rest] ? rest : a.base);
       if (name && a.clip !== name) this.playClip(a, name);
       for (const { b, rest } of Object.values(a.bones)) b.quaternion.copy(rest);
       a.mixer.update(dt);
@@ -1194,6 +1199,40 @@ export class Office3D {
     else if ((B.wait -= dt) <= 0) { B.target = B.n > 1 ? (B.target + 1 + Math.floor(Math.random() * (B.n - 1))) % B.n : 0; B.wait = 2 + Math.random() * 4; } // siempre a OTRA planta
     B.crowns.forEach((c, i) => { c.rotation.z = Math.sin(now * 0.9 + i * 1.7) * 0.05; c.rotation.x = Math.sin(now * 0.7 + i) * 0.04; });
     if (B.umb) B.umb.rotation.y += dt * 0.15;
+  }
+
+  // Edificio: los libres se levantan del sofá y dan una vuelta por su planta (kanban, mesa de reuniones, revisión, una mesa
+  // vacía…), hacen allí su gesto y vuelven. Coordenadas locales de la planta (Office3D.BLDG).
+  miniWalk(a, v, dt, now) {
+    if (v.status !== 'idle' || !a.fuel || !a.model) { a.moving = false; return; }
+    const B = Office3D.BLDG, m = a.model;
+    const SPOTS = [
+      { id: 'kanban', x: B.wait[1][0], z: B.wait[1][1] + 0.35, face: Math.PI, gesture: 'interact-right' },
+      { id: 'reunion', x: B.meeting[0], z: B.meeting[1] + 0.55, face: Math.PI, gesture: 'emote-yes' },
+      { id: 'revision', x: B.review[0] - 0.6, z: B.review[1] + 0.6, face: Math.PI / 2, gesture: 'interact-left' },
+      { id: 'mesa', x: B.dev[4][0] + 0.9, z: B.dev[4][1] + 0.55, face: Math.PI, gesture: 'pick-up' },
+    ];
+    const W = a.walk;
+    if (!W) {
+      if (now < a.nextWalk) return;
+      const s = SPOTS[Math.floor(Math.random() * SPOTS.length)];
+      a.walk = { to: s, phase: 'go', until: 0 }; a.wander = null; a.sitSpot = false;
+      m.position.y = a.standY;
+      return;
+    }
+    const tgt = W.phase === 'back' ? { x: a.home.x, z: a.home.z } : W.to;
+    if (W.phase === 'go' || W.phase === 'back') {
+      const dx = tgt.x - m.position.x, dz = tgt.z - m.position.z, d = Math.hypot(dx, dz), step = dt * 1.1;
+      a.moving = true;
+      m.rotation.y = Math.atan2(dx, dz);
+      if (d > step) { m.position.x += (dx / d) * step; m.position.z += (dz / d) * step; }
+      else {
+        m.position.x = tgt.x; m.position.z = tgt.z; a.moving = false;
+        if (W.phase === 'go') { W.phase = 'stay'; W.until = now + 4 + Math.random() * 5; m.rotation.y = W.to.face; a.wander = { id: W.to.id, gesture: W.to.gesture }; a.key = 'wander:' + W.to.id; a.nextGesture = now + 0.3; }
+        else { a.walk = null; a.wander = null; a.sitSpot = a.home.sit; m.position.y = a.home.y; m.rotation.y = a.home.ry; a.nextWalk = now + 8 + Math.random() * 14; }
+      }
+    } else if (now > W.until) { W.phase = 'back'; a.wander = null; a.key = null; }
+    if (a.dot) { a.dot.position.x = m.position.x; a.dot.position.z = m.position.z; }
   }
 
   nearestWorkstation(x, z) {
@@ -1228,25 +1267,26 @@ export class Office3D {
     const B = a.bones;
     if (!B || !a.fuel || a.moving) return;
     const t = now + a.phase;
+    const K = a.amp || 1;                                                    // el edificio exagera: los muñecos son diminutos
     const torso = B.torso?.b, head = B.head?.b, armL = B['arm-left']?.b, armR = B['arm-right']?.b;
-    if (torso) torso.rotation.x += Math.sin(t * 1.9) * 0.025;               // respirar
+    if (torso) torso.rotation.x += Math.sin(t * 1.9) * 0.025 * K;           // respirar
     const gesturing = a.emote && now < a.emote.until;
     if (visual.status === 'working' && a.sitSpot) {
       // Teclear con pausas para «pensar» (≈1,5 s de cada 7): brazos al frente y golpecitos alternos.
       const thinking = (t % 7) > 5.5;
       if (armL && armR) {
         armL.quaternion.copy(ARM_FWD_L); armR.quaternion.copy(ARM_FWD_R);
-        const k = thinking ? 0 : 0.22;
+        const k = thinking ? 0 : 0.22 * K;
         // El brazo va a lo largo de su eje X local: girar en Z sube/baja la mano (signo opuesto en cada lado).
         armL.rotateZ(-0.3 + Math.max(0, Math.sin(t * 14)) * k);
         armR.rotateZ(0.3 - Math.max(0, Math.sin(t * 14 + 1.7)) * k);
       }
-      if (head) { head.rotation.x += thinking ? -0.18 : 0.06 + Math.sin(t * 0.9) * 0.04; head.rotation.y += Math.sin(t * 0.35) * 0.22; }
+      if (head) { head.rotation.x += thinking ? -0.18 * K : 0.06 + Math.sin(t * 0.9) * 0.04 * K; head.rotation.y += Math.sin(t * 0.35) * 0.22 * K; }
       if (torso) torso.rotation.x += 0.08;                                    // inclinado hacia la pantalla
     } else if (!gesturing && head) {
       // Mirar alrededor: más tranquilo sentado, más curioso de pie.
-      const amp = a.sitSpot ? 0.3 : 0.45;
-      head.rotation.y += Math.sin(t * 0.45) * amp + Math.sin(t * 1.3) * 0.08;
+      const amp = (a.sitSpot ? 0.3 : 0.45) * K;
+      head.rotation.y += Math.sin(t * 0.45) * amp + Math.sin(t * 1.3) * 0.08 * K;
       head.rotation.x += Math.sin(t * 0.6) * 0.06 - (visual.status === 'waiting' ? 0.12 : 0);
     }
   }
