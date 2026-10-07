@@ -550,7 +550,8 @@ Lo leído se reenvía en cada turno; para exploraciones amplias el agente delega
 En `claude -p` no hay notificaciones: un proceso lanzado con `run_in_background` muere al cerrarse la sesión y la tarea llegaba a Revisión sin entregable (caso FT-133). Ahora:
 - `--settings` lleva siempre un hook `PreToolUse` (`bin/ao-nobg.mjs`) que rechaza `Bash` con `run_in_background:true` explicando «ejecútalo en primer plano con timeout», y el worker arranca con `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`.
 - El prompt base (junto a las reglas de preguntar) pide no lanzar procesos en segundo plano ni esperar avisos; comandos largos en primer plano con timeout (hasta 10 min).
-- Al terminar, si el resumen dice «me avisará», «en segundo plano» o «cuando termine» y no hay diff, la tarea vuelve a **Por hacer** (sin Revisión) con esa nota como indicación.
+- Al terminar, si el resumen promete un aviso o una espera futura («me avisará», «te aviso», «sigue en segundo plano», «will notify»; «cuando termine» a secas no cuenta) y no hay entregable, la tarea vuelve a **Por hacer** (sin Revisión) con esa nota como indicación. Entregable = diff en algún repo, o una ruta absoluta citada en el resumen (informes fuera del repo, `~` incluido) modificada tras empezar el intento (`t.startedAt`).
+- Solo se reencola UNA vez por tarea (`t.nobgRequeued`): si vuelve a pasar, va a Revisión con «⚠️ terminó esperando un aviso dos veces».
 - Prueba: `node scripts/nobg-e2e.mjs`.
 
 ## ⏸ Sin cuota a mitad de tarea: pausa y reanudación automática (FT-66)

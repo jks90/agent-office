@@ -38,10 +38,13 @@ if (!process.argv.includes('-p')) { console.log(process.argv.includes('status') 
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 const argv = process.argv;
 const settings = JSON.parse(argv[argv.indexOf('--settings') + 1]);
-fs.appendFileSync(${JSON.stringify(runsLog)}, JSON.stringify({ env: process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS }) + '\\n');
-const n = fs.readFileSync(${JSON.stringify(runsLog)}, 'utf8').trim().split('\\n').length;
-let prompt = '';
-readline.createInterface({ input: process.stdin }).once('line', (l) => { prompt = l; run(); });
+let prompt = '', tag = '', n = 0;
+readline.createInterface({ input: process.stdin }).once('line', (l) => {
+  prompt = l; tag = (l.match(/\\[(A|LOOP|DOC|BUILD)\\]/) || [])[1];
+  fs.appendFileSync(${JSON.stringify(runsLog)}, JSON.stringify({ tag, env: process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS }) + '\\n');
+  n = fs.readFileSync(${JSON.stringify(runsLog)}, 'utf8').trim().split('\\n').map((x) => JSON.parse(x)).filter((x) => x.tag === tag).length;
+  run();
+});
 function run() {
   out({ type: 'system', subtype: 'init', session_id: 's' + n, model: 'haiku', tools: [] });
   for (const h of settings.hooks.PreToolUse.flatMap((x) => x.hooks)) {
@@ -51,7 +54,9 @@ function run() {
     fs.appendFileSync(${JSON.stringify(hookLog)}, JSON.stringify({ res, ok, rules: /SEGUNDO PLANO/.test(prompt) }) + '\\n');
   }
   let result = 'Lancé el benchmark en segundo plano; me avisará cuando termine.';
-  if (n >= 2) { fs.writeFileSync('entregable.txt', 'hecho\\n'); result = 'Hecho: entregable.txt creado.'; }
+  if (tag === 'A' && n >= 2) { fs.writeFileSync('entregable.txt', 'hecho\\n'); result = 'Hecho: entregable.txt creado.'; }
+  if (tag === 'DOC') { fs.writeFileSync(${JSON.stringify(path.join(tmp, 'informe-fuera.md'))}, 'informe\\n'); result = 'Informe en ${path.join(tmp, 'informe-fuera.md')}; me avisará el lanzador si algo falla.'; }
+  if (tag === 'BUILD') result = 'Cuando termine el build lo comprobé: todo bien, sin cambios necesarios.';
   out({ type: 'result', subtype: 'success', is_error: false, result, total_cost_usd: 0.01, session_id: 's' + n });
 }
 `, { mode: 0o755 });
@@ -71,13 +76,27 @@ const task = async (id) => (await call('GET', '/api/state')).tasks.find((t) => t
 try {
   const p = await call('POST', '/api/projects', { name: 'nobg', repos: [{ key: 'r', path: repo }], engine: 'claude' });
   await call('POST', '/api/agents', { projectId: p.id, name: 'Vera', role: 'back', engine: 'claude', model: 'haiku' });
-  const t = await call('POST', '/api/tasks', { projectId: p.id, title: 'Lanzar benchmark', role: 'back', repo: 'r', sizeChecked: true });
   await call('POST', `/api/projects/${p.id}/run`, { running: true });
-  const done = await until(async () => { const x = await task(t.id); return ['review', 'failed'].includes(x?.status) ? x : null; }, 40_000, 250);
+  const runTag = async (tag) => { // tareas una a una, para separar sus ejecuciones
+    const t = await call('POST', '/api/tasks', { projectId: p.id, title: `Lanzar benchmark [${tag}]`, role: 'back', repo: 'r', sizeChecked: true });
+    return { t, done: await until(async () => { const x = await task(t.id); return ['review', 'failed'].includes(x?.status) ? x : null; }, 40_000, 250) };
+  };
+  const { t, done } = await runTag('A');
   check('acaba en Revisión tras el 2.º intento (no tras el 1.º)', done?.status === 'review' && done.attempts === 2, JSON.stringify({ s: done?.status, a: done?.attempts }));
   check('el resumen final es el del intento con entregable', /entregable\.txt/.test(done?.summary || ''), done?.summary);
-  const runs = fs.readFileSync(runsLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const readRuns = () => fs.readFileSync(runsLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const runs = readRuns().filter((r) => r.tag === 'A');
   check('2 ejecuciones, con CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1', runs.length === 2 && runs.every((r) => r.env === '1'), JSON.stringify(runs));
+  // 1 · tope: reencola UNA vez; a la segunda va a Revisión con la nota
+  const loop = await runTag('LOOP');
+  check('tope: a la 2.ª vez va a Revisión con la nota «dos veces»', loop.done?.status === 'review' && loop.done.attempts === 2 && /esperando un aviso dos veces/.test(loop.done.summary || '') && loop.done.nobgRequeued === true, JSON.stringify({ s: loop.done?.status, a: loop.done?.attempts, sum: (loop.done?.summary || '').slice(0, 80) }));
+  check('tope: solo 2 ejecuciones del bucle', readRuns().filter((r) => r.tag === 'LOOP').length === 2);
+  // 2 · entregable fuera del repo (ruta absoluta modificada en el intento) → no reencola
+  const doc = await runTag('DOC');
+  check('ruta absoluta citada y modificada = entregable: no se reencola', doc.done?.status === 'review' && doc.done.attempts === 1 && !doc.done.nobgRequeued, JSON.stringify({ s: doc.done?.status, a: doc.done?.attempts }));
+  // 3 · «cuando termine» a secas no promete aviso → no reencola
+  const build = await runTag('BUILD');
+  check('«cuando termine el build lo comprobé» NO reencola', build.done?.status === 'review' && build.done.attempts === 1 && !build.done.nobgRequeued, JSON.stringify({ s: build.done?.status, a: build.done?.attempts }));
   const hooks = fs.readFileSync(hookLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   const d = hooks[0] && JSON.parse(hooks[0].res).hookSpecificOutput;
   check('el hook rechaza run_in_background:true con el motivo', d?.permissionDecision === 'deny' && /primer plano con timeout/.test(d.permissionDecisionReason), hooks[0]?.res);

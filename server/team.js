@@ -1375,8 +1375,16 @@ function splitIfBig(p, t) {
 const teamRoles = (p) => [...new Set(teamOf(p).filter((a) => roleOf(a.role)?.kind !== 'planner').map((a) => a.role))];
 
 // FT-134: ¿el resumen final promete un aviso futuro / segundo plano? ¿y hay algo entregado (diff en algún repo)?
-export const waitsForNotice = (txt) => /me avisar[aá]|te avisar[aá]|en segundo plano|cuando termine|in the background|will notify me/i.test(String(txt || ''));
-const hasDeliverable = (t) => !!(t.diffStat || Object.values(t.repos || {}).some((r) => r?.diffStat));
+// Solo si PROMETE un aviso o una espera futura («cuando termine» a secas es corriente y no cuenta).
+export const waitsForNotice = (txt) => /\b(me|te|os) avis(ar[aáeé]\w*|o)\b|(sigue|siguen|corre|queda|lanc[eé]|lo dej[eé])[^.\n]{0,60}en segundo plano|will notify|notify me|running in the background/i.test(String(txt || ''));
+// Entregable: diff en algún repo, o una ruta absoluta citada en el resumen (informes fuera del repo) modificada durante este intento.
+const hasDeliverable = (t) => {
+  if (t.diffStat || Object.values(t.repos || {}).some((r) => r?.diffStat)) return true;
+  for (const m of String(t.summary || '').matchAll(/(?:^|[\s`'"(])((?:~|\/)[\w.\-\/~ñáéíóúÑ]*\w\.\w+)/g)) {
+    try { if (fs.statSync(m[1].replace(/^~/, os.homedir())).mtimeMs > (t.startedAt || 0)) return true; } catch { /* no existe */ }
+  }
+  return false;
+};
 
 // Cómo preguntar al cliente desde la tarea (bin/ao-ask.mjs espera la respuesta y la imprime) + lo ya respondido.
 const askRules = () => [
@@ -1500,7 +1508,7 @@ function economyBlock(codeIndexOn) {
 async function runTask(p, agent, t) {
   const s = get();
   jobs.set(agent.id, { stop() {}, taskId: t.id, engine: agent.engine === 'auto' ? null : agent.engine }); // ocupado DESDE YA (antes de cualquier await), o el mismo tick le daría dos tareas
-  Object.assign(t, { status: 'doing', agentId: agent.id, error: null, attempts: t.attempts + 1, updatedAt: Date.now() });
+  Object.assign(t, { status: 'doing', agentId: agent.id, error: null, attempts: t.attempts + 1, startedAt: Date.now(), updatedAt: Date.now() });
   Object.assign(agent, { status: 'working', taskId: t.id, activity: t.kind === 'plan' ? 'Leyendo el objetivo' : 'Preparando su copia del repo' });
   changed();
   log(agent.id, `▶ ${t.code || '#' + t.id} ${t.title}`);
@@ -1768,13 +1776,14 @@ async function runTask(p, agent, t) {
         t.diffStat = res.diffStat || '';
         events.emit('AgentArtifactCreated', ev, { kind: 'diff', diffStat: t.diffStat.slice(-500) });
       }
-      if (t.kind === 'work' && waitsForNotice(t.summary) && !hasDeliverable(t)) { // FT-134: terminó esperando un aviso y sin entregable → otro intento, sin pasar por Revisión
-        t.status = 'todo'; t.error = null; t.agentId = null;
+      if (t.kind === 'work' && !t.nobgRequeued && waitsForNotice(t.summary) && !hasDeliverable(t)) { // FT-134: terminó esperando un aviso y sin entregable → otro intento, sin pasar por Revisión
+        t.status = 'todo'; t.error = null; t.agentId = null; t.nobgRequeued = true; // una sola vez por tarea
         t.pendingMessages = [...(t.pendingMessages || []), { text: 'En tu intento anterior terminaste esperando un aviso («me avisará», «en segundo plano») y no entregaste nada: nadie te avisa. Ejecuta los comandos largos en primer plano con timeout (hasta 10 min) y entrega el resultado.', at: Date.now() }];
         events.emit('AgentProgress', ev, { activity: 'Reencolada: terminó esperando un aviso que no llega' });
         log(agent.id, '↻ Terminó esperando un aviso en segundo plano y sin entregable: vuelve a Por hacer (FT-134)');
         return;
       }
+      if (t.nobgRequeued && waitsForNotice(t.summary) && !hasDeliverable(t)) t.summary = `⚠️ terminó esperando un aviso dos veces (FT-134): sin entregable.\n\n${t.summary}`;
       t.status = 'review';
       Object.assign(t, { reviewAt: Date.now(), nudged: false, lastEngine: engineId }); delete t.autoApproved;
       setImmediate(() => autoReview(p, t).catch((e) => log(agent.id, `⚠ Revisión automática de ${t.code || t.id}: ${e.message}`))); // FT-56
