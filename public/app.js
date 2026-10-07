@@ -278,7 +278,7 @@ function guideMount(el, panel) {
       <div class="g-msgs"></div>
       <div class="g-voice" hidden><span class="g-vtxt"></span><i class="g-vlevel"></i></div>
       <div class="g-attach" hidden></div>
-      <form class="g-form"><button type="button" class="ghost g-clip" data-g="clip" title="Adjuntar imágenes o ficheros (también Ctrl+V o arrastrar sobre el chat)">📎 Adjuntar</button><input type="file" class="g-file" multiple hidden /><button type="button" class="ghost g-mic" data-g="mic" title="Mantén pulsado para hablar (o barra espaciadora con la caja vacía)">🎤</button><textarea rows="1" placeholder="Pídeme algo…" title="Intro envía · Mayús+Intro salto de línea · barra espaciadora con la caja vacía = hablar"></textarea><button class="g-send">Enviar</button><button type="button" class="ghost g-stop" data-g="stop" hidden>■ Parar</button></form>
+      <form class="g-form"><button type="button" class="ghost g-mic" data-g="mic" title="Mantén pulsado para hablar (o barra espaciadora con la caja vacía)">🎤</button><textarea rows="1" placeholder="Pídeme algo…" title="Intro envía · Mayús+Intro salto de línea · barra espaciadora con la caja vacía = hablar"></textarea><button type="button" class="ghost g-clip" data-g="clip" title="Adjuntar" aria-label="Adjuntar imágenes o ficheros (también Ctrl+V o arrastrar sobre el chat)">📎</button><input type="file" class="g-file" multiple hidden /><button class="g-send">Enviar</button><button type="button" class="ghost g-stop" data-g="stop" hidden>■ Parar</button></form>
     </div></div>`;
   guideRoots.push({ el, panel });
   const ta = el.querySelector('textarea');
@@ -407,8 +407,10 @@ async function guideAddFiles(list) {
 function guideChips(el) {
   const box = el.querySelector('.g-attach');
   box.hidden = !G.pending.length && !G.uploading;
-  box.innerHTML = G.pending.map((a, i) => `<span class="g-chip" title="${esc(a.name)}">${a.thumb ? `<img src="${a.thumb}" alt="" />` : '📄'}<span class="g-cname">${esc(a.name)}</span><span class="muted">${fmtSize(a.size)}</span><button type="button" data-g="unattach" data-i="${i}" title="Quitar">✕</button></span>`).join('') + (G.uploading ? '<span class="muted small">⏳ subiendo…</span>' : '');
-  el.querySelector('.g-clip').disabled = G.busy || G.uploading;
+  const total = G.pending.reduce((n, a) => n + a.size, 0), near = G.pending.length >= GUIDE_MAX_FILES * 0.8 || total >= GUIDE_MAX_TOTAL_BYTES * 0.8;
+  const chips = G.pending.map((a, i) => `<span class="g-chip" title="${esc(a.name)}">${a.thumb ? `<img src="${a.thumb}" alt="" />` : '<span class="g-ficon">📄</span>'}<span class="g-cname">${esc(a.name)}</span><span class="muted">${fmtSize(a.size)}</span><button type="button" data-g="unattach" data-i="${i}" title="Quitar" aria-label="Quitar ${esc(a.name)}">✕</button></span>`).join('') + (G.uploading ? '<span class="muted small">⏳ subiendo…</span>' : '');
+  box.innerHTML = `<div class="g-chips">${chips}</div>` + (G.pending.length ? `<div class="g-count${near ? ' warn' : ''}">${G.pending.length}/${GUIDE_MAX_FILES} · ${(total / 1e6).toFixed(1).replace('.', ',')}/${GUIDE_MAX_TOTAL_BYTES / 1e6} MB</div>` : '');
+  el.querySelector('.g-clip').disabled = G.busy || G.uploading || G.pending.length >= GUIDE_MAX_FILES;
 }
 function guideAttachWire(el, ta) {
   const main = el.querySelector('.g-main'), inp = el.querySelector('.g-file');
