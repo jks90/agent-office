@@ -22,6 +22,13 @@ freno anti-bucle, unión de `CHANGELOG` con git real en `/tmp`), `quota-ladder` 
 relojes inyectados (`now`), proyecto sin `running` (el `tick` no lanza nada) y sin red ni `claude`/`codex`. Los e2e
 (`scripts/*-e2e.mjs`) siguen siendo la integración. Si un test se cuelga, mira primero los bucles de los parsers (FT-160 arregló uno en `parseVerdict`).
 
+**Tests de seguridad (FT-161).** `tests/security/*.test.mjs` (también dentro de `npm run test:unit`): `marketplace` (rutas con `..`,
+nombres, topes, sha, campos inesperados/`__proto__`, secretos, symlinks), `browser-policy` (orígenes, esquemas `file/javascript/data`,
+red local, confirmaciones 🛡), `guide-policy` (read/execute/write/irreversible, `confirmOnce`, destructivos), `secrets` (la contraseña
+autorizada no llega a state/audit/logs/modal), `ao-nobg` (hook FT-134 por stdin/stdout) y `ao-mcp` (puente MCP contra un AgentOffice
+simulado en loopback). Los bugs hallados no se arreglan en silencio: sus tests llevan `todo` y están listados en
+`~/JksDocs/workspace/flowtest/tests-unitarios/AUDITORIA.md` (fc/fd en `isLocalHost`, `null` en `ao-mcp` y `ao-nobg`, permisos 0644 de los datos).
+
 **Se actualiza solo.** Cada 15 min (`AO_UPDATE_MIN`) hace `git fetch`; si va por detrás de su rama remota, el árbol está limpio,
 el avance es *fast-forward* y no hay ningún agente trabajando ni revisando, hace `git pull --ff-only`, avisa por Telegram y se
 reinicia (sale con 75: lo relanza `npm start` vía `bin/ao-run.mjs`, o systemd con `Restart=on-failure`). Con cambios locales o
