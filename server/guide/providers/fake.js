@@ -8,9 +8,9 @@ import { run } from '../tools.js';
 export const label = 'fake', defaultModel = 'fake', ready = () => true;
 export function create() {
   let stopped = false;
-  let sessionId = null;
+  let sessionId = null, chatId = null;
   return {
-    start(o) { sessionId = o.resume || 'fake-' + Date.now().toString(36); return { sessionId }; },
+    start(o) { chatId = o.chatId; sessionId = o.resume || 'fake-' + Date.now().toString(36); return { sessionId }; },
     get sessionId() { return sessionId; },
     async *send({ text }) {
       stopped = false;
@@ -26,7 +26,7 @@ export function create() {
         const id = `fake_${++n}`;
         yield { type: 'tool_call', id, name: step.tool, args: step.args || {} };
         try {
-          const out = await run(step.tool, step.args || {}, { via: 'guide-fake' });
+          const out = await run(step.tool, step.args || {}, { via: 'guide-fake', ...(chatId ? { chatId } : {}) });
           yield { type: 'tool_result', id, ok: true, result: JSON.stringify(out).slice(0, 20_000) };
         } catch (e) {
           yield { type: 'tool_result', id, ok: false, result: String(e.message).slice(0, 2000) };

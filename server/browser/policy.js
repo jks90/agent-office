@@ -79,3 +79,9 @@ export const untrusted = (obj) => ({ untrusted: true, aviso: UNTRUSTED, ...obj }
 
 // ¿El campo parece de credenciales o de pago? (para tratar el envío del formulario como irreversible)
 export const SENSITIVE_FIELD = /contrase|password|passwd|clave|pin\b|tarjeta|card|cvv|cvc|iban|credit|cuenta bancaria/i;
+
+// FT-137 · contraseña (se puede teclear si la dio el usuario, con 🛡) frente a pago (número, CVV, IBAN: siempre requestHuman)
+export const PAYMENT_FIELD = /tarjeta|card|cvv|cvc|iban|credit|cuenta bancaria/i;
+export const PASSWORD_FIELD = /contrase|password|passwd|clave|pin\b/i;
+export const isPaymentNode = (n) => !!n && PAYMENT_FIELD.test(n.name || '');
+export const isPasswordNode = (n) => !!n && !isPaymentNode(n) && (!!n.states?.includes('protected') || PASSWORD_FIELD.test(n.name || ''));

@@ -1,5 +1,5 @@
 // FT-114 · Driver falso (AO_BROWSER=fake): mismo contrato que cdp.js, sin Chromium, para pruebas.
-import { readFileSync } from 'node:fs';
+import { readFileSync, appendFileSync } from 'node:fs';
 import { bad, checkUrl, maskHeaders, ringPush, saveShot, paginateRead } from './util.js';
 
 const PNG = readFileSync(new URL('../desktop/fake.png', import.meta.url));
@@ -15,7 +15,9 @@ const LOGIN = [
   { role: 'textbox', name: 'Contraseña', value: '', states: ['protected'] },
   { role: 'button', name: 'Entrar', value: '', states: [] },
 ];
-const treeOf = (u) => (/\/login/.test(u) ? [...TREE, ...LOGIN] : TREE);
+// FT-137 · /pago añade un campo de tarjeta (siempre requestHuman)
+const PAGO = [{ role: 'textbox', name: 'Número de tarjeta', value: '', states: [] }];
+const treeOf = (u) => (/\/login/.test(u) ? [...TREE, ...LOGIN] : /\/pago/.test(u) ? [...TREE, ...PAGO] : TREE);
 
 export function createFakeDriver() {
   let open = false, seq = 0, active = null;
@@ -69,6 +71,7 @@ export function createFakeDriver() {
       const t = cur();
       if (a.ref) t.values[a.ref] = (a.clear ? '' : t.values[a.ref] || '') + (a.text || '');
       log.push({ op: 'type', ...a });
+      if (process.env.AO_BROWSER_FAKE_TRACE) appendFileSync(process.env.AO_BROWSER_FAKE_TRACE, JSON.stringify({ ref: a.ref, text: a.text }) + '\n'); // FT-137: solo para e2e
       return { ok: true, ...nav(t) };
     },
     async upload(a = {}) { const t = cur(); log.push({ op: 'upload', ...a }); return { ok: true, files: (a.files || []).map((f) => f.split('/').pop()), ...nav(t) }; },
