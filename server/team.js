@@ -198,7 +198,7 @@ export async function syncWorkspace() {
   for (const [folder, n] of counts) {
     let p = s.projects.find((x) => x.folder === folder);
     if (!p) {
-      p = { id: newId(), name: folder === 'default' ? 'default' : folder, folder, repos: [], repoPath: null, baseBranch: null, running: false, team: [], createdAt: Date.now() };
+      p = { id: newId(), name: folder === 'default' ? 'default' : folder, folder, repos: [], repoPath: null, baseBranch: null, running: false, team: [], coordinator: 'auto', createdAt: Date.now() }; // coordinador encendido de serie: que no queden tareas listas con agentes parados
       s.projects.push(p);
       if (!s.agents.length) DEFAULT_TEAM.forEach((m) => { const a = newAgent({ ...m, engine: 'auto' }); s.agents.push(a); p.team.push(a.id); }); // primer arranque: equipo base
       created++;
@@ -238,7 +238,7 @@ export async function createProject({ name, repoPath, repos, engine = 'demo', fo
   const list = await resolveRepos({ repos, repoPath });
   if (!ENGINE_IDS.includes(engine)) engine = 'auto';
   const s = get();
-  const project = { id: newId(), name: name.trim(), folder: folder || null, repos: list, repoPath: list[0]?.path || null, baseBranch: list[0]?.baseBranch || null, running: false, team: [], createdAt: Date.now() };
+  const project = { id: newId(), name: name.trim(), folder: folder || null, repos: list, repoPath: list[0]?.path || null, baseBranch: list[0]?.baseBranch || null, running: false, team: [], coordinator: 'auto', createdAt: Date.now() };
   s.projects.push(project);
   if (!s.agents.length) DEFAULT_TEAM.forEach((m) => { const a = newAgent({ ...m, engine }); s.agents.push(a); project.team.push(a.id); });
   changed();
