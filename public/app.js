@@ -14,7 +14,7 @@ const activityLoaded = new Set();
 
 import { Office } from './office3d.js';
 import { dictationSupported, createDictation, insertAtCursor } from './dictation.js'; // dictado por voz (FT-43)
-const office = new Office($('#office'), { onAgentClick: (id) => enterAgent(id), onFloorClick: (id) => enterFloor(id), onGuideClick: () => showTab('guide') }); // clic planta/agente → navegación continua (FT-47/FT-71)
+const office = new Office($('#office'), { onAgentClick: (id) => enterAgent(id), onFloorClick: (id) => enterFloor(id), onGuideClick: () => showTab('guide'), onMineClick: (pid) => { inboxProject = pid || null; showTab('inbox'); renderInbox(); } }); // clic planta/agente → navegación continua (FT-47/FT-71)
 window.aoOffice = office; // para QA: aoOffice.debugState() / setMode() (FT-46)
 
 function safeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
@@ -1029,7 +1029,7 @@ function render() {
   run.classList.toggle('on', !!p?.running);
   run.disabled = !p;
 
-  office.update({ agents: team(), tasks: tasks(), questions: S.questions || [], roles: S.roles, title: p?.name || '', selected: drawerAgent, projects: visibleProjects(), allAgents: S.agents, allTasks: S.tasks, projectId, quota: S.quota || {}, bubbles: S.settings?.officeBubbles }); // FT-123: burbujas; projects/allAgents/allTasks: modo edificio (FT-46); projectId: planta resaltada (FT-47)
+  office.update({ agents: team(), tasks: tasks(), questions: S.questions || [], roles: S.roles, title: p?.name || '', selected: drawerAgent, projects: visibleProjects(), allAgents: S.agents, allTasks: S.tasks, projectId, quota: S.quota || {}, bubbles: S.settings?.officeBubbles, mine: mineSummary(projectId), mineByProject: Object.fromEntries(visibleProjects().map((q) => [q.id, mineSummary(q.id).total])) }); // FT-124: mi mesa y puntos del edificio // FT-123: burbujas; projects/allAgents/allTasks: modo edificio (FT-46); projectId: planta resaltada (FT-47)
   renderSuite();
   renderTeam();
   renderRepos();
@@ -1592,7 +1592,18 @@ function compactCard(t) {
 const policyFor = (p) => p?.reviewPolicy || S.settings?.reviewPolicy || 'manual';
 const isManualTask = (t) => /^\s*👤|\bMANUAL\b/.test(t.title || '');
 let inboxOpen = (() => { try { return JSON.parse(localStorage.getItem('ao:inboxOpen') || '{}'); } catch { return {}; } })();
-function inboxItems() {
+function inboxItems(projectId) { // FT-124: con projectId, solo los de ese proyecto (la misma lógica sirve a «Para ti» y a la mesa de la oficina)
+  const all = inboxAll();
+  return projectId ? all.filter((i) => (i.p?.id || i.t?.projectId) === projectId) : all;
+}
+// FT-124: resumen de lo que espera al usuario en un proyecto (sin avisos ya resueltos de coordlog/importadas) para la mesa «Tú».
+function mineSummary(projectId) {
+  const items = inboxItems(projectId).filter((i) => !['coordlog'].includes(i.kind) && !i.imported);
+  const counts = {};
+  for (const i of items) counts[i.kind] = (counts[i.kind] || 0) + 1;
+  return { total: items.length, counts, items: items.map((i) => ({ kind: i.kind, taskId: i.t?.id || i.q?.taskId || null, agentId: i.t?.agentId || null })) };
+}
+function inboxAll() {
   const vis = new Map(visibleProjects().map((p) => [p.id, p]));
   const items = [];
   for (const q of S.questions || []) {
@@ -1624,8 +1635,10 @@ const INBOX_KIND = {
   coord: ['🧑‍✈️', 'Sugerencias del coordinador', 'Cambios de plantilla o de motor para que el tablero avance'],
   coordlog: ['🧑‍✈️', 'Lo que hizo el coordinador (24 h)', 'Cambios que aplicó solo (solo aviso)'],
 };
+let inboxProject = null; // FT-124: «Para ti» filtrado por proyecto (desde la mesa de la oficina); null = todos
 function renderInbox() {
-  const items = inboxItems();
+  if (inboxProject && !(S.projects || []).some((p) => p.id === inboxProject)) inboxProject = null;
+  const items = inboxItems(inboxProject);
   const urgent = items.filter((i) => !['quota', 'coordlog'].includes(i.kind) && !i.imported).length;
   const badge = $('#tab-inbox-count'); if (badge) badge.textContent = urgent || '';
   const el = $('#inbox');
@@ -1652,7 +1665,7 @@ function renderInbox() {
     return `<div class="inbox-row"><div class="inbox-main"><div class="inbox-what">${t && i.kind !== 'question' ? `<span class="task-id">${esc(tcode(t))}</span> ` : ''}${what}</div><div class="muted inbox-why">${i.p ? `${esc(i.p.name)} · ` : ''}${why}${blocks}</div></div><div class="inbox-acts">${act(i)}</div></div>`;
   };
   const groups = Object.keys(INBOX_KIND).map((k) => [k, items.filter((i) => i.kind === k)]).filter(([, l]) => l.length);
-  el.innerHTML = `<div class="inbox"><div class="inbox-head"><h2>🔔 Para ti</h2><span class="muted">${urgent ? `${urgent} cosas te esperan` : 'Nada urgente: los agentes no te necesitan ahora mismo.'}</span></div>
+  el.innerHTML = `<div class="inbox"><div class="inbox-head"><h2>🔔 Para ti</h2>${inboxProject ? `<span class="chip" data-inbox-filter>📁 ${esc((S.projects.find((p) => p.id === inboxProject) || {}).name || '')} <button class="small ghost" data-inbox-clear title="Quitar el filtro">✕</button></span>` : ''}<span class="muted">${urgent ? `${urgent} cosas te esperan` : 'Nada urgente: los agentes no te necesitan ahora mismo.'}</span></div>
     ${groups.map(([k, list]) => {
       const [ico, title, hint] = INBOX_KIND[k];
       // dentro de cada tipo, por proyecto; las importadas de un tablero (muchas, sin agente) en un grupo plegado aparte
@@ -1665,6 +1678,7 @@ function renderInbox() {
       return `<section class="inbox-group"><h3>${ico} ${title} <span class="muted">(${list.length})</span></h3><p class="muted">${hint}</p>${blocks}</section>`;
     }).join('') || '<p class="empty">Todo al día 🎉</p>'}</div>`;
 }
+document.addEventListener('click', (e) => { if (e.target.closest('[data-inbox-clear]')) { inboxProject = null; renderInbox(); } }); // FT-124: quitar el filtro por proyecto
 document.addEventListener('toggle', (e) => { const d = e.target.closest?.('[data-inbox-key]'); if (!d || e.target !== d) return; inboxOpen[d.dataset.inboxKey] = d.open; try { localStorage.setItem('ao:inboxOpen', JSON.stringify(inboxOpen)); } catch { /* sin almacenamiento */ } }, true);
 
 // FT-56 · revisión visible
