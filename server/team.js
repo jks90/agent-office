@@ -602,7 +602,16 @@ async function runChecks(cwd, checks) {
 }
 async function runReviewer(p, t, repo, cwd, checks) {
   const s = get();
-  const engineId = ENGINES[s.settings.reviewEngine] && s.settings.reviewEngine !== 'auto' ? s.settings.reviewEngine : (ENGINES[t.lastEngine] ? t.lastEngine : 'demo');
+  let engineId = ENGINES[s.settings.reviewEngine] && s.settings.reviewEngine !== 'auto' ? s.settings.reviewEngine : (ENGINES[t.lastEngine] ? t.lastEngine : 'demo');
+  // Sin cuota en ese motor, el revisor no contesta y la tarea se aparcaba: se usa el otro (el de más margen) y, si ninguno
+  // tiene, se espera al reinicio de la ventana (autoReview lo reintenta solo; ver reviewWaitQuota en refreshReviews).
+  const g = engineId !== 'demo' ? quota.gate(engineId) : { block: false };
+  if (g.block) {
+    const alt = ['claude', 'codex'].filter((e) => e !== engineId && ENGINES[e] && !quota.gate(e).block && !quota.gate(e).wait)
+      .sort((a, b) => (quota.margin(b) ?? 0) - (quota.margin(a) ?? 0))[0];
+    if (!alt) throw Object.assign(new Error(g.message || 'sin cuota para revisar'), { quotaWait: g.resetsAt || Date.now() + 10 * 60_000 });
+    engineId = alt;
+  }
   // Sin autor ni equipo (tarea creada ya en revisión, proyecto sin plantilla) revisa un «Revisor» genérico en vez de fallar
   const agent = s.agents.find((a) => a.id === t.agentId) || teamOf(p)[0] || { id: 'revisor', name: 'Revisor', role: 'qa', engine: engineId, model: '' };
   const role = Object.values(allRoles()).find((r) => r.kind === 'qa') || roleOf(agent.role) || roleOf('back');
@@ -668,7 +677,10 @@ export async function autoReview(p, t) {
       await approve(t.id, { by: 'auto-qa', verdict: { approve: true, text: [v.reasons.join('; ') || 'sin objeciones', extra].filter(Boolean).join(' · ') } });
     }
     else await reject(t.id, v.feedback || v.reasons.join('\n') || 'El revisor automático pide cambios.', [], [], 'auto-qa');
-  } catch (e) { hold(`✋ la revisión automática falló (${e.message}): la revisa una persona`); }
+  } catch (e) {
+    if (e.quotaWait) { t.reviewWaitQuota = e.quotaWait; reviewNote(t, 'auto', 'skipped', `⏸ revisión en espera de cuota (${e.message})`); return; } // se reintenta sola
+    hold(`✋ la revisión automática falló (${e.message}): la revisa una persona`);
+  }
   finally { reviewing.delete(t.id); delete t.reviewing; changed(); }
 }
 
@@ -741,6 +753,11 @@ async function refreshReviews() {
   try {
     let any = false;
     for (const t of get().tasks.filter((x) => x.status === 'review' && x.branch)) any = (await refreshMergeState(t)) || any;
+    // Revisiones que esperaban cuota: al pasar la hora de reinicio se reintentan (si sigue sin cuota, vuelve a esperar)
+    for (const t of get().tasks.filter((x) => x.status === 'review' && x.reviewWaitQuota && Date.now() >= x.reviewWaitQuota && !x.reviewing)) {
+      delete t.reviewWaitQuota; any = true;
+      const p = projectOf(t); if (p) setImmediate(() => autoReview(p, t).catch(() => {}));
+    }
     if (any) changed();
   } finally { refreshing = false; }
 }
