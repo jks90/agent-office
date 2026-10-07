@@ -85,6 +85,11 @@ try {
   const th = (await state()).tasks.find((t) => t.title.startsWith('Posición fuera de rango'));
   check('el webhook crea la tarea con los datos del aviso y revisión obligatoria', !!fired.task && /enRango/.test(th?.description || '') && th?.reviewRequired === true, JSON.stringify(fired));
   check('el webhook solo se acepta con su token (cualquier otra ruta sigue pidiendo x-ao-token fuera del loopback)', true);
+  console.log('Aprobar sola');
+  const auto = await call('POST', `/api/projects/${p.id}/schedules`, { title: 'Informe rutinario', role: 'back', every: 60, autoApprove: true });
+  const ra = await call('POST', `/api/projects/${p.id}/schedules/${auto.id}/run`);
+  const ta = await until(async () => { const t = (await state()).tasks.find((x) => x.code === ra.task || x.id === ra.task); return t?.status === 'done' ? t : null; }, 25_000, 300);
+  check('una programada «aprobar sola» se cierra al terminar (sin pasar por ti)', !!ta && ta.autoApproved?.by === 'programada', JSON.stringify(ta && { s: ta.status, a: ta.autoApproved }));
   console.log('Comprobación sin IA');
   const ok0 = await call('POST', `/api/projects/${p.id}/schedules`, { title: 'Vigilar OK', role: 'back', every: 30, check: 'echo todo bien; exit 0' });
   const n0 = (await state()).tasks.length;

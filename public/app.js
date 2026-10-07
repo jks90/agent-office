@@ -1187,7 +1187,7 @@ async function openSchedules() {
   dialog(`<h3>⏰ Tareas programadas de «${esc(project()?.name)}»</h3>
     <p class="muted">Se crean solas (con el proyecto en marcha) cada X tiempo o a una hora, o cuando llega un aviso al webhook (p. ej. un monitor de flow-test). Si la anterior sigue pendiente, esa vuelta se salta.</p>
     <div class="sched-list">${list.map((x) => `<div class="sched-row ${x.enabled ? '' : 'off'}">
-      <div class="sched-main"><b>${esc(x.title)}</b> <span class="muted">· ${roleChip(x.role)} · ${schedFreq(x)}${x.hookToken ? ' · 🪝 webhook' : ''}${x.reviewRequired ? ' · ✋ revisión obligatoria' : ''}</span>
+      <div class="sched-main"><b>${esc(x.title)}</b> <span class="muted">· ${roleChip(x.role)} · ${schedFreq(x)}${x.hookToken ? ' · 🪝 webhook' : ''}${x.reviewRequired ? ' · ✋ revisión obligatoria' : x.autoApprove ? ' · ✅ se aprueba sola' : ''}</span>
         <div class="muted">${last(x)}</div>
         ${x.check ? `<div class="muted">🔎 comprobación: <code>${esc(x.check.slice(0, 90))}</code>${x.lastCheck ? ` · última: ${x.lastCheck.code === 0 ? '✓ sin novedad' : x.lastCheck.code === 2 ? '⚠ creó tarea' : `✗ error ${x.lastCheck.code}`} hace ${waitTxt(x.lastCheck.at)}` : ''}</div>` : ''}
         ${x.hookToken ? `<div class="sched-hook"><code>${esc(hookUrl(x))}</code> <button type="button" class="small ghost" data-copy="${esc(hookUrl(x))}">Copiar</button> <button type="button" class="small ghost" data-copy="${esc(hookUrl(x, true))}" title="Para el flow-test en Docker (notifyUrl de un monitor)">Copiar (Docker)</button></div>` : ''}</div>
@@ -1212,9 +1212,10 @@ async function editSchedule(sid) {
     <label>🔎 Comprobación sin IA (opcional): orden que se ejecuta en la carpeta del proyecto; código 0 = todo bien (no se crea tarea), 2 = crear la tarea con su salida</label><input name="check" value="${esc(x.check || '')}" placeholder="node scripts/revert-posicion.mjs --check" />
     <label><input type="checkbox" name="webhook" ${x.hookToken || mode === 'hook' ? 'checked' : ''} /> 🪝 Además, se puede lanzar por webhook (te doy una URL secreta para un monitor de flow-test u otro sistema)</label>
     <label><input type="checkbox" name="reviewRequired" ${x.reviewRequired ? 'checked' : ''} /> ✋ Revisión obligatoria (nunca se aprueba sola: para tareas que tocan dinero o producción)</label>
+    <label><input type="checkbox" name="autoApprove" ${x.autoApprove ? 'checked' : ''} /> ✅ Aprobar sola al terminar (informes rutinarios; no aplica si es de revisión obligatoria)</label>
     <label><input type="checkbox" name="enabled" ${x.enabled !== false ? 'checked' : ''} /> Activa</label>
     ${buttons('Guardar')}`, async (f) => {
-    const body = { title: f.title, description: f.description, role: f.role, every: f.mode === 'every' ? Number(f.every) : null, at: f.mode === 'at' ? f.at : null, webhook: f.mode === 'hook' || !!f.webhook, reviewRequired: !!f.reviewRequired, enabled: !!f.enabled, check: f.check || '' };
+    const body = { title: f.title, description: f.description, role: f.role, every: f.mode === 'every' ? Number(f.every) : null, at: f.mode === 'at' ? f.at : null, webhook: f.mode === 'hook' || !!f.webhook, reviewRequired: !!f.reviewRequired, enabled: !!f.enabled, check: f.check || '', autoApprove: !!f.autoApprove };
     await api(sid ? 'PATCH' : 'POST', `/api/projects/${projectId}/schedules${sid ? '/' + sid : ''}`, body);
     toast('Programada guardada'); setTimeout(openSchedules, 50);
   }, 'wide');

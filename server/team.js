@@ -415,7 +415,7 @@ export function messageAgent(id, { text, constraint = false, origin = 'user' } =
 }
 
 // ── Tareas ─────────────────────────────────────────────────────────────────
-export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null, context = null, skills = [], priority = 0, sizeChecked = false, minModel = '', checks = [], reviewRequired = false }) {
+export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null, context = null, skills = [], priority = 0, sizeChecked = false, minModel = '', checks = [], reviewRequired = false, autoApprove = false }) {
   // attachments (subidos): imágenes → images (las ve el agente), el resto → files (se citan en el prompt)
   for (const a of attachments) { if (/\.(png|jpe?g|webp)$/i.test(a.path)) images = [...images, a.path]; else files = [...files, a.path]; }
   const s = get();
@@ -432,6 +432,7 @@ export function createTask({ projectId, title, description = '', role, repo = nu
   };
   if (Array.isArray(checks) && checks.length) task.checks = checks.map((c) => String(c).trim()).filter(Boolean).slice(0, 6); // FT-56: verificaciones que declara la tarea
   if (reviewRequired) task.reviewRequired = true; // FT-56: nunca se aprueba sola
+  else if (autoApprove) task.autoApprove = true; // programada rutinaria: se aprueba sola al terminar
   if (cleanMinModel(minModel)) task.minModel = cleanMinModel(minModel); // FT-60: esta tarea no empieza por el peldaño barato
   if (sizeChecked) task.sizeChecked = true; // FT-63: ya troceada por el PO, no se vuelve a evaluar
   codes.assignCode(s.tasks, p, task);
@@ -612,6 +613,10 @@ async function runReviewer(p, t, repo, cwd, checks) {
 }
 // Al llegar a «Revisión» (reviewPolicy auto-qa | auto). Nunca toca tareas reviewRequired, con tope/atasco, ni con ficheros sensibles.
 export async function autoReview(p, t) {
+  // Programadas rutinarias marcadas «aprobar sola» (p. ej. el informe contable diario): se cierran al terminar si no hay nada raro
+  if (t.autoApprove && t.status === 'review' && !t.reviewRequired && !t.budgetHit && !t.stuck && !reviewing.has(t.id)) {
+    return approve(t.id, { by: 'programada', verdict: { approve: true, text: 'tarea programada rutinaria: se aprueba sola al terminar' } });
+  }
   const s = get(), policy = review.policyOf(s.settings, p);
   if (policy === 'manual' || t.status !== 'review' || t.kind === 'plan' || reviewing.has(t.id)) return;
   const hold = (why) => { t.reviewNote = why; reviewNote(t, 'auto', 'skipped', why); changed(); };
@@ -995,7 +1000,7 @@ const fmtFecha = (ms) => new Date(ms).toLocaleString('es-ES', { day: '2-digit', 
 function fireSchedule(p, sch, { origin = 'programada', extra = '' } = {}) {
   const prev = sch.lastTaskId && get().tasks.find((t) => t.id === sch.lastTaskId);
   if (prev && pendingStatus.includes(prev.status)) { sch.lastRunAt = Date.now(); return { skipped: `${prev.code || prev.id} sigue pendiente` }; }
-  const t = createTask({ projectId: p.id, title: `${sch.title} · ${fmtFecha(Date.now())}`, role: sch.role, reviewRequired: !!sch.reviewRequired, sizeChecked: true,
+  const t = createTask({ projectId: p.id, title: `${sch.title} · ${fmtFecha(Date.now())}`, role: sch.role, reviewRequired: !!sch.reviewRequired, autoApprove: !!sch.autoApprove && !sch.reviewRequired, sizeChecked: true,
     description: `${sch.description || ''}\n\n_(Tarea ${origin} «${sch.title}»${sch.every ? `, cada ${sch.every} min` : sch.at ? `, cada día a las ${sch.at}` : ''}.)_${extra ? `\n\nDatos del aviso que la lanzó:\n\`\`\`\n${extra}\n\`\`\`` : ''}` });
   Object.assign(sch, { lastRunAt: Date.now(), lastTaskId: t.id });
   log(null, `⏰ ${p.name}: ${origin} «${sch.title}» → ${t.code || t.id}`);
@@ -1038,7 +1043,8 @@ const cleanSchedule = (b, prev = {}) => {
   return { ...prev, title: String(b.title ?? prev.title ?? '').trim().slice(0, 120), description: String(b.description ?? prev.description ?? '').slice(0, 8000),
     role: b.role ?? prev.role, every: b.every !== undefined || b.at !== undefined ? every : prev.every ?? null, at: b.every !== undefined || b.at !== undefined ? (every ? null : at) : prev.at ?? null,
     reviewRequired: b.reviewRequired !== undefined ? !!b.reviewRequired : !!prev.reviewRequired, enabled: b.enabled !== undefined ? !!b.enabled : prev.enabled ?? true,
-    check: b.check !== undefined ? (String(b.check || '').trim().slice(0, 500) || null) : prev.check ?? null };
+    check: b.check !== undefined ? (String(b.check || '').trim().slice(0, 500) || null) : prev.check ?? null,
+    autoApprove: b.autoApprove !== undefined ? !!b.autoApprove : !!prev.autoApprove };
 };
 export function listSchedules(projectId) { return findOr404(get().projects, projectId, 'Proyecto').schedules || []; }
 export function saveSchedule(projectId, b, sid = null) {
