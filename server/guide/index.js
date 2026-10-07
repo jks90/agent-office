@@ -17,6 +17,8 @@ import * as anthropicApi from './providers/anthropic-api.js';
 import * as openaiApi from './providers/openai-api.js';
 import { provider as localApi } from './providers/local-api.js';
 import * as fakeProvider from './providers/fake.js';
+import * as secrets from './secrets.js'; // FT-137
+import { isPasswordTarget } from './tools.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
 const PROVIDERS = { 'claude-cli': claudeCli, 'anthropic-api': anthropicApi, 'openai-api': openaiApi, 'local-api': localApi, ...(process.env.AO_GUIDE_FAKE === '1' ? { fake: fakeProvider } : {}) }; // `fake` (FT-11): solo para pruebas e2e
@@ -44,7 +46,7 @@ function saveChat(chat) {
   if (chat.messages.length > MAX_MESSAGES) chat.messages.splice(0, chat.messages.length - MAX_MESSAGES);
   fs.mkdirSync(DIR(), { recursive: true });
   const tmp = file(chat.id) + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(chat));
+  fs.writeFileSync(tmp, secrets.mask(chat.id, JSON.stringify(chat))); // FT-137: nunca una contraseña tecleada por el agente en disco
   fs.renameSync(tmp, file(chat.id));
 }
 
@@ -110,6 +112,7 @@ export async function* chat({ chatId, text, attachments, client = null }) {
   const name = store.get().settings.guideProvider || 'claude-cli';
   if (!PROVIDERS[name]) throw fail(400, `Proveedor de Guide desconocido: ${name}`);
   const model = modelFor(name);
+  secrets.bind(c.id, () => (name === 'fake' ? c.messages.map((m) => ({ ...m, text: String(m.text || '').split(' ::[')[0] })) : c.messages)); // el fake lleva su guion en el mensaje: no cuenta como «dicho por el usuario» // FT-137: para saber qué contraseñas dio el usuario en este chat
 
   let slot = providers.get(c.id);
   if (!slot || slot.model !== model || slot.name !== name) {
@@ -152,6 +155,9 @@ export async function* chat({ chatId, text, attachments, client = null }) {
         continue;
       }
       if (/^browser[._]/.test(ev.name || '') && ev.type === 'tool_call') browserCalls++;
+      // FT-137: el valor de una contraseña no sale por SSE ni se guarda (ni en tool_call, ni en resultados, ni si el modelo lo repite)
+      if (ev.type === 'tool_call' && isPasswordTarget(ev.name, ev.args)) { secrets.authorize(c.id, ev.args.text); ev = { ...ev, args: { ...ev.args, text: secrets.MASK } }; }
+      else if (secrets.has(c.id) && (ev.type === 'text' || ev.type === 'tool_result' || ev.type === 'tool_call')) ev = JSON.parse(secrets.mask(c.id, JSON.stringify(ev)));
       if (capHit && ev.type === 'error') ev = { type: 'done', sessionId: provider.sessionId, costUsd: estUsd, usage: estUsage, capped: true }; // el «Parado» lo provoca el tope
       if (ev.type === 'text') { reply += (reply ? '\n\n' : '') + ev.text; }
       else if (ev.type === 'tool_call') { flush(); c.messages.push({ role: 'tool', ts: Date.now(), id: ev.id, name: ev.name, args: ev.args, ok: null, result: null }); }

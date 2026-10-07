@@ -106,11 +106,11 @@ try {
   check('click en «Entrar» con campo de contraseña en la página → irreversible', en.asked && /contraseña\/pago/.test(en.asked.context) && en.res.status === 403, JSON.stringify(en.asked));
   const lk = await withAnswer('browser.click', { ref: 'e4' }, null);
   check('click en un enlace normal → sin confirmación', lk.res.ok && !lk.asked);
-  const ts = await withAnswer('browser.type', { ref: 'e5', text: 'x', submit: true }, 'No');
+  const ts = await withAnswer('browser.type', { ref: 'e2', text: 'x', submit: true }, 'No');
   check('type con submit → irreversible', ts.asked && ts.res.status === 403);
   const SECRET = 'hunter2-FT116';
   const pw = await withAnswer('browser.type', { ref: 'e5', text: SECRET }, null);
-  check('type en la contraseña (sin submit) → sin confirmación', pw.res.ok && !pw.asked);
+  check('type en la contraseña sin que el usuario la diera en un chat (FT-137) → 403 sin 🛡', pw.res.status === 403 && !pw.asked, JSON.stringify(pw.res.body));
   await call('POST', '/api/settings', { guidePolicy: { execute: 'auto', write: 'auto' } });
   const ev = await withAnswer('browser.evaluate', { expression: 'document.title' }, 'No');
   check('evaluate pide confirmación SIEMPRE aun con write/execute en automático', ev.asked && /JavaScript arbitrario/.test(ev.asked.context) && ev.res.status === 403);
