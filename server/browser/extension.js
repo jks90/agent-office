@@ -130,6 +130,7 @@ export function createExtensionDriver() {
     back: c('back'), forward: c('forward'), reload: c('reload'),
     snapshot: c('snapshot'),
     act: c('act'), type: c('type'), scroll: c('scroll'),
+    upload: async () => { throw bad(501, 'browser.upload aún no está disponible con la extensión «Mi navegador» (FT-130): usa el navegador dedicado'); },
     async screenshot(a = {}) {
       const r = await call('screenshot', a);
       if (!r?.data) throw bad(500, 'la extensión no devolvió imagen');

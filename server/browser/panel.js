@@ -72,7 +72,7 @@ export async function setControl(mode) {
 const needUser = () => { if (control !== 'user') throw fail(409, 'Toma el control del navegador para manejarlo tú'); };
 
 // Driver para el agente: en pausa mientras el usuario controla; marca el elemento antes de actuar.
-const ACTIONS = ['act', 'type', 'scroll'];
+const ACTIONS = ['act', 'type', 'scroll', 'upload']; // FT-130: upload
 const MUTATING = ['navigate', 'back', 'forward', 'reload', 'evaluate', 'waitFor'];
 export function agentDriver() {
   const d = getDriver();
