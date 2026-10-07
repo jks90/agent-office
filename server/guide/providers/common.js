@@ -2,8 +2,9 @@
 // Aquí vive lo que NO depende del LLM: esquemas de las tools del registro (FT-4), ejecución de tool calls con su política y
 // auditoría, historial del chat y el bucle «modelo → tools → modelo» que emite los mismos eventos que claude-cli.js.
 import { tools as registry, run } from '../tools.js';
+import { estimateCost } from '../budget.js';
 
-const MAX_ROUNDS = 12;
+const MAX_ROUNDS = 200; // FT-132: sin tope artificial de pasos para tareas abiertas; manda el tope de coste (settings.guideBrowserMaxUsd)
 // Los nombres de tool de los LLM no admiten «.»: `task.create` se publica como `task_create` (igual que el MCP de FT-4).
 export const wireName = (n) => n.replace('.', '_');
 export const realName = (n) => registry.find((t) => wireName(t.name) === n)?.name || n;
@@ -76,6 +77,7 @@ export function createHttpProvider(adapter) {
           const r = await adapter.stream({ system: opts.system, tools: toolDefs(), model: opts.model, turns, signal: ctrl.signal, onText: (t) => texts.push(t) });
           for (const k of Object.keys(usage)) usage[k] += r.usage?.[k] || 0;
           if (r.cost != null) cost = (cost || 0) + r.cost;
+          yield { type: 'usage', usage: { ...usage }, costUsd: cost ?? estimateCost(opts.model, usage) }; // FT-132: tope de coste del Guía con navegador
           for (const t of texts) if (t.trim()) yield { type: 'text', text: t };
           const turn = { role: 'assistant', text: texts.join('\n\n'), calls: [] };
           turns.push(turn);

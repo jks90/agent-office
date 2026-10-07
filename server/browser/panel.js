@@ -22,8 +22,11 @@ export function status() {
   const d = getDriver();
   let av = { ok: false, missing: [] };
   try { av = d.available(); } catch { /* sin driver */ }
-  return { driver: d.id || 'cdp', available: !!av.ok, missing: av.missing || [], open: cache.open, control, tabs: cache.tabs, url: cache.url, title: cache.title, tabId: cache.tabId, handoffs };
+  return { driver: d.id || 'cdp', available: !!av.ok, missing: av.missing || [], open: cache.open, control, tabs: cache.tabs, url: cache.url, title: cache.title, tabId: cache.tabId, handoffs, lastRequest };
 }
+// FT-132 · coste/tokens de la última petición del Guía que usó el navegador (la rellena guide/index.js al terminar el turno)
+let lastRequest = null;
+export function setLastRequest(r) { lastRequest = r; lastKey = ''; store.changed(); }
 
 // FT-119: tras una acción el estado se lee ya y otra vez tras la navegación que haya provocado (un POST de formulario tarda en cambiar la URL)
 const refreshSoon = () => { refresh().catch(() => {}); for (const ms of [300, 1200]) setTimeout(() => refresh().catch(() => {}), ms).unref?.(); };
