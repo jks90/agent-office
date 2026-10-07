@@ -24,10 +24,11 @@ import { agentDriver, addHandoff, resolveHandoff, setControl, status as browserS
 import * as bpolicy from '../browser/policy.js';
 import * as questions from '../questions.js';
 import * as secrets from './secrets.js'; // FT-137
+import * as mpCloud from '../marketplace-cloud.js'; // FT-142
 import { resolveRefs } from '../uploads.js'; // FT-130
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
-const VIEWS = ['office', 'summary', 'tasks', 'agents', 'guide', 'browser', 'settings'];
+const VIEWS = ['office', 'summary', 'tasks', 'agents', 'guide', 'browser', 'marketplace', 'settings'];
 const str = (description) => ({ type: 'string', description });
 const obj = (properties = {}, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
 
@@ -297,7 +298,7 @@ export const tools = [
   // — App / navegación —
   T('app.getContext', 'Qué está viendo el usuario ahora: vista, proyecto, tarea abierta, agente seleccionado, últimos eventos y contexto de flow-test.', obj({ client: str('Id de cliente (opcional; por defecto el más reciente)') }), 'read',
     ({ client }) => context.get(client)),
-  T('app.navigate', 'Lleva la UI a una vista (office|summary|tasks|agents|guide|browser|settings) y, si se indica, a un proyecto. Con view=office y projectId la Oficina entra en la planta (sala) de ese proyecto; sin projectId muestra lo que haya (edificio, planta o agente, app.getContext.officeLevel, FT-71).', obj({ view: { type: 'string', enum: VIEWS }, projectId: str('Id o nombre del proyecto (opcional)') }, ['view']), 'navigate',
+  T('app.navigate', 'Lleva la UI a una vista (office|summary|tasks|agents|guide|browser|marketplace|settings) y, si se indica, a un proyecto. Con view=office y projectId la Oficina entra en la planta (sala) de ese proyecto; sin projectId muestra lo que haya (edificio, planta o agente, app.getContext.officeLevel, FT-71).', obj({ view: { type: 'string', enum: VIEWS }, projectId: str('Id o nombre del proyecto (opcional)') }, ['view']), 'navigate',
     ({ view, projectId }, ctx) => ({ ...ui({ type: 'navigate', view, projectId: projectId ? findProject(projectId).id : null }, ctx), view }) ),
   T('app.openTask', 'Abre en la UI el modal de una tarea.', obj({ code: str('Código de la tarea, p. ej. FT-4') }, ['code']), 'navigate',
     ({ code }, ctx) => { const t = findTask(code); return { ...ui({ type: 'openTask', taskId: t.id, projectId: t.projectId }, ctx), task: t.code || t.id }; }),
@@ -404,7 +405,18 @@ export const tools = [
   T('git.log', 'git log del repo (o de una rama): hash, fecha, autor y asunto.', obj({ repo: str('Clave del repo'), branch: str('Rama (opcional)'), limit: { type: 'integer', description: 'Máx. de commits (20 por defecto, 100 como mucho)' } }, ['repo']), 'read', (a) => integ.gitLog(a)),
   T('filesystem.read', 'Lee un fichero de un repo/worktree del proyecto (máx. 200 KB). Nunca .env, .git ni data/; fuera del repo da error.', obj({ repo: str('Clave del repo'), task: str('Código de la tarea (lee su worktree)'), path: str('Fichero, relativo al repo') }, ['path']), 'read', (a) => integ.fsRead(a)),
   T('filesystem.write', 'Escribe (crea o sobrescribe) un fichero dentro de un repo/worktree del proyecto (máx. 200 KB). Pide confirmación. Nunca .env, .git ni data/.', obj({ repo: str('Clave del repo'), task: str('Código de la tarea (escribe en su worktree)'), path: str('Fichero, relativo al repo'), content: str('Contenido completo') }, ['path', 'content']), 'write', (a) => integ.fsWrite(a)),
-  T('terminal.execute', 'Ejecuta un comando en la raíz de un repo/worktree, sin shell (nada de ; & | > $ ni sustituciones). Solo la lista blanca de los workers (npm, node, git status/diff/log/add/commit…, ls, cat, grep…; sin rm, sudo, docker, ssh ni git push). Timeout 60 s y salida recortada.', obj({ repo: str('Clave del repo'), task: str('Código de la tarea (corre en su worktree)'), cmd: str('Comando, p. ej. «git status --short»') }, ['cmd']), 'execute', (a) => integ.terminalExecute(a)),
+  // — Marketplace (FT-142): nube vía flow-test —
+  T('marketplace.search', 'Busca en el marketplace de FlowTest: scope team (tu organización: roles, skills y agentes con memoria) o public (especificaciones de todas las organizaciones). Devuelve id, tipo, nombre, versión, resumen, autor, descargas y si trae memoria. Sin vinculación responde 412 con el enlace para vincular.',
+    obj({ scope: { type: 'string', enum: ['team', 'public'], description: 'team por defecto' }, kind: { type: 'string', enum: ['role', 'skill', 'agent'] }, q: str('Texto a buscar') }), 'read',
+    (a) => mpCloud.search(a)),
+  T('marketplace.install', 'Instala un paquete del marketplace por su id (de marketplace.search): rol/skill al catálogo local, agente al banquillo con su memoria en «projectId». SIEMPRE pide confirmación (🛡) con la lista de ficheros.',
+    obj({ id: str('Id del paquete'), projectId: str('Proyecto destino de la memoria (solo agentes)'), overwrite: { type: 'boolean', description: 'Sobrescribir si ya existe' } }, ['id']), 'write',
+    async ({ id, ...rest }) => mpCloud.install(id, { ...rest, confirmCode: true }),
+    { dynamic: async ({ id }) => {
+      const { item, info, files } = await mpCloud.inspectItem(id);
+      return { policy: 'irreversible', context: `Instalar ${item.kind} «${item.name}» v${item.version} (${item.scope === 'team' ? 'mi team' : 'público'} · ${item.orgName || item.author?.name || '—'})\n${info.hasCode ? '⚠ Trae código ejecutable\n' : ''}${info.hasMemory ? '🧠 Trae memoria\n' : ''}${info.exists ? '⚠ Ya existe: se sobrescribirá si overwrite\n' : ''}Ficheros (${files.length}):\n${files.slice(0, 40).map((f) => `- ${f.path} (${f.size} B)`).join('\n')}` };
+    } }),
+  T('terminal.execute','Ejecuta un comando en la raíz de un repo/worktree, sin shell (nada de ; & | > $ ni sustituciones). Solo la lista blanca de los workers (npm, node, git status/diff/log/add/commit…, ls, cat, grep…; sin rm, sudo, docker, ssh ni git push). Timeout 60 s y salida recortada.', obj({ repo: str('Clave del repo'), task: str('Código de la tarea (corre en su worktree)'), cmd: str('Comando, p. ej. «git status --short»') }, ['cmd']), 'execute', (a) => integ.terminalExecute(a)),
   T('browser.open', 'Abre una URL http(s) en el navegador NORMAL del usuario (xdg-open) para que ÉL la vea; no devuelve nada ni se puede controlar. Para leer o manejar una web tú mismo usa browser.navigate + browser.snapshot (navegador dedicado del agente).', obj({ url: str('URL') }, ['url']), 'navigate', (a) => integ.browserOpen(a)),
 
   // — Navegador del agente (FT-115, sobre el driver de FT-114): Chromium dedicado por CDP. Flujo: snapshot → actuar por ref → snapshot —

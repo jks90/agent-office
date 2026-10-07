@@ -977,7 +977,7 @@ $('#view-browser').addEventListener('click', (e) => {
   else if (t.dataset.brhand) brCall('control', { mode: 'user' });
 });
 const VIEW_PARAM = new URLSearchParams(location.search).get('view'); // ?view=guide (botón «Guía» de flow-test, FT-3)
-let activeTab = ['office', 'tasks', 'agents', 'guide', 'browser'].includes(VIEW_PARAM) ? VIEW_PARAM : safeGet('ao:tab') || 'office';
+let activeTab = ['office', 'tasks', 'agents', 'guide', 'browser', 'marketplace'].includes(VIEW_PARAM) ? VIEW_PARAM : safeGet('ao:tab') || 'office';
 function showTab(tab) {
   const prev = activeTab;
   activeTab = tab;
@@ -989,6 +989,7 @@ function showTab(tab) {
     if (prev !== 'office' && officeInit) applyOfficeDefault(); // al entrar en la pestaña: edificio, planta recordada o la única (FT-47)
   }
   if (tab === 'agents') { renderSkills(); renderClaudeMemory(); renderTools(); }
+  if (tab === 'marketplace') setTimeout(renderMarketplace); // FT-142 (diferido: su estado se declara al final)
   if (tab === 'inbox') setTimeout(renderInbox); // al arrancar con «Para ti» guardada, su código aún no está definido: después de cargar
   if (tab === 'browser') brShow(); else brHide();
   if (tab === 'guide') guideShow(); else guideRender();
@@ -1106,6 +1107,7 @@ function renderTeam() {
       <div class="acts">
         <button class="small ghost" data-agent="${a.id}">Registro</button>
         <button class="small ghost" data-agent-edit="${a.id}" title="Nombre, rol, motor y modelo">✎ Editar</button>
+        <button class="small ghost" data-mp-pub="agent:${a.id}" title="Publicar en el marketplace de tu team, con memoria (FT-142)">⬆ Publicar</button>
         ${busy(a) ? `${controls(a)}<button class="small danger" data-stop="${a.id}">⏹ Parar</button>` : ''}
         <button class="small ghost" data-bench="${a.id}" title="Sale de la plantilla de este proyecto; sigue en la empresa">↓ Al banquillo</button>
       </div>
@@ -1171,7 +1173,7 @@ function renderRoles() {
       <div class="desc">${esc(r.description || r.system.slice(0, 160))}</div>
       ${r.skills?.length ? `<div class="sk">🧩 ${r.skills.map(esc).join(' · ')}</div>` : ''}
       <div class="src">${r.custom ? `📄 ${esc(r.file.replace(/^.*\/_agentes\/roles\//, 'catálogo/'))}` : 'de serie'}${team().some((a) => a.role === id) ? ' · en plantilla' : ''}</div>
-      <div class="acts">${r.custom ? `<button class="small ghost" data-role-edit="${id}">✎ Editar</button><button class="small danger" data-role-del="${id}">✕</button>` : `<button class="small ghost" data-role-dup="${id}">Copiar al catálogo…</button>`}</div>
+      <div class="acts">${r.custom ? `<button class="small ghost" data-role-edit="${id}">✎ Editar</button><button class="small ghost" data-mp-pub="role:${id}" title="Publicar en el marketplace (FT-142)">⬆ Publicar</button><button class="small danger" data-role-del="${id}">✕</button>` : `<button class="small ghost" data-role-dup="${id}">Copiar al catálogo…</button>`}</div>
     </div>`;
   $('#roles').innerHTML = order.map((g) => {
     const list = groups[g].sort(([a, ra], [b, rb]) => (inTeam(b) - inTeam(a)) || ra.label.localeCompare(rb.label));
@@ -1190,7 +1192,7 @@ async function renderSkills(reload = false) {
   const groups = {};
   for (const s of inventory) (groups[s.sourceLabel] = groups[s.sourceLabel] || []).push(s);
   el.innerHTML = `<div class="skills-wrap">
-    <div class="skills-box"><h4>Catálogo central (lo que pueden usar los roles)</h4>${catalog.length ? catalog.map((s) => `<div class="skill"><span class="nm">${esc(s.name)}</span><span class="ds" title="${esc(s.description)}">${esc(s.description)}</span><span class="src" title="${esc(s.target)}">${s.broken ? '⚠ roto' : '→ ' + esc(short(s.target))}</span><button class="small ghost" data-skill-edit="${esc(s.target)}" title="Editar SKILL.md">✎</button><button class="small danger" data-skill-del="${esc(s.name)}" title="Quitar del catálogo (no borra la skill)">✕</button></div>`).join('') : '<p class="muted">Vacío. Añade skills desde el inventario →</p>'}</div>
+    <div class="skills-box"><h4>Catálogo central (lo que pueden usar los roles)</h4>${catalog.length ? catalog.map((s) => `<div class="skill"><span class="nm">${esc(s.name)}</span><span class="ds" title="${esc(s.description)}">${esc(s.description)}</span><span class="src" title="${esc(s.target)}">${s.broken ? '⚠ roto' : '→ ' + esc(short(s.target))}</span><button class="small ghost" data-skill-edit="${esc(s.target)}" title="Editar SKILL.md">✎</button><button class="small ghost" data-mp-pub="skill:${esc(s.name)}" title="Publicar en el marketplace (FT-142)">⬆ Publicar</button><button class="small danger" data-skill-del="${esc(s.name)}" title="Quitar del catálogo (no borra la skill)">✕</button></div>`).join('') : '<p class="muted">Vacío. Añade skills desde el inventario →</p>'}</div>
     <div class="skills-box"><h4>Inventario del PC</h4>${Object.entries(groups).map(([g, list]) => `<div class="muted skill-group ${collapsed['skills:' + g] === false ? '' : 'collapsed'}" data-group="${esc(g)}" style="margin:8px 0 4px;font-weight:600">${esc(g)} <span class="muted">(${list.length}${list.filter((s) => s.central).length ? ` · ${list.filter((s) => s.central).length} en catálogo` : ''})</span></div><div class="grp-items">${list.map((s) => `<div class="skill" data-group="${esc(g)}"><span class="nm">${esc(s.name)}</span><span class="ds" title="${esc(s.description)}">${esc(s.description)}</span><button class="small ghost" data-skill-edit="${esc(s.dir)}" title="Editar SKILL.md">✎</button>${s.central ? `<span class="src">✓ en catálogo${s.central !== s.name ? ' como ' + esc(s.central) : ''}</span>` : `<button class="small ghost" data-skill-add="${esc(s.dir)}" title="${esc(s.dir)}">→ Catálogo</button>`}</div>`).join('')}</div>`).join('')}</div>
   </div>`;
 }
@@ -1941,6 +1943,7 @@ function renderDrawer() {
       ${task ? `<button class="small" data-open="${task.id}">Abrir tarea</button>` : ''}
       <button class="small ghost" data-log-focus>Ver log</button>
       <button class="small ghost" data-agent-edit="${a.id}">Reasignar / editar</button>
+      <button class="small ghost" data-mp-pub="agent:${a.id}" title="Publicar en el marketplace de tu team, con memoria (FT-142)">⬆ Publicar</button>
       <button class="danger small" data-stop="${a.id}">⏹ Parar</button>
     </div>
     <div class="muted">Registro en vivo</div>
@@ -3169,3 +3172,110 @@ function failedDialog(pid) {
     </div>`).join('') : '<p class="muted">No hay tareas fallidas.</p>'}
     ${buttons('')}`, () => {}, 'wide');
 }
+
+// ── 🛒 Marketplace (FT-142): equipo (org) y público, vía flow-test ─────────────────────────────────
+const MP_KIND = { role: '🎭 rol', skill: '🧩 skill', agent: '🤖 agente' };
+let mpTab = 'team', mpKind = '', mpQ = '', mpTimer = null, mpSeq = 0;
+// Como api() pero sin toast: devuelve {ok,status,j} para poder pedir confirmaciones (🛡) según el 409.
+async function mpApi(method, url, body) {
+  const r = await fetch(BASE + url.replace(/^\//, ''), { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  return { ok: r.ok, status: r.status, j: await r.json().catch(() => ({})) };
+}
+const mpUnlinked = (j) => `<div class="empty mp-unlinked">🔗 ${esc(j.error || 'Instalación sin vincular')}<br><a href="${esc(j.linkUrl || '#')}" target="_blank" rel="noopener">Vincular en flow-test →</a></div>`;
+function renderMarketplace() {
+  const el = $('#marketplace');
+  if (!el) return;
+  el.innerHTML = `<div class="skills-box mp-box">
+    <div class="row mp-bar">
+      <button class="small ${mpTab === 'team' ? '' : 'ghost'}" data-mp-tab="team">👥 Mi team</button>
+      <button class="small ${mpTab === 'public' ? '' : 'ghost'}" data-mp-tab="public">🌍 Público</button>
+      <input id="mp-q" type="search" placeholder="Buscar…" value="${esc(mpQ)}" style="flex:1;min-width:140px" />
+      <select id="mp-kind"><option value="">Todo</option>${Object.entries(MP_KIND).map(([k, v]) => `<option value="${k}" ${mpKind === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
+      <button class="small ghost" data-mp-reload title="Recargar">↻</button>
+    </div>
+    <p class="muted">${mpTab === 'team' ? 'Roles, skills y agentes con memoria de tu organización de FlowTest.' : 'Especificaciones (roles y skills) de todas las organizaciones, ya moderadas. Nunca llevan memoria.'}</p>
+    <div id="mp-list" class="role-grid"><p class="muted">Cargando…</p></div></div>`;
+  loadMarketplace();
+}
+async function loadMarketplace() {
+  const seq = ++mpSeq, box = $('#mp-list');
+  if (!box) return;
+  const qs = new URLSearchParams({ scope: mpTab, ...(mpKind ? { kind: mpKind } : {}), ...(mpQ ? { q: mpQ } : {}) });
+  const { ok, j } = await mpApi('GET', `/api/marketplace/items?${qs}`);
+  if (seq !== mpSeq || !$('#mp-list')) return;
+  if (!ok) { box.innerHTML = j.unlinked ? mpUnlinked(j) : `<p class="bad">${esc(j.error || 'No se pudo leer el marketplace')}</p>`; return; }
+  box.innerHTML = j.length ? j.map((i) => `<div class="role-card mp-card" style="--c:var(--accent, #6aa9ff)">
+    <b>${esc(i.name)}</b> <span class="muted">· v${esc(i.version)} · ${MP_KIND[i.kind] || esc(i.kind)}${i.hasMemory ? ' · <span title="Trae memoria del agente">🧠</span>' : ''}</span>
+    <div class="desc">${esc(i.summary || '')}</div>
+    <div class="src">${esc(i.author?.name || i.author || '—')}${i.orgName ? ' · ' + esc(i.orgName) : ''} · ⬇ ${i.downloads || 0}${i.status && i.status !== 'approved' && i.status !== 'published' ? ` · <span class="warn">${i.status === 'pending' ? '⏳ pendiente de moderación' : esc(i.status)}</span>` : ''}</div>
+    <div class="acts"><button class="small" data-mp-install="${esc(i.id)}">${i.update ? `⟳ Actualizar (${esc(i.installedVersion)} → ${esc(i.version)})` : i.installedVersion ? `✓ Instalada ${esc(i.installedVersion)} · reinstalar` : '⬇ Instalar'}</button></div>
+  </div>`).join('') : '<p class="empty">Nada por aquí todavía.</p>';
+}
+const mpFiles = (files) => `<ul class="mp-files">${files.slice(0, 60).map((f) => `<li><code>${esc(f.path)}</code> <span class="muted">${f.size} B${f.exec ? ' · ejecutable' : ''}</span></li>`).join('')}${files.length > 60 ? `<li class="muted">… y ${files.length - 60} más</li>` : ''}</ul>`;
+
+async function mpPublish(kind, id) {
+  const isAgent = kind === 'agent';
+  dialog(`<h3>⬆ Publicar ${MP_KIND[kind]} <span class="muted">· ${esc(id)}</span></h3>
+    <label>Ámbito</label>
+    <select name="scope" id="mp-scope"><option value="team">👥 Mi team (con memoria${isAgent ? ' del agente' : ' si la hay'})</option>${isAgent ? '' : '<option value="public">🌍 Público (pasa por moderación; sin memoria)</option>'}</select>
+    ${isAgent ? '<p class="muted">Los agentes (con estado y memoria) solo se comparten dentro del team.</p>' : ''}
+    <label>Versión</label><input name="version" id="mp-ver" placeholder="1.0.0" pattern="\\d+\\.\\d+\\.\\d+.*" />
+    <label>Resumen</label><textarea name="summary" id="mp-sum" rows="2" maxlength="300"></textarea>
+    <h4>Qué se va a subir</h4><div id="mp-prev" class="muted">Calculando…</div>
+    ${buttons('⬆ Publicar')}`, async (f) => {
+    const r = await mpApi('POST', '/api/marketplace/publish', { kind, id, scope: f.scope, version: f.version, summary: f.summary });
+    if (!r.ok) { toast(r.j.unlinked ? `${r.j.error} (${r.j.linkUrl})` : r.j.error || 'No se pudo publicar', 'error'); throw new Error(r.j.error); }
+    toast(r.j.pending ? `«${r.j.name}» enviado: pendiente de moderación` : `«${r.j.name}» v${r.j.version} publicado en tu team`);
+    if (activeTab === 'marketplace') loadMarketplace();
+  }, 'wide');
+  const prev = async () => {
+    const box = $('#mp-prev'), v = $('#mp-ver'), s = $('#mp-sum');
+    if (!box) return;
+    const { ok, j } = await mpApi('POST', '/api/marketplace/preview', { kind, id, scope: $('#mp-scope').value, version: v.value.trim() || undefined, summary: s.value.trim() || undefined });
+    if (!$('#mp-prev')) return;
+    if (!ok) { box.innerHTML = `<p class="bad">⛔ ${esc(j.error || 'No se puede publicar')}${(j.findings || []).map((x) => `<br>· ${esc(x.kind)} en ${esc(x.where)}`).join('')}</p>`; return; }
+    if (!v.value) v.value = j.version;
+    if (!s.value) s.value = j.summary;
+    box.innerHTML = `<p>${esc(j.name)} v${esc(j.version)} · ${(j.size / 1024).toFixed(1)} KB · ${j.files.length} fichero(s)${j.hasCode ? ' · ⚠ con código ejecutable' : ''}</p>${mpFiles(j.files)}
+      ${j.memory ? `<p>🧠 Memoria del agente: ${j.memory.agent} caracteres${j.memory.project ? ` + proyecto ${j.memory.project}` : ''}<pre class="code">${esc(j.memory.sample)}</pre></p>` : ''}
+      <p class="muted">🧼 Saneado: ${esc(j.sanitized)}.</p>`;
+  };
+  $('#mp-scope').onchange = prev;
+  $('#mp-ver').onchange = prev;
+  prev();
+}
+
+async function mpInstall(id) {
+  const { ok, j } = await mpApi('GET', `/api/marketplace/items/${encodeURIComponent(id)}`);
+  if (!ok) { toast(j.unlinked ? `${j.error} (${j.linkUrl})` : j.error || 'No se pudo leer el paquete', 'error'); return; }
+  const { item, info, files, projects } = j;
+  dialog(`<h3>⬇ Instalar ${MP_KIND[item.kind] || esc(item.kind)} <span class="muted">· ${esc(item.name)} v${esc(item.version)}</span></h3>
+    <p class="muted">${esc(item.summary || '')}<br>${esc(item.author?.name || item.author || '—')}${item.orgName ? ' · ' + esc(item.orgName) : ''} · ${item.scope === 'team' ? '👥 team' : '🌍 público'}</p>
+    ${info.hasCode ? '<p class="bad">🛡 Esta skill trae código ejecutable. Revisa los ficheros:</p>' : ''}
+    <h4>Ficheros (${files.length})</h4>${mpFiles(files)}
+    ${info.secrets?.length ? `<p class="bad">⛔ Posibles secretos: ${info.secrets.map((s) => esc(s.kind + ' en ' + s.where)).join('; ')}</p>` : ''}
+    ${info.hasCode ? '<label><input type="checkbox" name="confirmCode" required /> 🛡 Confirmo que he revisado el código y quiero instalarlo</label>' : ''}
+    ${info.exists ? `<label><input type="checkbox" name="overwrite" ${info.installedVersion ? 'checked' : ''} /> Ya existe${info.installedVersion ? ` (v${esc(info.installedVersion)})` : ''}: sobrescribir</label>` : ''}
+    ${item.kind === 'agent' ? `<label>Proyecto donde guardar la memoria del agente</label><select name="projectId" ${info.hasMemory ? 'required' : ''}><option value="">${info.hasMemory ? 'Elige…' : 'Ninguno'}</option>${projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select>` : ''}
+    ${buttons(info.installedVersion && info.installedVersion !== item.version ? '⟳ Actualizar' : '⬇ Instalar')}`, async (f) => {
+    const r = await mpApi('POST', `/api/marketplace/items/${encodeURIComponent(id)}/install`, { confirmCode: !!f.confirmCode, overwrite: !!f.overwrite, projectId: f.projectId || undefined });
+    if (!r.ok) { toast(r.j.error || 'No se pudo instalar', 'error'); throw new Error(r.j.error); }
+    toast(`«${item.name}» v${item.version} instalado${r.j.target ? ' en ' + short(r.j.target) : ''}`);
+    if (item.kind === 'skill') renderSkills(true);
+    if (activeTab === 'marketplace') loadMarketplace();
+  }, 'wide');
+}
+
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-mp-tab],[data-mp-reload],[data-mp-install],[data-mp-pub]');
+  if (!b) return;
+  if (b.dataset.mpTab) { mpTab = b.dataset.mpTab; renderMarketplace(); }
+  else if (b.dataset.mpReload !== undefined) loadMarketplace();
+  else if (b.dataset.mpInstall) mpInstall(b.dataset.mpInstall);
+  else if (b.dataset.mpPub) { const [kind, ...id] = b.dataset.mpPub.split(':'); mpPublish(kind, id.join(':')); }
+});
+document.addEventListener('input', (e) => {
+  if (e.target.id !== 'mp-q') return;
+  mpQ = e.target.value.trim(); clearTimeout(mpTimer); mpTimer = setTimeout(loadMarketplace, 300);
+});
+document.addEventListener('change', (e) => { if (e.target.id === 'mp-kind') { mpKind = e.target.value; loadMarketplace(); } });
