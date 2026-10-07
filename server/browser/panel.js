@@ -25,6 +25,9 @@ export function status() {
   return { driver: d.id || 'cdp', available: !!av.ok, missing: av.missing || [], open: cache.open, control, tabs: cache.tabs, url: cache.url, title: cache.title, tabId: cache.tabId, handoffs };
 }
 
+// FT-119: tras una acción el estado se lee ya y otra vez tras la navegación que haya provocado (un POST de formulario tarda en cambiar la URL)
+const refreshSoon = () => { refresh().catch(() => {}); for (const ms of [300, 1200]) setTimeout(() => refresh().catch(() => {}), ms).unref?.(); };
+
 export async function refresh() {
   const d = getDriver();
   if (!d.isOpen()) cache = { open: false, tabs: [], url: '', title: '', tabId: null };
@@ -76,9 +79,9 @@ export function agentDriver() {
   const paused = () => { if (control === 'user') throw fail(409, 'El usuario tiene el control del navegador: espera a que lo devuelva'); };
   return new Proxy(d, {
     get(t, k) {
-      if (k === 'tabs') return new Proxy(t.tabs, { get: (tt, kk) => (kk === 'list' ? tt.list : async (...a) => { paused(); const r = await tt[kk](...a); refresh().catch(() => {}); return r; }) });
-      if (ACTIONS.includes(k)) return async (a = {}) => { paused(); if (a.ref || a.x != null) mark(await t.box?.(a).catch(() => null)); const r = await t[k](a); refresh().catch(() => {}); return r; };
-      if (MUTATING.includes(k)) return async (...a) => { paused(); const r = await t[k](...a); refresh().catch(() => {}); return r; };
+      if (k === 'tabs') return new Proxy(t.tabs, { get: (tt, kk) => (kk === 'list' ? tt.list : async (...a) => { paused(); const r = await tt[kk](...a); refreshSoon(); return r; }) });
+      if (ACTIONS.includes(k)) return async (a = {}) => { paused(); if (a.ref || a.x != null) mark(await t.box?.(a).catch(() => null)); const r = await t[k](a); refreshSoon(); return r; };
+      if (MUTATING.includes(k)) return async (...a) => { paused(); const r = await t[k](...a); refreshSoon(); return r; };
       return t[k]?.bind ? t[k].bind(t) : t[k];
     },
   });
