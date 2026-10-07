@@ -311,177 +311,78 @@ Tools del Guide (`tools.js`): `ui.getTree` y `ui.find` (política `read`) y `ui.
 
 Prueba: `node -e "import('./server/desktop/index.js').then(async m=>{const p=m.getProvider();console.log(p.session,p.available(),await p.getActive(),(await p.list()).length)})"`.
 
-## 🌐 Navegador del agente (FT-120): épica Chromium + Extensión
+## 🌐 Navegador del agente: visión general (FT-120)
 
-Navegador controlado por el Guía (Claude en AgentOffice) con 16 tools (`browser.*` + `requestHuman()`). Dos fases: **A (MVP)** = Chromium dedicado por CDP; **B** = extensión MV3 en el navegador del usuario (Brave/Chrome). Ambas usan el mismo contrato `BrowserDriver` (`server/browser/index.js`).
+El Guía y los agentes pueden **manejar un navegador** (abrir webs, leer, rellenar formularios, capturar), al estilo «Claude en Chrome» pero dentro de AgentOffice. Dos fases con el **mismo contrato de tools `browser.*`**:
 
-### Fase A: Chromium dedicado por CDP (FT-114, FT-115, FT-116, FT-117)
+| | Fase A · Chromium dedicado (FT-114) | Fase B · Extensión MV3 «Mi navegador» (FT-118) |
+|---|---|---|
+| Qué controla | Un Chromium propio, con perfil persistente en `data/browser/profile`, vía CDP (`puppeteer-core`) | Tu Brave/Chrome real, con tus sesiones, mediante una extensión emparejada |
+| Cuándo | Por defecto; automatizar sin tocar tu navegador | Cuando necesitas tus logins o Chrome 136+ (no deja depurar el perfil por defecto) |
+| Límite | Cloudflare, captchas y login de Google detectan la automatización | Solo actúa en las pestañas que le cedes |
 
-`server/browser/` implementa `BrowserDriver` con:
-- `cdp.js` → Chromium/Chrome/Brave por CDP con `puppeteer-core` (se importa lazy en el primer `launch()`)
-- `fake.js` → `AO_BROWSER=fake` para tests (sin Chromium real)
-- `panel.js` → vista 🌐 Navegador en directo (SSE screencast + control real-time)
-- `policy.js` → política de dominios y confirmaciones
+No se usan iframes: `X-Frame-Options`/CSP lo impiden; la vista 🌐 es un vídeo del navegador (FT-117).
 
-**Variables de entorno (FT-120):**
-- `AO_BROWSER=fake|cdp|extension` (default `cdp` si está instalado `puppeteer-core`, sino `fake`)
-- `AO_BROWSER_HEADLESS=1` → headless (default visible si hay DISPLAY; `AO_BROWSER_PATH` fuerza el binario)
-- `AO_BROWSER_IDLE_MS` → cierre por inactividad (default 15 min); no borra el perfil
-- `AO_BROWSER_NO_SANDBOX=1` → automático como root (para Docker)
-- `AO_BROWSER_SNAPSHOT_NODES=300` → límite de nodos en `snapshot()` (default 300)
+**Elegir modo:** Ajustes ▸ Navegador del agente (`settings.browserMode`: `dedicated` | `extension`). `AO_BROWSER=fake` solo existe para los tests. Variables `AO_BROWSER_*`: ver la subsección FT-114.
 
-**Características:**
-- **Perfil persistente** en `data/browser/profile` (sesiones iniciadas sobreviven a `close()` e inactividad)
-- **`snapshot()`**: árbol de accesibilidad compacto (incluye iframes) con refs estables por pestaña (`[e12]`) → `{ref, role, name, value, states}`
-- **`screenshot()`** ≤1280 px en `data/browser/captures`; `console()` y `network()` con anillo de 200 por pestaña (cabeceras sensibles a `***`)
-- **Solo HTTP(s)**: `navigate()`, `click` a URLs bloqueadas por dominio → 403. `about:`, `chrome://`, `file://`, `data:` bloqueados siempre
-- **Los popups pasan a ser pestaña activa**
-- **Prueba**: `node scripts/browser-driver-e2e.mjs`
+Subsecciones: [driver CDP (FT-114)](#-navegador-del-agente--driver-cdp-ft-114) · [tools `browser.*` (FT-115)](#tools-browser-del-guía-y-de-los-agentes-ft-115) · [seguridad (FT-116)](#-seguridad-del-navegador-del-agente-ft-116) · [panel en vivo (FT-117)](#-navegador--panel-en-vivo-ft-117) · [extensión (FT-118)](#-navegador-del-agente--extensión-mv3-mi-navegador-ft-118).
+
+Guía de uso para el usuario: `~/JksDocs/workspace/flowtest/guide-navegador.md`. Informe QA: `qa-navegador/INFORME-FT-119.md`. Arquitectura: nota Mermaid en el flow `flowtest/arquitectura-guide`.
+
+## 🌐 Navegador del agente — driver CDP (FT-114)
+
+Fase A de la épica «Navegador del agente»: `server/browser/` con un contrato `BrowserDriver` (documentado en `index.js`) y dos implementaciones: `cdp.js` (Chromium/Chrome/Brave dedicado por CDP con `puppeteer-core`, que se importa en el primer `launch()`) y `fake.js` (`AO_BROWSER=fake`, sin Chromium). `getDriver()` devuelve la instancia compartida única.
+
+- **Perfil persistente** en `data/browser/profile` (las sesiones iniciadas sobreviven); `close()` y el cierre por inactividad (`AO_BROWSER_IDLE_MS`, 15 min) no lo borran.
+- **Visible** por defecto si hay escritorio; headless con `AO_BROWSER_HEADLESS=1` (o sin `DISPLAY`). `AO_BROWSER_PATH` fuerza el binario; `AO_BROWSER_NO_SANDBOX=1` (automático como root).
+- `snapshot()`: árbol de accesibilidad compacto (incluye iframes) con refs estables por pestaña (`e12`) `{ref, role, name, value, states}`; tope `AO_BROWSER_SNAPSHOT_NODES` (300) con `truncated`/`omitted`. `act`/`type`/`scroll` resuelven la ref por CDP (`backendNodeId`) y caen a `x,y`.
+- `screenshot()` ≤1280 px de ancho en `data/browser/captures`; `console()`/`network()` con anillo de 200 por pestaña y cabeceras sensibles a `***`; solo se navega a `http(s)`.
+- Los popups pasan a ser la pestaña activa. Prueba: `node scripts/browser-driver-e2e.mjs`.
+- Las tools `browser.*` ya existen (FT-115, abajo). Pendiente: `puppeteer-core` sigue en `devDependencies`; moverlo a `dependencies` cuando se despliegue a usuarios.
 
 ### Tools `browser.*` del Guía y de los agentes (FT-115)
 
-16 tools exponen el driver (la mayoría para Fase A y B, `requestHuman()` es de FT-116):
+Las 15 tools exponen el driver (la 15.ª, `browser.requestHuman`, es de FT-116): `browser.tabs`, `navigate` (url o back/forward/reload), `snapshot`, `find` (rol y/o texto), `click`, `type`, `select`, `scroll`, `press`, `waitFor`, `screenshot`, `console`, `network` y `evaluate`. `browser.open` (xdg-open) sigue siendo «enseñar una web al usuario en su navegador normal».
 
-**Lectura** (automática): `browser.tabs`, `snapshot`, `find`, `waitFor`, `screenshot`, `console`, `network`
-**Navegación** (confirma): `navigate` (url/back/forward/reload), `scroll`, `requestHuman`
-**Ejecución** (confirma): `click`, `type`, `select`, `press`, `evaluate`
-**Especial**: `browser.open` (xdg-open, tu navegador normal; devuelve `{inside:true}` si es AgentOffice/flow-test)
-
-**Flujo recomendado (FT-120)**:
-1. `browser.snapshot()` primero (árbol de accesibilidad, barato en tokens)
-2. Actuar siempre por `ref` devuelto (no por coordenadas)
-3. `browser.screenshot()` solo si necesitas VER el aspecto (gráficos, maquetación)
-
-**Política del servidor** (`server/guide/policy.js` + `browser/policy.js`):
-- Lectura automática
-- Navegación → `navigate` (pide confirmación)
-- Ejecución → `execute` (pide confirmación); `click` en botones destructivos → `irreversible`
-- **Irreversible (SIEMPRE confirma)**: `click` destructivo, `type` con `submit`, `press` Enter/Delete, `evaluate` (cualquier JS arbitrario)
-- **Auditoría** (`guide-audit.jsonl`): cada tool registra página, acción, ref, resultado. Nunca el texto tecleado (solo `chars`), nunca JS que mencione contraseñas/tokens
-
-**Agentes worker** (`server/engines/toolscope.js`):
-- Rol `qa-suite` y `office-flowtest` activados por defecto
-- Otro rol: `tools: …, browser` en su frontmatter
-- Motor Claude: MCP stdio `agentoffice-browser` (`AO_MCP_ONLY=browser`) → solo ven `browser_*` (sin `browser_open`)
-- Política y auditoría en el servidor (no local)
-
-**Entregas**:
-- `browser.screenshot()` devuelve `{path, width, height, bytes, format, image:{}}`
-- Por MCP (`bin/ao-mcp.mjs`): `image` en base64 → Claude lo ve
-- Por API REST (`POST /api/guide/tool`): solo la ruta
-
-**Pruebas**: `node scripts/browser-tools-e2e.mjs` (fake driver); con `AO_E2E_REAL_BROWSER=1` con Chromium real
+- **Flujo guiado por las descripciones**: `snapshot` primero (texto, barato), actuar siempre por `ref`, `screenshot` solo si hace falta ver el aspecto.
+- **Política**: lectura (`tabs`, `snapshot`, `find`, `waitFor`, `screenshot`, `console`, `network`) automática; `navigate`/`scroll` = navigate; `click`, `type`, `select`, `press` = execute (ajuste del Guía); `evaluate` = write (confirma). **Irreversible, confirma siempre**: `click` sobre un control destructivo (mismas palabras que `ui.act`), `type` con `submit` y `press` de Enter/Delete. El texto de `browser.type` nunca va al audit (solo `chars`).
+- **Solo fuera**: navegar o actuar con la pestaña activa en AgentOffice o flow-test responde `{inside:true}` sin tocar nada.
+- **`browser.screenshot` devuelve la imagen**: por MCP, `bin/ao-mcp.mjs` la entrega como contenido `type:image` (base64) además del texto con la ruta, así que Claude la ve (con claude-cli sustituye al 501 de `screen.describe`); por `POST /api/guide/tool` solo la ruta.
+- **Agentes worker**: la capacidad `browser` (`server/engines/toolscope.js`) está activa para los roles `qa-suite` y `office-flowtest` (otro rol la activa con `tools: …, browser` en su frontmatter; nunca en modo plan). `claude.js` les añade un MCP stdio `agentoffice-browser` con `AO_MCP_ONLY=browser`: solo ven `browser_*` (sin `browser_open`); política y auditoría siguen en el servidor. Solo motor Claude.
+- Prueba: `node scripts/browser-tools-e2e.mjs` (driver fake, MCP real); con `AO_E2E_REAL_BROWSER=1` repite lo esencial con Chromium real.
 
 ### 🛡 Seguridad del navegador del agente (FT-116)
 
-**Política de dominios** (`server/browser/policy.js`):
-- Ajustes ▸ 🌐 Navegador del agente o `POST /api/settings {browserPolicy: { default, domains }}`
-- Valores: `allow` | `block` | `ask` (default)
-- `block` gana a todo; subdominios heredan la regla del padre
-- Sin regla explícita: **pregunta 🛡 la 1.ª vez por dominio y sesión** (memoria; «Sí» lo recuerda hasta reiniciar)
-- **Bloqueados siempre**: `file://`, `chrome://`, `about:*` (salvo `about:blank`), `data:`, `ws://` no-loopback
-- **Permitidos por defecto**: `localhost`, `127.x`, `::1`, redes privadas (10.x, 172.16-31.x, 192.168.x)
-- **Se aplica a**: `navigate()`, `tabs new()`, y a **todas** las tools sobre la pestaña activa (click a URL bloqueada → siguientes tools dan 403)
-- **Respuesta**: 403 Forbidden
-
-**Datos no confiables** (FT-116):
-- `snapshot()`, `find()`, `console()`, `network()`, `evaluate()` devuelven `untrusted:true` + aviso
-- Texto envuelto: `<<<DATOS_WEB_NO_CONFIABLES … >>>`
-- Motivo: la página puede inyectar instrucciones maliciosas o falsas
-- El prompt del Guía repite la regla: desconfía de valores de la web
-
-**Handoff** (control humano, FT-116):
-- `browser.requestHuman({motivo})` pasa el control al usuario para:
-  - Captchas, reCAPTCHA, Cloudflare
-  - Login, 2FA, biometría
-  - Datos sensibles (DNI, teléfono, email, tarjeta, contraseña)
-- Efecto: agente pausa, pregunta 🛡 «Listo»/«Cancelar» aparece en la barra
-- Resultado: `{done:true}` con «Listo»; `{done:false, cancelled:true}` con «Cancelar`; `{done:false, timeout:true}` si no responde en 10 min
-- El panel 🌐 lista las peticiones activas; tomar el control desde la petición para actuar
-
-**Límites reales (no automatizables)** (FT-120):
-- ❌ **Cloudflare**: detecta Chromium headless → bloquea automático → `requestHuman()`
-- ❌ **Google Login**: requiere biometría, código SMS, 2FA → `requestHuman()`
-- ❌ **reCAPTCHA**: detección robusta → `requestHuman()`
-- ❌ **Chrome 136+**: no permite debuguear el perfil por defecto (por eso Fase B = extensión MV3)
-- ❌ **X-Frame-Options / CSP**: impiden iframes → `browser.navigate()` a AgentOffice/flow-test devuelve `{inside:true}`
-
-**Prueba**: `node scripts/browser-policy-e2e.mjs`
+- **Dominios** (`settings.browserPolicy = { default: 'ask'|'allow'|'block', domains: { 'dominio': 'allow'|'block'|'ask' } }`, Ajustes ▸ 🌐 Navegador del agente, o `POST /api/settings {browserPolicy}`; módulo `server/browser/policy.js`). `block` gana a todo; subdominios heredan la regla. Sin regla: **pregunta 🛡 la 1.ª vez por dominio y sesión** (en memoria; «Sí» lo recuerda hasta reiniciar). `file://`, `chrome://`, `about:` (salvo `about:blank`), `data:`… se bloquean siempre; `localhost`, `127.x`, redes privadas y hosts sin punto, salvo que su host esté como `allow` explícito. Se aplica a `navigate` y `tabs new` (por la URL pedida) y a **todas** las tools sobre la pestaña activa (una redirección o un clic a un dominio bloqueado hace que la siguiente llamada responda 403). El rechazo es 403.
+- **Irreversible = confirma siempre**: además de lo de FT-115, `click` sobre un botón en una página con campo de contraseña/tarjeta (nombre tipo contraseña, card, iban… o estado `protected`) y **`browser.evaluate`, siempre** (aunque `guidePolicy` esté en automático).
+- **Datos no confiables**: `snapshot`, `find`, `console`, `network` y `evaluate` devuelven `untrusted:true` + `aviso` («DATOS NO CONFIABLES…»); el texto del snapshot va entre `<<<DATOS_WEB_NO_CONFIABLES … >>>`. El prompt del Guía repite la regla.
+- **Handoff** `browser.requestHuman({motivo})`: lista la petición en el panel 🌐, pasa el control al usuario (el agente queda en pausa, sus acciones dan 409), lanza una pregunta 🛡 «Listo»/«Cancelar» (campana y barra de preguntas) y, al responder, devuelve el control: `{done:true}` con «Listo»; `{done:false, cancelled|timeout}` si no. Caduca a los 10 min.
+- **Auditoría** (`guide-audit.jsonl`): cada `browser.*` registra `page` (URL sin query/hash), acción, `ref` y resultado (también los 403 por dominio). Nunca el texto tecleado (solo `chars`) ni expresiones de `evaluate` que mencionen contraseñas/tokens.
+- Prueba: `node scripts/browser-policy-e2e.mjs`.
 
 ## 🌐 Navegador — panel en vivo (FT-117)
 
-Vista en directo de lo que ve el navegador dedicado (Fase A) o tu navegador cedido (Fase B). Menú lateral ▸ 🌐 Navegador o `app.navigate view=browser` del Guía.
+Vista **🌐 Navegador** (menú lateral, `?view=browser` y `app.navigate view=browser` del Guía): lo que ve el navegador dedicado del agente, en directo.
 
-**Vídeo en tiempo real**:
-- **Fuente**: CDP `Page.startScreencast` (Fase A) o `chrome.debugger` (Fase B, degradado a ~1 fps JPEG)
-- **Entrega**: SSE `GET /api/browser/stream` → frames JPEG, ≤10 fps
-- **Control dinámico**: abierto mientras la vista es visible; se pausa si nadie la ve
-- **Estado SSE**: `browser` con control, pestañas, URL, handoffs, `mode` (dedicado|extension)
-
-**Barra de herramientas**:
-- Indicador 🤖 (agente controla) / 🧑 (tú controlas)
-- Botones de navegación: ◄ atrás | ► adelante | ⟳ recargar
-- URL actual (editable)
-- Pestañas: seleccionar, cerrar, ➕ nueva
-- Abrir/Cerrar navegador
-
-**Tomar el control** (modo Live):
-- `POST /api/browser/control {mode:'user'}` → agente en pausa
-- Tus clics, rueda, teclas sobre el vídeo se reenvían vía `POST /api/browser/input`
-- Las tools del agente responden 409 mientras tú controlas
-- «Devolver al agente» → reanuda
-- Marca visual: 1 s rectángulo sobre lo que el agente va a hacer (antes de `click`/`type`/`scroll`)
-
-**Handoffs** (peticiones pendientes):
-- Panel lateral lista `browser.handoffs` generadas por `browser.requestHuman()`
-- Motivo: captcha, login, 2FA, datos personales/pago
-- Acción: pulsa «Tomar el control» desde la petición, haz lo que pida, pulsa «Listo»
-- API: `panel.addHandoff({reason})` / `resolveHandoff(id)` / `browserStatus().handoffs`
-
-**Responsive**: ≤760 px el panel lateral se mueve bajo el vídeo
-
-**Prueba**: `node scripts/browser-panel-e2e.mjs [--real] [dir-capturas]` (fake driver por defecto; `--real` con Chromium headless)
+- **Vídeo**: `driver.screencast(onFrame)` (CDP `Page.startScreencast`, JPEG, ≤10 fps, sigue a la pestaña activa) → SSE `GET /api/browser/stream` (`frame`, `mark`, `control`). Solo está abierto mientras la vista se ve; sin espectadores el screencast se para. El estado (control, pestañas, URL, handoffs) va en el snapshot SSE (`browser`).
+- **Barra**: quién controla (🤖 agente / 🧑 tú), atrás/adelante/recargar, URL, pestañas (seleccionar, cerrar, ＋), «Abrir/Cerrar navegador».
+- **Tomar el control** (`POST /api/browser/control {mode:'user'|'agent'}`): el agente queda en pausa y tus clics, rueda y teclas sobre el fotograma se reenvían (`POST /api/browser/input`), como en el modo Live de flow-test. «Devolver al agente» lo reanuda. Sin el control, la entrada responde 409.
+- **Marca**: `panel.agentDriver()` es el driver que deben usar las tools `browser.*` (A2): lanza 409 mientras controla el usuario y, antes de `act`/`type`/`scroll`, pinta 1 s un rectángulo sobre el ref (`driver.box()`).
+- **Handoff (A3)**: el panel lateral lista `browser.handoffs` (`panel.addHandoff({reason})` / `resolveHandoff(id)`); los genera `browser.requestHuman` (FT-116). «Tomar el control» desde la petición.
+- Responsive: ≤760 px el panel lateral pasa bajo la imagen.
+- Prueba: `node scripts/browser-panel-e2e.mjs [--real] [dir-capturas]` (driver fake por defecto; `--real` con Chromium headless). Capturas en `docs/FT-117/`.
 
 ## 🧩 Navegador del agente — extensión MV3 «Mi navegador» (FT-118)
 
-Fase B (próxima): extensión Manifest V3 (`extension/`) para Brave/Chrome que cede pestañas al agente. Cumple el mismo `BrowserDriver` que Fase A (`server/browser/extension.js`) pero actúa con `chrome.debugger` sobre tus pestañas reales.
+Fase B: la carpeta `extension/` es una extensión Manifest V3 (Chrome/Brave, carga desempaquetada; instalación en `extension/README.md`) que cumple el **mismo `BrowserDriver`** con `chrome.debugger` sobre las pestañas del usuario.
 
-**Modos** (selector en Ajustes):
-- Ajustes ▸ 🌐 Navegador del agente → «Chromium dedicado» (Fase A, defecto) o «Mi navegador (extensión)» (Fase B)
-- `settings.browserMode` o `POST /api/settings {browserMode}`
-- `getDriver()` devuelve el driver elegido; `AO_BROWSER=fake` sigue ganando (tests)
-- SSE `browser: { mode, modes, ext: { connected, paired, tabs, pairing } }`
-
-**Emparejamiento seguro** (loopback, sesión-only):
-- `POST /api/browser/pair` → código de 8 caracteres único (5 min)
-- Extensión lo envía en `hello` por `ws://127.0.0.1:7420/api/browser/ext`
-- Servidor devuelve clave → extensión la guarda solo en `chrome.storage.session` (no disco)
-- Servidor guarda hash SHA-256 en `data/browser/ext.json`
-- Validaciones: loopback (127.0.0.1) sin `Origin` web; no usa `x-ao-token`
-- `POST /api/browser/forget` invalida la clave
-
-**Pestañas cedidas** (control selectivo):
-- Usuario cede pestañas con «Dejar al agente esta pestaña» (grupo morado «AgentOffice»)
-- Agente solo actúa en pestañas cedidas
-- Sin ninguna cedida → ops responden 503
-- Banner de depuración de Chrome es esperado (chrome.debugger activo)
-- Usuario mantiene control del resto de pestañas
-
-**Implementación**:
-- `server/browser/ws.js` (WebSocket RFC 6455 mínimo, sin dependencias)
-- `server/browser/extension.js` (hub + driver; valida URLs en servidor, enmascara cabeceras sensibles)
-
-**Panel 🌐 Navegador**:
-- `panel.js` usa `getDriver()` → funciona con ambos modos
-- Fase B degrada `screencast()` a capturas JPEG ~1 fps (chrome.debugger limitado)
-- Expone `box()` para la marca visual del agente
-- Mismo `requestHuman()` y handoffs
-
-**Estado actual (FT-120)**:
-- Tools `browser.*` con política → funcionales en Fase A, listos para Fase B
-- Tests: `node scripts/extension-e2e.mjs` simula WebSocket + servidor real
-- Sin probar: extensión real en Brave (falta prueba manual)
-- Pendiente: `puppeteer-core` en `devDependencies`; moverlo a `dependencies` para distribución a usuarios
+- **Ajustes ▸ Navegador del agente**: «Chromium dedicado» (FT-114, por defecto) o «Mi navegador (extensión)» (`settings.browserMode`, `POST /api/settings`). `getDriver()` devuelve el driver elegido; `AO_BROWSER=fake` sigue ganando (tests). El snapshot SSE trae `browser: { mode, ext: { connected, paired, tabs, pairing } }`.
+- **Emparejamiento**: `POST /api/browser/pair` da un código de 8 caracteres de un solo uso (5 min). La extensión lo manda en su `hello` por `ws://127.0.0.1:7420/api/browser/ext` y recibe una clave que guarda solo en `chrome.storage.session`; el servidor guarda su hash SHA-256 en `data/browser/ext.json`. `POST /api/browser/forget` la invalida. El upgrade solo se acepta desde loopback y sin `Origin` web; no usa el token `x-ao-token`.
+- **Pestañas cedidas**: el agente solo actúa en las que el usuario cede con «Dejar al agente esta pestaña» (grupo morado «AgentOffice»); sin ninguna, las operaciones dan 503. El banner de depuración de Chrome es esperado.
+- `server/browser/ws.js` (WebSocket RFC 6455 mínimo, sin dependencias) y `server/browser/extension.js` (hub + driver; las URL se validan también en el servidor y las cabeceras sensibles se enmascaran de nuevo).
+- **Panel en vivo (FT-117) con la extensión**: `panel.js` usa `getDriver()`, así que sirve con ambos modos. El snapshot `browser` combina `browserPanel.status()` con `mode`, `modes` y `ext`. `chrome.debugger` no da screencast fiable: el driver de la extensión degrada `screencast()` a capturas JPEG ~1 fps y expone `box()` para la marca del agente.
+- Prueba: `node scripts/extension-e2e.mjs` (cliente WebSocket que simula la extensión, y servidor real para pair/Ajustes/snapshot).
+- Pendiente: las tools `browser.*` con política (A3) todavía no existen en esta rama; cuando lleguen usarán `getDriver()` y se aplicarán igual a ambos modos. La extensión real solo se ha comprobado con `node --check`: falta la prueba manual en Brave.
 
 ## Estructura
 
