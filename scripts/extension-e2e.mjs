@@ -97,6 +97,16 @@ await rejects(d.evaluate({ expression: 'x' }), 422, 'error 422 de evaluate se pr
 const act = await d.act({ ref: 'e1', action: 'click' });
 ok(act.op === 'act' && act.params.ref === 'e1', 'act reenvía ref y acción');
 
+// FT-117 en modo extensión: el panel en vivo degrada a capturas periódicas
+const frames = [];
+const stopCast = await d.screencast((f) => frames.push(f), { fps: 2 });
+ok(await waitFor(() => frames.length >= 1), 'screencast degradado: llegan fotogramas JPEG por capturas');
+ok(frames[0].mime === 'image/jpeg' && frames[0].tabId === '7' && frames[0].url === 'https://example.com/', 'el fotograma lleva mime, pestaña y URL');
+stopCast();
+const panel = await import('../server/browser/panel.js');
+const ps = await panel.refresh();
+ok(ps.driver === 'extension' && ps.open && ps.tabs.length === 1, 'panel.status() usa el driver de la extensión');
+ok(typeof panel.agentDriver().box === 'function', 'agentDriver() envuelve el driver de la extensión');
 const rel = await d.close();
 ok(rel.ok, 'close() pide soltar las pestañas');
 x.ws.close();

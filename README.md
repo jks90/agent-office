@@ -322,6 +322,18 @@ Fase A de la épica «Navegador del agente»: `server/browser/` con un contrato 
 - Los popups pasan a ser la pestaña activa. Prueba: `node scripts/browser-driver-e2e.mjs`.
 - Pendiente (siguientes fases): tools `browser.*` en `server/guide/tools.js` con política y `bin/ao-mcp.mjs`, respondiendo `{inside:true}` para flow-test/AgentOffice como `ui.*`. `puppeteer-core` sigue en `devDependencies`: mover a `dependencies` cuando se exponga al usuario.
 
+## 🌐 Navegador — panel en vivo (FT-117)
+
+Vista **🌐 Navegador** (menú lateral, `?view=browser` y `app.navigate view=browser` del Guía): lo que ve el navegador dedicado del agente, en directo.
+
+- **Vídeo**: `driver.screencast(onFrame)` (CDP `Page.startScreencast`, JPEG, ≤10 fps, sigue a la pestaña activa) → SSE `GET /api/browser/stream` (`frame`, `mark`, `control`). Solo está abierto mientras la vista se ve; sin espectadores el screencast se para. El estado (control, pestañas, URL, handoffs) va en el snapshot SSE (`browser`).
+- **Barra**: quién controla (🤖 agente / 🧑 tú), atrás/adelante/recargar, URL, pestañas (seleccionar, cerrar, ＋), «Abrir/Cerrar navegador».
+- **Tomar el control** (`POST /api/browser/control {mode:'user'|'agent'}`): el agente queda en pausa y tus clics, rueda y teclas sobre el fotograma se reenvían (`POST /api/browser/input`), como en el modo Live de flow-test. «Devolver al agente» lo reanuda. Sin el control, la entrada responde 409.
+- **Marca**: `panel.agentDriver()` es el driver que deben usar las tools `browser.*` (A2): lanza 409 mientras controla el usuario y, antes de `act`/`type`/`scroll`, pinta 1 s un rectángulo sobre el ref (`driver.box()`).
+- **Handoff (A3)**: el panel lateral lista `browser.handoffs` (`panel.addHandoff({reason})` / `resolveHandoff(id)`); hoy vacío hasta que A3 los genere. «Tomar el control» desde la petición.
+- Responsive: ≤760 px el panel lateral pasa bajo la imagen.
+- Prueba: `node scripts/browser-panel-e2e.mjs [--real] [dir-capturas]` (driver fake por defecto; `--real` con Chromium headless). Capturas en `docs/FT-117/`.
+
 ## 🧩 Navegador del agente — extensión MV3 «Mi navegador» (FT-118)
 
 Fase B: la carpeta `extension/` es una extensión Manifest V3 (Chrome/Brave, carga desempaquetada; instalación en `extension/README.md`) que cumple el **mismo `BrowserDriver`** con `chrome.debugger` sobre las pestañas del usuario.
@@ -330,6 +342,7 @@ Fase B: la carpeta `extension/` es una extensión Manifest V3 (Chrome/Brave, car
 - **Emparejamiento**: `POST /api/browser/pair` da un código de 8 caracteres de un solo uso (5 min). La extensión lo manda en su `hello` por `ws://127.0.0.1:7420/api/browser/ext` y recibe una clave que guarda solo en `chrome.storage.session`; el servidor guarda su hash SHA-256 en `data/browser/ext.json`. `POST /api/browser/forget` la invalida. El upgrade solo se acepta desde loopback y sin `Origin` web; no usa el token `x-ao-token`.
 - **Pestañas cedidas**: el agente solo actúa en las que el usuario cede con «Dejar al agente esta pestaña» (grupo morado «AgentOffice»); sin ninguna, las operaciones dan 503. El banner de depuración de Chrome es esperado.
 - `server/browser/ws.js` (WebSocket RFC 6455 mínimo, sin dependencias) y `server/browser/extension.js` (hub + driver; las URL se validan también en el servidor y las cabeceras sensibles se enmascaran de nuevo).
+- **Panel en vivo (FT-117) con la extensión**: `panel.js` usa `getDriver()`, así que sirve con ambos modos. El snapshot `browser` combina `browserPanel.status()` con `mode`, `modes` y `ext`. `chrome.debugger` no da screencast fiable: el driver de la extensión degrada `screencast()` a capturas JPEG ~1 fps y expone `box()` para la marca del agente.
 - Prueba: `node scripts/extension-e2e.mjs` (cliente WebSocket que simula la extensión, y servidor real para pair/Ajustes/snapshot).
 - Pendiente: las tools `browser.*` con política (A3) todavía no existen en esta rama; cuando lleguen usarán `getDriver()` y se aplicarán igual a ambos modos. La extensión real solo se ha comprobado con `node --check`: falta la prueba manual en Brave.
 
@@ -602,6 +615,9 @@ Agentes ▸ 🔌 MCP / 📜 Scripts, junto a las skills:
 Ajustes ▸ Proyecto: apagado · solo sugerir · automático. Reglas fijas, sin IA (`server/coordinator.js`), cada 2 min en proyectos en marcha:
 - agente parado porque su motor no tiene cuota, con trabajo listo y el otro motor con margen → **motor automático**;
 - rol con tareas **listas** (por hacer, dependencias hechas) y nadie que pueda hacerlas (o ≥3 por agente) → vuelve uno de ese rol del **banquillo** o se **contrata** (motor con más margen, modelo de ese motor); sin mesa libre (8 por proyecto), antes va al banquillo un ocioso (≥10 min sin trabajo listo) que no sea imprescindible.
+- **(FT-121) Reasignar antes que contratar**: si un rol tiene tareas listas y nadie libre, y hay un agente **ocioso ≥ 10 min** de otro rol del **mismo kind** (dev↔dev) que comparte repo (`p.repos[].roles`), la acción `retarget` le cambia el rol (guarda `homeRole`); cuando ya no queda trabajo listo del rol prestado, `restore` lo devuelve a su `homeRole`. Nunca al PO, a quien trabaja o tiene tareas suyas, ni a un prestado.
+- **(FT-121) Revisión que bloquea** (`reviewPlan()`): tarea en revisión con otras esperándola más de `reviewNudgeMin` → con política automática y sin `reviewRequired` se **lanza ya** la revisión (`review-now`); si es `reviewRequired`, la política es manual o la automática la retuvo → **aviso prioritario** (`review-alert`: evento `ReviewBlocking` + Telegram si está configurado) con «bloquea a N tareas». Una vez por tarea; en «solo sugerir» los avisos salen igualmente.
+- Cada acción lleva su `why` en `coordLog` y se ve en 📊 Resumen («Lo que hizo el coordinador»). Prueba: `scripts/coordinator-reassign-e2e.mjs` (snapshots sintéticos).
 
 Nunca toca a quien trabaja, tiene tareas suyas (asignadas o pausadas) ni al PO; un cambio de plantilla cada 10 min. Sugerencias con «Aplicar» y registro de 24 h en 🔔 Para ti; evento `TeamAdjusted`; `POST /api/projects/:id/coordinate`. Pruebas: `scripts/coordinator-unit.mjs`, `scripts/coordinator-e2e.mjs`.
 
@@ -653,3 +669,9 @@ La vista de planta sigue el panel 2 de `diseno-edificio-referencia.png`:
 - Más densidad: doble monitor por puesto, estanterías en la pared izquierda, plantas grandes en las esquinas y mesita auxiliar.
 
 Captura: `node scripts/preview.mjs out.png --width 1920 --height 1080`.
+
+## 🫧 Burbujas de estado en la oficina (FT-123)
+
+En la planta, cada agente lleva siempre una burbuja compacta: icono + código de tarea + estado (`✏️ FT-115 editando…`, `✋ FT-114 en revisión`, `⏳ en cola`, `⛔ bloqueado`, `💤 sin cuota`, `☕ libre`). Al pasar el ratón o seleccionar se expande con la actividad completa. Si dos se pisan (mesas contiguas) se apilan hacia arriba —sin tapar las píldoras de zona ni la pizarra— con una línea fina hasta el avatar. En el edificio no se ven y en pantallas estrechas (<640 px) solo llevan icono + código. El DOM solo se toca cuando cambia el texto.
+
+Ajustes → «Burbujas de estado» (`settings.officeBubbles`, `POST /api/settings`): `'todas'` (por defecto) o `'al pasar'`. Prueba: `node scripts/bubbles-e2e.mjs [captura.png]`.

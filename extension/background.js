@@ -184,6 +184,11 @@ const ops = {
     if (submit) await press(id, 'Enter');
     return { ok: true, ...(await nav(id)) };
   },
+  async box(a = {}) {
+    const id = cur(); const node = ts(id).refs.get(a.ref);
+    if (node != null) { const { model } = await cmd(id, 'DOM.getBoxModel', { backendNodeId: node }); const q = model.border; return { x: q[0], y: q[1], w: q[2] - q[0], h: q[5] - q[1] }; }
+    return a.x != null ? { x: a.x - 12, y: a.y - 12, w: 24, h: 24 } : null;
+  },
   async scroll(a = {}) {
     const id = cur();
     let x, y;

@@ -34,6 +34,7 @@
     <button class="nav-item" data-tab="tasks" title="Tareas"><span class="ico">🗂</span><span class="lbl">Tareas</span><span class="tab-count" id="tab-tasks-count"></span><span class="tab-count review-badge" id="tab-tasks-review" title="Tareas esperando tu revisión"></span></button>
     <button class="nav-item" data-tab="agents" title="Agentes"><span class="ico">👥</span><span class="lbl">Agentes</span><span class="tab-count" id="tab-agents-count"></span></button>
     <button class="nav-item" data-tab="guide" title="Guía (Ctrl+G)"><span class="ico">🧭</span><span class="lbl">Guía</span></button>
+    <button class="nav-item" data-tab="browser" title="Navegador del agente (FT-117)"><span class="ico">🌐</span><span class="lbl">Navegador</span></button>
     <div class="spacer"></div>
     <div id="tab-summary" class="side-summary muted"></div>
     <button class="nav-item" data-action="settings" title="Ajustes"><span class="ico">⚙</span><span class="lbl">Ajustes</span></button>
@@ -126,6 +127,26 @@
     </section>
 
     <section class="view" id="view-guide" hidden></section>
+    <section class="view" id="view-browser" hidden>
+      <div class="br" id="br">
+        <div class="br-bar">
+          <span class="br-who" id="br-who"></span>
+          <button class="small ghost" id="br-back" title="Atrás">◀</button><button class="small ghost" id="br-fwd" title="Adelante">▶</button><button class="small ghost" id="br-reload" title="Recargar">⟳</button>
+          <form id="br-url-form" class="br-url"><input id="br-url" type="text" spellcheck="false" placeholder="https://…" autocomplete="off"></form>
+          <button class="small" id="br-control"></button>
+          <button class="small ghost" id="br-open"></button>
+        </div>
+        <div class="br-tabs" id="br-tabs"></div>
+        <div class="br-body">
+          <div class="br-stage" id="br-stage" tabindex="0">
+            <img id="br-img" alt="Vista en vivo del navegador del agente" draggable="false">
+            <div class="br-mark" id="br-mark" hidden></div>
+            <div class="br-empty" id="br-empty"></div>
+          </div>
+          <aside class="br-side" id="br-side"></aside>
+        </div>
+      </div>
+    </section>
   </main>
   </div>
 

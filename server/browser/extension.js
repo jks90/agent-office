@@ -135,6 +135,24 @@ export function createExtensionDriver() {
       if (!r?.data) throw bad(500, 'la extensión no devolvió imagen');
       return { ...saveShot(Buffer.from(r.data, 'base64'), r.format === 'jpeg' ? 'jpeg' : 'png', r.tabId), width: r.width, height: r.height, tabId: r.tabId };
     },
+    box: async (a = {}) => call('box', a).catch(() => null), // rectángulo del elemento (marca del panel, FT-117)
+    // FT-117 · sin screencast fiable en chrome.debugger: el panel en vivo degrada a capturas JPEG periódicas
+    async screencast(onFrame, { fps = 1 } = {}) {
+      let stopped = false, busy = false;
+      const tick = async () => {
+        if (stopped || busy || !conn) return;
+        busy = true;
+        try {
+          const r = await call('screenshot', { format: 'jpeg' });
+          const t = (await call('tabs.list')).find((x) => x.active);
+          if (!stopped && r?.data) onFrame({ mime: 'image/jpeg', data: r.data, w: r.width, h: r.height, tabId: r.tabId, url: t?.url || '' });
+        } catch { /* sin pestaña cedida o desconectada: se reintenta */ }
+        busy = false;
+      };
+      const iv = setInterval(tick, 1000 / Math.min(2, Math.max(0.2, fps)));
+      tick();
+      return () => { stopped = true; clearInterval(iv); };
+    },
     evaluate: c('evaluate'),
     async console(a) { return call('console', a); },
     async network(a) { return maskEntries(await call('network', a)); },
