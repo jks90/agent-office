@@ -24,6 +24,8 @@ import crypto2 from 'node:crypto';
 import { saveRole, deleteRole } from './roles.js';
 import { ladders, normalizeLadder } from './model-ladder.js'; // FT-60
 import * as activity from './events.js';
+import * as telegram from './telegram.js'; // avisos al móvil (ReviewPending, bloqueos, fallos)
+import * as selfupdate from './selfupdate.js'; // se pone al día solo con GitHub cuando no hay nadie trabajando
 import * as context from './context.js';
 import * as guideTools from './guide/tools.js';
 import * as guidePolicy from './guide/policy.js';
@@ -167,6 +169,9 @@ const routes = [
   ['POST', /^\/api\/projects$/, (_, b) => team.createProject(b)],
   ['DELETE', /^\/api\/projects\/(\w+)$/, ([id]) => team.deleteProject(id)],
   ['PATCH', /^\/api\/projects\/(\w+)$/, ([id], b) => team.updateProject(id, b)],
+  ['GET', /^\/api\/version$/, () => selfupdate.state],
+  ['POST', /^\/api\/version\/check$/, () => selfupdate.check()],
+  ['POST', /^\/api\/telegram\/test$/, async () => { const c = telegram.config(); return { enabled: c.enabled, chats: c.chats.length, sent: await telegram.send('✅ AgentOffice: los avisos por Telegram funcionan') }; }],
   // Costes de los agentes (FT-76): KPI, desglose y línea base interactiva. Para seguirlo desde flows de flow-test.
   ['GET', /^\/api\/costs$/, (_, __, q) => costs.overview(store.get(), Date.now(), { variant: q.variant })],
   ['GET', /^\/api\/costs\/export$/, (_, __, q) => { const rows = costs.exportRows(store.get()); return q.format === 'csv' ? { csv: costs.toCsv(rows) } : rows; }],
@@ -221,6 +226,14 @@ const routes = [
   ['GET', /^\/api\/projects\/(\w+)\/claude-memory\/file$/, ([id], _, q) => memory.claudeRead(repoPath(id, q.repo), q.name)],
   ['PUT', /^\/api\/projects\/(\w+)\/claude-memory\/file$/, ([id], b, q) => memory.claudeWrite(repoPath(id, q.repo), q.name, b.text)],
   ['DELETE', /^\/api\/projects\/(\w+)\/claude-memory\/file$/, ([id], _, q) => memory.claudeDelete(repoPath(id, q.repo), q.name)],
+  // ⏰ tareas programadas y 🪝 webhook entrante
+  ['GET', /^\/api\/projects\/(\w+)\/schedules$/, ([id]) => team.listSchedules(id)],
+  ['POST', /^\/api\/projects\/(\w+)\/schedules$/, ([id], b) => team.saveSchedule(id, b)],
+  ['PATCH', /^\/api\/projects\/(\w+)\/schedules\/(\w+)$/, ([id, sid], b) => team.saveSchedule(id, b, sid)],
+  ['DELETE', /^\/api\/projects\/(\w+)\/schedules\/(\w+)$/, ([id, sid]) => team.deleteSchedule(id, sid)],
+  ['POST', /^\/api\/projects\/(\w+)\/schedules\/(\w+)\/run$/, ([id, sid]) => team.runScheduleNow(id, sid)],
+  ['POST', /^\/api\/hooks\/([\w-]{16,})$/, ([token], b) => team.fireHook(token, b)],
+  ['POST', /^\/api\/projects\/(\w+)\/coordinate$/, ([id]) => team.coordinateNow(id)], // 🧑‍✈️ aplicar la sugerencia / pasada ahora
   ['POST', /^\/api\/tasks\/([\w-]+)\/review-again$/, ([id]) => team.reReview(id)], // relanzar la revisión automática
   ['POST', /^\/api\/tasks\/(\w+)\/resume-now$/, ([id]) => team.resumeNow(id)], // FT-66: «Reanudar ya» una tarea pausada por cuota
   ['POST', /^\/api\/upload$/, (_, b) => uploads.save(b.files, extractText)], // FT-95: saneado y con límites
@@ -352,7 +365,7 @@ async function guideTts(req, res) {
 
 http.createServer(async (req, res) => {
   const { pathname } = new URL(req.url, 'http://x');
-  if (TOKEN && !isLoopback(req) && req.headers['x-ao-token'] !== TOKEN) {
+  if (TOKEN && !isLoopback(req) && req.headers['x-ao-token'] !== TOKEN && !/^\/api\/hooks\/[\w-]{16,}$/.test(pathname)) { // 🪝 el webhook se autentica con el token de su URL
     return res.writeHead(401, { 'content-type': 'application/json' }).end('{"error":"AgentOffice: falta el token (x-ao-token)"}');
   }
   if (pathname === '/events') return events(req, res);

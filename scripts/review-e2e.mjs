@@ -88,11 +88,11 @@ try {
   check('auto-qa devuelve al autor con el feedback', !!back && /revisor/.test(back.feedback || ''), JSON.stringify(back && { s: back.status, f: back.feedback }));
   // Tope de ciclos: se pone el equipo a trabajar; el autor (demo) reentrega y el revisor vuelve a devolver hasta agotar los 2 ciclos
   await call('POST', `/api/projects/${proj.id}/run`, { running: true });
-  const capped = await until(async () => { const t = await task(ret.id); return t?.status === 'review' && t.autoReviews === 2 && /dos revisiones automáticas fallidas/.test(t.reviewNote || '') ? t : null; }, 150_000, 500);
-  check('tras 2 devoluciones automáticas queda para el humano con «⚠️ dos revisiones automáticas fallidas»', !!capped, JSON.stringify(await task(ret.id)).slice(0, 300));
+  const capped = await until(async () => { const t = await task(ret.id); return t?.status === 'review' && t.autoReviews === review.MAX_AUTO_CYCLES && /3 revisiones automáticas fallidas/.test(t.reviewNote || '') ? t : null; }, 240_000, 500);
+  check('tras 3 devoluciones automáticas queda para el humano con «⚠️ 3 revisiones automáticas fallidas»', !!capped, JSON.stringify(await task(ret.id)).slice(0, 300));
   await call('POST', `/api/projects/${proj.id}/run`, { running: false });
-  check('el tope son 2 ciclos automáticos', review.MAX_AUTO_CYCLES === 2);
-  check('el historial de la tarea recoge las decisiones', (capped?.reviewLog || []).filter((r) => r.by === 'auto-qa' && r.verdict === 'rejected').length === 2, JSON.stringify(capped?.reviewLog));
+  check('el tope son 3 ciclos automáticos', review.MAX_AUTO_CYCLES === 3);
+  check('el historial de la tarea recoge las decisiones', (capped?.reviewLog || []).filter((r) => r.by === 'auto-qa' && r.verdict === 'rejected').length === review.MAX_AUTO_CYCLES, JSON.stringify(capped?.reviewLog));
 
   console.log('Política por proyecto');
   await call('POST', '/api/settings', { reviewPolicy: 'manual' });

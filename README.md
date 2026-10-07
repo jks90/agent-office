@@ -13,6 +13,14 @@ npm start            # http://127.0.0.1:7420
 npm run dev          # igual, reiniciando al cambiar el servidor
 ```
 
+**Se actualiza solo.** Cada 15 min (`AO_UPDATE_MIN`) hace `git fetch`; si va por detrás de su rama remota, el árbol está limpio,
+el avance es *fast-forward* y no hay ningún agente trabajando ni revisando, hace `git pull --ff-only`, avisa por Telegram y se
+reinicia (sale con 75: lo relanza `npm start` vía `bin/ao-run.mjs`, o systemd con `Restart=on-failure`). Con cambios locales o
+ramas divergentes no toca nada. Estado en `GET /api/version`; `POST /api/version/check` comprueba ya; `AO_AUTOUPDATE=off` lo apaga.
+
+**Avisos por Telegram** (revisión pendiente, preguntas, cuota, atascos, tope de gasto, fallos): `data/telegram.json` con
+`{ "enabled": true, "botToken": "…", "chatIds": ["…"] }` (o `AO_TELEGRAM_TOKEN` + `AO_TELEGRAM_CHATS`); prueba con `POST /api/telegram/test`.
+
 El primer arranque crea **«Demo — Tienda online»** con el motor `demo` (simulado, no gasta tokens):
 escribe un objetivo, pulsa **Encargar al PO** y luego **▶ Poner a trabajar**.
 
@@ -534,6 +542,61 @@ La decisión de activarla de serie depende de ejecutar la medición A/B en un ro
 
 **APIs de telemetría:** `GET /api/costs` (byVariant), `GET /api/costs?variant=base|ponytail` (filtrado), `GET /api/costs/export?format=csv` (export).
 
+
+## 🔔 Para ti y la campana
+
+Todo lo que **te** espera, de todos los proyectos visibles, en un sitio: la **🔔 N** de la barra (clic → vista «Para ti»). Se deriva del estado (no se guarda) y cada aviso desaparece al resolverse:
+preguntas de los agentes · revisiones (de proyectos en manual o que la revisión automática te dejó) · cortadas por tope/atasco · fallidas · tareas manuales (título con 👤 o MANUAL) · sugerencias y cambios del 🧑‍✈️ coordinador · pausadas por cuota (solo aviso). Cada aviso trae su acción (contestar, abrir, diff, aprobar, devolver, reintentar, reanudar, revisar otra vez). Grupos por proyecto plegables; las tarjetas importadas de un tablero sin agente van aparte y plegadas.
+
+## 👁 Proyectos visibles
+
+Ajustes ▸ Proyectos visibles: desmarca los proyectos que no quieres ver en el selector, el Resumen, el edificio y Para ti (`settings.hiddenProjects`). Ocultar no para ni borra nada.
+
+## ✋ Revisión por proyecto
+
+La política de revisión (`manual` · `auto-qa` · `auto`, ver FT-56) se elige **por proyecto** en Ajustes ▸ Proyecto (`project.reviewPolicy`; «Igual que la empresa» = `settings.reviewPolicy`). Al activar una automática se revisa en el momento lo que ya esperaba. «🔎 Revisar otra vez» (`POST /api/tasks/:id/review-again`) relanza una revisión automática que falló por un problema técnico. El revisor usa un «Revisor» genérico si la tarea no tiene autor ni el proyecto equipo.
+
+## 🧠 Memoria de Claude Code del repo
+
+Agentes ▸ 🧠 Memoria del proyecto: la auto-memoria que Claude Code guarda por repo (`~/.claude/projects/<repo>/memory/`: `MEMORY.md` + un `.md` por memoria) se ve y se edita aquí (si el repo no tiene, se usa la de una carpeta padre). Su índice va en la parte estable del prompt de los agentes (también del PO) y la carpeta en `--add-dir` para leer el detalle. Ajuste `claudeMemory`. API `/api/projects/:id/claude-memory[/file]`.
+
+## 🔌 MCP y 📜 scripts del catálogo
+
+Agentes ▸ 🔌 MCP / 📜 Scripts, junto a las skills:
+- **Inventario**: MCP de `~/.claude.json` (usuario y proyectos) y `~/.codex/config.toml`; scripts de las carpetas `scripts/` de los repos de tus proyectos (+ «Añadir por ruta»).
+- **Catálogo** (`_agentes/mcp.json` solo con nombres —ningún secreto—; `_agentes/scripts.json` con ruta y descripción).
+- **Asignación** por agente (su ficha o «＋ agente…» en el catálogo; `agent.mcps` / `agent.scripts`) y por rol (frontmatter `mcps:` / `scripts:`, editor de rol). Aviso al dar MCP con coste (Hostinger…).
+- **Al lanzar**: Claude recibe los MCP en un `--mcp-config` **fichero 0600** (borrado al acabar) y sus `mcp__` permitidos; Codex conserva los de su config y recibe por `-c` los que solo tiene Claude. Los scripts van al prompt, a la lista blanca (`Bash(node <ruta>:*)`) y su carpeta a `--add-dir`.
+
+## 💸 Codex: coste visible y más barato sin bajar de modelo
+
+- Coste **≈ estimado** de Codex (tabla de precios) en vivo y por tarea (`costEstimated`); columna «Acumulado» y desglose por motor en «Ver» del Resumen; la tabla del Resumen muestra el reparto **Claude / Codex** por proyecto.
+- Los agentes Codex **no heredan** tus MCP, plugins ni memorias de `~/.codex/config.toml` (se apagan por `-c`; `AO_CODEX_ISOLATE=off` lo desactiva), salida de órdenes acotada (`tool_output_token_limit`), regla de agrupar lecturas, aviso de atasco a los 15 pasos sin editar.
+- Bajo el servicio Codex corre sin sandbox (bwrap no arranca en systemd), así que **sí puede capturar y mirar** su trabajo visual: el prompt le dice que mire las imágenes con `view_image`.
+
+## 🧑‍✈️ Coordinador del equipo
+
+Ajustes ▸ Proyecto: apagado · solo sugerir · automático. Reglas fijas, sin IA (`server/coordinator.js`), cada 2 min en proyectos en marcha:
+- agente parado porque su motor no tiene cuota, con trabajo listo y el otro motor con margen → **motor automático**;
+- rol con tareas **listas** (por hacer, dependencias hechas) y nadie que pueda hacerlas (o ≥3 por agente) → vuelve uno de ese rol del **banquillo** o se **contrata** (motor con más margen, modelo de ese motor); sin mesa libre (8 por proyecto), antes va al banquillo un ocioso (≥10 min sin trabajo listo) que no sea imprescindible.
+
+Nunca toca a quien trabaja, tiene tareas suyas (asignadas o pausadas) ni al PO; un cambio de plantilla cada 10 min. Sugerencias con «Aplicar» y registro de 24 h en 🔔 Para ti; evento `TeamAdjusted`; `POST /api/projects/:id/coordinate`. Pruebas: `scripts/coordinator-unit.mjs`, `scripts/coordinator-e2e.mjs`.
+
+## ⏰ Tareas programadas, 🔎 comprobación sin IA y 🪝 webhook
+
+Tareas ▸ ⏰ Programadas (por proyecto, `project.schedules`): una plantilla de tarea (título, descripción, rol, revisión obligatoria) que se crea sola **cada N minutos**, **cada día a una hora** o **cuando llega un aviso**:
+- **Comprobación sin IA** (opcional): una orden que se ejecuta en la carpeta del proyecto. Código 0 = sin novedad (solo se apunta); **2 = se crea la tarea** con la salida del script como datos; otro = error apuntado. Así se vigila cada X tiempo sin gastar tokens.
+- **🪝 Webhook** `POST /api/hooks/<token>`: crea la tarea con el cuerpo del aviso (p. ej. el `notifyUrl` de un monitor de flow-test; desde el Docker de flow-test, `http://host.docker.internal:7420/api/hooks/<token>`). El token secreto de la URL es la credencial (no pide `x-ao-token`).
+- Solo en proyectos en marcha (el webhook, siempre); sin acumular: si la tarea anterior de esa programada sigue pendiente, esa vuelta se salta.
+- API: `GET|POST /api/projects/:id/schedules`, `PATCH|DELETE …/schedules/:sid`, `POST …/schedules/:sid/run`. Pruebas: `scripts/schedules-e2e.mjs`.
+
+## 📁 Proyectos sin repo
+
+Un proyecto sin repos pero con carpeta en el workspace de flow-test (p. ej. «empresa»: documentación, flows y scripts) funciona igual: el agente trabaja **directamente en esa carpeta** (sin worktree ni rama, de una tarea en una para no pisarse) y «Aprobar» la da por hecha. Ejemplo real: el equipo de inversión de `empresa/` (estratega, contable y verificador), descrito en `empresa/inversion-revert-agentes.md` del workspace.
+
+## Otras mejoras de la UI (7-oct)
+
+Banquillo agrupado por proyecto (Disponibles primero, grupos plegables) · la etiqueta del rol lleva al rol también desde el banquillo · la planta Dirección / Guía abre el Guía · el tablero conserva el scroll de cada columna al llegar actualizaciones · plegar un grupo de skills/scripts no oculta los de debajo · el Guía lista y lee los flows del workspace (`flowtest.listFlows` / `flowtest.readFlow`) sin contar las copias de los worktrees.
 
 ## 🖥️ IA local (LM Studio / Ollama) (FT-54)
 

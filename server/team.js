@@ -1,6 +1,8 @@
 // El equipo: proyectos (con uno o varios repos), agentes (roles de serie o de fichero .md), tareas y el planificador.
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import * as store from './store.js';
 import { orderTodo, CACHE_WINDOW_MS } from './affinity.js';
@@ -31,6 +33,7 @@ import * as compact from './compact.js';
 import * as stuck from './stuck.js';
 import * as review from './review.js'; // FT-56
 import * as toolcat from './toolcatalog.js';
+import * as coord from './coordinator.js';
 import * as ladder from './model-ladder.js';
 
 const ENGINES = { demo, claude, codex, local }; // FT-54: local = IA local (LM Studio/Ollama) por el runner de Codex
@@ -167,14 +170,20 @@ async function resolveRepos({ repos, repoPath }) {
 export const isWorktreeCopy = (p) => /(^|\/)data\/worktrees\//.test(String(p || ''));
 
 export async function syncWorkspace() {
-  let files, dir;
+  let files, dir, dirs;
   try {
     const r = await fetch(`${flowTestUrl()}/workspace/flows`, { signal: AbortSignal.timeout(8000) });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
-    files = j.files || []; dir = j.dir || null;
+    files = j.files || []; dir = j.dir || null; dirs = j.dirs || [];
   } catch (e) { throw fail(502, `No pude leer el workspace de flow-test: ${e.message}`); }
   const counts = new Map([['default', 0]]);
+  // Toda carpeta de primer nivel es un proyecto aunque aún no tenga flows (solo documentos o subcarpetas, p. ej. «tareas/»);
+  // flow-test ≥ 5.20 manda `dirs` (también las vacías). assets/ y privado/ son del sistema, no proyectos.
+  const topOf = (rel) => String(rel).split('/')[0];
+  const isProjectFolder = (name) => name && !name.startsWith('.') && !name.startsWith('_') && !['assets', 'privado'].includes(name) && !isWorktreeCopy(name);
+  for (const d of dirs) { const top = topOf(d); if (isProjectFolder(top) && !counts.has(top)) counts.set(top, 0); }
+  for (const f of files) { const parts = String(f.path).split('/'); if (parts.length > 1 && isProjectFolder(parts[0]) && !counts.has(parts[0])) counts.set(parts[0], 0); }
   for (const f of files) {
     if (f.type && f.type !== 'flow') continue;
     if (isWorktreeCopy(f.path)) continue;
@@ -241,6 +250,7 @@ export async function updateProject(id, patch) {
   if (patch.name?.trim()) p.name = patch.name.trim();
   if (patch.folder !== undefined) p.folder = patch.folder || null;
   if (patch.prefix !== undefined) p.prefix = codes.normalizePrefix(patch.prefix) || null; // las tareas ya numeradas conservan su código
+  if (patch.coordinator !== undefined) p.coordinator = ['suggest', 'auto'].includes(patch.coordinator) ? patch.coordinator : null; // 🧑‍✈️ apagado | sugerir | automático
   if (patch.reviewPolicy !== undefined) { // '' = la de la empresa · manual | auto-qa | auto
     p.reviewPolicy = review.POLICIES.includes(patch.reviewPolicy) ? patch.reviewPolicy : null;
     reviewPending(p);
@@ -269,6 +279,15 @@ export function setRunning(id, running) {
   p.running = !!running;
   changed();
   tick();
+}
+
+// Proyecto SIN repo (solo documentación y flows, p. ej. «empresa»): sus agentes trabajan directamente en la carpeta del
+// proyecto en el workspace de flow-test (sin worktree ni rama; de una en una para no pisarse; aprobar = hecha).
+export function projectDir(p) {
+  if (!p?.folder) return null;
+  const base = String(get().settings.workspaceHostDir || path.join(os.homedir(), 'JksDocs', 'workspace')).replace(/^~(?=\/|$)/, os.homedir());
+  const dir = path.join(base, p.folder);
+  return fs.existsSync(dir) ? dir : null;
 }
 
 // El repo de una tarea: el que diga la tarea; si no, el que declare su rol; si no, el primero.
@@ -402,7 +421,7 @@ export function messageAgent(id, { text, constraint = false, origin = 'user' } =
 }
 
 // ── Tareas ─────────────────────────────────────────────────────────────────
-export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null, context = null, skills = [], priority = 0, sizeChecked = false, minModel = '', checks = [], reviewRequired = false }) {
+export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null, context = null, skills = [], priority = 0, sizeChecked = false, minModel = '', checks = [], reviewRequired = false, autoApprove = false }) {
   // attachments (subidos): imágenes → images (las ve el agente), el resto → files (se citan en el prompt)
   for (const a of attachments) { if (/\.(png|jpe?g|webp)$/i.test(a.path)) images = [...images, a.path]; else files = [...files, a.path]; }
   const s = get();
@@ -419,6 +438,7 @@ export function createTask({ projectId, title, description = '', role, repo = nu
   };
   if (Array.isArray(checks) && checks.length) task.checks = checks.map((c) => String(c).trim()).filter(Boolean).slice(0, 6); // FT-56: verificaciones que declara la tarea
   if (reviewRequired) task.reviewRequired = true; // FT-56: nunca se aprueba sola
+  else if (autoApprove) task.autoApprove = true; // programada rutinaria: se aprueba sola al terminar
   if (cleanMinModel(minModel)) task.minModel = cleanMinModel(minModel); // FT-60: esta tarea no empieza por el peldaño barato
   if (sizeChecked) task.sizeChecked = true; // FT-63: ya troceada por el PO, no se vuelve a evaluar
   codes.assignCode(s.tasks, p, task);
@@ -582,7 +602,16 @@ async function runChecks(cwd, checks) {
 }
 async function runReviewer(p, t, repo, cwd, checks) {
   const s = get();
-  const engineId = ENGINES[s.settings.reviewEngine] && s.settings.reviewEngine !== 'auto' ? s.settings.reviewEngine : (ENGINES[t.lastEngine] ? t.lastEngine : 'demo');
+  let engineId = ENGINES[s.settings.reviewEngine] && s.settings.reviewEngine !== 'auto' ? s.settings.reviewEngine : (ENGINES[t.lastEngine] ? t.lastEngine : 'demo');
+  // Sin cuota en ese motor, el revisor no contesta y la tarea se aparcaba: se usa el otro (el de más margen) y, si ninguno
+  // tiene, se espera al reinicio de la ventana (autoReview lo reintenta solo; ver reviewWaitQuota en refreshReviews).
+  const g = engineId !== 'demo' ? quota.gate(engineId) : { block: false };
+  if (g.block) {
+    const alt = ['claude', 'codex'].filter((e) => e !== engineId && ENGINES[e] && !quota.gate(e).block && !quota.gate(e).wait)
+      .sort((a, b) => (quota.margin(b) ?? 0) - (quota.margin(a) ?? 0))[0];
+    if (!alt) throw Object.assign(new Error(g.message || 'sin cuota para revisar'), { quotaWait: g.resetsAt || Date.now() + 10 * 60_000 });
+    engineId = alt;
+  }
   // Sin autor ni equipo (tarea creada ya en revisión, proyecto sin plantilla) revisa un «Revisor» genérico en vez de fallar
   const agent = s.agents.find((a) => a.id === t.agentId) || teamOf(p)[0] || { id: 'revisor', name: 'Revisor', role: 'qa', engine: engineId, model: '' };
   const role = Object.values(allRoles()).find((r) => r.kind === 'qa') || roleOf(agent.role) || roleOf('back');
@@ -599,6 +628,10 @@ async function runReviewer(p, t, repo, cwd, checks) {
 }
 // Al llegar a «Revisión» (reviewPolicy auto-qa | auto). Nunca toca tareas reviewRequired, con tope/atasco, ni con ficheros sensibles.
 export async function autoReview(p, t) {
+  // Programadas rutinarias marcadas «aprobar sola» (p. ej. el informe contable diario): se cierran al terminar si no hay nada raro
+  if (t.autoApprove && t.status === 'review' && !t.reviewRequired && !t.budgetHit && !t.stuck && !reviewing.has(t.id)) {
+    return approve(t.id, { by: 'programada', verdict: { approve: true, text: 'tarea programada rutinaria: se aprueba sola al terminar' } });
+  }
   const s = get(), policy = review.policyOf(s.settings, p);
   if (policy === 'manual' || t.status !== 'review' || t.kind === 'plan' || reviewing.has(t.id)) return;
   const hold = (why) => { t.reviewNote = why; reviewNote(t, 'auto', 'skipped', why); changed(); };
@@ -606,7 +639,7 @@ export async function autoReview(p, t) {
   try {
     if (t.reviewRequired) return hold('✋ marcada «revisión obligatoria»: la revisa una persona');
     if (t.budgetHit || t.stuck) return hold('✋ terminó cortada (tope de gasto o atasco): la revisa una persona');
-    if ((t.autoReviews || 0) >= review.MAX_AUTO_CYCLES) return hold('⚠️ dos revisiones automáticas fallidas: la revisa una persona');
+    if ((t.autoReviews || 0) >= review.MAX_AUTO_CYCLES) return hold(`⚠️ ${review.MAX_AUTO_CYCLES} revisiones automáticas fallidas: la revisa una persona`);
     const repo = repoOfTask(p, t);
     const checks = review.declaredChecks(t);
     const dirOk = t.branch && fs.existsSync(git.worktreeDir(p, t));
@@ -625,12 +658,27 @@ export async function autoReview(p, t) {
       await approve(t.id, { by: 'auto', verdict: { approve: true, text: `pasan las verificaciones declaradas (${checks.join('; ')})` } });
       return;
     }
+    // La rama se pone al día con la base ANTES de revisar (el revisor ve el código real y no devuelve por desfase). Choques solo en
+    // historiales (CHANGELOG…) se combinan solos; un choque de verdad vuelve al agente sin gastar intento de revisión.
+    for (const x of taskRepos(p, t)) {
+      try { await syncWithBase(p, x, t); } catch (e) { if (e.conflicts) return; throw e; }
+    }
+    if (t.status !== 'review') return;
     const v = await runReviewer(p, t, repo, cwd, checks); // auto-qa
     if (t.status !== 'review') return; // un humano decidió mientras tanto
     if (!v) return hold('✋ el revisor no devolvió un veredicto válido: la revisa una persona');
-    if (v.approve) await approve(t.id, { by: 'auto-qa', verdict: { approve: true, text: v.reasons.join('; ') || 'sin objeciones' } });
+    if (v.approve) {
+      // Lo que el revisor ve mejorable pero no bloquea se APUNTA en el veredicto (historial de la tarea), sin crear tareas:
+      // creándolas, cada aprobación añadía 1–4 tarjetas al backlog y el proyecto «nunca se acababa» (22 en una tarde).
+      const sug = (v.followups || []).map((f) => f.title).filter(Boolean);
+      const extra = [v.pending?.length ? `pendiente de comprobar fuera: ${v.pending.join('; ')}` : '', sug.length ? `sugerencias (no se han creado tareas): ${sug.join('; ')}` : ''].filter(Boolean).join(' · ');
+      await approve(t.id, { by: 'auto-qa', verdict: { approve: true, text: [v.reasons.join('; ') || 'sin objeciones', extra].filter(Boolean).join(' · ') } });
+    }
     else await reject(t.id, v.feedback || v.reasons.join('\n') || 'El revisor automático pide cambios.', [], [], 'auto-qa');
-  } catch (e) { hold(`✋ la revisión automática falló (${e.message}): la revisa una persona`); }
+  } catch (e) {
+    if (e.quotaWait) { t.reviewWaitQuota = e.quotaWait; reviewNote(t, 'auto', 'skipped', `⏸ revisión en espera de cuota (${e.message})`); return; } // se reintenta sola
+    hold(`✋ la revisión automática falló (${e.message}): la revisa una persona`);
+  }
   finally { reviewing.delete(t.id); delete t.reviewing; changed(); }
 }
 
@@ -641,7 +689,7 @@ export async function reReview(id) {
   if (t.status !== 'review') throw fail(409, 'La tarea no está en revisión');
   const p = get().projects.find((x) => x.id === t.projectId);
   if (review.policyOf(get().settings, p) === 'manual') throw fail(409, 'La revisión de este proyecto es manual');
-  delete t.reviewNote; changed();
+  delete t.reviewNote; delete t.autoReviews; delete t.conflictRejects; changed(); // lo pide una persona: nuevos intentos de revisión automática
   setImmediate(() => autoReview(p, t).catch(() => {}));
   return { ok: true };
 }
@@ -703,12 +751,18 @@ async function refreshReviews() {
   try {
     let any = false;
     for (const t of get().tasks.filter((x) => x.status === 'review' && x.branch)) any = (await refreshMergeState(t)) || any;
+    // Revisiones que esperaban cuota: al pasar la hora de reinicio se reintentan (si sigue sin cuota, vuelve a esperar)
+    for (const t of get().tasks.filter((x) => x.status === 'review' && x.reviewWaitQuota && Date.now() >= x.reviewWaitQuota && !x.reviewing)) {
+      delete t.reviewWaitQuota; any = true;
+      const p = projectOf(t); if (p) setImmediate(() => autoReview(p, t).catch(() => {}));
+    }
     if (any) changed();
   } finally { refreshing = false; }
 }
 setInterval(refreshReviews, 10_000).unref();
 
 const CONFLICT_MARK = 'Tu rama choca con';
+const CONFLICT_MAX = 3; // devoluciones seguidas por el mismo choque antes de dejarla para una persona
 const conflictText = (base, files, x) => `${CONFLICT_MARK} ${base}${x && !x.main ? ` (repo ${x.key}, tu worktree ${x.dir})` : ''} en: ${files.join(', ')}; haz \`git merge ${base}\` en tu worktree, resuelve los conflictos conservando lo de ambos lados, verifica y vuelve a confirmar.`;
 
 // Mete la base en la rama de la tarea (merge dentro de su worktree). x = { repo, key, dir, branch }.
@@ -731,7 +785,16 @@ async function mergeBaseInto(p, x, t) {
 async function syncWithBase(p, x, t, { onConflict = 'reject' } = {}) {
   const r = await mergeBaseInto(p, x, t);
   const where = x.main ? '' : ` (repo ${x.key})`;
+  if (!r.conflicts.length) delete t.conflictRejects; // al día: el freno anti-bucle vuelve a cero
   if (r.conflicts.length && onConflict === 'reject') {
+    // Freno anti-bucle: si el agente ya ha recibido el mismo choque CONFLICT_MAX veces y no lo resuelve (sin permisos, sin
+    // saber…), deja de devolverse y espera a una persona (avisa por ReviewPending/Telegram) en vez de girar cada pocos segundos.
+    t.conflictRejects = (t.conflictRejects || 0) + 1;
+    if (t.conflictRejects > CONFLICT_MAX) {
+      t.reviewNote = `✋ no consigue resolver el choque con ${x.repo.baseBranch}${where} en ${r.conflicts.slice(0, 3).join(', ')} (${CONFLICT_MAX} intentos): la revisa una persona`;
+      reviewNote(t, 'auto', 'skipped', t.reviewNote); changed();
+      throw Object.assign(fail(409, t.reviewNote), { conflicts: r.conflicts, held: true });
+    }
     const msg = conflictText(x.repo.baseBranch, r.conflicts, x);
     await reject(t.id, msg);
     throw Object.assign(fail(409, `${t.code || t.id} choca con ${x.repo.baseBranch}${where} en ${r.conflicts.join(', ')}: devuelta al agente para que lo resuelva`), { conflicts: r.conflicts });
@@ -918,6 +981,7 @@ export function tick() {
     if (!p.running) continue;
     const team = teamOf(p);
     let slots = (s.settings.maxParallel || 4) - team.filter((a) => jobs.has(a.id)).length;
+    if (!(p.repos || []).length && team.some((a) => jobs.has(a.id))) slots = 0; // sin repo: una tarea a la vez sobre la misma carpeta
     const todoAll = s.tasks.filter((t) => t.projectId === p.id && t.status === 'todo');
     // Entradas calientes: lo que corre ahora (motor del agente si no es `auto`) y lo terminado hace <5 min
     const hot = new Set();
@@ -954,9 +1018,181 @@ export function tick() {
       activeRepos.add(repoKey);
       runTask(p, agent, t);
     }
+    coordinate(p);
   }
+  runSchedules();
 }
 setInterval(tick, 1500).unref();
+
+// ── ⏰ Tareas programadas y 🪝 webhook entrante ─────────────────────────────────────────────────────────────────────
+// p.schedules = [{ id, title, description, role, every (min) | at ('HH:MM', cada día) | null (solo webhook), hookToken?,
+//                  reviewRequired, enabled, lastRunAt, lastTaskId }]. Solo se crean en proyectos en marcha (las de webhook,
+// siempre). Sin acumular: si la tarea anterior de esa programación sigue pendiente, esta vuelta se salta.
+const SCHED_EVERY = 30_000;
+let schedAt = 0;
+const pendingStatus = ['backlog', 'todo', 'doing', 'review'];
+function scheduleDue(sch, now) {
+  if (!sch.enabled) return false;
+  if (sch.every > 0) return now - (sch.lastRunAt || 0) >= sch.every * 60_000;
+  if (/^\d{1,2}:\d{2}$/.test(sch.at || '')) {
+    const [h, m] = sch.at.split(':').map(Number);
+    const today = new Date(now); today.setHours(h, m, 0, 0);
+    return now >= today.getTime() && (sch.lastRunAt || 0) < today.getTime();
+  }
+  return false;
+}
+const fmtFecha = (ms) => new Date(ms).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+function fireSchedule(p, sch, { origin = 'programada', extra = '' } = {}) {
+  const prev = sch.lastTaskId && get().tasks.find((t) => t.id === sch.lastTaskId);
+  if (prev && pendingStatus.includes(prev.status)) { sch.lastRunAt = Date.now(); return { skipped: `${prev.code || prev.id} sigue pendiente` }; }
+  const t = createTask({ projectId: p.id, title: `${sch.title} · ${fmtFecha(Date.now())}`, role: sch.role, reviewRequired: !!sch.reviewRequired, autoApprove: !!sch.autoApprove && !sch.reviewRequired, sizeChecked: true,
+    description: `${sch.description || ''}\n\n_(Tarea ${origin} «${sch.title}»${sch.every ? `, cada ${sch.every} min` : sch.at ? `, cada día a las ${sch.at}` : ''}.)_${extra ? `\n\nDatos del aviso que la lanzó:\n\`\`\`\n${extra}\n\`\`\`` : ''}` });
+  Object.assign(sch, { lastRunAt: Date.now(), lastTaskId: t.id });
+  log(null, `⏰ ${p.name}: ${origin} «${sch.title}» → ${t.code || t.id}`);
+  changed();
+  return { task: t.code || t.id };
+}
+function runSchedules() {
+  const now = Date.now();
+  if (now - schedAt < SCHED_EVERY) return;
+  schedAt = now;
+  for (const p of get().projects) if (p.running) for (const sch of p.schedules || []) if (scheduleDue(sch, now)) {
+    if (sch.check) { runCheck(p, sch); continue; }
+    try { fireSchedule(p, sch); } catch (e) { log(null, `⚠ Programada «${sch.title}»: ${e.message}`); }
+  }
+}
+// Script de comprobación (sin IA): se ejecuta en la carpeta del proyecto (o su repo). Código 0 = sin novedad (solo se apunta);
+// 2 = hay que actuar → se crea la tarea con su salida como datos del aviso; otro = error (se apunta y se reintenta en la siguiente).
+const checking = new Set();
+function runCheck(p, sch) {
+  if (checking.has(sch.id)) return;
+  checking.add(sch.id);
+  sch.lastRunAt = Date.now();
+  const cwd = projectDir(p) || p.repos?.[0]?.path || os.homedir();
+  const ch = spawn('sh', ['-c', sch.check], { cwd, env: { ...process.env, AO_PROJECT: p.name }, stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000 });
+  let out = '';
+  ch.stdout.on('data', (d) => { out += d; if (out.length > 20_000) out = out.slice(-20_000); });
+  ch.stderr.on('data', (d) => { out += d; if (out.length > 20_000) out = out.slice(-20_000); });
+  ch.on('close', (code) => {
+    checking.delete(sch.id);
+    sch.lastCheck = { at: Date.now(), code, out: out.slice(-1500) };
+    if (code === 2) { try { fireSchedule(p, sch, { origin: 'lanzada por su comprobación', extra: out.slice(-4000) }); } catch (e) { log(null, `⚠ Programada «${sch.title}»: ${e.message}`); } }
+    else if (code !== 0) log(null, `⚠ Comprobación de «${sch.title}» falló (código ${code}): ${out.split('\n').filter(Boolean).slice(-1)[0] || ''}`);
+    changed();
+  });
+  ch.on('error', (e) => { checking.delete(sch.id); sch.lastCheck = { at: Date.now(), code: -1, out: e.message }; changed(); });
+}
+const cleanSchedule = (b, prev = {}) => {
+  const every = Number(b.every) > 0 ? Math.max(5, Math.min(60 * 24 * 31, Math.round(Number(b.every)))) : null;
+  const at = /^\d{1,2}:\d{2}$/.test(String(b.at || '')) ? String(b.at) : null;
+  return { ...prev, title: String(b.title ?? prev.title ?? '').trim().slice(0, 120), description: String(b.description ?? prev.description ?? '').slice(0, 8000),
+    role: b.role ?? prev.role, every: b.every !== undefined || b.at !== undefined ? every : prev.every ?? null, at: b.every !== undefined || b.at !== undefined ? (every ? null : at) : prev.at ?? null,
+    reviewRequired: b.reviewRequired !== undefined ? !!b.reviewRequired : !!prev.reviewRequired, enabled: b.enabled !== undefined ? !!b.enabled : prev.enabled ?? true,
+    check: b.check !== undefined ? (String(b.check || '').trim().slice(0, 500) || null) : prev.check ?? null,
+    autoApprove: b.autoApprove !== undefined ? !!b.autoApprove : !!prev.autoApprove };
+};
+export function listSchedules(projectId) { return findOr404(get().projects, projectId, 'Proyecto').schedules || []; }
+export function saveSchedule(projectId, b, sid = null) {
+  const p = findOr404(get().projects, projectId, 'Proyecto');
+  p.schedules ||= [];
+  const prev = sid ? p.schedules.find((x) => x.id === sid) : null;
+  if (sid && !prev) throw fail(404, 'Programación no encontrada');
+  const sch = cleanSchedule(b, prev || { id: newId(), createdAt: Date.now() });
+  if (!sch.title) throw fail(400, 'Falta el título');
+  if (!roleOf(sch.role)) throw fail(400, 'Rol desconocido');
+  if (b.webhook === true && !sch.hookToken) sch.hookToken = crypto.randomBytes(18).toString('base64url');
+  if (b.webhook === false) delete sch.hookToken;
+  if (!sch.every && !sch.at && !sch.hookToken) throw fail(400, 'Elige una frecuencia (cada N minutos o a una hora) o activa el webhook');
+  if (prev) Object.assign(prev, sch); else p.schedules.push(sch);
+  changed();
+  return prev || sch;
+}
+export function deleteSchedule(projectId, sid) { const p = findOr404(get().projects, projectId, 'Proyecto'); p.schedules = (p.schedules || []).filter((x) => x.id !== sid); changed(); return { ok: true }; }
+export function runScheduleNow(projectId, sid) {
+  const p = findOr404(get().projects, projectId, 'Proyecto');
+  const sch = (p.schedules || []).find((x) => x.id === sid);
+  if (!sch) throw fail(404, 'Programación no encontrada');
+  if (sch.check) { runCheck(p, sch); return { checking: true }; }
+  const r = fireSchedule(p, sch, { origin: 'lanzada a mano' }); tick(); return r;
+}
+// POST /api/hooks/<token> (sin x-ao-token: el token de la URL es la credencial). El cuerpo (p. ej. el aviso de un monitor de
+// flow-test con sus reglas y variables) va en la descripción de la tarea.
+export function fireHook(token, body) {
+  if (!token || token.length < 16) throw fail(404, 'Webhook desconocido');
+  for (const p of get().projects) for (const sch of p.schedules || []) {
+    if (!sch.hookToken || sch.hookToken.length !== token.length || !crypto.timingSafeEqual(Buffer.from(sch.hookToken), Buffer.from(token))) continue;
+    if (!sch.enabled) return { skipped: 'programación desactivada' };
+    const extra = typeof body === 'string' ? body : JSON.stringify(body ?? {}, null, 2);
+    const r = fireSchedule(p, sch, { origin: 'lanzada por webhook', extra: extra.slice(0, 4000) }); tick(); return r;
+  }
+  throw fail(404, 'Webhook desconocido');
+}
+
+// ── 🧑‍✈️ Coordinador del equipo (server/coordinator.js decide; aquí se aplica o se sugiere) ──────────────────────────────
+const COORD_EVERY = 2 * 60_000, COORD_COOLDOWN = 10 * 60_000;
+const busySeen = new Map(); // agente → última vez visto trabajando (o la primera vez visto, tras arrancar)
+const FREE_NAMES = ['Alba', 'Bruno', 'Celia', 'Dani', 'Eva', 'Fran', 'Gala', 'Hugo', 'Inés', 'Jon', 'Lara', 'Marco', 'Nerea', 'Omar', 'Pau', 'Rita', 'Saúl', 'Tea', 'Unai', 'Vega', 'Yago', 'Zoe'];
+const freeName = () => FREE_NAMES.find((n) => !get().agents.some((a) => a.name === n)) || `Agente ${get().agents.length + 1}`;
+function coordSnapshot(p) {
+  const s = get(), team = teamOf(p), now = Date.now();
+  for (const a of team) if (jobs.has(a.id) || !busySeen.has(a.id)) busySeen.set(a.id, now);
+  const st = cachedEnginesStatus();
+  const engineOk = Object.fromEntries(['claude', 'codex'].map((e) => [e, (st ? !!st[e]?.loggedIn : e === 'claude') && !quota.gate(e).block]));
+  const onTeam = new Set(s.projects.flatMap((x) => x.team || []));
+  return { team, bench: s.agents.filter((a) => !onTeam.has(a.id)), tasks: s.tasks.filter((t) => t.projectId === p.id), roles: allRoles(), engineOk,
+    busy: new Set(team.filter((a) => jobs.has(a.id)).map((a) => a.id)), idleSince: Object.fromEntries(team.map((a) => [a.id, busySeen.get(a.id)])), now,
+    margin: { claude: quota.margin('claude'), codex: quota.margin('codex') } };
+}
+function coordNote(p, entry) {
+  (p.coordLog ||= []).push({ at: Date.now(), ...entry });
+  p.coordLog = p.coordLog.slice(-30);
+  log(null, `🧑‍✈️ ${p.name}: ${entry.why}`);
+  events.emit('TeamAdjusted', { projectId: p.id }, entry);
+}
+// Aplica las acciones del plan (sin pasar por setTeam/hire, que llamarían a tick() desde dentro de tick()).
+export function applyCoordination(p, actions) {
+  const s = get();
+  for (const x of actions) {
+    const a = x.agentId && s.agents.find((y) => y.id === x.agentId);
+    if (x.type === 'engine' && a) a.engine = 'auto';
+    else if (x.type === 'bench' && a) p.team = p.team.filter((id) => id !== a.id);
+    else if (x.type === 'sign' && a && p.team.length < coord.MAX_DESKS && !p.team.includes(a.id)) p.team.push(a.id);
+    else if (x.type === 'hire' && p.team.length < coord.MAX_DESKS) {
+      const rm = roleOf(x.role)?.model || '';
+      const fits = rm && (x.engine === 'claude' ? MODEL_OF.claude.test(rm) : !MODEL_OF.claude.test(rm)); // el modelo del rol solo si es de ese motor
+      const agent = newAgent({ name: freeName(), role: x.role, engine: x.engine, model: fits ? rm : (x.engine === 'claude' ? 'sonnet' : '') });
+      s.agents.push(agent); p.team.push(agent.id);
+      x.why += ` (${agent.name})`;
+    } else continue;
+    coordNote(p, { type: x.type, why: x.why, auto: true });
+  }
+  delete p.coordSuggest;
+  changed();
+}
+function coordinate(p) {
+  if (!['suggest', 'auto'].includes(p.coordinator)) return;
+  const now = Date.now();
+  if (now - (p.coordCheckAt || 0) < COORD_EVERY) return;
+  p.coordCheckAt = now;
+  const actions = coord.plan(coordSnapshot(p));
+  const staffing = actions.some((x) => x.type !== 'engine');
+  if (staffing && now - (p.coordAt || 0) < COORD_COOLDOWN) return; // un cambio de plantilla cada 10 min como mucho
+  if (!actions.length) { if (p.coordSuggest) { delete p.coordSuggest; changed(); } return; }
+  if (p.coordinator === 'suggest') {
+    const sig = actions.map((x) => x.why).join('|');
+    if ((p.coordSuggest || []).map((x) => x.why).join('|') !== sig) { p.coordSuggest = actions.map((x) => ({ ...x, at: now })); log(null, `🧑‍✈️ ${p.name} (sugerencia): ${actions.map((x) => x.why).join(' · ')}`); changed(); }
+    return;
+  }
+  if (staffing) p.coordAt = now;
+  applyCoordination(p, actions);
+}
+// «Aplicar» una sugerencia (Para ti) o forzar una pasada ahora.
+export function coordinateNow(projectId) {
+  const p = findOr404(get().projects, projectId, 'Proyecto');
+  const actions = p.coordSuggest?.length ? p.coordSuggest : coord.plan(coordSnapshot(p));
+  if (actions.length) { p.coordAt = Date.now(); applyCoordination(p, actions); tick(); }
+  return { applied: actions.map((x) => x.why) };
+}
 
 // FT-63: una tarea nueva que parece grande (muchas piezas, «y además…», estimación cercana al tope) no se lanza entera: se manda al PO
 // como «Planificar:» para que la trocee, y la original queda en Backlog enlazada (`splitInto`). Se evalúa una sola vez por tarea.
@@ -1004,6 +1240,7 @@ const clientBlock = (t) => [
 // FT-44: rutas de trabajo del agente. Una copia aislada (git worktree, rama ao/<código>) por CADA repo del proyecto; escribir en
 // los checkouts principales se prohíbe (no tienen rama ni revisión y AgentOffice puede servirlos en caliente).
 function worktreesBlock(p, t) {
+  if (!t.branch && !repoOfTask(p, t)) return ''; // proyecto sin repo: lo explica la parte estable del prompt
   const xs = taskRepos(p, t);
   if (xs.length < 2) return `Trabajas en una copia aislada del repo (git worktree) en la rama ${t.branch}. No cambies de rama ni hagas push.`;
   return [
@@ -1046,7 +1283,7 @@ function buildPrompt(p, agent, t) {
   return [
     // ── estable ──
     p.folder ? `Carpeta del proyecto en el workspace de flow-test: «${p.folder}/» (ahí viven sus flows y su documentación; guarda ahí lo que generes con flow-test).` : '',
-    'Trabajas en una copia aislada del repo (git worktree), en tu propia rama. No cambies de rama ni hagas push.',
+    repoOfTask(p, t) ? 'Trabajas en una copia aislada del repo (git worktree), en tu propia rama. No cambies de rama ni hagas push.' : `Este proyecto no tiene repo: trabajas DIRECTAMENTE en su carpeta (${projectDir(p) || p.folder}). Escribe solo dentro de ella, no borres nada que no hayas creado tú y deja todo en un estado coherente al terminar.`,
     'Lo que dejes sin confirmar se confirmará solo al terminar.',
     (() => { const r = repoOfTask(p, t); return r?.path ? '\n' + briefingFor(r.path) + (t.codeIndexOn ? '\n' + codeindex.BRIEFING_LINE : '') + '\n' : ''; })(), // FT-58: aviso del índice de código
     get().settings.claudeMemory !== false ? memory.claudePromptBlock(repoOfTask(p, t)?.path) : '', // índice de la memoria de Claude Code del repo
@@ -1082,6 +1319,11 @@ function buildPrompt(p, agent, t) {
 
 // Reglas para gastar menos tokens (cada turno reenvía TODO lo leído: un fichero de 140 KB leído entero pesa ~35k tokens
 // en cada paso que queda). Medido el 6 OCT: las tareas de UI rondaban los 6 $ por leer ficheros enteros y repetir capturas/e2e.
+// Codex SÍ puede verse: bajo el servicio corre sin sandbox (bwrap no arranca en systemd), así que puede levantar servidores y
+// capturar (scripts/preview.mjs, Chrome headless); y su herramienta view_image está activa en los roles de desarrollo. Lo que no
+// sabe es que en Codex una imagen se mira con view_image (leer el fichero no la muestra): se le dice al final del prompt.
+const CODEX_VISION = '\n\nPara MIRAR una imagen o captura (PNG/JPG) usa tu herramienta view_image con la ruta del fichero: leerlo con cat/sed no te la enseña. En trabajo visual: genera la captura (p. ej. `node scripts/preview.mjs /tmp/captura.png`), mírala con view_image, corrige y repite (2-3 vueltas como mucho).';
+
 function economyBlock(codeIndexOn) {
   return [
     '',
@@ -1124,13 +1366,18 @@ async function runTask(p, agent, t) {
   const role = roleOf(agent.role) || roleOf('back');
   const roles = teamRoles(p);
   const repo = repoOfTask(p, t);
-  let cwd = repo?.path || store.DATA_DIR;
+  let cwd = repo?.path || projectDir(p) || store.DATA_DIR;
   const outside = {}; // FT-44: `git status` de cada checkout principal antes de empezar (guardarraíl)
   let addDirs = [];
 
   try {
-    if (real && t.kind !== 'plan') {
-      if (!repo) throw new Error('Los motores claude/codex necesitan que el proyecto tenga un repositorio git');
+    if (real && t.kind !== 'plan' && !repo) {
+      const dir = projectDir(p);
+      if (!dir) throw new Error('El proyecto no tiene repositorio git ni carpeta en el workspace de flow-test');
+      Object.assign(t, { repo: null, branch: null, folderMode: true });
+      cwd = dir;
+      log(agent.id, `📁 Sin repo: trabaja directamente en ${dir}`);
+    } else if (real && t.kind !== 'plan') {
       t.repo = repo.key;
       const wt = await git.createWorktree(p, repo, t);
       cwd = wt.path;
@@ -1178,7 +1425,7 @@ async function runTask(p, agent, t) {
     const model = pickedModel.model;
     let res;
     for (let seg = 0; ; seg++) {
-    const prompt = buildPrompt(p, agent, t);
+    const prompt = buildPrompt(p, agent, t) + (engineId === 'codex' && t.kind !== 'plan' && role.kind !== 'docs' ? CODEX_VISION : '');
     t.pendingMessages = []; // ya van en el prompt
     const baseUsage = t.usage || null; // FT-26: consumo de intentos anteriores; t.usage es acumulado y se actualiza en vivo
     agent.usage = null; // sesión nueva

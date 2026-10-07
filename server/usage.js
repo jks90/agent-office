@@ -54,7 +54,7 @@ export function codexTracker() {
       if (ev.type !== 'turn.completed' || !ev.usage) return null;
       const cached = num(ev.usage.cached_input_tokens);
       acc = { input: acc.input + Math.max(0, num(ev.usage.input_tokens) - cached), output: acc.output + num(ev.usage.output_tokens), cache: acc.cache + cached };
-      return finish({ ...acc, limit: null, used: null, ctx: num(ev.usage.input_tokens), costUsd: null, source: 'codex turn.completed' }); // ctx (FT-63): entrada del último turno, aprox. del contexto
+      return finish({ ...acc, limit: null, used: null, ctx: null, costUsd: null, source: 'codex turn.completed' }); // ctx (FT-63): Codex no da el contexto de la última llamada — input_tokens del turno SUMA todas las llamadas del bucle (cientos de miles a millones) y disparaba una compactación falsa tras cada turno (hasta 3 relanzamientos en frío por tarea). Sin medida no se compacta desde aquí: Codex compacta solo
     },
   };
 }

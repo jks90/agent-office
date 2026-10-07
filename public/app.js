@@ -939,7 +939,7 @@ function render() {
   $('#tab-tasks-review').textContent = nRev ? `✋${nRev}` : '';
   // El chip cuenta las revisiones del proyecto ACTIVO; si este no tiene y otros sí, lo dice explícitamente («en otros proyectos»).
   // 🔔 de la barra: los avisos de «Para ti» (lo que te espera a ti, de todos los proyectos visibles); clic → esa vista
-  const rc = $('#review-chip'), inbox = inboxItems().filter((i) => i.kind !== 'quota' && !i.imported);
+  const rc = $('#review-chip'), inbox = inboxItems().filter((i) => !['quota', 'coordlog'].includes(i.kind) && !i.imported);
   rc.hidden = !inbox.length;
   rc.textContent = `🔔 ${inbox.length}`;
   rc.title = `Para ti: ${Object.entries(inbox.reduce((m, i) => ((m[i.kind] = (m[i.kind] || 0) + 1), m), {})).map(([k, n]) => `${n} ${INBOX_KIND[k][1].toLowerCase()}`).join(' · ')}`;
@@ -1177,6 +1177,49 @@ document.addEventListener('change', (e) => {
   const [kind, ...rest] = s.dataset.toolAssign.split(':');
   setToolUser(kind, rest.join(':'), s.value, true).catch(() => {});
 });
+
+// ── ⏰ Tareas programadas y 🪝 webhook (por proyecto) ─────────────────────────────────────────────────────────────
+const schedFreq = (x) => (x.every ? `cada ${x.every >= 60 && x.every % 60 === 0 ? `${x.every / 60} h` : `${x.every} min`}` : x.at ? `cada día a las ${x.at}` : 'solo por webhook');
+const hookUrl = (x, docker = false) => `${docker ? 'http://host.docker.internal:7420' : location.origin}/api/hooks/${x.hookToken}`;
+async function openSchedules() {
+  const list = await api('GET', `/api/projects/${projectId}/schedules`);
+  const last = (x) => { const t = x.lastTaskId && S.tasks.find((y) => y.id === x.lastTaskId); return x.lastRunAt ? `última: hace ${waitTxt(x.lastRunAt)}${t ? ` → ${tcode(t)} (${TSTATUS[t.status] || t.status})` : ''}` : 'aún no se ha lanzado'; };
+  dialog(`<h3>⏰ Tareas programadas de «${esc(project()?.name)}»</h3>
+    <p class="muted">Se crean solas (con el proyecto en marcha) cada X tiempo o a una hora, o cuando llega un aviso al webhook (p. ej. un monitor de flow-test). Si la anterior sigue pendiente, esa vuelta se salta.</p>
+    <div class="sched-list">${list.map((x) => `<div class="sched-row ${x.enabled ? '' : 'off'}">
+      <div class="sched-main"><b>${esc(x.title)}</b> <span class="muted">· ${roleChip(x.role)} · ${schedFreq(x)}${x.hookToken ? ' · 🪝 webhook' : ''}${x.reviewRequired ? ' · ✋ revisión obligatoria' : x.autoApprove ? ' · ✅ se aprueba sola' : ''}</span>
+        <div class="muted">${last(x)}</div>
+        ${x.check ? `<div class="muted">🔎 comprobación: <code>${esc(x.check.slice(0, 90))}</code>${x.lastCheck ? ` · última: ${x.lastCheck.code === 0 ? '✓ sin novedad' : x.lastCheck.code === 2 ? '⚠ creó tarea' : `✗ error ${x.lastCheck.code}`} hace ${waitTxt(x.lastCheck.at)}` : ''}</div>` : ''}
+        ${x.hookToken ? `<div class="sched-hook"><code>${esc(hookUrl(x))}</code> <button type="button" class="small ghost" data-copy="${esc(hookUrl(x))}">Copiar</button> <button type="button" class="small ghost" data-copy="${esc(hookUrl(x, true))}" title="Para el flow-test en Docker (notifyUrl de un monitor)">Copiar (Docker)</button></div>` : ''}</div>
+      <div class="sched-acts"><button type="button" class="small" data-sched-run="${x.id}">▶ Ahora</button><button type="button" class="small ghost" data-sched-toggle="${x.id}">${x.enabled ? '⏸ Pausar' : '▶ Activar'}</button><button type="button" class="small ghost" data-sched-edit="${x.id}">✎</button><button type="button" class="small danger" data-sched-del="${x.id}">✕</button></div>
+    </div>`).join('') || '<p class="empty">Ninguna todavía.</p>'}</div>
+    <div class="row" style="justify-content:space-between"><button type="button" class="small" data-sched-edit="">＋ Nueva programada</button><button class="ghost" value="cancel">Cerrar</button></div>`, null, 'wide');
+}
+async function editSchedule(sid) {
+  const list = await api('GET', `/api/projects/${projectId}/schedules`);
+  const x = list.find((y) => y.id === sid) || { enabled: true, every: 60 };
+  const mode = x.every ? 'every' : x.at ? 'at' : 'hook';
+  const teamRolesOpts = [...new Set(team().map((a) => a.role))].map((r) => `<option value="${esc(r)}" ${x.role === r ? 'selected' : ''}>${esc(S.roles[r]?.label || r)}</option>`).join('');
+  dialog(`<h3>${sid ? '✎ Programada' : '＋ Nueva programada'}</h3>
+    <label>Título</label><input name="title" value="${esc(x.title || '')}" required autofocus placeholder="Revisar la posición de Revert" />
+    <label>Qué tiene que hacer el agente (y cómo saber que está bien)</label><textarea name="description" rows="6">${esc(x.description || '')}</textarea>
+    <div class="grid2">
+      <div><label>Rol (agente que la hará)</label><select name="role">${teamRolesOpts || '<option disabled>(el proyecto no tiene equipo)</option>'}</select></div>
+      <div><label>Cuándo</label><select name="mode"><option value="every" ${mode === 'every' ? 'selected' : ''}>Cada N minutos</option><option value="at" ${mode === 'at' ? 'selected' : ''}>Cada día a una hora</option><option value="hook" ${mode === 'hook' ? 'selected' : ''}>Solo cuando llegue un aviso (webhook)</option></select></div>
+      <div><label>Minutos (si «cada N minutos»; mínimo 5)</label><input name="every" type="number" min="5" value="${esc(String(x.every || 60))}" /></div>
+      <div><label>Hora (si «cada día»)</label><input name="at" type="time" value="${esc(x.at || '09:00')}" /></div>
+    </div>
+    <label>🔎 Comprobación sin IA (opcional): orden que se ejecuta en la carpeta del proyecto; código 0 = todo bien (no se crea tarea), 2 = crear la tarea con su salida</label><input name="check" value="${esc(x.check || '')}" placeholder="node scripts/revert-posicion.mjs --check" />
+    <label><input type="checkbox" name="webhook" ${x.hookToken || mode === 'hook' ? 'checked' : ''} /> 🪝 Además, se puede lanzar por webhook (te doy una URL secreta para un monitor de flow-test u otro sistema)</label>
+    <label><input type="checkbox" name="reviewRequired" ${x.reviewRequired ? 'checked' : ''} /> ✋ Revisión obligatoria (nunca se aprueba sola: para tareas que tocan dinero o producción)</label>
+    <label><input type="checkbox" name="autoApprove" ${x.autoApprove ? 'checked' : ''} /> ✅ Aprobar sola al terminar (informes rutinarios; no aplica si es de revisión obligatoria)</label>
+    <label><input type="checkbox" name="enabled" ${x.enabled !== false ? 'checked' : ''} /> Activa</label>
+    ${buttons('Guardar')}`, async (f) => {
+    const body = { title: f.title, description: f.description, role: f.role, every: f.mode === 'every' ? Number(f.every) : null, at: f.mode === 'at' ? f.at : null, webhook: f.mode === 'hook' || !!f.webhook, reviewRequired: !!f.reviewRequired, enabled: !!f.enabled, check: f.check || '', autoApprove: !!f.autoApprove };
+    await api(sid ? 'PATCH' : 'POST', `/api/projects/${projectId}/schedules${sid ? '/' + sid : ''}`, body);
+    toast('Programada guardada'); setTimeout(openSchedules, 50);
+  }, 'wide');
+}
 
 async function editSkill(dir) {
   const r = await api('POST', '/api/skills/read', { dir });
@@ -1448,6 +1491,10 @@ function inboxItems() {
     if (t && !vis.has(t.projectId)) continue;
     items.push({ kind: 'question', p: t && vis.get(t.projectId), t, q, sort: 0 });
   }
+  for (const p of vis.values()) { // 🧑‍✈️ coordinador: sugerencias pendientes y cambios de las últimas 24 h
+    for (const x of p.coordSuggest || []) items.push({ kind: 'coord', p, x, sort: 1 });
+    for (const x of (p.coordLog || []).filter((e) => Date.now() - e.at < 24 * 3600e3).slice(-8).reverse()) items.push({ kind: 'coordlog', p, x, sort: 5 });
+  }
   for (const t of S.tasks) {
     const p = vis.get(t.projectId);
     if (!p) continue;
@@ -1465,16 +1512,20 @@ const INBOX_KIND = {
   failed: ['❌', 'Fallidas', 'No terminaron bien'],
   manual: ['👤', 'Tareas manuales tuyas', 'Tareas que no hace ningún agente'],
   quota: ['⏸', 'Pausadas por cuota', 'Siguen solas al reiniciarse la cuota (solo aviso)'],
+  coord: ['🧑‍✈️', 'Sugerencias del coordinador', 'Cambios de plantilla o de motor para que el tablero avance'],
+  coordlog: ['🧑‍✈️', 'Lo que hizo el coordinador (24 h)', 'Cambios que aplicó solo (solo aviso)'],
 };
 function renderInbox() {
   const items = inboxItems();
-  const urgent = items.filter((i) => i.kind !== 'quota' && !i.imported).length;
+  const urgent = items.filter((i) => !['quota', 'coordlog'].includes(i.kind) && !i.imported).length;
   const badge = $('#tab-inbox-count'); if (badge) badge.textContent = urgent || '';
   const el = $('#inbox');
   if (!el || $('#view-inbox').hidden) return;
   const act = (i) => {
     const t = i.t, b = (attr, txt, cls = 'ghost', id = t?.id) => `<button class="small ${cls}" data-${attr}="${id}">${txt}</button>`;
     if (i.kind === 'question') return b('q-answer', 'Contestar', '', i.q.id) + (t ? b('open', 'Ver la tarea') : '');
+    if (i.kind === 'coord') return b('coord-apply', 'Aplicar', 'ok', i.p.id);
+    if (i.kind === 'coordlog') return '';
     if (i.kind === 'review' || i.kind === 'cut') return b('open', 'Abrir') + b('diff', 'Ver diff') + b('approve', '✓ Aprobar', 'ok') + b('reject', '↩ Devolver') + (t.reviewNote && /falló|veredicto válido/.test(t.reviewNote) ? b('review-again', '🔎 Revisar otra vez') : '');
     if (i.kind === 'failed') return b('open', 'Abrir') + b('reject', '↻ Reintentar', '');
     if (i.kind === 'quota') return b('open', 'Abrir') + b('resume-now', '▶ Reanudar ya');
@@ -1482,6 +1533,7 @@ function renderInbox() {
   };
   const row = (i) => {
     const t = i.t;
+    if (i.kind === 'coord' || i.kind === 'coordlog') return `<div class="inbox-row"><div class="inbox-main"><div class="inbox-what">${esc(i.x.why)}</div><div class="muted inbox-why">${esc(i.p.name)} · hace ${waitTxt(i.x.at)}</div></div><div class="inbox-acts">${act(i)}</div></div>`;
     const what = i.kind === 'question' ? esc(i.q.question || i.q.text || '') : esc(t.title);
     const why = i.kind === 'question' ? `${esc(S.agents.find((a) => a.id === i.q.agentId)?.name || 'Un agente')}${t ? ` · ${esc(tcode(t))}` : ''}`
       : i.kind === 'failed' ? esc((t.error || '').split('\n')[0].slice(0, 160))
@@ -1894,6 +1946,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <label>Motor</label><select name="engine">${engineOptions('auto')}</select>
     <label>Modelo (opcional)</label>${modelSelect('model', 'auto', '')}
     ${buttons('Contratar')}`, (f) => api('POST', '/api/agents', { ...f, model: pickModel(f), projectId })),
+  schedules: () => openSchedules(),
   'new-task': () => { pendingAttachments = []; dialog(`
     <h3>Nueva tarea</h3>
     <label>Título <span class="muted">(con «Redactar con IA» puedes dejarlo vacío)</span></label>${micField('<input name="title" autofocus />')}
@@ -1982,6 +2035,8 @@ Pasos, convenciones y ejemplos…</textarea>
     <label>Prefijo de los códigos de tarea del proyecto «${esc(project()?.name)}» (p. ej. <code>GL</code> → GL-1, GL-2…; las tareas ya numeradas no cambian)</label><input name="prefix" value="${esc(project()?.prefix || "")}" placeholder="${esc(project()?.prefixDefault || "")}" maxlength="5" style="text-transform:uppercase;width:120px" />
     <label>Revisión de las tareas de «${esc(project()?.name)}» (con revisión automática, lo que una tarea desbloquea no espera a que tú la mires)</label>
     <select name="reviewPolicy">${[['', `Igual que la empresa (${REVIEW_LABEL[S.settings.reviewPolicy || 'manual']})`], ['manual', REVIEW_LABEL.manual], ['auto-qa', REVIEW_LABEL['auto-qa']], ['auto', REVIEW_LABEL.auto]].map(([v, l]) => `<option value="${v}" ${(project()?.reviewPolicy || '') === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+    <label>🧑‍✈️ Coordinador del equipo de «${esc(project()?.name)}» (reglas fijas, sin IA: refuerza el rol que tiene trabajo listo y nadie libre, cambia a motor automático a quien se queda sin cuota y manda al banquillo a quien lleva rato sin nada que hacer)</label>
+    <select name="coordinator">${[['', 'Apagado'], ['suggest', 'Solo sugerir (en 🔔 Para ti, con «Aplicar»)'], ['auto', 'Automático (lo hace solo y lo apunta en 🔔 Para ti)']].map(([v, l]) => `<option value="${v}" ${(project()?.coordinator || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
     <label>Revisión por defecto de la empresa (proyectos con «Igual que la empresa»)</label>
     <select name="reviewPolicyAll">${['manual', 'auto-qa', 'auto'].map((v) => `<option value="${v}" ${(S.settings.reviewPolicy || 'manual') === v ? 'selected' : ''}>${esc(REVIEW_LABEL[v])}</option>`).join('')}</select>
     <p class="muted" style="margin:2px 0 8px">Nunca se aprueban solas las tareas con «revisión obligatoria», las cortadas por tope o atasco, las que tocan ficheros sensibles ni las que el revisor devolvió dos veces: esas te esperan a ti.</p>
@@ -2003,6 +2058,7 @@ Pasos, convenciones y ejemplos…</textarea>
     if ((f.prefix || '').toUpperCase() !== (project()?.prefix || '')) await api('PATCH', `/api/projects/${projectId}`, { prefix: f.prefix });
     { const hidden = S.projects.filter((x) => !f['vis_' + x.id]).map((x) => x.id); if (hidden.join() !== (S.settings.hiddenProjects || []).join()) await api('POST', '/api/settings', { hiddenProjects: hidden }); }
     if ((f.reviewPolicyAll || 'manual') !== (S.settings.reviewPolicy || 'manual')) await api('POST', '/api/settings', { reviewPolicy: f.reviewPolicyAll });
+    if ((f.coordinator || '') !== (project()?.coordinator || '')) await api('PATCH', `/api/projects/${projectId}`, { coordinator: f.coordinator || '' });
     if ((f.reviewPolicy || '') !== (project()?.reviewPolicy || '')) await api('PATCH', `/api/projects/${projectId}`, { reviewPolicy: f.reviewPolicy || '' });
   }),
 };
@@ -2054,7 +2110,10 @@ function tokensModalBody(pid) {
   const cost = groups.reduce((n, g) => n + g.team.reduce((m, a) => m + (g.costOf(a) || a.usage?.costUsd || 0), 0), 0);
   const accumulated = groups.reduce((n, g) => n + g.ts.reduce((m, t) => m + (t.usage?.total || 0), 0), 0);
   const rows = groups.map((g) => `${groups.length > 1 ? `<tr class="sum-group"><td colspan="10">${esc(g.p.name)} <span class="muted">· ${g.team.length} agente${g.team.length === 1 ? "" : "s"} · ${fmtTok(sumOf(g.team, 'total'))}</span></td></tr>` : ''}${[...g.team].sort(byTotalDesc).map((a) => tokensRow(a, g)).join('')}`).join('');
-  return `<table class="repos sum-detail">
+  const split = engineSplit(groups.flatMap((g) => g.ts), agents);
+  const estAny = Object.values(split.by).some((x) => x.est);
+  const engTable = split.total ? `<table class="repos sum-detail eng-detail"><thead><tr><th>Motor</th><th class="num">Tokens acumulados</th><th class="num">%</th><th class="num">Coste${estAny ? ' (≈ estimado en Codex)' : ''}</th><th class="num">Agentes</th></tr></thead><tbody>${Object.entries(split.by).sort((a, b) => b[1].tokens - a[1].tokens).map(([e, x]) => `<tr><td><b style="color:${ENGINE_COLOR[e]?.[1] || '#9ca3af'}">${esc(ENGINE_COLOR[e]?.[0] || e)}</b></td><td class="num tok">${fmtN(x.tokens)}</td><td class="num">${Math.round((x.tokens / split.total) * 100)} %</td><td class="num">${x.cost ? `${x.est ? '≈ ' : ''}${x.cost.toFixed(2)} $` : '·'}</td><td class="num">${split.agents[e] || 0}</td></tr>`).join('')}</tbody><tfoot><tr><td><b>Total</b></td><td class="num tok">${fmtN(split.total)}</td><td class="num">100 %</td><td class="num">${estAny ? '≈ ' : ''}${Object.values(split.by).reduce((n, x) => n + x.cost, 0).toFixed(2)} $</td><td class="num">${agents.length}</td></tr></tfoot></table><p class="muted sum-note" style="margin:0 0 6px">Todas las tareas${pid === '*' ? '' : ' del proyecto'}, intentos incluidos (también las de agentes que ya no están en el equipo). El coste de Codex es una estimación con la tabla de precios: con suscripción se descuenta de la cuota.</p><h4 class="sum-sub">Por agente</h4>` : '';
+  return `${engTable}<table class="repos sum-detail">
     <thead><tr><th>Agente</th><th>Rol</th><th>Motor · modelo</th><th class="num">Total</th><th class="num">↓ Entrada</th><th class="num">↑ Salida</th><th class="num">⚡ Caché</th><th>Contexto</th><th class="num">Acumulado</th><th class="num">Coste</th></tr></thead>
     <tbody>${rows || '<tr><td colspan="10" class="muted">Sin equipo</td></tr>'}</tbody>
     <tfoot><tr data-sum-totals><td colspan="3"><b>Total</b> <span class="muted">· ${agents.length} agentes</span></td><td class="num tok">${fmtN(sumOf(agents, 'total'))}</td><td class="num">${fmtN(sumOf(agents, 'input'))}</td><td class="num">${fmtN(sumOf(agents, 'output'))}</td><td class="num">${fmtN(sumOf(agents, 'cache'))}</td><td></td><td class="num tok">${fmtN(accumulated)}</td><td class="num">${groups.some((g) => g.team.some(g.estOf)) && cost ? '≈ ' : ''}${cost ? cost.toFixed(2) + ' $' : '·'}</td></tr></tfoot>
@@ -2166,6 +2225,30 @@ function busyCell(busy) {
   const one = busy.length === 1 && busy[0].t ? ` <b>${esc(tcode(busy[0].t))}</b>` : '';
   return `<span class="dot ${busy[0].a.status}"></span>${busy.length} en curso${one}`;
 }
+// Reparto por motor de un conjunto de tareas: tokens acumulados (intentos incluidos) y coste por motor + agentes por motor.
+const ENGINE_COLOR = { claude: ['Claude', '#d97757'], codex: ['Codex', '#10a37f'], local: ['Local', '#60a5fa'], demo: ['Demo', '#9ca3af'] };
+// Tareas antiguas sin el motor guardado: por la fuente de su uso; si no, coste REAL (no estimado) solo lo informa Claude;
+// si no, el motor fijo de su agente.
+const engineOfTask = (t) => t.sessionEngine || t.lastEngine || t.modelHistory?.at(-1)?.engine || (/^codex/.test(t.usage?.source || '') ? 'codex' : /^claude/.test(t.usage?.source || '') ? 'claude' : null)
+  || (t.costUsd && !t.costEstimated ? 'claude' : null) || ((e) => (e && e !== 'auto' ? e : null))(S.agents.find((a) => a.id === t.agentId)?.engine);
+function engineSplit(ts, team = []) {
+  const by = {};
+  for (const t of ts) { const e = engineOfTask(t); if (!e || !(t.usage?.total || t.costUsd)) continue; const x = (by[e] ||= { tokens: 0, cost: 0, est: false }); x.tokens += t.usage?.total || 0; x.cost += t.costUsd || 0; x.est ||= !!t.costEstimated; }
+  const total = Object.values(by).reduce((n, x) => n + x.tokens, 0);
+  const agents = {};
+  for (const a of team) { const e = a.engine === 'auto' ? (a.activeEngine || 'auto') : a.engine; agents[e] = (agents[e] || 0) + 1; }
+  return { by, total, agents };
+}
+function enginesCell(ts, team) {
+  const { by, total, agents } = engineSplit(ts, team);
+  if (!total) return '<span class="muted">—</span>';
+  const parts = Object.entries(by).sort((a, b) => b[1].tokens - a[1].tokens).map(([e, x]) => ({ e, pct: Math.round((x.tokens / total) * 100), ...x }));
+  const name = (e) => ENGINE_COLOR[e]?.[0] || e, color = (e) => ENGINE_COLOR[e]?.[1] || '#9ca3af';
+  const tip = parts.map((x) => `${name(x.e)}: ${x.pct} % · ${fmtTok(x.tokens)}${x.cost ? ` · ${x.est ? '≈ ' : ''}${x.cost.toFixed(2)} $` : ''}`).join('\n')
+    + `\nAgentes: ${Object.entries(agents).map(([e, n]) => `${n} ${e === 'auto' ? 'auto' : name(e)}`).join(' · ') || '—'}\n(tokens acumulados de todas sus tareas, intentos incluidos)`;
+  return `<div class="eng-split" title="${esc(tip)}"><div class="eng-bar">${parts.map((x) => `<i style="width:${x.pct}%;background:${color(x.e)}"></i>`).join('')}</div><span>${parts.filter((x) => x.pct > 0).map((x) => `<b style="color:${color(x.e)}">${name(x.e)}</b> ${x.pct} %`).join(' · ')}</span></div>`;
+}
+
 const SUM_COLS = [['backlog', 'Backlog'], ['todo', 'Por hacer'], ['doing', 'En curso'], ['review', 'Revisión'], ['done', 'Hecho'], ['failed', 'Fallidas'], ['discarded', 'Descartadas']];
 // ── 💸 Costes (FT-76) ──────────────────────────────────────────────────────
 // Datos de GET /api/costs; se piden al abrir la pestaña y cuando cambia el coste acumulado (llega por el SSE), sin polling.
@@ -2252,7 +2335,7 @@ function renderSummary() {
     </div>
     ${quotaBlockHtml()}
     <table class="repos summary">
-      <thead><tr><th>Proyecto</th><th>Estado</th>${SUM_COLS.map(([, l]) => `<th class="num">${l}</th>`).join('')}<th>Equipo</th><th>Trabajando en</th><th>Libres</th><th>Tokens por sesión</th><th class="num">Coste</th><th>Actividad</th></tr></thead>
+      <thead><tr><th>Proyecto</th><th>Estado</th>${SUM_COLS.map(([, l]) => `<th class="num">${l}</th>`).join('')}<th>Equipo</th><th>Trabajando en</th><th>Libres</th><th>Tokens por sesión</th><th>Motores</th><th>Actividad</th></tr></thead>
       <tbody>${shown.map(({ p, ts, team, busy, free, last, cost, open, tokens }) => `
         <tr data-sum-project="${p.id}" class="${p.id === projectId ? 'sel' : ''}">
           <td><b>${esc(p.name)}</b>${p.folder && p.folder !== p.name ? ` <span class="muted">(${esc(p.folder)})</span>` : ''} <span class="muted">${esc(p.prefixDefault || '')}</span>${open ? ` <span title="preguntas pendientes">❓${open}</span>` : ''}</td>
@@ -2262,9 +2345,9 @@ function renderSummary() {
           <td>${busyCell(busy)}</td>
           <td>${free.length ? `<span title="${esc(free.map((a) => a.name).join(', '))}">${free.length} libre${free.length === 1 ? '' : 's'}</span>` : '<span class="muted">—</span>'}</td>
           <td>${tokensCell(p, team, tokens)}</td>
-          <td class="num">${cost ? cost.toFixed(2) + ' $' : '·'}</td>
+          <td>${enginesCell(ts, team)}</td>
           <td class="muted">${last ? 'hace ' + ago(last) : '—'}</td>
-        </tr>`).join('')}${idle.length ? `<tr class="idle-row"><td colspan="${SUM_COLS.length + 8}"><button class="small ghost" data-sum-empty>${sumShowEmpty ? '▾ Ocultar' : '▸ Mostrar'} ${idle.length} proyectos sin equipo ni tareas (${esc(idle.map((r) => r.p.name).join(', '))})</button></td></tr>` : ''}</tbody>${shown.length > 1 ? `<tfoot><tr class="sum-total"><td><b>Total</b></td><td></td><td colspan="${SUM_COLS.length + 3}"></td><td><span class="tok">${fmtTok(shown.reduce((n, r) => n + r.tokens, 0))}</span> ${sumBtn('data-sum-all', '*', 'Ver todos', 'Tokens de todos los agentes, agrupados por proyecto')}</td><td class="num">${shown.reduce((n, r) => n + r.cost, 0).toFixed(2)} $</td><td></td></tr></tfoot>` : ''}
+        </tr>`).join('')}${idle.length ? `<tr class="idle-row"><td colspan="${SUM_COLS.length + 8}"><button class="small ghost" data-sum-empty>${sumShowEmpty ? '▾ Ocultar' : '▸ Mostrar'} ${idle.length} proyectos sin equipo ni tareas (${esc(idle.map((r) => r.p.name).join(', '))})</button></td></tr>` : ''}</tbody>${shown.length > 1 ? `<tfoot><tr class="sum-total"><td><b>Total</b></td><td></td><td colspan="${SUM_COLS.length + 3}"></td><td><span class="tok">${fmtTok(shown.reduce((n, r) => n + r.tokens, 0))}</span> ${sumBtn('data-sum-all', '*', 'Ver todos', 'Tokens de todos los agentes, agrupados por proyecto')}</td><td>${enginesCell(shown.flatMap((r) => r.ts), shown.flatMap((r) => r.team))}</td><td></td></tr></tfoot>` : ''}
     </table>
     <p class="muted" style="margin:8px 2px">Clic en una fila: abre sus tareas. Los datos llegan por SSE: la tabla se actualiza sola.</p>`;
   refreshSumModal();
@@ -2740,6 +2823,12 @@ document.addEventListener('click', async (e) => {
     return;
   }
   if (d.qAnswer) return openQuestion(d.qAnswer);
+  if (d.schedEdit !== undefined) return editSchedule(d.schedEdit);
+  if (d.schedRun) return api('POST', `/api/projects/${projectId}/schedules/${d.schedRun}/run`).then((r) => { toast(r.checking ? 'Comprobando… (si hay algo que hacer, crea la tarea)' : r.skipped ? `Saltada: ${r.skipped}` : `Creada ${r.task}`); setTimeout(openSchedules, r.checking ? 3000 : 0); });
+  if (d.schedToggle) { const x = (await api('GET', `/api/projects/${projectId}/schedules`)).find((y) => y.id === d.schedToggle); return api('PATCH', `/api/projects/${projectId}/schedules/${d.schedToggle}`, { enabled: !x.enabled }).then(openSchedules); }
+  if (d.schedDel) { if (confirm('¿Borrar esta programada? (las tareas ya creadas se quedan)')) api('DELETE', `/api/projects/${projectId}/schedules/${d.schedDel}`).then(openSchedules); return; }
+  if (d.copy) { try { await navigator.clipboard.writeText(d.copy); toast('Copiado'); } catch { prompt('Copia la URL:', d.copy); } return; }
+  if (d.coordApply) return api('POST', `/api/projects/${d.coordApply}/coordinate`).then((r) => toast(r.applied?.length ? `🧑‍✈️ ${r.applied.join(' · ')}` : 'Nada que cambiar ahora'));
   if (d.reviewAgain) return api('POST', `/api/tasks/${d.reviewAgain}/review-again`).then(() => toast('Revisión automática relanzada'));
   if (d.cmemEdit !== undefined) return editClaudeMemory(d.cmemRepo, d.cmemEdit);
   if (d.cmemDel) { if (confirm(`¿Borrar la memoria «${d.cmemDel}»? (también su línea del índice)`)) api('DELETE', cmemUrl(d.cmemRepo, d.cmemDel)).then(() => { toast('Memoria borrada'); renderClaudeMemory(true); }); return; }
