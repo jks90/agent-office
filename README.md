@@ -699,3 +699,14 @@ Captura: `node scripts/preview.mjs out.png --width 1920 --height 1080`.
 En la planta, cada agente lleva siempre una burbuja compacta: icono + código de tarea + estado (`✏️ FT-115 editando…`, `✋ FT-114 en revisión`, `⏳ en cola`, `⛔ bloqueado`, `💤 sin cuota`, `☕ libre`). Al pasar el ratón o seleccionar se expande con la actividad completa. Si dos se pisan (mesas contiguas) se apilan hacia arriba —sin tapar las píldoras de zona ni la pizarra— con una línea fina hasta el avatar. En el edificio no se ven y en pantallas estrechas (<640 px) solo llevan icono + código. El DOM solo se toca cuando cambia el texto.
 
 Ajustes → «Burbujas de estado» (`settings.officeBubbles`, `POST /api/settings`): `'todas'` (por defecto) o `'al pasar'`. Prueba: `node scripts/bubbles-e2e.mjs [captura.png]`.
+
+## 🪑 Mi mesa en la oficina (FT-124)
+
+Cada planta tiene una mesa «Tú» (avatar naranja con corona, en la franja libre a la derecha de QA, calculada desde `floorZones`) con lo que te espera en ESE proyecto: pila de papeles proporcional (máx. 14) y burbuja siempre visible `🔔 3 · ❓1 ✋2` con el desglose por tipo (❓ pregunta · ✋ revisión · ⚠️ cortada · ❌ fallida · 👤 manual · ⏸ cuota · 🧑‍✈️ coordinador). Sin pendientes: `✅ nada te espera`.
+
+- Fuente: la misma lógica que 🔔 Para ti (`inboxItems(projectId)` en `public/app.js`; `mineSummary()` la resume y llega a `office.update({mine, mineByProject})` por el snapshot SSE, sin polling). La burbuja usa el apilado anti-solape de FT-123.
+- Un agente que te espera muestra `❓ te pregunta` / `✋ espera tu revisión` y una línea discontinua une su avatar con tu mesa.
+- Clic en la mesa, en «Tú» o en la burbuja → abre 🔔 Para ti filtrado por ese proyecto (chip con ✕ para quitar el filtro); cada fila lleva sus acciones (contestar / ver la tarea).
+- Vista Edificio: cada planta con avisos muestra un punto naranja con tu número de pendientes.
+
+Prueba: `node scripts/mydesk-e2e.mjs [captura.png]`.
