@@ -11,7 +11,16 @@ quién está trabajando, en qué y quién está en la zona de descanso.
 ```bash
 npm start            # http://127.0.0.1:7420
 npm run dev          # igual, reiniciando al cambiar el servidor
+npm run test:unit    # tests unitarios (FT-160), < 1 s en total
 ```
+
+**Tests unitarios (FT-160).** `node:test` sin dependencias, un fichero por capacidad en `tests/*.test.mjs`
+(`node --test tests/foo.test.mjs` para uno solo): `team-state` (máquina de estados de las tareas: transiciones válidas e
+inválidas, `dependsOn`, revisión/devolución, descartadas, reasignación), `coordinator`, `review` (veredicto y followups,
+freno anti-bucle, unión de `CHANGELOG` con git real en `/tmp`), `quota-ladder` (quota-pause + model-ladder), `stuck` y
+`compact-codes`. Reglas: datos en `AO_DATA_DIR` temporal fijado **antes** del `import()` dinámico de `server/*.js` (nunca `data/`),
+relojes inyectados (`now`), proyecto sin `running` (el `tick` no lanza nada) y sin red ni `claude`/`codex`. Los e2e
+(`scripts/*-e2e.mjs`) siguen siendo la integración. Si un test se cuelga, mira primero los bucles de los parsers (FT-160 arregló uno en `parseVerdict`).
 
 **Se actualiza solo.** Cada 15 min (`AO_UPDATE_MIN`) hace `git fetch`; si va por detrás de su rama remota, el árbol está limpio,
 el avance es *fast-forward* y no hay ningún agente trabajando ni revisando, hace `git pull --ff-only`, avisa por Telegram y se
@@ -497,7 +506,7 @@ Medido el 6 OCT 2026: lo caro no es el arranque (≈31k tokens con `--strict-mcp
 - **Briefing por repo** (`server/briefing.js`): mapa generado con git (carpetas, ficheros grandes a leer por tramos, scripts, e2e, secciones de README/CLAUDE.md, últimos commits), cacheado por commit en `data/briefings/` e inyectado en cada prompt, para que el agente no explore.
 - **Reglas de lectura en el prompt** (`economyBlock` en `team.js`): Grep + Read por tramos en ficheros grandes, sin releer, salidas recortadas, un e2e salvo fallo, una captura.
 - **Tope de gasto por intento** (Ajustes, `maxTaskUsd`, 3 $; `claude --max-budget-usd`): al alcanzarlo la tarea NO falla, va a Revisión con «⚠️ tope de gasto alcanzado»; Devolver le da otro intento desde su rama.
-- **Agente atascado (FT-62)** (`server/stuck.js`, Ajustes ▸ «Detectar agentes atascados»): sobre el stream que ya llega (`AgentToolStarted/Finished` y `t.usage`, igual con `claude`, `codex` y `auto`) detecta: la misma orden o lectura de fichero ≥3 veces sin editar nada entre medias (editar reinicia el contador), ≥4 errores de herramienta seguidos, 25 pasos sin editar en una tarea de código (rol `dev`), el mismo e2e/test fallando igual ≥3 veces y tokens por turno >80 k durante 4 turnos sin cambios en el worktree (`git status` + `git diff --stat`). Todos los umbrales se cambian en Ajustes. Acción escalonada: 1.ª señal → aviso en caliente de redacción neutra («Parece que das vueltas…; cambia de enfoque o termina con lo que tienes y explica qué te bloquea»; Claude por stdin, Codex/demo —sin entrada en caliente— reencolando la misma tarea con el aviso en el prompt); si la señal vuelve a saltar tras el aviso, se corta y la tarea va a Revisión con «⚠️ atascado: <señal>» (como el tope de gasto: lo hecho queda en la rama, `t.stuck`, evento `AgentBlocked {reason:'stuck', signal}`). Prueba: `node scripts/stuck-unit.mjs` (cada señal) y `node scripts/stuck-e2e.mjs` (`claude`/`codex` falsos que repiten una orden: aviso, corte y Revisión).
+- **Agente atascado (FT-62)** (`server/stuck.js`, Ajustes ▸ «Detectar agentes atascados»): sobre el stream que ya llega (`AgentToolStarted/Finished` y `t.usage`, igual con `claude`, `codex` y `auto`) detecta: la misma orden o lectura de fichero ≥3 veces sin editar nada entre medias (editar reinicia el contador), ≥4 errores de herramienta seguidos, 25 pasos sin editar en una tarea de código (rol `dev`), el mismo e2e/test fallando igual ≥3 veces y tokens por turno >80 k durante 4 turnos sin cambios en el worktree (`git status` + `git diff --stat`). Todos los umbrales se cambian en Ajustes. Acción escalonada: 1.ª señal → aviso en caliente de redacción neutra («Parece que das vueltas…; cambia de enfoque o termina con lo que tienes y explica qué te bloquea»; Claude por stdin, Codex/demo —sin entrada en caliente— reencolando la misma tarea con el aviso en el prompt); si la señal vuelve a saltar tras el aviso, se corta y la tarea va a Revisión con «⚠️ atascado: <señal>» (como el tope de gasto: lo hecho queda en la rama, `t.stuck`, evento `AgentBlocked {reason:'stuck', signal}`). Prueba: `npm run test:unit (tests/stuck.test.mjs)` (cada señal) y `node scripts/stuck-e2e.mjs` (`claude`/`codex` falsos que repiten una orden: aviso, corte y Revisión).
 - **Esfuerzo** (Ajustes, `agentEffort`, medio; `claude --effort`).
 - **Reanudar sesión** en reintentos de la misma tarea en su worktree si el anterior acabó hace <50 min (`claude --resume`, la caché de contexto aún vale).
 - **Paridad Codex (FT-57)** — mismas medidas con `codex exec --json` (`server/engines/codex.js`); `team.js` pasa `budgetUsd`/`maxTokens`/`effort`/`resumeSession` a ambos motores (y con `auto`):
@@ -699,7 +708,7 @@ Ajustes ▸ Proyecto: apagado · solo sugerir · automático. Reglas fijas, sin 
 - **(FT-121) Revisión que bloquea** (`reviewPlan()`): tarea en revisión con otras esperándola más de `reviewNudgeMin` → con política automática y sin `reviewRequired` se **lanza ya** la revisión (`review-now`); si es `reviewRequired`, la política es manual o la automática la retuvo → **aviso prioritario** (`review-alert`: evento `ReviewBlocking` + Telegram si está configurado) con «bloquea a N tareas». Una vez por tarea; en «solo sugerir» los avisos salen igualmente.
 - Cada acción lleva su `why` en `coordLog` y se ve en 📊 Resumen («Lo que hizo el coordinador»). Prueba: `scripts/coordinator-reassign-e2e.mjs` (snapshots sintéticos).
 
-Nunca toca a quien trabaja, tiene tareas suyas (asignadas o pausadas) ni al PO; un cambio de plantilla cada 10 min. Sugerencias con «Aplicar» y registro de 24 h en 🔔 Para ti; evento `TeamAdjusted`; `POST /api/projects/:id/coordinate`. Pruebas: `scripts/coordinator-unit.mjs`, `scripts/coordinator-e2e.mjs`.
+Nunca toca a quien trabaja, tiene tareas suyas (asignadas o pausadas) ni al PO; un cambio de plantilla cada 10 min. Sugerencias con «Aplicar» y registro de 24 h en 🔔 Para ti; evento `TeamAdjusted`; `POST /api/projects/:id/coordinate`. Pruebas: `tests/coordinator.test.mjs`, `scripts/coordinator-e2e.mjs`.
 
 ### 🧑‍⚖️ Coordinador / Supervisor de serie (FT-122)
 
