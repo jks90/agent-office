@@ -41,6 +41,7 @@ try {
   for (const id of [...a.team]) await api('PATCH', `/api/projects/${a.id}/team`, { remove: [id] }); // el primer proyecto trae el equipo por defecto
   await api('POST', '/api/agents', { name: 'Ana', role: 'back', engine: 'demo', projectId: a.id });
   const b = await api('POST', '/api/projects', { name: 'Beta', repoPath: mkRepo('beta') });
+  for (const id of [...b.team]) await api('PATCH', `/api/projects/${b.id}/team`, { remove: [id] }); // FT-163: también Beta nace con Coordi (FT-122); el check de 2 agentes visibles cuenta solo a Bea y Beto
   await api('POST', '/api/agents', { name: 'Bea', role: 'front', engine: 'demo', projectId: b.id });
   await api('POST', '/api/agents', { name: 'Beto', role: 'qa', engine: 'demo', projectId: b.id });
   const c = await api('POST', '/api/projects', { name: 'Vacío', repoPath: mkRepo('vacio') });
@@ -53,6 +54,7 @@ try {
   browser = await puppeteer.launch({ executablePath: chrome, headless: 'new', args: ['--no-sandbox', '--disable-gpu', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   const page = await browser.newPage();
   await page.setViewport({ width: 1400, height: 900 });
+  page.setDefaultNavigationTimeout(120000); // FT-163: con la máquina cargada (swiftshader) el networkidle2 tarda más de 30 s
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });

@@ -802,6 +802,8 @@ Prueba: `node scripts/office-panels-e2e.mjs [carpeta]` (1920×1080, 1366×768 y 
 
 Desde FT-122 todo proyecto (también los descubiertos en el workspace) lleva a Coordi (kind `supervisor`). La Oficina decide «un solo proyecto con equipo → planta» contando equipos, así que con varios proyectos nunca entraba en `floor`. `teamProjects()` (`public/app.js`) ya no cuenta a los supervisores: un proyecto solo con Coordi no cuenta como equipo. Prueba: `node scripts/bubbles-e2e.mjs` (Coordi tiene burbuja en la planta).
 
+**FT-163:** `computeFloors()` (`public/office3d.js`) usaba otro criterio que `teamProjects()` y dibujaba una planta para proyectos que solo tenían a Coordi (p. ej. «Vacío»). Ahora aplica el mismo: una planta exige al menos un agente que no sea `supervisor`. `scripts/building-e2e.mjs` vuelve a estar en verde (Beta también se vacía de Coordi de serie en el fixture y la navegación admite 120 s con la máquina cargada).
+
 ### Coordi solo en proyectos creados a mano (FT-127)
 
 El escaneo del workspace ya no crea un Coordi por carpeta descubierta: solo `createProject` lo añade (reutilizando antes un Coordi libre del banquillo; nunca más de uno por proyecto). En los demás sirve «Añadir coordinador» (FT-122). Al arrancar, una migración borra los Coordi de proyectos sin repo y sin tareas (nunca uno con tareas o historial). Prueba: `node scripts/supervisor-e2e.mjs`.
