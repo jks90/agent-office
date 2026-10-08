@@ -90,6 +90,71 @@ export function plan(snap) {
   return actions;
 }
 
+// ── FT-154 · notas de agentes (scores.forCoordinator) ─────────────────────────────────────────────────────────────────
+export const CRITICAL_PRIORITY = 85; // prioridad ≥ 85 (o reviewRequired) = tarea crítica
+export const CRITICAL_MIN = 50;      // a una tarea crítica no va quien tenga menos de esta nota en el rol
+export const UP_BELOW = 55, UP_ABOVE = 70, DOWN_AT = 75, MODEL_MIN_TASKS = 5; // subir/bajar de modelo por rol
+export const BENCH_BELOW = 40, REVIEWER_ABOVE = 85, RECENT = 5;               // plantilla: últimas 5 entregas
+const TIER = [[/haiku/i, 0], [/sonnet/i, 1], [/opus/i, 2]];
+export const tierOf = (m) => TIER.find(([re]) => re.test(String(m || '')))?.[1] ?? null;
+export const isCritical = (t) => !!t.reviewRequired || Number(t.priority) >= CRITICAL_PRIORITY;
+
+// Reparto: de las personas libres que pueden coger la tarea, primero la de mejor nota en ese rol (sin nota = 60, neutra).
+// Las tareas críticas nunca van a quien tenga < CRITICAL_MIN. → { agent, why } (why solo si la nota cambió la decisión)
+export function pickByScore(task, candidates, scores) {
+  const sc = (a) => scores?.byAgentRole?.[`${a.id}|${task.role}`]?.score ?? null;
+  if (!scores || !candidates.length) return { agent: candidates[0] || null, why: null };
+  const crit = isCritical(task);
+  const ok = crit ? candidates.filter((a) => (sc(a) ?? 100) >= CRITICAL_MIN) : candidates;
+  const sorted = [...ok].sort((a, b) => (sc(b) ?? 60) - (sc(a) ?? 60));
+  const agent = sorted[0] || null, first = candidates[0];
+  const code = task.code || task.id;
+  if (!agent) return { agent: null, why: `${code} es crítica y todos los libres tienen menos de ${CRITICAL_MIN} en ${task.role} (${candidates.map((a) => `${a.name} ${sc(a)}`).join(', ')}) → espera` };
+  if (agent.id === first.id) return { agent, why: null };
+  const why = crit && !ok.includes(first)
+    ? `${code} es crítica: no va a ${first.name} (${sc(first)} < ${CRITICAL_MIN}) sino a ${agent.name} (${sc(agent) ?? 'sin nota'})`
+    : `${code} (${task.role}): va a ${agent.name} (nota ${sc(agent) ?? 'sin nota'}) antes que ${first.name} (${sc(first) ?? 'sin nota'})`;
+  return { agent, why };
+}
+
+// Modelo por rol y plantilla. snap: { team, roles, busy, scores, tasks } → acciones; `advisory` = solo sugerencia (salvo delegación).
+// Nunca toca al PO (planner), al coordinador/supervisor ni a quien está trabajando o tiene tareas suyas.
+export function scorePlan(snap) {
+  const { team, roles = {}, busy = new Set(), scores, tasks = [] } = snap;
+  if (!scores) return [];
+  const out = [];
+  const ownsWork = (a) => tasks.some((t) => !['done', 'discarded'].includes(t.status) && (t.assignedAgentId === a.id || t.preferAgentId === a.id || (t.status === 'doing' && t.agentId === a.id)));
+  const free = (a) => !busy.has(a.id) && !ownsWork(a) && !['planner', 'supervisor'].includes(roles[a.role]?.kind);
+  const modelOf = (a) => a.model || roles[a.role]?.model || '';
+
+  // modelo por rol (solo dentro del mismo motor y con modelos de tier conocido)
+  for (const role of new Set(scores.roleModels.map((x) => x.role))) {
+    const rows = scores.roleModels.filter((x) => x.role === role && tierOf(x.model) != null);
+    for (const lo of rows) {
+      const hi = rows.filter((x) => x.engine === lo.engine && tierOf(x.model) > tierOf(lo.model)).sort((a, b) => b.score - a.score)[0];
+      if (!hi || lo.tasks < MODEL_MIN_TASKS) continue;
+      const up = lo.score < UP_BELOW && hi.score > UP_ABOVE;
+      const down = lo.score >= DOWN_AT;
+      if (!up && !down) continue;
+      // sube: los que usan el barato pasan al caro; baja: los que usan el caro (y la nota barata es buena) pasan al barato
+      const from = up ? lo : hi, to = up ? hi : lo;
+      const ids = team.filter((a) => a.role === role && free(a) && tierOf(modelOf(a)) === tierOf(from.model) && (a.engine === from.engine || a.engine === 'auto')).map((a) => a.id);
+      if (!ids.length) continue;
+      out.push({ type: 'model', role, model: to.model, from: from.model, agentIds: ids, advisory: !up,
+        why: up ? `${role}: con ${lo.model} la nota es ${lo.score} (${lo.tasks} entregas) y con ${hi.model} ${hi.score} → sube a ${hi.model}`
+          : `${role}: ${lo.model} saca ${lo.score} (${lo.tasks} entregas) → se puede bajar de ${hi.model} a ${lo.model} para ahorrar` });
+    }
+  }
+  // plantilla: nota de las últimas 5 entregas
+  for (const a of team) {
+    const r = scores.byAgent?.[a.id];
+    if (!r || r.tasks < RECENT || !free(a)) continue;
+    if (r.score < BENCH_BELOW) out.push({ type: 'bench', agentId: a.id, advisory: true, why: `${a.name} saca ${r.score} en sus últimas ${RECENT} tareas → al banquillo o cambiar de rol` });
+    else if (r.score > REVIEWER_ABOVE && !a.autoReviewer) out.push({ type: 'reviewer', agentId: a.id, role: a.role, advisory: true, why: `${a.name} saca ${r.score} en sus últimas ${RECENT} tareas → propuesto como revisor automático de ${a.role}` });
+  }
+  return out;
+}
+
 // FT-121 · revisiones que bloquean. snap: { tasks (del proyecto), reviewPolicy, reviewNudgeMin, now }.
 // Tarea en review con tareas esperándola más de reviewNudgeMin minutos:
 //   · política automática y no reviewRequired → 'review-now' (se lanza ya la revisión, sin esperar al tick) una sola vez (t.blockKicked);

@@ -3,7 +3,7 @@
 const DAY = 86_400_000;
 export const MIN_TASKS = 3; // por debajo no se puntúa (sin muestra suficiente)
 export const REASONS = ['tests-rojos', 'test-inestable', 'seguridad', 'regresion', 'choque-main', 'sin-entregable', 'informe-falso', 'alcance', 'otro'];
-export const DEFAULT_WEIGHTS = { calidad: 35, limpieza: 20, coste: 15, tiempo: 10, fiabilidad: 10, honestidad: 10 };
+export const DEFAULT_WEIGHTS = { calidad: 30, limpieza: 20, coste: 15, tiempo: 5, fiabilidad: 10, honestidad: 10, revisor: 10 }; // FT-153: «revisor» = valoración 1-5 de quien aprueba/devuelve; sin valoraciones se descarta y no pesa
 
 // Orden = prioridad: gana la primera regla que encaja (lo más grave y específico primero).
 const RULES = [
@@ -112,11 +112,12 @@ export function deliveriesOf(t, { events = [], agentNames = {}, regs = new Map()
   const cost = t.costUsd > 0 ? t.costUsd / n : null; // sin telemetría por intento: el coste de la tarea se reparte entre sus entregas
   return Array.from({ length: n }, (_, i) => {
     const rej = rejs[i], at = rej ? rej.at : doneAt(t), a = attemptAt(at, i);
+    const rv = (t.ratings || []).filter((r) => r.n === i && r.rating).pop(); // FT-153: valoración del revisor de ESTA entrega
     const agentId = a.agentId || t.agentId || null;
     return {
       code: t.code || null, role: t.role, agentId, agentName: agentNames[agentId] || a.agentName || t.agentName || RETIRED,
       engine: a.engine || '', model: a.model || '', rejected: !!rej, reason: rej ? rej.reason : null,
-      cut: a.cut || null, costUsd: cost, durationMs: a.startedAt && at ? Math.max(0, at - a.startedAt) : null,
+      rating: rv ? rv.rating : null, ratedBy: rv ? rv.by : null, title: t.title || '', cut: a.cut || null, costUsd: cost, durationMs: a.startedAt && at ? Math.max(0, at - a.startedAt) : null,
       causedRegression: !rej && (regs.get(t.code) || []).length > 0, finishedAt: at || doneAt(t),
     };
   });
@@ -153,6 +154,7 @@ function scoreOf(units, weights, med) {
     tiempo: mean((c) => rel(c.durationMs, med.dur[c.role])),
     fiabilidad: avg((c) => (c.cut ? 0 : 1)),
     honestidad: avg((c) => (has(c, 'informe-falso', 'sin-entregable') ? 0 : 1)),
+    revisor: mean((c) => (c.rating ? (c.rating - 1) / 4 : null)), // FT-153: 1★ = 0, 5★ = 1; las entregas sin valorar no cuentan
   };
   const used = Object.keys(parts).filter((k) => parts[k] != null);
   const total = used.reduce((s, k) => s + weights[k], 0);
@@ -174,6 +176,9 @@ function group(units, keyOf, extra, weights, med, prev, names = {}) {
       key, ...extra(list[0], key), tasks: list.length, scored: !!sc, score: sc?.score ?? null, trend: sc && before ? sc.score - before.score : null, breakdown: sc?.parts || null,
       firstPass: list.filter((c) => !c.rejected).length, returns: list.filter((c) => c.rejected).length, rejectReasons: reasons,
       cut: list.filter((c) => c.cut).length, regressions: list.filter((c) => c.causedRegression).length, autoApproved: list.filter((c) => c.autoApproved).length,
+      stars: (() => { const v = list.map((c) => c.rating).filter(Boolean); return v.length ? +(v.reduce((s, x) => s + x, 0) / v.length).toFixed(1) : null; })(), // FT-153: media de las valoraciones 1-5
+      rated: list.filter((c) => c.rating).length,
+      lastReturns: list.filter((c) => c.rejected).sort((a, b) => b.finishedAt - a.finishedAt).slice(0, 5).map((c) => ({ code: c.code, title: c.title, reason: c.reason, at: c.finishedAt, rating: c.rating })),
       costUsd: +cost.toFixed(4), avgCostUsd: costs.length ? +(cost / costs.length).toFixed(4) : null,
     };
   }).sort((a, b) => (b.score ?? -1) - (a.score ?? -1) || b.tasks - a.tasks);
@@ -212,6 +217,27 @@ export function compute(state, { projectId = '', days = 30, now = Date.now(), es
   };
 }
 
+
+// FT-154 · Notas para el coordinador (server/coordinator.js): { byAgentRole:{'agente|rol':{score,tasks}}, byAgent:{id:{score,tasks}} (últimas 5 entregas),
+// roleModels:[{role,engine,model,score,tasks}] }. Ventana de 90 días y todos los proyectos; la nota solo existe con ≥ MIN_TASKS entregas.
+export function forCoordinator(state, { now = Date.now(), estimates = {}, events = [] } = {}) {
+  const r = compute(state, { days: 90, now, estimates, events });
+  const weights = r.weights;
+  const units = r.tasks.flatMap((c) => c.deliveries.map((d) => ({ ...d })));
+  const med = { cost: {}, dur: {} };
+  for (const role of new Set(units.map((u) => u.role))) {
+    med.cost[role] = median(units.filter((u) => u.role === role).map((u) => u.costUsd).filter((x) => x > 0));
+    med.dur[role] = median(units.filter((u) => u.role === role).map((u) => u.durationMs).filter((x) => x > 0));
+  }
+  const byAgentRole = {}, byAgent = {};
+  for (const row of group(units, (u) => (u.agentId ? `${u.agentId}|${u.role}` : ''), () => ({}), weights, med, [])) if (row.scored) byAgentRole[row.key] = { score: row.score, tasks: row.tasks };
+  for (const id of new Set(units.map((u) => u.agentId).filter(Boolean))) {
+    const last = units.filter((u) => u.agentId === id).sort((a, b) => (a.finishedAt || 0) - (b.finishedAt || 0)).slice(-5);
+    const sc = scoreOf(last, weights, med);
+    if (sc) byAgent[id] = { score: sc.score, tasks: last.length };
+  }
+  return { byAgentRole, byAgent, roleModels: r.roleModels.filter((x) => x.scored).map((x) => ({ role: x.role, engine: x.engine, model: x.model, score: x.score, tasks: x.tasks })) };
+}
 
 // Caché por última tarea: el histórico entero solo se recalcula si cambió algo (nº de tareas, última actualización, devoluciones, pesos).
 let cache = { sig: '', byKey: new Map() };
