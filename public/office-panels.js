@@ -28,7 +28,7 @@ const PANELS = [
   { id: 'usage', title: '⚡ Consumo y cuota', col: 'r', at: 'bottom' },
 ];
 
-export function createOfficePanels({ office, S, projectId, esc, inboxItems, inboxKind, openAgent, openTask, openInbox, quota, api }) {
+export function createOfficePanels({ office, S, projectId, esc, inboxItems, inboxKind, openAgent, openTask, openInbox, quota, api, score }) {
   const root = office.labelRoot.parentElement || office.labelRoot; // FT-138: fuera de labelRoot (overflow:hidden) para poder salirse por abajo
   const box = document.createElement('div');
   box.className = 'op-root';
@@ -91,6 +91,13 @@ export function createOfficePanels({ office, S, projectId, esc, inboxItems, inbo
   const codeOf = (t) => t?.code || '';
   const STATE = { working: '✏️ trabajando', idle: '☕ libre', waiting: '⏳ en cola', blocked: '⛔ bloqueado', paused: '⏸ pausado', failed: '⚠ falló', reviewing: '✋ en revisión' };
 
+  // FT-153: nota 0-100 con tendencia junto al estado (misma línea: no añade alto al panel)
+  function scoreTag(id) {
+    const s = score?.(id);
+    if (!s) return '';
+    const tr = s.trend > 0 ? '↑' : s.trend < 0 ? '↓' : '';
+    return `<span class="${s.score < 60 ? 'op-bad' : 'op-w'}" title="Nota 0-100${s.stars != null ? ` · valoración ${s.stars}/5` : ''}">⭐${s.score}${tr}</span> `;
+  }
   function teamHtml(st) {
     const p = st.projects.find((x) => x.id === projectId());
     const ids = new Set(p?.team || []);
@@ -103,7 +110,7 @@ export function createOfficePanels({ office, S, projectId, esc, inboxItems, inbo
       const since = t && (feed.slice().reverse().find((e) => e.type === 'AgentStarted' && e.agentId === a.id && e.taskId === t.id)?.ts || a.updatedAt);
       const eng = `${a.activeEngine || a.engine || ''}${a.model ? ' · ' + a.model : ''}`;
       return `<div class="op-r" data-agent="${esc(a.id)}" title="${esc(a.activity || '')}"><div style="min-width:0"><b>${esc(a.name)}</b> <span class="op-m">${esc(st.roles?.[a.role]?.name || a.role || '')} · ${esc(short(eng, 28))}</span>
-        <div>${STATE[t?.status === 'review' ? 'reviewing' : a.status] || esc(a.status)}${t ? ` · <b>${esc(codeOf(t))}</b> ${esc(short(t.title, 26))}` : ''}</div></div>
+        <div>${scoreTag(a.id)}${STATE[t?.status === 'review' ? 'reviewing' : a.status] || esc(a.status)}${t ? ` · <b>${esc(codeOf(t))}</b> ${esc(short(t.title, 26))}` : ''}</div></div>
         <span class="op-t">${since ? Math.max(0, Math.round((Date.now() - since) / 60000)) + ' min<br>' : ''}${cost ? money(cost) : ''}</span></div>`;
     }).join('');
   }

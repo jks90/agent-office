@@ -11,7 +11,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { layoutFloor, recommendedFloorSize, toVisualState } from './office-layout.js';
-import { V3, pickLayout, zonesV3, layoutV3, routeV3, ambientPos } from './office-v3.js'; // FT-149: planta por zonas (oficina v3)
+import { V3, pickLayout, zonesV3, layoutV3, routeV3 } from './office-v3.js';
+import { createScheduler, stepScheduler, busyRatio, MAX_AMBIENT as AMBIENT_MAX } from './office-ambient.js'; // FT-150: personajes de ambiente // FT-149: planta por zonas (oficina v3)
 
 // ── Geometría de la sala (en unidades Kenney; los modelos son pequeños ≈ 0,7 m/u) ──
 const RX = 13, RZ = 9, WALL_H = 1.29;
@@ -439,10 +440,11 @@ export class Office3D {
     box(0.08, BOARD.y - BOARD.h / 2, 0.08, 0x8a6a45, BOARD.x + BOARD.w / 2 - 0.15, BOARD.z);
   }
 
-  // Personajes de AMBIENTE (visita y limpieza): decorativos, no son agentes ni cuentan en nada; gris rayado + rombo + rótulo AMBIENTE.
+  // FT-150: personajes de AMBIENTE (visita, mensajero, limpieza, reunión, mantenimiento). Decorativos: no son agentes, no cuentan en nada y
+  // jamás mueven a un agente ni tocan sus burbujas. Reserva fija de 3 figuras con geometría y materiales compartidos; nada se reconstruye por fotograma.
   syncAmbient() {
-    for (const o of this.ambientChars || []) { o.el.remove(); }
-    this.ambientChars = [];
+    for (const o of this.ambientPool || []) { o.el.remove(); this.room?.remove(o.grp); }
+    this.ambientPool = []; this.ambientSched = null;
     if (!this.v3 || !this.labelRoot) return;
     const cv = document.createElement('canvas'); cv.width = cv.height = 16;
     const g = cv.getContext('2d');
@@ -450,32 +452,53 @@ export class Office3D {
     g.strokeStyle = V3.palette.ambient.outline; g.lineWidth = 3;
     for (const k of [-16, 0, 16]) { g.beginPath(); g.moveTo(k, 16); g.lineTo(k + 16, 0); g.stroke(); }
     const tex = new THREE.CanvasTexture(cv); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(1, 3);
-    for (const ch of V3.ambient.characters) {
+    const bodyG = new THREE.CylinderGeometry(0.14, 0.17, 0.4, 10), headG = new THREE.SphereGeometry(0.12, 10, 8), markG = new THREE.OctahedronGeometry(0.1);
+    const bodyM = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 });
+    const headM = new THREE.MeshStandardMaterial({ color: hexInt(V3.palette.ambient.fill), roughness: 0.9 });
+    const markM = new THREE.MeshBasicMaterial({ color: hexInt(V3.palette.ambient.outline) });
+    for (let i = 0; i < AMBIENT_MAX; i++) {
       const grp = new THREE.Group();
-      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.17, 0.4, 14), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 }));
-      body.position.y = 0.3; body.castShadow = true;
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.12, 14, 10), new THREE.MeshStandardMaterial({ color: hexInt(V3.palette.ambient.fill), roughness: 0.9 }));
-      head.position.y = 0.6;
-      const mark = new THREE.Mesh(new THREE.OctahedronGeometry(0.1), new THREE.MeshBasicMaterial({ color: hexInt(V3.palette.ambient.outline) }));
-      mark.position.y = 0.86; mark.scale.y = 1.4;
-      grp.add(body, head, mark);
-      this.room.add(grp);
-      const el = document.createElement('div'); el.className = 'o3d-el o3d-ambient'; el.textContent = ch.label;
+      const body = new THREE.Mesh(bodyG, bodyM); body.position.y = 0.3; body.castShadow = true;
+      const head = new THREE.Mesh(headG, headM); head.position.y = 0.6;
+      const mark = new THREE.Mesh(markG, markM); mark.position.y = 0.86; mark.scale.y = 1.4;
+      grp.add(body, head, mark); grp.visible = false; this.room.add(grp);
+      const el = document.createElement('div'); el.className = 'o3d-el o3d-ambient'; el.style.opacity = '0';
       this.labelRoot.appendChild(el);
-      this.ambientChars.push({ ch, grp, el });
+      this.ambientPool.push({ grp, el });
     }
+    this.ambientSched = createScheduler(this.activeProjectId || '', this.v3);
+    this.ambientNow = []; this.ambientHidden = 0;
   }
 
   updateAmbient(now) {
-    const still = reducedMotion();
-    for (const o of this.ambientChars || []) {
-      const p = ambientPos(this.v3, o.ch, now, still);
-      o.grp.position.set(p.x, still ? 0 : Math.abs(Math.sin(now * 6)) * 0.03, p.z);
-      o.grp.rotation.y = p.ang;
-      const s = this.project(p.x, 1.15, p.z);
-      o.el.style.left = s.x + 'px'; o.el.style.top = s.y + 'px'; o.el.style.opacity = s.visible ? '1' : '0';
+    const dt = Math.min(0.1, now - (this.ambientT ?? now)); this.ambientT = now; // reanudar tras una pausa no «recupera» el reloj
+    this.ambientClock = (this.ambientClock || 0) + dt * (this.ambientScale || 1);
+    const pool = this.ambientPool || [];
+    const on = this.ambientOn !== false && !reducedMotion() && this.mode === 'floor';
+    const list = on && this.ambientSched ? stepScheduler(this.ambientSched, this.ambientClock, busyRatio(this.visualAgents), { enabled: true }) : [];
+    if (!on && this.ambientSched) this.ambientSched.active = [];
+    // Zonas protegidas (burbujas de agentes y mesa «Tú»), +16 px: el ambiente se oculta solo mientras las tapa.
+    const prot = [];
+    for (const e of this.labelEls.values()) {
+      if (e.pos && e.bubble.style.opacity === '1') { const x = parseFloat(e.bubble.style.left) || 0, y = parseFloat(e.bubble.style.top) || 0; prot.push({ l: x - e.w / 2 - 16, r: x + e.w / 2 + 16, t: y - e.h - 16, b: y + 16 }); }
     }
+    if (this.deskPos) { const d = this.project(this.deskPos.x, 0.5, this.deskPos.z); prot.push({ l: d.x - 60, r: d.x + 60, t: d.y - 50, b: d.y + 40 }); }
+    let hidden = 0;
+    pool.forEach((o, i) => {
+      const c = list[i];
+      if (!c || c.hidden) { o.grp.visible = false; o.el.style.opacity = '0'; return; }
+      o.grp.position.set(c.x, c.dwell ? 0 : Math.abs(Math.sin(now * 6)) * 0.03, c.z);
+      o.grp.rotation.y = c.ang;
+      const s = this.project(c.x, 1.15, c.z);
+      const occ = prot.some((r) => s.x > r.l && s.x < r.r && s.y > r.t - 40 && s.y < r.b);
+      if (occ) hidden++;
+      o.grp.visible = !occ; o.el.style.opacity = s.visible && !occ ? '1' : '0';
+      if (o.el.textContent !== c.label) o.el.textContent = c.label;
+      o.el.style.left = s.x + 'px'; o.el.style.top = s.y + 'px';
+    });
+    this.ambientNow = list; this.ambientHidden = hidden;
   }
+
 
   // Leyenda plegable (interruptor): tipo de suelo = tipo de zona; indicador del agente = estado; ambiente aparte.
   buildLegend() {
@@ -488,7 +511,7 @@ export class Office3D {
       + sw(P.work.fill, 'Trabajo · QA · reuniones') + sw(P.waiting.fill, 'Kanban / espera · recepción') + sw(P.rest.fill, 'Café · recreo')
       + sw(P.key.fill, 'PO · despacho') + sw(P.user.fill, 'Tú · avisos') + '</div><div>'
       + sw(st.working, 'trabajando') + sw(st.waiting, 'en cola') + sw(st.reviewing, 'revisando') + sw(st.blocked, 'bloqueado') + sw(st.failed, 'fallo') + sw(st.idle, 'libre')
-      + '</div><small>◇ AMBIENTE (gris rayado): visita y limpieza, solo decorativos; no cuentan como equipo.</small>';
+      + '</div><small>◇ AMBIENTE (gris rayado): visitas, reuniones, reparto, limpieza y mantenimiento (máx. 3), solo decorativos; no cuentan como equipo.</small>';
     const on = (v) => { box.hidden = !v; btn.setAttribute('aria-expanded', String(v)); try { localStorage.setItem('ao.office.legend', v ? '1' : '0'); } catch { /* sin almacenamiento */ } };
     btn.addEventListener('click', () => on(box.hidden));
     let saved = false; try { saved = localStorage.getItem('ao.office.legend') === '1'; } catch { /* sin almacenamiento */ }
@@ -729,7 +752,8 @@ export class Office3D {
   // `agents`/`tasks` son los del proyecto activo (modo `floor`); `projects`/`allAgents`/`allTasks`, todo el
   // estado, para el edificio (modo `building`, FT-46). Si no llegan, se conservan los últimos.
   // `projectId` (FT-47) es el proyecto activo del desplegable: en el edificio su planta va resaltada.
-  update({ agents, tasks, questions, roles, title, selected, projects, allAgents, allTasks, projectId, quota, bubbles, mine, mineByProject }) {
+  update({ agents, tasks, questions, roles, title, selected, projects, allAgents, allTasks, projectId, quota, bubbles, mine, mineByProject, ambient }) {
+    if (ambient !== undefined) this.ambientOn = ambient !== false; // FT-150: settings.officeAmbient (por defecto sí)
     if (bubbles !== undefined) this.bubbleMode = bubbles === 'al pasar' ? 'al pasar' : 'todas'; // FT-123
     if (mine !== undefined) { // FT-124
       this.mine = mine || MINE_NONE;
@@ -842,7 +866,8 @@ export class Office3D {
     const maxProjectFloors = Math.max(1, MAX_FLOORS - 1);
     const list = this.projects
       .map((p) => { const ids = new Set(p.team || []); return { p, team: this.allAgents.filter((a) => ids.has(a.id)) }; })
-      .filter(({ p, team }) => (p.team || []).length > 0 || team.length > 0)
+      // FT-163: igual que teamProjects() de app.js (FT-126): el coordinador de serie (kind supervisor) no cuenta como equipo
+      .filter(({ team }) => team.some((a) => this.roles[a.role]?.kind !== 'supervisor'))
       .sort((a, b) => (a.p.createdAt || 0) - (b.p.createdAt || 0))
       .map(({ p, team }) => {
         const ts = this.allTasks.filter((t) => t.projectId === p.id);
@@ -1235,6 +1260,7 @@ export class Office3D {
       mode: this.mode, officeLevel: this.officeLevel, selectedAgentId: this.selected || null, activeProjectId: this.activeProjectId, hoverFloor: this.hoverFloor, hoverActor: this.hoverActor, animating: !!this.camAnim,
       camera: { center: { x: +this.camCenter.x.toFixed(3), y: +this.camCenter.y.toFixed(3), z: +this.camCenter.z.toFixed(3) }, span: +(this.camera.top - this.camera.bottom).toFixed(3) },
       actors: this.actors.size,
+      ambient: { on: this.ambientOn !== false && !reducedMotion(), max: AMBIENT_MAX, visible: (this.ambientNow || []).map((c) => ({ id: c.id, kind: c.kind, x: +c.x.toFixed(2), z: +c.z.toFixed(2) })), occluded: this.ambientHidden || 0, meshes: (this.ambientPool || []).length },
       metrics: { fps: this.metrics.fps, lastRebuildMs: this.metrics.lastRebuildMs, lastFloorCount: this.metrics.lastFloorCount },
       zones: Object.fromEntries(Object.entries(this.floorZones || {}).map(([id, z]) => [id, { label: z.label, x: z.x, z: z.z, w: z.w, d: z.d }])),
       slots,

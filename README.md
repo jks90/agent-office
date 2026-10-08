@@ -785,6 +785,17 @@ En la planta, cada agente lleva siempre una burbuja compacta: icono + código de
 
 Ajustes → «Burbujas de estado» (`settings.officeBubbles`, `POST /api/settings`): `'todas'` (por defecto) o `'al pasar'`. Prueba: `node scripts/bubbles-e2e.mjs [captura.png]`.
 
+## 🚶 Personajes de ambiente de la planta (FT-150)
+
+Implementa `docs/oficina-v3/ambiente.md` + `ambient-contract.json`. La planta v3 tiene vida (visita que saluda en recepción y mira la sala de reuniones, repartidor, persona de la limpieza, reunión de 2–3 figuras y mantenimiento que riega la planta), pero son **figuras decorativas, no agentes**: gris rayado, rombo ◇ y rótulo `… · AMBIENTE`, ids `ambient:*`, fuera de `S.agents`, de las tareas y de los recuentos. Los agentes reales siguen donde dice su estado; el ambiente jamás los mueve ni ocupa sus mesas (solo usa pasillos, recepción y la sala de reuniones).
+
+- **Cuándo salen** (`public/office-ambient.js`, lógica pura): ventana de admisión de 30 s; se elige el episodio vencido más antiguo que quepa; fase inicial por hash FNV-1a de `project.id` (sin `Math.random`). Cupo según lo ocupado que esté el equipo real: quieto ≤3 figuras, mixto 2 (cadencia ×1,5), muy ocupado 1 (×2, sin reuniones). Tope duro: **3 a la vez**. Si sube la carga no entran más y los presentes salen por donde vinieron. Equipo vacío → sin ambiente.
+- **Rendimiento**: reserva fija de 3 figuras con geometrías y materiales compartidos, creadas al montar la planta; por fotograma solo se mueven. Reloj = segundos visibles (delta ≤0,1 s al reanudar).
+- **Convivencia**: si una figura quedaría bajo una burbuja de agente o la mesa «Tú» (+16 px) se oculta mientras la tapa; la burbuja nunca cede.
+- **Interruptor**: Ajustes → «Personajes de ambiente» (`settings.officeAmbient`, `POST /api/settings`, **activado por defecto**). Con `prefers-reduced-motion` no hay ambiente.
+- Pendiente del diseño: sofá de visitas e impresora (mantenimiento solo riega la planta), carrito de limpieza y recorte por colisiones reales con los modelos.
+- QA: `aoOffice.debugState().ambient`; para acelerar, `aoOffice.ambientScale = 40`. Prueba: `node scripts/office-ambient-e2e.mjs` (y `office-fidelity-e2e` sigue en verde).
+
 ## 🪑 Mi mesa en la oficina (FT-124)
 
 Cada planta tiene una mesa «Tú» (avatar naranja con corona, en la franja libre a la derecha de QA, calculada desde `floorZones`) con lo que te espera en ESE proyecto: pila de papeles proporcional (máx. 14) y burbuja siempre visible `🔔 3 · ❓1 ✋2` con el desglose por tipo (❓ pregunta · ✋ revisión · ⚠️ cortada · ❌ fallida · 👤 manual · ⏸ cuota · 🧑‍✈️ coordinador). Sin pendientes: `✅ nada te espera`.
@@ -817,6 +828,8 @@ Prueba: `node scripts/office-panels-e2e.mjs [carpeta]` (1920×1080, 1366×768 y 
 ### Entrada directa a la planta con Coordi de serie (FT-126)
 
 Desde FT-122 todo proyecto (también los descubiertos en el workspace) lleva a Coordi (kind `supervisor`). La Oficina decide «un solo proyecto con equipo → planta» contando equipos, así que con varios proyectos nunca entraba en `floor`. `teamProjects()` (`public/app.js`) ya no cuenta a los supervisores: un proyecto solo con Coordi no cuenta como equipo. Prueba: `node scripts/bubbles-e2e.mjs` (Coordi tiene burbuja en la planta).
+
+**FT-163:** `computeFloors()` (`public/office3d.js`) usaba otro criterio que `teamProjects()` y dibujaba una planta para proyectos que solo tenían a Coordi (p. ej. «Vacío»). Ahora aplica el mismo: una planta exige al menos un agente que no sea `supervisor`. `scripts/building-e2e.mjs` vuelve a estar en verde (Beta también se vacía de Coordi de serie en el fixture y la navegación admite 120 s con la máquina cargada).
 
 ### Coordi solo en proyectos creados a mano (FT-127)
 
@@ -881,9 +894,11 @@ Implementa el diseño de Codex (`docs/oficina-v3/planta.md` + `visual-contract-v
 
 - **Ficha por tarea terminada**: aprobada a la primera, nº de devoluciones y motivo, coste frente a la estimación de su rol, duración, si se cortó (`stuck`/`budgetHit`/`cuts`), si la aprobó el revisor automático o una persona y si causó una regresión (otra tarea la cita como «Regresión FT-xxx» / «rompe FT-xxx»).
 - **Motivo de cada devolución** (reglas sobre la nota): `tests-rojos`, `test-inestable`, `seguridad`, `regresion`, `choque-main`, `sin-entregable`, `informe-falso`, `alcance`, `otro`. `reject()` lo guarda en `t.rejectReasons` (y `t.cuts` si se cortó); en el histórico se deduce de `reviewLog`, eventos `TaskReviewed` y `feedback`.
-- **Puntuación 0-100** con `settings.scoreWeights` (`POST /api/settings`): calidad 35 · limpieza (sin regresiones ni seguridad) 20 · coste 15 · tiempo 10 · fiabilidad 10 · honestidad 10. Ventana de 30 días con tendencia frente a los 30 anteriores; menos de 3 tareas → sin puntuar.
+- **Puntuación 0-100** con `settings.scoreWeights` (`POST /api/settings`): calidad 30 · limpieza (sin regresiones ni seguridad) 20 · coste 15 · tiempo 5 · fiabilidad 10 · honestidad 10 · nota del revisor 10 (FT-153). Ventana de 30 días con tendencia frente a los 30 anteriores; menos de 3 tareas → sin puntuar.
 - **Se puntúan entregas, no tareas** (corrección de revisión): cada vez que se entregó a Revisión cuenta aparte y se atribuye al agente y modelo del INTENTO que la hizo (`t.attemptsLog` `{attempt, agentId, agentName, engine, model, startedAt, cut}`; en el histórico se deduce de `modelHistory` + eventos `TaskAssigned`/`AgentStarted`/`AgentBlocked` y de la hora de cada devolución, `t.rejectAt`/`reviewLog`). Así una entrega falsa de haiku corregida luego por sonnet penaliza a haiku. Los cortes se acumulan en `t.stuckCount`/`t.budgetHitCount` (`t.stuck` se limpia al reintentar).
 - **Coste y tiempo** frente a la MEDIANA DEL ROL en la ventana: 1 = la mitad o menos, 0 = el triple o más, lineal entre medias. Una entrega sin coste o duración no cuenta; si un grupo no tiene ningún dato, ese componente se descarta y los pesos se reparten entre los demás. El coste de la tarea se reparte a partes iguales entre sus entregas.
+- **Valoración del revisor (FT-153)**: `POST /api/tasks/:id/approve` y `/reject` aceptan `{rating: 1-5, reasons: [...]}` (ambos opcionales; `reasons` ∈ motivos de arriba; 400 si no son válidos, antes de tocar la tarea). En la UI, los diálogos Aprobar/Devolver llevan estrellas y casillas de motivo; el coordinador/supervisor pueden pasar `rating`/`reasons` en su decisión. Se guarda en `t.ratings` `[{n, rating, reasons, by, at}]` (n = entrega valorada) y, al devolver, la primera etiqueta elegida sustituye al motivo deducido del texto. Entra como componente `revisor` = media de (estrellas−1)/4 de las entregas valoradas (sin valoraciones se descarta y los pesos se reparten; configurable en `settings.scoreWeights.revisor`).
+- **Dónde se ve (FT-153)**: la API añade a cada agrupación `stars`/`rated`, `lastReturns` (últimas 5 devoluciones con su motivo) y `avgCostUsd`. La **ficha del agente** (cajón) muestra nota, tendencia ↑↓, estrellas, desglose por criterio, últimas devoluciones y coste medio; el panel **👥 Equipo** de la oficina, `⭐nota↑↓` en la misma línea del estado (sin alto extra); **📊 Resumen**, el ranking de la plantilla y la tabla rol × modelo (nota, ★, coste medio, % a la primera). Los datos se piden a `/api/scores` solo cuando cambia el historial (SSE), sin polling.
 - **Agentes retirados**: se muestra el nombre guardado (`t.agentName`/`attemptsLog`) o «(agente retirado)», nunca el id.
 - **Agregados** por agente, rol, modelo (`motor/modelo`) y rol+modelo (qa-suite con haiku frente a sonnet).
 - `GET /api/scores?projectId=&days=` → `{agents, roles, models, roleModels, tasks, weights}` con desglose. Se calcula al arrancar sobre todo el histórico y se cachea hasta que cambia la última tarea.
