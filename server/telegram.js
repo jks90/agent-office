@@ -5,7 +5,7 @@
 // Sin token o con enabled:false no hace nada. Nunca debe tumbar al orquestador.
 import fs from 'node:fs';
 import path from 'node:path';
-import { bus, DATA_DIR, get } from './store.js';
+import { bus, DATA_DIR, get, log } from './store.js';
 
 const CFG_FILE = path.join(DATA_DIR, 'telegram.json');
 const COOLDOWN_MS = 30 * 60e3; // mismo aviso (tipo + tarea/motor) como mucho cada 30 min
@@ -39,6 +39,115 @@ export async function send(text) {
   }
   return sent;
 }
+
+// ── Confirmaciones con botones ✅/❌ (FT-170) ──────────────────────────────────────────────
+// sendConfirm(texto, id) manda el mensaje con inline_keyboard; un poll de getUpdates (sin webhook, offset persistido)
+// atiende callback_query. waitConfirm(id) → 'yes'|'no'|'timeout'. Estado en data/telegram-confirms.json (sobrevive a un reinicio).
+// Solo vale la respuesta de un chat de data/telegram.json; el resto se ignora y queda en el log (SSE `log`, agente «telegram»).
+const CONFIRM_FILE = path.join(DATA_DIR, 'telegram-confirms.json');
+export const CONFIRM_TTL_MS = 12 * 3600e3;
+const POLL_MS = 3000;
+let now = () => Date.now(); // reloj sustituible en tests
+export const _setClock = (fn) => { now = fn || (() => Date.now()); };
+const waiters = new Map(); // id → [resolve]
+let timer = null;
+
+const note = (line) => log('telegram', line);
+const loadConf = () => { try { return { offset: 0, items: {}, ...JSON.parse(fs.readFileSync(CONFIRM_FILE, 'utf8')) }; } catch { return { offset: 0, items: {} }; } };
+const saveConf = (s) => { try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(CONFIRM_FILE, JSON.stringify(s)); } catch (e) { console.warn('[telegram]', e.message); } };
+const api = async (c, method, body) => {
+  const r = await fetch(`https://api.telegram.org/bot${c.token}/${method}`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(15_000),
+  });
+  if (!r.ok) throw new Error(`${method} ${r.status}`);
+  return (await r.json())?.result;
+};
+const LABEL = { yes: '✅ Publicado', no: '❌ No publicar', timeout: '⌛ Caducado (12 h sin respuesta): NO se publica' };
+
+function settle(s, id, status, note_) {
+  const it = s.items[id];
+  it.status = status; it.resolvedAt = now();
+  saveConf(s);
+  note(`confirmación ${id}: ${status}${note_ ? ` (${note_})` : ''}`);
+  for (const r of waiters.get(id) || []) r(status);
+  waiters.delete(id);
+}
+
+async function markMessages(c, it, status) {
+  for (const m of it.messages || []) {
+    try { await api(c, 'editMessageText', { chat_id: m.chat, message_id: m.id, text: `${it.text}\n\n${LABEL[status]}`, parse_mode: 'HTML', reply_markup: { inline_keyboard: [] } }); }
+    catch (e) { note(`no se pudo editar el mensaje de ${it.id}: ${e.message}`); }
+  }
+}
+
+/** Manda la pregunta con «✅ Publicar / ❌ No». Devuelve cuántos chats la recibieron. */
+export async function sendConfirm(text, id) {
+  const c = config();
+  if (!c.enabled) return 0;
+  id = String(id);
+  const safe = String(text ?? '').split(c.token).join('***');
+  const s = loadConf();
+  const it = s.items[id] = { id, text: safe, status: 'pending', createdAt: now(), messages: [] };
+  for (const chat of c.chats) {
+    try {
+      const res = await api(c, 'sendMessage', {
+        chat_id: chat, text: safe, parse_mode: 'HTML', disable_web_page_preview: true,
+        reply_markup: { inline_keyboard: [[{ text: '✅ Publicar', callback_data: `ao:yes:${id}` }, { text: '❌ No', callback_data: `ao:no:${id}` }]] },
+      });
+      it.messages.push({ chat: String(chat), id: res?.message_id });
+    } catch (e) { note(`fallo al enviar la confirmación ${id}: ${e.message}`); }
+  }
+  saveConf(s);
+  startPolling();
+  return it.messages.length;
+}
+
+/** Espera la respuesta: 'yes' | 'no' | 'timeout'. Una confirmación desconocida cuenta como 'timeout' (nunca publica). */
+export function waitConfirm(id) {
+  id = String(id);
+  const it = loadConf().items[id];
+  if (!it) return Promise.resolve('timeout');
+  if (it.status !== 'pending') return Promise.resolve(it.status);
+  startPolling();
+  return new Promise((res) => { waiters.set(id, [...(waiters.get(id) || []), res]); });
+}
+
+/** Un ciclo: caduca las vencidas y atiende getUpdates. Exportada para tests. */
+export async function pollOnce() {
+  const c = config(), s = loadConf();
+  if (!c.enabled) return;
+  for (const it of Object.values(s.items)) {
+    if (it.status === 'pending' && now() - it.createdAt >= CONFIRM_TTL_MS) { settle(s, it.id, 'timeout'); await markMessages(c, it, 'timeout'); }
+  }
+  if (!Object.values(s.items).some((i) => i.status === 'pending')) return;
+  let updates = [];
+  try { updates = (await api(c, 'getUpdates', { offset: s.offset, timeout: 0, allowed_updates: ['callback_query'] })) || []; }
+  catch (e) { note(`getUpdates: ${e.message}`); return; }
+  for (const u of updates) {
+    s.offset = Math.max(s.offset, u.update_id + 1);
+    const q = u.callback_query;
+    if (!q) continue;
+    const chat = String(q.message?.chat?.id ?? '');
+    if (!c.chats.includes(chat)) { note(`respuesta ignorada de un chat ajeno (${chat || '?'})`); continue; }
+    const m = /^ao:(yes|no):(.+)$/.exec(q.data || ''), it = m && s.items[m[2]];
+    let reply = 'Respuesta no válida';
+    if (it && it.status === 'pending') { settle(s, it.id, m[1], `chat ${chat}`); reply = LABEL[m[1]]; await markMessages(c, it, m[1]); }
+    else if (it) reply = `Ya está resuelta (${it.status})`;
+    try { await api(c, 'answerCallbackQuery', { callback_query_id: q.id, text: reply }); } catch { /* best effort */ }
+  }
+  saveConf(s);
+}
+
+function startPolling() {
+  if (timer) return;
+  timer = setInterval(() => {
+    pollOnce().catch((e) => note(`poll: ${e.message}`));
+    if (!Object.values(loadConf().items).some((i) => i.status === 'pending')) { clearInterval(timer); timer = null; }
+  }, POLL_MS);
+  timer.unref?.();
+}
+// Tras un reinicio, retoma el poll si había confirmaciones pendientes.
+try { if (Object.values(loadConf().items).some((i) => i.status === 'pending') && config().enabled) startPolling(); } catch { /* nunca tumba */ }
 
 /** Texto del aviso para un evento, o null si ese evento no se avisa. */
 export function message(ev) {

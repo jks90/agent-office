@@ -37,6 +37,8 @@ ramas divergentes no toca nada. Estado en `GET /api/version`; `POST /api/version
 **Avisos por Telegram** (revisión pendiente, preguntas, cuota, atascos, tope de gasto, fallos): `data/telegram.json` con
 `{ "enabled": true, "botToken": "…", "chatIds": ["…"] }` (o `AO_TELEGRAM_TOKEN` + `AO_TELEGRAM_CHATS`); prueba con `POST /api/telegram/test`.
 
+**Confirmaciones ✅/❌ por Telegram (FT-170)**: `telegram.sendConfirm(texto, id)` manda el mensaje con botones «✅ Publicar / ❌ No» y `telegram.waitConfirm(id)` devuelve `'yes'|'no'|'timeout'`. Un poll de `getUpdates` (sin webhook, cada 3 s y solo con confirmaciones pendientes) atiende `callback_query` y responde con `answerCallbackQuery`; solo vale un chat de `telegram.json`, los demás se ignoran y quedan en el log (SSE `log`, agente `telegram`). A las 12 h sin respuesta pasa a `timeout` (no se publica) y el mensaje se edita como caducado. Estado y offset en `data/telegram-confirms.json`, así que sobreviven a un reinicio. El token nunca va en el texto. Test: `node --test tests/telegram-confirm.test.mjs`.
+
 El primer arranque crea **«Demo — Tienda online»** con el motor `demo` (simulado, no gasta tokens):
 escribe un objetivo, pulsa **Encargar al PO** y luego **▶ Poner a trabajar**.
 
