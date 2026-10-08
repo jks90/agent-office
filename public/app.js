@@ -4,6 +4,45 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 let S = { projects: [], agents: [], tasks: [], settings: {}, roles: {}, engines: [] };
 let projectId = safeGet('ao:project');
 let drawerAgent = null;
+// ── ⭐ Puntuación de agentes (FT-153): datos de GET /api/scores; se piden cuando cambia el historial (llega por el SSE), sin polling ──
+let scoresData = null, scoresSig = '';
+const REASON_LABEL = { 'tests-rojos': 'tests en rojo', 'test-inestable': 'test inestable', seguridad: 'seguridad', regresion: 'regresión', 'choque-main': 'choque con main', 'sin-entregable': 'sin entregable', 'informe-falso': 'informe falso', alcance: 'alcance', otro: 'otro' };
+function loadScores() {
+  const sig = S.tasks.reduce((n, t) => n + (t.status === 'done' ? 1 + (t.returns || 0) + (t.ratings?.length || 0) : 0), 0) + ':' + S.tasks.reduce((m, t) => Math.max(m, t.status === 'done' ? t.updatedAt || 0 : 0), 0);
+  if (sig === scoresSig) return;
+  scoresSig = sig;
+  api('GET', '/api/scores').then((d) => { scoresData = d; if (drawerAgent) renderDrawer(); officePanels?.update(); if (sumView === 'general' && !$('#summary')?.hidden) renderSummary(); }).catch(() => {});
+}
+// Campos de valoración de los diálogos Aprobar/Devolver: estrellas 1-5 (opcional) y, al devolver, etiquetas de motivo.
+const rateFields = (reasons = false) => `<label>Valoración del trabajo (opcional)</label>
+  <div class="rate-stars" style="display:flex;gap:2px;font-size:1.5em">${[1, 2, 3, 4, 5].map((n) => `<label style="cursor:pointer" title="${n} de 5"><input type="radio" name="rating" value="${n}" style="display:none" onchange="this.closest('.rate-stars').querySelectorAll('span').forEach((s,i)=>s.textContent=i<${n}?'★':'☆')"><span>☆</span></label>`).join('')}</div>
+  ${reasons ? `<label>Motivo (opcional)</label><div class="rate-reasons" style="display:flex;flex-wrap:wrap;gap:4px 10px">${Object.entries(REASON_LABEL).map(([k, l]) => `<label style="display:inline-flex;gap:3px;align-items:center"><input type="checkbox" name="reason" value="${k}"> ${l}</label>`).join('')}</div>` : ''}`;
+const rateBody = (f) => ({ rating: f.rating ? Number(f.rating) : undefined, reasons: [...document.querySelectorAll('#dialog [name=reason]:checked')].map((x) => x.value) });
+const starsTxt =(v) => (v == null ? '' : '★'.repeat(Math.round(v)) + '☆'.repeat(5 - Math.round(v)));
+const trendTxt = (d) => (d == null ? '' : d > 0 ? ` <span class="ok" title="+${d} frente a los 30 días anteriores">↑${d}</span>` : d < 0 ? ` <span class="bad" title="${d} frente a los 30 días anteriores">↓${-d}</span>` : ' <span class="muted" title="igual que los 30 días anteriores">→</span>');
+const scoreAgent = (id) => scoresData?.agents?.find((x) => x.agentId === id) || null;
+const CRIT_LABEL = { calidad: 'Calidad', limpieza: 'Limpieza', coste: 'Coste', tiempo: 'Tiempo', fiabilidad: 'Fiabilidad', honestidad: 'Honestidad', revisor: 'Nota del revisor' };
+function scoreCardHtml(a) {
+  const s = scoreAgent(a.id);
+  if (!s) return '<span class="muted">Calculando…</span>';
+  if (!s.scored) return `<span class="muted">Sin puntuar: ${s.tasks} entrega${s.tasks === 1 ? '' : 's'} en 30 días (mínimo ${scoresData.minTasks}).</span>`;
+  const rows = Object.entries(s.breakdown).map(([k, v]) => `<tr><td>${CRIT_LABEL[k] || k}</td><td class="num">${v.value == null ? '—' : Math.round(v.value * 100) + ' %'}</td><td class="num muted">${v.weight ? v.weight + ' %' : ''}</td></tr>`).join('');
+  const ret = s.lastReturns.length ? `<ul class="agent-activity">${s.lastReturns.map((r) => `<li><span><b>${esc(r.code || '')}</b> ${esc(REASON_LABEL[r.reason] || r.reason || '')}${r.rating ? ' ' + starsTxt(r.rating) : ''}</span><time>${ago(r.at)}</time></li>`).join('')}</ul>` : '<span class="muted">Sin devoluciones</span>';
+  return `<div class="score-head"><b style="font-size:1.4em">${s.score}</b>/100${trendTxt(s.trend)} ${s.stars != null ? `<span class="stars" title="Valoración media del revisor: ${s.stars} (${s.rated} valoradas)">${starsTxt(s.stars)}</span>` : ''}</div>
+    <div class="muted">${s.tasks} entregas · ${s.firstPass} a la primera · coste medio ${usd(s.avgCostUsd)}</div>
+    <table class="repos"><tbody>${rows}</tbody></table><h4 style="margin:6px 0 2px">Últimas devoluciones</h4>${ret}`;
+}
+const scoreCell = (r) => `<td class="num">${r.scored ? `<b>${r.score}</b>${trendTxt(r.trend)}` : '<span class="muted">—</span>'}</td><td class="num">${r.stars != null ? `<span class="stars">${starsTxt(r.stars)}</span>` : '<span class="muted">—</span>'}</td><td class="num">${r.avgCostUsd != null ? usd(r.avgCostUsd) : '—'}</td><td class="num">${r.tasks ? Math.round(100 * r.firstPass / r.tasks) + ' %' : '—'}</td>`;
+function scoresHtml() {
+  const d = scoresData;
+  if (!d) return '';
+  const head = (t) => `<tr><th>${t}</th><th class="num">Nota</th><th class="num">★</th><th class="num">Coste medio</th><th class="num">1ª vez</th><th class="num">Entregas</th></tr>`;
+  const ag = d.agents.filter((x) => !x.retired);
+  return `<div class="section-title">⭐ Ranking de la plantilla (FT-153) <span class="muted">· últimos ${d.days} días</span></div>
+    <table class="repos"><thead>${head('Agente')}</thead><tbody>${ag.map((r) => `<tr data-score-agent="${esc(r.agentId)}"><td>${esc(r.name)} <span class="muted">${esc(r.role || '')}</span></td>${scoreCell(r)}<td class="num">${r.tasks}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">sin entregas</td></tr>'}</tbody></table>
+    <div class="section-title">Rol × modelo</div>
+    <table class="repos"><thead>${head('Rol · modelo')}</thead><tbody>${d.roleModels.map((r) => `<tr><td>${esc(r.role)} · ${esc(r.model)} <span class="muted">${esc(r.engine || '')}</span></td>${scoreCell(r)}<td class="num">${r.tasks}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">sin entregas</td></tr>'}</tbody></table>`;
+}
 let openTaskId = null; // tarea abierta en el modal «Ver la tarea» (FT-2)
 let hostCtx = null, ctxTimer = null, ctxSent = ""; // hostFeatures: lo que el flow-test que nos embebe sabe hacer (p. ej. 'settingsPanel', FT-42)
 let hostFeatures = []; // publicación del contexto (FT-2)
@@ -1042,12 +1081,13 @@ function render() {
     officePanels = createOfficePanels({ office, S: () => S, projectId: () => projectId, esc, inboxItems, inboxKind: INBOX_KIND, api,
       openAgent: (id) => enterAgent(id), openTask: (id) => { const t = S.tasks.find((x) => x.id === id); if (t) openTask(t.id); },
       openInbox: (pid) => { inboxProject = pid || null; showTab('inbox'); renderInbox(); },
-      quota: { name: QUOTA_NAME, worst: quotaWorst, sev: quotaSev } });
+      quota: { name: QUOTA_NAME, worst: quotaWorst, sev: quotaSev }, score: (id) => { const s = scoreAgent(id); return s?.scored ? { score: s.score, trend: s.trend, stars: s.stars } : null; } }); // FT-153
     office.onLabelsTick = () => officePanels.layout();
     office.panels = officePanels; // para QA
   }
   officePanels.update();
   officePanels.layout();
+  loadScores(); // FT-153
   renderSuite();
   renderTeam();
   renderRepos();
@@ -1902,6 +1942,7 @@ function renderDrawer() {
     d.querySelector('[data-f=tool]').textContent = activeTool(a);
     d.querySelector('[data-f=controls]').innerHTML = controlsHtml;
     d.querySelector('[data-f=task]').innerHTML = taskHtml;
+    d.querySelector('[data-f=score]').innerHTML = scoreCardHtml(a);
     d.querySelector('[data-f=current]').textContent = a.activity || (effectiveStatus(a) === 'idle' ? 'Disponible' : meta.label);
     d.querySelector('[data-stop]').hidden = !busy(a);
     return;
@@ -1914,6 +1955,10 @@ function renderDrawer() {
     <section class="agent-panel-card">
       <h3>Tarea actual</h3>
       <div data-f="task"></div>
+    </section>
+    <section class="agent-panel-card">
+      <h3>⭐ Puntuación</h3>
+      <div data-f="score">${scoreCardHtml(a)}</div>
     </section>
     <section class="agent-panel-card">
       <h3>Herramienta activa</h3>
@@ -2517,6 +2562,7 @@ function renderSummary() {
           <td class="muted">${last ? 'hace ' + ago(last) : '—'}</td>
         </tr>`).join('')}${idle.length ? `<tr class="idle-row"><td colspan="${SUM_COLS.length + 8}"><button class="small ghost" data-sum-empty>${sumShowEmpty ? '▾ Ocultar' : '▸ Mostrar'} ${idle.length} proyectos sin equipo ni tareas (${esc(idle.map((r) => r.p.name).join(', '))})</button></td></tr>` : ''}</tbody>${shown.length > 1 ? `<tfoot><tr class="sum-total"><td><b>Total</b></td><td></td><td colspan="${SUM_COLS.length + 3}"></td><td><span class="tok">${fmtTok(shown.reduce((n, r) => n + r.tokens, 0))}</span> ${sumBtn('data-sum-all', '*', 'Ver todos', 'Tokens de todos los agentes, agrupados por proyecto')}</td><td>${enginesCell(shown.flatMap((r) => r.ts), shown.flatMap((r) => r.team))}</td><td></td></tr></tfoot>` : ''}
     </table>
+    ${scoresHtml()}
     <p class="muted" style="margin:8px 2px">Clic en una fila: abre sus tareas. Los datos llegan por SSE: la tabla se actualiza sola.</p>`;
   refreshSumModal();
   const sc = $('#tab-summary-count'); if (sc) sc.textContent = (all.filter((t) => t.status === 'review' && S.projects.find((p) => p.id === t.projectId)?.running).length + qs.length) || ''; // solo lo que pide acción: revisiones de proyectos en marcha + preguntas
@@ -2954,7 +3000,11 @@ document.addEventListener('click', async (e) => {
     return;
   }
   if (d.update) return api('POST', `/api/tasks/${d.update}/update-from-base`).then((r) => toast(r.message));
-  if (d.approve) return api('POST', `/api/tasks/${d.approve}/approve`).then(() => toast('Tarea aprobada ✓'));
+  if (d.approve) { // FT-153: valoración opcional al aprobar
+    const t = S.tasks.find((x) => x.id === d.approve);
+    return dialog(`<h3>Aprobar ${esc(tcode(t))}</h3><p class="muted">${esc(t.title)}</p>${rateFields()}${buttons('✓ Aprobar')}`,
+      (f) => api('POST', `/api/tasks/${t.id}/approve`, rateBody(f)).then(() => toast('Tarea aprobada ✓')));
+  }
   if (d.open) return openTask(d.open);
   if (d.ready) return api('PATCH', `/api/tasks/${d.ready}`, { status: 'todo' });
   if (d.edit) return editTask(d.edit);
@@ -3013,7 +3063,8 @@ document.addEventListener('click', async (e) => {
       <p class="muted">${esc(t.title)}</p>
       <label>Comentarios para el agente (opcional)</label><textarea name="feedback" rows="4" autofocus></textarea>
       ${attachArea()}
-      ${buttons(t.status === 'failed' ? 'Reintentar' : 'Devolver')}`, (f) => api('POST', `/api/tasks/${t.id}/reject`, { ...f, attachments: pendingAttachments }));
+      ${rateFields(true)}
+      ${buttons(t.status === 'failed' ? 'Reintentar' : 'Devolver')}`, (f) => api('POST', `/api/tasks/${t.id}/reject`, { ...f, ...rateBody(f), attachments: pendingAttachments }));
   }
   if (d.diff) {
     const { diff } = await api('GET', `/api/tasks/${d.diff}/diff`);
