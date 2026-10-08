@@ -126,7 +126,10 @@ test('importPackage: un enlace simbólico en el destino se rechaza y no se sigue
 
 test('importPackage de rol: organización no válida y destino existente', () => {
   const r = { format: 'ao-pkg/1', kind: 'role', name: 'revisor', version: '1.0.0', files: [file('roles/revisor.md', 'hola')] };
-  for (const org of ['../x', 'a/b', '..']) assert.throws(() => mkt.importPackage(r, { org }), (e) => e.status === 422);
+  // FT-144 normaliza el nombre de la org a una carpeta segura (no rechaza '../x'); FT-162 ajusta el test.
+  for (const org of ['..', '///', '...']) assert.throws(() => mkt.importPackage(r, { org }), (e) => e.status === 422);
+  const t = mkt.importPackage(r, { org: '../x', overwrite: true }).target;
+  assert.equal(t, path.join(path.dirname(path.dirname(t)), 'x', 'revisor.md'), '../x se normaliza a «x», sin salir de marketplace/');
   assert.ok(mkt.importPackage(r, { org: 'Acme' }).target.endsWith(path.join('marketplace', 'acme', 'revisor.md')));
   assert.throws(() => mkt.importPackage(r, { org: 'Acme' }), (e) => e.status === 409);
   assert.throws(() => mkt.importPackage({ ...r, files: [] }), (e) => e.status === 400);
