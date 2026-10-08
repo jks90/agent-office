@@ -785,6 +785,17 @@ En la planta, cada agente lleva siempre una burbuja compacta: icono + código de
 
 Ajustes → «Burbujas de estado» (`settings.officeBubbles`, `POST /api/settings`): `'todas'` (por defecto) o `'al pasar'`. Prueba: `node scripts/bubbles-e2e.mjs [captura.png]`.
 
+## 🚶 Personajes de ambiente de la planta (FT-150)
+
+Implementa `docs/oficina-v3/ambiente.md` + `ambient-contract.json`. La planta v3 tiene vida (visita que saluda en recepción y mira la sala de reuniones, repartidor, persona de la limpieza, reunión de 2–3 figuras y mantenimiento que riega la planta), pero son **figuras decorativas, no agentes**: gris rayado, rombo ◇ y rótulo `… · AMBIENTE`, ids `ambient:*`, fuera de `S.agents`, de las tareas y de los recuentos. Los agentes reales siguen donde dice su estado; el ambiente jamás los mueve ni ocupa sus mesas (solo usa pasillos, recepción y la sala de reuniones).
+
+- **Cuándo salen** (`public/office-ambient.js`, lógica pura): ventana de admisión de 30 s; se elige el episodio vencido más antiguo que quepa; fase inicial por hash FNV-1a de `project.id` (sin `Math.random`). Cupo según lo ocupado que esté el equipo real: quieto ≤3 figuras, mixto 2 (cadencia ×1,5), muy ocupado 1 (×2, sin reuniones). Tope duro: **3 a la vez**. Si sube la carga no entran más y los presentes salen por donde vinieron. Equipo vacío → sin ambiente.
+- **Rendimiento**: reserva fija de 3 figuras con geometrías y materiales compartidos, creadas al montar la planta; por fotograma solo se mueven. Reloj = segundos visibles (delta ≤0,1 s al reanudar).
+- **Convivencia**: si una figura quedaría bajo una burbuja de agente o la mesa «Tú» (+16 px) se oculta mientras la tapa; la burbuja nunca cede.
+- **Interruptor**: Ajustes → «Personajes de ambiente» (`settings.officeAmbient`, `POST /api/settings`, **activado por defecto**). Con `prefers-reduced-motion` no hay ambiente.
+- Pendiente del diseño: sofá de visitas e impresora (mantenimiento solo riega la planta), carrito de limpieza y recorte por colisiones reales con los modelos.
+- QA: `aoOffice.debugState().ambient`; para acelerar, `aoOffice.ambientScale = 40`. Prueba: `node scripts/office-ambient-e2e.mjs` (y `office-fidelity-e2e` sigue en verde).
+
 ## 🪑 Mi mesa en la oficina (FT-124)
 
 Cada planta tiene una mesa «Tú» (avatar naranja con corona, en la franja libre a la derecha de QA, calculada desde `floorZones`) con lo que te espera en ESE proyecto: pila de papeles proporcional (máx. 14) y burbuja siempre visible `🔔 3 · ❓1 ✋2` con el desglose por tipo (❓ pregunta · ✋ revisión · ⚠️ cortada · ❌ fallida · 👤 manual · ⏸ cuota · 🧑‍✈️ coordinador). Sin pendientes: `✅ nada te espera`.
@@ -817,6 +828,8 @@ Prueba: `node scripts/office-panels-e2e.mjs [carpeta]` (1920×1080, 1366×768 y 
 ### Entrada directa a la planta con Coordi de serie (FT-126)
 
 Desde FT-122 todo proyecto (también los descubiertos en el workspace) lleva a Coordi (kind `supervisor`). La Oficina decide «un solo proyecto con equipo → planta» contando equipos, así que con varios proyectos nunca entraba en `floor`. `teamProjects()` (`public/app.js`) ya no cuenta a los supervisores: un proyecto solo con Coordi no cuenta como equipo. Prueba: `node scripts/bubbles-e2e.mjs` (Coordi tiene burbuja en la planta).
+
+**FT-163:** `computeFloors()` (`public/office3d.js`) usaba otro criterio que `teamProjects()` y dibujaba una planta para proyectos que solo tenían a Coordi (p. ej. «Vacío»). Ahora aplica el mismo: una planta exige al menos un agente que no sea `supervisor`. `scripts/building-e2e.mjs` vuelve a estar en verde (Beta también se vacía de Coordi de serie en el fixture y la navegación admite 120 s con la máquina cargada).
 
 ### Coordi solo en proyectos creados a mano (FT-127)
 
