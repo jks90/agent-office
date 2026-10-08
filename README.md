@@ -829,6 +829,8 @@ Prueba: `node scripts/office-panels-e2e.mjs [carpeta]` (1920×1080, 1366×768 y 
 
 Desde FT-122 todo proyecto (también los descubiertos en el workspace) lleva a Coordi (kind `supervisor`). La Oficina decide «un solo proyecto con equipo → planta» contando equipos, así que con varios proyectos nunca entraba en `floor`. `teamProjects()` (`public/app.js`) ya no cuenta a los supervisores: un proyecto solo con Coordi no cuenta como equipo. Prueba: `node scripts/bubbles-e2e.mjs` (Coordi tiene burbuja en la planta).
 
+**FT-163:** `computeFloors()` (`public/office3d.js`) usaba otro criterio que `teamProjects()` y dibujaba una planta para proyectos que solo tenían a Coordi (p. ej. «Vacío»). Ahora aplica el mismo: una planta exige al menos un agente que no sea `supervisor`. `scripts/building-e2e.mjs` vuelve a estar en verde (Beta también se vacía de Coordi de serie en el fixture y la navegación admite 120 s con la máquina cargada).
+
 ### Coordi solo en proyectos creados a mano (FT-127)
 
 El escaneo del workspace ya no crea un Coordi por carpeta descubierta: solo `createProject` lo añade (reutilizando antes un Coordi libre del banquillo; nunca más de uno por proyecto). En los demás sirve «Añadir coordinador» (FT-122). Al arrancar, una migración borra los Coordi de proyectos sin repo y sin tareas (nunca uno con tareas o historial). Prueba: `node scripts/supervisor-e2e.mjs`.
@@ -883,4 +885,19 @@ Implementa el diseño de Codex (`docs/oficina-v3/planta.md` + `visual-contract-v
 - **⬇ Instalar**: lista los ficheros; skill con código exige 🛡 (`confirmCode`); agente con memoria exige proyecto destino; si ya existe, casilla de sobrescribir.
 - **API local**: `GET /api/marketplace/status`, `GET /api/marketplace/items?scope=&kind=&q=`, `GET|DELETE /api/marketplace/items/:id`, `POST /api/marketplace/items/:id/install {overwrite?, confirmCode?, projectId?}`, `POST /api/marketplace/preview` y `POST /api/marketplace/publish {kind,id,scope,version?,summary?}`.
 - **Guía**: `marketplace.search` (lectura) y `marketplace.install` (siempre 🛡 con la lista de ficheros); `app.navigate` acepta `view=marketplace`.
-- e2e con flow-test y nube simulados: `node scripts/marketplace-cloud-e2e.mjs` (módulo) y `node scripts/marketplace-ui-e2e.mjs [captura.png]` (UI con Chrome; usa catálogo temporal).
+- e2e con flow-test y nube simulados: `node scripts/marketplace-cloud-e2e.mjs` (módulo) y `node scr
+- (FT-152: ver la sección «📊 Puntuación de agentes» al final.)
+
+## 📊 Puntuación de agentes (FT-152)
+
+`server/scores.js` puntúa a la plantilla con funciones puras sobre el historial (tareas + eventos), sin IA.
+
+- **Ficha por tarea terminada**: aprobada a la primera, nº de devoluciones y motivo, coste frente a la estimación de su rol, duración, si se cortó (`stuck`/`budgetHit`/`cuts`), si la aprobó el revisor automático o una persona y si causó una regresión (otra tarea la cita como «Regresión FT-xxx» / «rompe FT-xxx»).
+- **Motivo de cada devolución** (reglas sobre la nota): `tests-rojos`, `test-inestable`, `seguridad`, `regresion`, `choque-main`, `sin-entregable`, `informe-falso`, `alcance`, `otro`. `reject()` lo guarda en `t.rejectReasons` (y `t.cuts` si se cortó); en el histórico se deduce de `reviewLog`, eventos `TaskReviewed` y `feedback`.
+- **Puntuación 0-100** con `settings.scoreWeights` (`POST /api/settings`): calidad 35 · limpieza (sin regresiones ni seguridad) 20 · coste 15 · tiempo 10 · fiabilidad 10 · honestidad 10. Ventana de 30 días con tendencia frente a los 30 anteriores; menos de 3 tareas → sin puntuar.
+- **Se puntúan entregas, no tareas** (corrección de revisión): cada vez que se entregó a Revisión cuenta aparte y se atribuye al agente y modelo del INTENTO que la hizo (`t.attemptsLog` `{attempt, agentId, agentName, engine, model, startedAt, cut}`; en el histórico se deduce de `modelHistory` + eventos `TaskAssigned`/`AgentStarted`/`AgentBlocked` y de la hora de cada devolución, `t.rejectAt`/`reviewLog`). Así una entrega falsa de haiku corregida luego por sonnet penaliza a haiku. Los cortes se acumulan en `t.stuckCount`/`t.budgetHitCount` (`t.stuck` se limpia al reintentar).
+- **Coste y tiempo** frente a la MEDIANA DEL ROL en la ventana: 1 = la mitad o menos, 0 = el triple o más, lineal entre medias. Una entrega sin coste o duración no cuenta; si un grupo no tiene ningún dato, ese componente se descarta y los pesos se reparten entre los demás. El coste de la tarea se reparte a partes iguales entre sus entregas.
+- **Agentes retirados**: se muestra el nombre guardado (`t.agentName`/`attemptsLog`) o «(agente retirado)», nunca el id.
+- **Agregados** por agente, rol, modelo (`motor/modelo`) y rol+modelo (qa-suite con haiku frente a sonnet).
+- `GET /api/scores?projectId=&days=` → `{agents, roles, models, roleModels, tasks, weights}` con desglose. Se calcula al arrancar sobre todo el histórico y se cachea hasta que cambia la última tarea.
+- Prueba: `node scripts/scores-e2e.mjs`.ipts/marketplace-ui-e2e.mjs [captura.png]` (UI con Chrome; usa catálogo temporal).

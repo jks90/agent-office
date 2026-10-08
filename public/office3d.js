@@ -866,7 +866,8 @@ export class Office3D {
     const maxProjectFloors = Math.max(1, MAX_FLOORS - 1);
     const list = this.projects
       .map((p) => { const ids = new Set(p.team || []); return { p, team: this.allAgents.filter((a) => ids.has(a.id)) }; })
-      .filter(({ p, team }) => (p.team || []).length > 0 || team.length > 0)
+      // FT-163: igual que teamProjects() de app.js (FT-126): el coordinador de serie (kind supervisor) no cuenta como equipo
+      .filter(({ team }) => team.some((a) => this.roles[a.role]?.kind !== 'supervisor'))
       .sort((a, b) => (a.p.createdAt || 0) - (b.p.createdAt || 0))
       .map(({ p, team }) => {
         const ts = this.allTasks.filter((t) => t.projectId === p.id);
