@@ -7,8 +7,8 @@ export const DEFAULT_WEIGHTS = { calidad: 30, limpieza: 20, coste: 15, tiempo: 5
 
 // Orden = prioridad: gana la primera regla que encaja (lo más grave y específico primero).
 const RULES = [
-  ['informe-falso', /informe (falso|inventado|enga)|falso|inventad|miente|no coincide con (lo|la)|\b\d+\s*\/\s*\d+\b.*(pero|en realidad|realmente)|en realidad (falla|fallan|no)/],
-  ['seguridad', /seguridad|traversal|inyecci|secreto|credencial|vulnerab|agujero|\bxss\b|\bcsrf\b|token versionad|clave versionad|\.\.\//],
+  ['informe-falso', /informe (falso|inventado|enga)|(trabajo|entrega|resultado|readme|prueba|test)s? (falso|inventad)\w*|inventad|miente|tu (versi[oó]n|readme|informe|texto|documentaci[oó]n) ten[ií]a (errores|fallos|datos incorrectos)|no coincide con (lo|la)|\b\d+\s*\/\s*\d+\b.{0,80}(pero (esas|esos|la tuya|el tuyo|falla|fallan|no )|en realidad|realmente)|en realidad (falla|fallan|no)/],
+  ['seguridad', /seguridad|traversal|inyecci|secreto|\.env\b|admin_token|session_secret|versionad[oa]s? .{0,40}(secret|token|clave|credencial)|credencial|vulnerab|agujero|\bxss\b|\bcsrf\b|token versionad|clave versionad|\.\.\//],
   ['sin-entregable', /sin entregable|no (entreg|dej[oó] (nada|ning))|no hay (cambios|commit|diff|entregable|rama)|sin cambios|rama vac[ií]a|segundo plano|background|nada que revisar/],
   ['test-inestable', /inestable|flaky|intermitente|a veces (falla|pasa)|de forma aleatoria|condici[oó]n de carrera/],
   ['tests-rojos', /(test|tests|prueba|pruebas|e2e|suite|check|lint|build)\b.{0,60}(fall|rojo|roto|no pasa|no pasan|error)|(fall|rojo|roto|no pasa).{0,60}(test|prueba|e2e|suite)/],
@@ -22,6 +22,7 @@ const RULES_FLAT = RULES.map(([k, re]) => [k, new RegExp(flat(re.source), 'i')])
 // Motivo de una devolución a partir de su nota (feedback / reviewNote). Sin nota o sin regla → «otro».
 export function classifyReject(text) {
   const s = flat(text);
+  if (/te corto por .{0,3}atasco/.test(s)) return 'otro'; // FT-155: el corte por atasco ya penaliza «fiabilidad»; no es «sin-entregable» aunque diga «sin cambios en el worktree»
   for (const [k, re] of RULES_FLAT) if (re.test(s)) return k;
   return 'otro';
 }
