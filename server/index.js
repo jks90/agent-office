@@ -297,6 +297,7 @@ const routes = [
     const st = store.get().settings;
     if (typeof b.flowTestUrl === 'string' && b.flowTestUrl.trim()) st.flowTestUrl = b.flowTestUrl.trim().replace(/\/+$/, '').replace(/\/mcp$/, '');
     if (typeof b.workspaceHostDir === 'string') st.workspaceHostDir = b.workspaceHostDir.trim();
+    if (typeof b.officeAmbient === 'boolean') st.officeAmbient = b.officeAmbient; // FT-150: personajes de ambiente de la planta (por defecto on)
     if (typeof b.officePanels === 'boolean') st.officePanels = b.officePanels; // FT-125: paneles de los márgenes de la planta (por defecto on)
     if (['todas', 'al pasar'].includes(b.officeBubbles)) st.officeBubbles = b.officeBubbles; // FT-123
     if (typeof b.quotaGuard === 'boolean') st.quotaGuard = b.quotaGuard; // FT-45
