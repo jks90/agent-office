@@ -887,4 +887,14 @@ Implementa el diseño de Codex (`docs/oficina-v3/planta.md` + `visual-contract-v
 - **Agentes retirados**: se muestra el nombre guardado (`t.agentName`/`attemptsLog`) o «(agente retirado)», nunca el id.
 - **Agregados** por agente, rol, modelo (`motor/modelo`) y rol+modelo (qa-suite con haiku frente a sonnet).
 - `GET /api/scores?projectId=&days=` → `{agents, roles, models, roleModels, tasks, weights}` con desglose. Se calcula al arrancar sobre todo el histórico y se cachea hasta que cambia la última tarea.
-- Prueba: `node scripts/scores-e2e.mjs`.ipts/marketplace-ui-e2e.mjs [captura.png]` (UI con Chrome; usa catálogo temporal).
+- Prueba: `node scripts/scores-e2e.mjs`.
+
+### 🧑‍✈️ El coordinador usa las notas (FT-154)
+
+Reglas puras en `server/coordinator.js` (`pickByScore`, `scorePlan`) sobre `scores.forCoordinator` (90 días, caché de 60 s en `team.js`); cada decisión queda en `p.coordLog` con su motivo. Solo actúa con el coordinador del proyecto encendido.
+
+- **Reparto**: entre varias personas libres que pueden coger la tarea va primero la de mejor nota en ese rol (sin nota = 60). Las tareas críticas (prioridad ≥ 85 o `reviewRequired`) nunca van a quien tenga < 50: si no hay otro, esperan.
+- **Modelo por rol** (mismo motor, ≥ 5 entregas): barato < 55 y el mismo rol con un modelo superior > 70 → sube de modelo (en automático lo aplica a los agentes libres del rol, p. ej. `haiku`→`sonnet`); barato ≥ 75 → propone bajar (solo sugerencia).
+- **Plantilla**: nota < 40 en sus últimas 5 entregas → propuesta de banquillo o cambio de rol; > 85 → propuesto como revisor automático de su rol (`agent.autoReviewer`). Son sugerencias (`coordSuggest`, «Para ti») salvo con delegación (`p.supervisorApproves`).
+- Nunca toca al PO, al coordinador, a quien está trabajando ni a quien tiene tareas suyas.
+- Prueba: `node scripts/coordinator-scores-e2e.mjs` (notas sintéticas por regla).ipts/marketplace-ui-e2e.mjs [captura.png]` (UI con Chrome; usa catálogo temporal).
