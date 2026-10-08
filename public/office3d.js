@@ -71,6 +71,9 @@ function zonesFor(size = DEFAULT_FLOOR_SIZE) {
 const MINE_NONE = { total: 0, counts: {}, items: [] };
 const MINE_ICON = [['question', '❓'], ['review', '✋'], ['cut', '⚠️'], ['failed', '❌'], ['manual', '👤'], ['quota', '⏸'], ['coord', '🧑‍✈️']];
 const mineText = (m) => m.total ? `🔔 ${m.total} · ${MINE_ICON.filter(([k]) => m.counts[k]).map(([k, i]) => i + m.counts[k]).join(' ')}` : '✅ nada te espera';
+// FT-168: icono por zona en el rótulo (Trabajo/QA y Kanban/Recepción comparten color por TIPO, FT-146: el icono las distingue).
+const ZONE_ICON = { development: '💻', qa: '🔍', board: '📋', meeting: '🗣️', po: '🎯', user: '👤', idle: '☕', recreation: '🎮', reception: '🛎️' };
+const zoneText = (id, label) => (ZONE_ICON[id] ? ZONE_ICON[id] + ' ' : '') + label;
 // La mesa va en la franja libre a la derecha de QA (sigue a floorZones, así que se adapta al tamaño de la planta).
 const deskSpot = (zones) => ({ x: zones.qa.x + zones.qa.w / 2 + 0.8, z: 1.7 });
 
@@ -331,7 +334,7 @@ export class Office3D {
     this.zoneLabelEls = ids.map((id) => {
       const el = document.createElement('div');
       el.className = 'o3d-el o3d-zone';
-      el.textContent = this.floorZones[id].label;
+      el.textContent = zoneText(id, this.floorZones[id].label);
       el.dataset.zone = id;
       this.labelRoot.appendChild(el);
       return { id, el };
@@ -1747,7 +1750,7 @@ export class Office3D {
     this.boardLabel.style.left = bp.x + 'px';
     this.boardLabel.style.top = (bp.y - 76) + 'px'; // FT-78 v2: encima de la pizarra, sin tapar «Por hacer»
     this.boardLabel.style.opacity = bp.visible && !this.v3 ? '1' : '0'; // FT-149: en v3 el título y los pendientes van en el rótulo de la zona Kanban
-    if (this.v3) { const zl = this.zoneLabelEls?.find((o) => o.id === 'board'); if (zl) zl.el.textContent = `${this.floorZones.board.label} · ${pend} pendientes`; }
+    if (this.v3) { const zl = this.zoneLabelEls?.find((o) => o.id === 'board'); if (zl) zl.el.textContent = zoneText('board', `${this.floorZones.board.label} · ${pend} pendientes`); }
 
     const seen = new Set();
     this.agents.forEach((agent) => {
@@ -1833,16 +1836,19 @@ export class Office3D {
     const obst = [];
     for (const { el } of this.zoneLabelEls || []) if (el.style.opacity === '1') obst.push(this.boxOf(el, 0.5, 0.5));
     if (this.boardLabel.style.opacity === '1') obst.push(this.boxOf(this.boardLabel, 0.5, 1));
+    // FT-168: también las píldoras de nombre (cada burbuja esquiva las de los demás; la suya queda debajo, unida por --lead)
+    const pillBox = (e) => this.boxOf(e.pill, 0.5, 0);
     const list = [...this.labelEls.values()].filter((e) => e.pos).sort((p, q) => q.pos.y - p.pos.y);
+    const pills = list.filter((e) => e.pill.style.opacity === '1').map((e) => ({ e, b: pillBox(e) }));
     const placed = [];
     for (const e of list) {
       const w = e.w, h = e.h;
       let y = e.pos.y;
       const hit = (b) => e.pos.x - w / 2 < b.r && e.pos.x + w / 2 > b.l && y - h < b.b && y > b.t;
-      for (let i = 0; i < 40; i++) {
-        const o = obst.find(hit) || placed.find(hit);
+      for (let i = 0; i < 60; i++) {
+        const o = obst.find(hit) || placed.find(hit) || pills.find((p) => p.e !== e && hit(p.b))?.b;
         if (!o) break;
-        y = o.t - 2;
+        y = o.t - 3;
       }
       e.bubble.style.setProperty('--lead', Math.max(0, e.pos.y - y) + 'px');
       e.bubble.style.left = e.pos.x + 'px';

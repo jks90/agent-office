@@ -785,6 +785,10 @@ En la planta, cada agente lleva siempre una burbuja compacta: icono + código de
 
 Ajustes → «Burbujas de estado» (`settings.officeBubbles`, `POST /api/settings`): `'todas'` (por defecto) o `'al pasar'`. Prueba: `node scripts/bubbles-e2e.mjs [captura.png]`.
 
+## 🪑 Oficina v3: asientos en su zona y rótulos legibles (FT-168)
+
+Hallazgos de la QA FT-151. (1) Los asientos del contrato ya caen dentro de su zona: el «hasta 2,62 u fuera» venía de que `office-qa-visual-e2e` leía `x,z` de `debugState().zones` como esquina cuando son el **centro**; el e2e mide ya bien y la distancia 0 es un check duro. (2) El anti-solape de burbujas (FT-123) esquiva además las píldoras de nombre de los demás agentes, con 3 px de holgura: dos libres en el sofá no se pisan. (3) Los rótulos de zona llevan icono (💻 Trabajo, 🔍 QA, 📋 Kanban, 🛎️ Recepción, ☕ Descanso…) para distinguir las que comparten color por tipo (FT-146).
+
 ## 🚶 Personajes de ambiente de la planta (FT-150)
 
 Implementa `docs/oficina-v3/ambiente.md` + `ambient-contract.json`. La planta v3 tiene vida (visita que saluda en recepción y mira la sala de reuniones, repartidor, persona de la limpieza, reunión de 2–3 figuras y mantenimiento que riega la planta), pero son **figuras decorativas, no agentes**: gris rayado, rombo ◇ y rótulo `… · AMBIENTE`, ids `ambient:*`, fuera de `S.agents`, de las tareas y de los recuentos. Los agentes reales siguen donde dice su estado; el ambiente jamás los mueve ni ocupa sus mesas (solo usa pasillos, recepción y la sala de reuniones).
