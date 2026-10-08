@@ -11,6 +11,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { layoutFloor, recommendedFloorSize, toVisualState } from './office-layout.js';
+import { V3, pickLayout, zonesV3, layoutV3, routeV3, ambientPos } from './office-v3.js'; // FT-149: planta por zonas (oficina v3)
 
 // ── Geometría de la sala (en unidades Kenney; los modelos son pequeños ≈ 0,7 m/u) ──
 const RX = 13, RZ = 9, WALL_H = 1.29;
@@ -30,7 +31,10 @@ for (const z of DESK_ROWS) for (const x of DESK_COLS) DESKS.push({ x, z });
 const seatOf = (d) => ({ x: d.x, z: d.z + 0.5, corr: d.z + 0.5 });
 
 const BOARD_SPOTS = [{ x: 3.0, z: 1.1, corr: null }, { x: 4.2, z: 1.1, corr: null }];
-const BOARD = { x: 4.15, y: 0.92, z: 0.09, w: 3.5, h: 1.25 }; // FT-78 v2: Kanban grande, foco funcional
+const BOARD_LEGACY = { x: 4.15, y: 0.92, z: 0.09, w: 3.5, h: 1.25 };
+const BOARD_V3 = { x: 12.4, y: 0.95, z: 3.55, w: 1.75, h: 0.92 }; // FT-149: tablero compacto de pie, de cara a la cámara
+let BOARD = BOARD_LEGACY;
+const hexInt = (s) => parseInt(String(s).replace('#', ''), 16); // FT-78 v2: Kanban grande, foco funcional
 
 const BASE_ZONE_STYLE = {
   development: { label: 'Desarrollo', color: 0xd6c3ff, x: 1.9, z: 2.35, w: 3.2, d: 3.25, labelX: 0.75, labelZ: 0.75 },
@@ -198,6 +202,8 @@ export class Office3D {
     this.floorLayout = null;
     this.currentFloorSize = DEFAULT_FLOOR_SIZE;
     this.floorZones = zonesFor(this.currentFloorSize);
+    this.v3 = null;                // FT-149: contrato de planta activo (null = planta heredada, >8 agentes)
+    this.furnSig = '';
     this.visualAgents = [];
     this.hoverActor = null;
     // Modo edificio (FT-46)
@@ -276,7 +282,7 @@ export class Office3D {
   buildFloor() {
     const size = this.currentFloorSize || DEFAULT_FLOOR_SIZE;
     const geo = new THREE.PlaneGeometry(size.rx, size.rz);
-    const mat = new THREE.MeshStandardMaterial({ color: 0xf4efe6, roughness: 0.95, metalness: 0 });
+    const mat = new THREE.MeshStandardMaterial({ color: this.v3 ? hexInt(V3.palette.floor) : 0xf4efe6, roughness: 0.95, metalness: 0 });
     const floor = new THREE.Mesh(geo, mat);
     floor.rotation.x = -Math.PI / 2;
     floor.position.set(size.rx / 2, 0, size.rz / 2);
@@ -288,6 +294,7 @@ export class Office3D {
     this.zoneLabels = [];
     // FT-78 v2: casi alfombras (opacidad 13 %) con un borde fino del color de la zona, como en la referencia
     const rugMat = (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.94, metalness: 0, transparent: true, opacity: 0.13, depthWrite: false });
+    if (this.v3) return this.buildZonesV3();
     for (const [zone, z] of Object.entries(this.floorZones || zonesFor(this.currentFloorSize))) {
       const rug = new THREE.Mesh(new THREE.PlaneGeometry(z.w, z.d), rugMat(z.color));
       rug.rotation.x = -Math.PI / 2;
@@ -306,16 +313,202 @@ export class Office3D {
     }
   }
 
+  // ── FT-149 · Oficina v3: planta por zonas (docs/oficina-v3/planta.md) ──────────────────────
+  // Entrada de los que llegan: la puerta de recepción del contrato; en la planta heredada, la puerta de siempre.
+  entryPoint() {
+    const d = this.v3?.anchors.find((a) => a.id === 'reception-door');
+    return d ? { x: d.x, z: d.z - 0.3 } : doorFor(this.currentFloorSize);
+  }
+
+  // Rótulos permanentes: uno por zona del contrato activo (se recrean solo si cambia el conjunto de zonas).
+  syncZoneLabels() {
+    if (!this.labelRoot) return;
+    const ids = Object.keys(this.floorZones || {});
+    if (ids.join() === this.zoneSig) return;
+    this.zoneSig = ids.join();
+    for (const { el } of this.zoneLabelEls || []) el.remove();
+    this.zoneLabelEls = ids.map((id) => {
+      const el = document.createElement('div');
+      el.className = 'o3d-el o3d-zone';
+      el.textContent = this.floorZones[id].label;
+      el.dataset.zone = id;
+      this.labelRoot.appendChild(el);
+      return { id, el };
+    });
+  }
+
+  // Suelo de cada zona con su material (moqueta/baldosa/madera) y borde del color del TIPO de zona (el estado no pinta suelo).
+  buildZonesV3() {
+    this.zoneLabels = [];
+    const css = (n) => '#' + n.toString(16).padStart(6, '0');
+    const mkTex = (kind, fill, accent, w, d) => {
+      const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+      const g = cv.getContext('2d');
+      g.fillStyle = fill; g.fillRect(0, 0, 64, 64);
+      g.strokeStyle = accent; g.globalAlpha = 0.22; g.lineWidth = 1;
+      const step = kind === 'tile' ? 32 : kind === 'wood' ? 16 : 8;
+      for (let i = 0; i <= 64; i += step) {
+        if (kind !== 'wood') { g.beginPath(); g.moveTo(i, 0); g.lineTo(i, 64); g.stroke(); }
+        g.beginPath(); g.moveTo(0, i); g.lineTo(64, i); g.stroke();
+      }
+      const tex = new THREE.CanvasTexture(cv);
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(w, d); tex.colorSpace = THREE.SRGBColorSpace;
+      return tex;
+    };
+    const strip = (w, d, x, z, color, y) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.02, d), new THREE.MeshBasicMaterial({ color }));
+      m.position.set(x, y, z); this.room.add(m);
+    };
+    const border = (z, inset, t) => {
+      const w = z.w - inset * 2, d = z.d - inset * 2;
+      strip(w, t, z.x, z.z - d / 2 + t / 2, z.color, 0.022); strip(w, t, z.x, z.z + d / 2 - t / 2, z.color, 0.022);
+      strip(t, d, z.x - w / 2 + t / 2, z.z, z.color, 0.022); strip(t, d, z.x + w / 2 - t / 2, z.z, z.color, 0.022);
+    };
+    for (const z of Object.values(this.floorZones)) {
+      const floor = new THREE.Mesh(new THREE.PlaneGeometry(z.w, z.d),
+        new THREE.MeshStandardMaterial({ map: mkTex(z.floor, css(z.fill), css(z.color), z.w, z.d), roughness: 0.95, metalness: 0 }));
+      floor.rotation.x = -Math.PI / 2; floor.position.set(z.x, 0.012, z.z); floor.receiveShadow = true;
+      this.room.add(floor);
+      border(z, 0.02, 0.06);
+      if (z.type === 'user' || z.paletteOverride) border(z, 0.14, 0.05); // «Tú»: borde doble dorado
+    }
+  }
+
+  // Paredes bajas (0,8 u) solo en el fondo y a la izquierda; frente y derecha abiertos a la cámara. Sala de reuniones acristalada.
+  buildWallsV3(size) {
+    const col = hexInt(V3.palette.floor);
+    const wall = (w, h, d, x, z, color, opts = {}) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial({ color, roughness: 0.9, ...opts }));
+      m.position.set(x, h / 2, z); m.castShadow = !opts.transparent; this.room.add(m);
+    };
+    wall(size.rx, 0.8, 0.12, size.rx / 2, -0.06, WALL_TINT);
+    wall(0.12, 0.8, size.rz, -0.06, size.rz / 2, WALL_TINT);
+    const mz = this.floorZones.meeting, door = this.v3.anchors.find((a) => a.id === 'meeting-door');
+    if (!mz) return;
+    const glass = { color: hexInt(V3.palette.glass), transparent: true, opacity: 0.3, depthWrite: false };
+    const zF = mz.z + mz.d / 2, x0 = mz.x - mz.w / 2, x1 = mz.x + mz.w / 2, g0 = door.x - door.w / 2, g1 = door.x + door.w / 2;
+    wall(g0 - x0, 0.55, 0.05, (x0 + g0) / 2, zF, 0, glass);
+    if (x1 > g1) wall(x1 - g1, 0.55, 0.05, (g1 + x1) / 2, zF, 0, glass);
+    wall(0.05, 0.55, mz.d, x1, mz.z, 0, glass);
+  }
+
+  buildFurnitureV3() {
+    const A = this.v3.anchors, get = (id) => A.find((a) => a.id === id);
+    const box = (w, h, d, c, x, z, y = 0, ry = 0) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial({ color: c, roughness: 0.85 }));
+      m.position.set(x, y + h / 2, z); m.rotation.y = ry; m.castShadow = true; m.receiveShadow = true; this.room.add(m); return m;
+    };
+    const WOODC = hexInt(V3.palette.wood);
+    // Despacho del PO: mesa propia, monitor y silla (vacío salvo que haya un PO real).
+    const pd = get('po-desk'), pc = get('po-chair');
+    const desk = this.place('desk', pd.x, pd.z, { ry: 0 });
+    if (desk) { const top = this.topOf(desk); const s = this.place('computerScreen', pd.x, pd.z - 0.1, { ry: 0 }); if (s) s.position.y = top; }
+    this.place('chairDesk', pc.x, pc.z, { ry: 0 });
+    // Reuniones: mesa y cuatro sillas.
+    const mt = get('meeting-table');
+    if (mt) {
+      box(mt.w, 0.06, mt.d, WOODC, mt.x, mt.z, 0.42);
+      box(0.12, 0.42, 0.12, 0x8a6a45, mt.x, mt.z);
+      for (const c of A.filter((a) => a.id.startsWith('meeting-chair'))) this.place('chairDesk', c.x, c.z, { ry: c.rotationY });
+    }
+    // Café / descanso: mostrador con máquina, mesa con silla y sofá de dos plazas.
+    const cc = get('coffee-counter'), cm = get('coffee-machine'), ct = get('cafe-table'), cch = get('cafe-chair');
+    if (cc) box(cc.w, 0.45, cc.d, WOODC, cc.x, cc.z);
+    if (cm) { const m = this.place('kitchenCoffeeMachine', cm.x, cm.z, { ry: Math.PI }); if (m) m.position.y = 0.45; }
+    if (ct) { box(ct.w, 0.05, ct.d, WOODC, ct.x, ct.z, 0.4); box(0.1, 0.4, 0.1, 0x8a6a45, ct.x, ct.z); }
+    if (cch) this.place('chairDesk', cch.x, cch.z + 0.55, { ry: 0 });
+    for (const id of ['idle-sofa', 'recreation-sofa']) { const s = get(id); if (s) this.place('loungeSofa', s.x, s.z, { ry: Math.PI, tint: hexInt(V3.palette.rest.accent) }); }
+    // Recreo: futbolín (tablero verde, laterales de madera, barras).
+    const fb = get('foosball');
+    if (fb) {
+      const g = new THREE.Group(); g.position.set(fb.x, 0, fb.z); g.rotation.y = fb.rotationY; this.room.add(g);
+      const add = (w, h, d, c, y, x = 0, z = 0) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 })); m.position.set(x, y + h / 2, z); m.castShadow = true; g.add(m); };
+      add(fb.w, 0.08, fb.d, 0x2f7d5b, 0.38); add(fb.w, 0.14, 0.06, WOODC, 0.38, 0, fb.d / 2 - 0.03); add(fb.w, 0.14, 0.06, WOODC, 0.38, 0, -fb.d / 2 + 0.03);
+      add(0.06, 0.14, fb.d, WOODC, 0.38, fb.w / 2 - 0.03); add(0.06, 0.14, fb.d, WOODC, 0.38, -fb.w / 2 + 0.03);
+      for (const lx of [-0.4, 0, 0.4]) add(0.04, 0.04, fb.d + 0.3, 0xb0b8c0, 0.54, lx);
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) add(0.08, 0.38, 0.08, 0x8a6a45, 0, sx * (fb.w / 2 - 0.1), sz * (fb.d / 2 - 0.1));
+    }
+    // Recepción: mostrador y felpudo en la puerta; plantas solo en bordes.
+    const rc = get('reception-counter'), em = get('entry-mat');
+    if (rc) box(rc.w, 0.5, rc.d, WOODC, rc.x, rc.z);
+    if (em) box(em.w, 0.02, em.d, 0x6b5a45, em.x, em.z);
+    this.place('pottedPlant', 0.5, this.v3.floor.rz - 0.5, { ry: 0 });
+    this.place('pottedPlant', this.v3.floor.rx - 0.5, this.floorZones.board.z - this.floorZones.board.d / 2 - 0.4, { ry: 0 });
+    // Tablero Kanban: pie central bajo el panel.
+    box(0.08, BOARD.y - BOARD.h / 2, 0.08, 0x8a6a45, BOARD.x - BOARD.w / 2 + 0.15, BOARD.z);
+    box(0.08, BOARD.y - BOARD.h / 2, 0.08, 0x8a6a45, BOARD.x + BOARD.w / 2 - 0.15, BOARD.z);
+  }
+
+  // Personajes de AMBIENTE (visita y limpieza): decorativos, no son agentes ni cuentan en nada; gris rayado + rombo + rótulo AMBIENTE.
+  syncAmbient() {
+    for (const o of this.ambientChars || []) { o.el.remove(); }
+    this.ambientChars = [];
+    if (!this.v3 || !this.labelRoot) return;
+    const cv = document.createElement('canvas'); cv.width = cv.height = 16;
+    const g = cv.getContext('2d');
+    g.fillStyle = V3.palette.ambient.fill; g.fillRect(0, 0, 16, 16);
+    g.strokeStyle = V3.palette.ambient.outline; g.lineWidth = 3;
+    for (const k of [-16, 0, 16]) { g.beginPath(); g.moveTo(k, 16); g.lineTo(k + 16, 0); g.stroke(); }
+    const tex = new THREE.CanvasTexture(cv); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(1, 3);
+    for (const ch of V3.ambient.characters) {
+      const grp = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.17, 0.4, 14), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 }));
+      body.position.y = 0.3; body.castShadow = true;
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.12, 14, 10), new THREE.MeshStandardMaterial({ color: hexInt(V3.palette.ambient.fill), roughness: 0.9 }));
+      head.position.y = 0.6;
+      const mark = new THREE.Mesh(new THREE.OctahedronGeometry(0.1), new THREE.MeshBasicMaterial({ color: hexInt(V3.palette.ambient.outline) }));
+      mark.position.y = 0.86; mark.scale.y = 1.4;
+      grp.add(body, head, mark);
+      this.room.add(grp);
+      const el = document.createElement('div'); el.className = 'o3d-el o3d-ambient'; el.textContent = ch.label;
+      this.labelRoot.appendChild(el);
+      this.ambientChars.push({ ch, grp, el });
+    }
+  }
+
+  updateAmbient(now) {
+    const still = reducedMotion();
+    for (const o of this.ambientChars || []) {
+      const p = ambientPos(this.v3, o.ch, now, still);
+      o.grp.position.set(p.x, still ? 0 : Math.abs(Math.sin(now * 6)) * 0.03, p.z);
+      o.grp.rotation.y = p.ang;
+      const s = this.project(p.x, 1.15, p.z);
+      o.el.style.left = s.x + 'px'; o.el.style.top = s.y + 'px'; o.el.style.opacity = s.visible ? '1' : '0';
+    }
+  }
+
+  // Leyenda plegable (interruptor): tipo de suelo = tipo de zona; indicador del agente = estado; ambiente aparte.
+  buildLegend() {
+    const P = V3.palette, st = P.states;
+    const sw = (c, t) => `<span><i style="background:${c}"></i>${t}</span>`;
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'o3d-legend-btn'; btn.textContent = '🗺 Leyenda'; btn.setAttribute('aria-expanded', 'false');
+    const box = document.createElement('div'); box.className = 'o3d-legend'; box.hidden = true;
+    box.innerHTML = `<b>El color del suelo es el TIPO de zona; el indicador del agente es su ESTADO</b><div>`
+      + sw(P.work.fill, 'Trabajo · QA · reuniones') + sw(P.waiting.fill, 'Kanban / espera · recepción') + sw(P.rest.fill, 'Café · recreo')
+      + sw(P.key.fill, 'PO · despacho') + sw(P.user.fill, 'Tú · avisos') + '</div><div>'
+      + sw(st.working, 'trabajando') + sw(st.waiting, 'en cola') + sw(st.reviewing, 'revisando') + sw(st.blocked, 'bloqueado') + sw(st.failed, 'fallo') + sw(st.idle, 'libre')
+      + '</div><small>◇ AMBIENTE (gris rayado): visita y limpieza, solo decorativos; no cuentan como equipo.</small>';
+    const on = (v) => { box.hidden = !v; btn.setAttribute('aria-expanded', String(v)); try { localStorage.setItem('ao.office.legend', v ? '1' : '0'); } catch { /* sin almacenamiento */ } };
+    btn.addEventListener('click', () => on(box.hidden));
+    let saved = false; try { saved = localStorage.getItem('ao.office.legend') === '1'; } catch { /* sin almacenamiento */ }
+    on(saved);
+    this.wrap.append(btn, box);
+    this.legendEls = [btn, box];
+  }
+
   // FT-124: la mesa del usuario («Tú»): tablero, avatar naranja (distinto de los agentes) y la pila de papeles de sus avisos.
   buildMyDesk() {
-    const s = deskSpot(this.floorZones || zonesFor(this.currentFloorSize));
+    const ua = this.v3?.anchors.find((a) => a.id === 'user-desk');
+    const s = ua ? { x: ua.x, z: ua.z } : deskSpot(this.floorZones || zonesFor(this.currentFloorSize));
+    const dw = ua ? ua.w : 1.1; // FT-149: la mesa «Tú» es más ancha que las demás (1,85 u)
     this.deskPos = s;
     const g = new THREE.Group();
     const mat = (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 });
     const box = (w, h, d, c, x, y, z) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(c)); m.position.set(x, y, z); m.castShadow = true; g.add(m); return m; };
-    box(1.1, 0.06, 0.6, 0xb98a5a, s.x, 0.42, s.z);
-    box(0.06, 0.4, 0.55, 0x8a6a45, s.x - 0.5, 0.2, s.z);
-    box(0.06, 0.4, 0.55, 0x8a6a45, s.x + 0.5, 0.2, s.z);
+    box(dw, 0.06, 0.6, 0xb98a5a, s.x, 0.42, s.z);
+    box(0.06, 0.4, 0.55, 0x8a6a45, s.x - dw / 2 + 0.05, 0.2, s.z);
+    box(0.06, 0.4, 0.55, 0x8a6a45, s.x + dw / 2 - 0.05, 0.2, s.z);
     const body = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.17, 0.4, 14), mat(0xff7a1a)); body.position.set(s.x, 0.32, s.z - 0.55); body.castShadow = true; g.add(body);
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 14, 10), mat(0xffd7b0)); head.position.set(s.x, 0.62, s.z - 0.55); g.add(head);
     const hat = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.16, 4), mat(0xffc400)); hat.position.set(s.x, 0.82, s.z - 0.55); g.add(hat); // corona: «el jefe»
@@ -455,6 +648,7 @@ export class Office3D {
 
   buildWalls() {
     const size = this.currentFloorSize || DEFAULT_FLOOR_SIZE;
+    if (this.v3) return this.buildWallsV3(size);
     const door = doorFor(size);
     const wallBox = this.furnCache.get('wall') && new THREE.Box3().setFromObject(this.furnCache.get('wall'));
     const seg = wallBox ? Math.max(0.5, wallBox.getSize(new THREE.Vector3()).x) : 1;
@@ -479,7 +673,11 @@ export class Office3D {
   rebuildFloorGeometry() {
     this.room.clear();
     this.workstations = [];
-    this.floorZones = zonesFor(this.currentFloorSize);
+    this.v3 = this.currentFloorSize.v3 ? V3.layouts.find((l) => l.id === this.currentFloorSize.v3) : null;
+    BOARD = this.v3 ? BOARD_V3 : BOARD_LEGACY;
+    this.floorZones = this.v3 ? zonesV3(this.v3) : zonesFor(this.currentFloorSize);
+    this.syncZoneLabels();
+    this.syncAmbient();
     this.buildFloor();
     this.buildZones();
     this.buildBoard();
@@ -488,11 +686,13 @@ export class Office3D {
       this.buildWalls();
       this.buildWorkstations();
       this.buildFurniture();
+      if (this.v3) this.buildFurnitureV3();
     }
   }
 
   buildWorkstations() {
-    DESKS.forEach((d) => {
+    const list = this.v3 ? (this.floorLayout?.usedDesks || []).map(({ desk }) => ({ x: desk.x, z: desk.z })) : DESKS;
+    list.forEach((d) => {
       const desk = this.place('desk', d.x, d.z, { ry: 0 });
       if (!desk) return;
       const top = this.topOf(desk);
@@ -503,7 +703,7 @@ export class Office3D {
       const mouse = this.place('computerMouse', d.x + 0.22, d.z + 0.05, { ry: 0 });
       for (const o of [screen, kb, mouse]) if (o) o.position.y = top;
       // Silla del escritorio, el agente se sienta encima mirando al monitor (-z).
-      this.place('chairDesk', d.x, d.z + 0.5, { ry: 0 });
+      this.place('chairDesk', d.x, d.z + (this.v3 ? 0.55 : 0.5), { ry: 0 });
       // Materiales de la pantalla, para encenderla cuando se trabaja.
       const screenMats = [];
       if (screen) screen.traverse((m) => {
@@ -514,6 +714,7 @@ export class Office3D {
   }
 
   buildFurniture() {
+    if (this.v3) return;
     const placed = {};
     for (const f of FURNITURE) placed[f.model] = this.place(f.model, f.x, f.z, { ry: f.ry, tint: f.tint });
     for (const f of MEETING_CHAIRS) this.place(f.model, f.x, f.z, { ry: f.ry });
@@ -550,9 +751,13 @@ export class Office3D {
     if (projectId !== undefined) this.activeProjectId = projectId || null;
     for (const [id, a] of this.actors) if (!this.agents.some((g) => g.id === id)) { this.scene.remove(a.group); this.actors.delete(id); this.removeLabel(id); }
     this.visualAgents = this.agents.map((a) => toVisualState(a, this.tasks, this.questions));
-    this.floorLayout = layoutFloor(this.visualAgents, { tasks: this.tasks, questions: this.questions }, this.floorLayout);
+    const lay3 = pickLayout(this.visualAgents.length);
+    if (lay3) this.floorLayout = layoutV3(this.visualAgents, new Map(this.agents.map((a) => [a.id, a.role])), lay3, this.floorLayout);
+    else this.floorLayout = layoutFloor(this.visualAgents, { tasks: this.tasks, questions: this.questions }, this.floorLayout);
     const nextSize = this.floorLayout?.size || recommendedFloorSize(this.visualAgents.length);
-    if (nextSize.kind !== this.currentFloorSize.kind) {
+    const sig3 = this.floorLayout?.sig || '';
+    if (nextSize.kind !== this.currentFloorSize.kind || sig3 !== this.furnSig) {
+      this.furnSig = sig3;
       this.currentFloorSize = nextSize;
       this.rebuildFloorGeometry();
       if (this.mode === 'floor') this.resize();
@@ -1050,7 +1255,7 @@ export class Office3D {
     const gltf = this.charCache.get(file);
     const group = new THREE.Group();
     const a = {
-      group, x: doorFor(this.currentFloorSize).x, z: doorFor(this.currentFloorSize).z, corr: null, path: [], key: null, moving: false,
+      group, x: this.entryPoint().x, z: this.entryPoint().z, corr: null, path: [], key: null, moving: false,
       loungeSpot: index, enterAt: now + this.queuedCount(now) * 0.9, nextWander: Infinity,
       angle: Math.PI, targetAngle: Math.PI, mixer: null, actions: {}, clip: null, current: null,
       emote: null, lastEmote: null, sitSpot: false,
@@ -1106,7 +1311,7 @@ export class Office3D {
     if (s) return {
       key: `${s.zone}:${s.module}:${s.index}:${visual.status}`,
       zone: s.zone, x: s.x, z: s.z, corr: s.z,
-      sit: ['development', 'qa', 'docs', 'review', 'meeting'].includes(s.zone) && visual.status !== 'waiting',
+      sit: ['development', 'qa', 'docs', 'review', 'meeting', 'po', 'idle'].includes(s.zone) && visual.status !== 'waiting',
       status: visual.status,
     };
     const spot = a?.loungeSpot ?? index;
@@ -1115,6 +1320,11 @@ export class Office3D {
   }
 
   route(c, t) {
+    if (this.v3) {
+      // FT-149: por los pasillos del contrato; el recién llegado (sin dest) sale de recepción por el pasillo sur
+      const from = c.dest ? { ...c.dest, x: c.x, z: c.dest.z } : { zone: 'reception', x: c.x, z: c.z };
+      return routeV3(this.v3, from, t);
+    }
     const pts = [];
     const za = c.corr ?? c.z;
     const zb = t.corr ?? t.z;
@@ -1138,7 +1348,7 @@ export class Office3D {
 
   // Los que no tienen tarea dan vueltas por la oficina: café, libros, kanban, charla…
   planWander(agent, a, visual, fuel, now) {
-    if (visual.status !== 'idle' || !fuel) { a.wander = null; a.nextWander = Infinity; return; }
+    if (this.v3 || visual.status !== 'idle' || !fuel) { a.wander = null; a.nextWander = Infinity; return; }
     if (a.nextWander === Infinity) a.nextWander = now + rand(2, 9);
     const w = a.wander;
     if (w) {
@@ -1411,7 +1621,16 @@ export class Office3D {
       .o3d-floor.active{border-color:#3ad0a0;box-shadow:0 0 0 2px rgba(58,208,160,.45),0 2px 10px rgba(0,0,0,.3)}
       .o3d-floor.grouped{color:#64748b;font-style:italic}
       .o3d-floor.guide{background:rgba(6,40,30,.9);border-color:rgba(52,211,153,.45)}
-      .o3d-labels:not(.building) .o3d-floor,.o3d-labels.building .o3d-pill,.o3d-labels.building .o3d-bubble,.o3d-labels.building .o3d-board,.o3d-labels.building .o3d-zone{display:none}`;
+      .o3d-labels:not(.building) .o3d-floor,.o3d-labels.building .o3d-pill,.o3d-labels.building .o3d-bubble,.o3d-labels.building .o3d-board,.o3d-labels.building .o3d-zone,.o3d-labels.building .o3d-ambient{display:none}
+      .o3d-ambient{font-size:10px;font-weight:700;letter-spacing:.04em;color:#475569;background:repeating-linear-gradient(135deg,#cfd7df 0 6px,#e6ebf0 6px 12px);border:1px dashed #657586;border-radius:6px;padding:1px 7px}
+      .o3d-zone.v3{color:#203247}
+      .o3d-legend-btn{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);z-index:5;font:700 12px system-ui,sans-serif;color:#f3f6fa;background:#1c293c;border:1px solid #53677D;border-radius:999px;padding:5px 14px;cursor:pointer}
+      .o3d-legend{position:absolute;left:50%;bottom:44px;transform:translateX(-50%);z-index:5;max-width:min(720px,90%);font:12px system-ui,sans-serif;color:#f3f6fa;background:rgba(28,41,60,.96);border:1px solid #53677D;border-radius:12px;padding:10px 14px;display:flex;flex-direction:column;gap:6px}
+      .o3d-legend[hidden]{display:none}
+      .o3d-legend div{display:flex;flex-wrap:wrap;gap:4px 14px}
+      .o3d-legend span{display:inline-flex;align-items:center;gap:5px}
+      .o3d-legend i{width:12px;height:12px;border-radius:3px;border:1px solid #53677D;display:inline-block}
+      .o3d-legend small{color:#cbd5e1}`;
     document.head.appendChild(style);
     this.labelRoot = document.createElement('div');
     this.labelRoot.className = 'o3d-labels';   // con la clase `building` solo se ven las etiquetas de las plantas (FT-47)
@@ -1424,14 +1643,9 @@ export class Office3D {
     this.boardLabel = document.createElement('div');
     this.boardLabel.className = 'o3d-el o3d-board';
     this.labelRoot.appendChild(this.boardLabel);
-    this.zoneLabelEls = Object.entries(BASE_ZONE_STYLE).map(([id, z]) => {
-      const el = document.createElement('div');
-      el.className = 'o3d-el o3d-zone';
-      el.textContent = z.label;
-      el.dataset.zone = id;
-      this.labelRoot.appendChild(el);
-      return { id, el };
-    });
+    this.zoneLabelEls = []; this.zoneSig = '';
+    this.syncZoneLabels();
+    this.buildLegend();
   }
 
   removeLabel(id) { const e = this.labelEls.get(id); if (e) { e.pill.remove(); e.bubble.remove(); this.labelEls.delete(id); } }
@@ -1475,6 +1689,8 @@ export class Office3D {
   }
 
   updateLabels(now) {
+    if (this.legendEls) for (const e of this.legendEls) e.style.display = this.v3 && this.mode === 'floor' ? '' : 'none';
+    if (this.v3) this.updateAmbient(now);
     const actorMarks = this.agents.map((agent) => {
       const a = this.actors.get(agent.id);
       return a?.group.visible ? this.project(a.x, 0.7, a.z) : null;
@@ -1484,6 +1700,13 @@ export class Office3D {
       if (!z) { el.style.opacity = '0'; continue; }
       // FT-78 v2: anclada DENTRO de su zona (esquina del fondo-izquierda), por encima del suelo; píldora del color de la zona
       // QA queda delante del Kanban: su píldora va a la esquina del fondo-derecha; la del Kanban, bajo la pizarra.
+      if (z.v3) {
+        // FT-149: rótulo horizontal en el borde posterior de la zona (ancla del contrato); el del Kanban baja bajo el tablero
+        const p3 = this.project(z.labelAnchor.x, id === 'board' ? 0.05 : z.labelAnchor.y, z.labelAnchor.z + (id === 'board' ? 0.45 : 0));
+        if (!el.dataset.c) { el.classList.add('v3'); el.style.background = '#' + z.fill.toString(16).padStart(6, '0'); el.style.borderColor = '#' + z.color.toString(16).padStart(6, '0'); el.dataset.c = '1'; }
+        el.style.left = p3.x + 'px'; el.style.top = p3.y + 'px'; el.style.opacity = p3.visible ? '1' : '0';
+        continue;
+      }
       const ax = id === 'qa' ? z.x + z.w / 2 - Math.min(0.75, z.w * 0.3) : z.x - z.w / 2 + Math.min(0.9, z.w * 0.3);
       const p = id === 'board' ? this.project(BOARD.x - BOARD.w / 2 + 0.55, BOARD.y - BOARD.h / 2 - 0.12, BOARD.z + 0.12)
         : this.project(ax, 0.5, z.z - z.d / 2 + 0.3);
@@ -1498,7 +1721,8 @@ export class Office3D {
     this.boardLabel.textContent = `${this.title || 'Proyecto'} · ${pend} pendientes`;
     this.boardLabel.style.left = bp.x + 'px';
     this.boardLabel.style.top = (bp.y - 76) + 'px'; // FT-78 v2: encima de la pizarra, sin tapar «Por hacer»
-    this.boardLabel.style.opacity = bp.visible ? '1' : '0';
+    this.boardLabel.style.opacity = bp.visible && !this.v3 ? '1' : '0'; // FT-149: en v3 el título y los pendientes van en el rótulo de la zona Kanban
+    if (this.v3) { const zl = this.zoneLabelEls?.find((o) => o.id === 'board'); if (zl) zl.el.textContent = `${this.floorZones.board.label} · ${pend} pendientes`; }
 
     const seen = new Set();
     this.agents.forEach((agent) => {

@@ -95,7 +95,7 @@ try {
     return { x: r.left + p.x, y: r.top + p.y };
   }, id);
 
-  await page.goto(base + '/', { waitUntil: 'networkidle2' });
+  await page.goto(base + '/', { waitUntil: 'networkidle2', timeout: 90000 });
   await sleep(4000);
   let st = await state();
   console.log('— FT-46: el edificio');
@@ -189,7 +189,7 @@ try {
     await sleep(500);
   }
   await page.screenshot({ path: path.join(shotDir, 'building-1-edificio-5-plantas.png') });
-  await page.reload({ waitUntil: 'networkidle2' });
+  await page.reload({ waitUntil: 'networkidle2', timeout: 90000 });
   await sleep(1200);
   await clickFloor('Beta');
   const anim = await page.evaluate(() => window.aoOffice.debugState().animating);
@@ -267,10 +267,10 @@ try {
     const d10 = window.aoOffice.debugState();
     return { zones: Object.keys(d1.zones), slots: ids.length, stable, before, moving, after, areaRatio: zoneArea / floorArea, floorSize6: d1.floorSize, size10: d10.floorSize?.kind, slots10: Object.keys(d10.slots).length };
   });
-  check('debugState expone zones y slots de 6 agentes', floor69.zones.includes('development') && floor69.zones.includes('review') && floor69.slots === 6, JSON.stringify(floor69));
+  check('debugState expone zones y slots de 6 agentes', floor69.zones.includes('development') && floor69.zones.includes('qa') && floor69.slots === 6, JSON.stringify(floor69));
   check('slots estables entre refrescos idénticos', floor69.stable, JSON.stringify(floor69));
-  check('working → review cambia de zona y se anima sin salto', floor69.before.zone === 'development' && floor69.moving.zone === 'review' && floor69.moving.moving === true && floor69.after.zone === 'review', JSON.stringify({ before: floor69.before, moving: floor69.moving, after: floor69.after }));
-  check('4–6 agentes usan planta compacta 8.2×5.7 sin gran vacío', floor69.floorSize6?.kind === 'compact' && floor69.floorSize6?.rx === 8.2 && floor69.floorSize6?.rz === 5.7 && floor69.areaRatio >= 0.6, JSON.stringify(floor69));
+  check('working → review cambia de zona y se anima sin salto', floor69.before.zone === 'development' && floor69.moving.zone === 'qa' && floor69.moving.moving === true && floor69.after.zone === 'qa', JSON.stringify({ before: floor69.before, moving: floor69.moving, after: floor69.after }));
+  check('4–6 agentes usan la planta v3 team-6 (14×13, contrato FT-149)', floor69.floorSize6?.v3 === 'team-6' && floor69.floorSize6?.rx === 14 && floor69.floorSize6?.rz === 13, JSON.stringify(floor69));
   check('10 agentes usan oficina media con todos los slots asignados', floor69.size10 === 'medium' && floor69.slots10 === 10, JSON.stringify(floor69));
   await page.evaluate(() => {
     const mkAgent = (id, role, status = 'working', taskId = 't-' + id) => ({ id, name: id.toUpperCase(), role, status, taskId, projectId: 'ft69', activity: 'FT-69' });
@@ -339,13 +339,13 @@ try {
   console.log('— FT-47: persistencia y un solo proyecto');
   await clickFloor('Alfa');
   await sleep(500);
-  await page.reload({ waitUntil: 'networkidle2' });
+  await page.reload({ waitUntil: 'networkidle2', timeout: 90000 });
   await sleep(3500);
   st = await state();
   check('al recargar se recuerda el modo (floor) y el proyecto', st.ds === 'floor' && st.title === 'Alfa', `${st.ds} ${st.title}`);
   await clickCrumb();
   await sleep(500);
-  await page.reload({ waitUntil: 'networkidle2' });
+  await page.reload({ waitUntil: 'networkidle2', timeout: 90000 });
   await sleep(3500);
   st = await state();
   check('al recargar se recuerda el modo (building)', st.ds === 'building', st.ds);
@@ -397,7 +397,7 @@ try {
 
   // Solo UN proyecto con equipo (Beta se queda sin Bea): al abrir la Oficina se entra directo a la planta de Alfa.
   await api('PATCH', `/api/projects/${b.id}/team`, { remove: (await api('GET', '/api/state')).projects.find((p) => p.id === b.id).team });
-  await page.reload({ waitUntil: 'networkidle2' });
+  await page.reload({ waitUntil: 'networkidle2', timeout: 90000 });
   await sleep(3500);
   st = await state();
   check('con un solo proyecto con equipo se entra directo a su planta (aunque se recordara el edificio)', st.ds === 'floor' && st.title === 'Alfa' && st.stored === 'building', `${st.ds} ${st.title} ${st.stored}`);

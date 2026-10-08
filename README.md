@@ -11,7 +11,23 @@ quién está trabajando, en qué y quién está en la zona de descanso.
 ```bash
 npm start            # http://127.0.0.1:7420
 npm run dev          # igual, reiniciando al cambiar el servidor
+npm run test:unit    # tests unitarios (FT-160), < 1 s en total
 ```
+
+**Tests unitarios (FT-160).** `node:test` sin dependencias, un fichero por capacidad en `tests/*.test.mjs`
+(`node --test tests/foo.test.mjs` para uno solo): `team-state` (máquina de estados de las tareas: transiciones válidas e
+inválidas, `dependsOn`, revisión/devolución, descartadas, reasignación), `coordinator`, `review` (veredicto y followups,
+freno anti-bucle, unión de `CHANGELOG` con git real en `/tmp`), `quota-ladder` (quota-pause + model-ladder), `stuck` y
+`compact-codes`. Reglas: datos en `AO_DATA_DIR` temporal fijado **antes** del `import()` dinámico de `server/*.js` (nunca `data/`),
+relojes inyectados (`now`), proyecto sin `running` (el `tick` no lanza nada) y sin red ni `claude`/`codex`. Los e2e
+(`scripts/*-e2e.mjs`) siguen siendo la integración. Si un test se cuelga, mira primero los bucles de los parsers (FT-160 arregló uno en `parseVerdict`).
+
+**Tests de seguridad (FT-161).** `tests/security/*.test.mjs` (también dentro de `npm run test:unit`): `marketplace` (rutas con `..`,
+nombres, topes, sha, campos inesperados/`__proto__`, secretos, symlinks), `browser-policy` (orígenes, esquemas `file/javascript/data`,
+red local, confirmaciones 🛡), `guide-policy` (read/execute/write/irreversible, `confirmOnce`, destructivos), `secrets` (la contraseña
+autorizada no llega a state/audit/logs/modal), `ao-nobg` (hook FT-134 por stdin/stdout) y `ao-mcp` (puente MCP contra un AgentOffice
+simulado en loopback). Los bugs hallados no se arreglan en silencio: sus tests llevan `todo` y están listados en
+`~/JksDocs/workspace/flowtest/tests-unitarios/AUDITORIA.md` (fc/fd en `isLocalHost`, `null` en `ao-mcp` y `ao-nobg`, permisos 0644 de los datos).
 
 **Se actualiza solo.** Cada 15 min (`AO_UPDATE_MIN`) hace `git fetch`; si va por detrás de su rama remota, el árbol está limpio,
 el avance es *fast-forward* y no hay ningún agente trabajando ni revisando, hace `git pull --ff-only`, avisa por Telegram y se
@@ -497,7 +513,7 @@ Medido el 6 OCT 2026: lo caro no es el arranque (≈31k tokens con `--strict-mcp
 - **Briefing por repo** (`server/briefing.js`): mapa generado con git (carpetas, ficheros grandes a leer por tramos, scripts, e2e, secciones de README/CLAUDE.md, últimos commits), cacheado por commit en `data/briefings/` e inyectado en cada prompt, para que el agente no explore.
 - **Reglas de lectura en el prompt** (`economyBlock` en `team.js`): Grep + Read por tramos en ficheros grandes, sin releer, salidas recortadas, un e2e salvo fallo, una captura.
 - **Tope de gasto por intento** (Ajustes, `maxTaskUsd`, 3 $; `claude --max-budget-usd`): al alcanzarlo la tarea NO falla, va a Revisión con «⚠️ tope de gasto alcanzado»; Devolver le da otro intento desde su rama.
-- **Agente atascado (FT-62)** (`server/stuck.js`, Ajustes ▸ «Detectar agentes atascados»): sobre el stream que ya llega (`AgentToolStarted/Finished` y `t.usage`, igual con `claude`, `codex` y `auto`) detecta: la misma orden o lectura de fichero ≥3 veces sin editar nada entre medias (editar reinicia el contador), ≥4 errores de herramienta seguidos, 25 pasos sin editar en una tarea de código (rol `dev`), el mismo e2e/test fallando igual ≥3 veces y tokens por turno >80 k durante 4 turnos sin cambios en el worktree (`git status` + `git diff --stat`). Todos los umbrales se cambian en Ajustes. Acción escalonada: 1.ª señal → aviso en caliente de redacción neutra («Parece que das vueltas…; cambia de enfoque o termina con lo que tienes y explica qué te bloquea»; Claude por stdin, Codex/demo —sin entrada en caliente— reencolando la misma tarea con el aviso en el prompt); si la señal vuelve a saltar tras el aviso, se corta y la tarea va a Revisión con «⚠️ atascado: <señal>» (como el tope de gasto: lo hecho queda en la rama, `t.stuck`, evento `AgentBlocked {reason:'stuck', signal}`). Prueba: `node scripts/stuck-unit.mjs` (cada señal) y `node scripts/stuck-e2e.mjs` (`claude`/`codex` falsos que repiten una orden: aviso, corte y Revisión).
+- **Agente atascado (FT-62)** (`server/stuck.js`, Ajustes ▸ «Detectar agentes atascados»): sobre el stream que ya llega (`AgentToolStarted/Finished` y `t.usage`, igual con `claude`, `codex` y `auto`) detecta: la misma orden o lectura de fichero ≥3 veces sin editar nada entre medias (editar reinicia el contador), ≥4 errores de herramienta seguidos, 25 pasos sin editar en una tarea de código (rol `dev`), el mismo e2e/test fallando igual ≥3 veces y tokens por turno >80 k durante 4 turnos sin cambios en el worktree (`git status` + `git diff --stat`). Todos los umbrales se cambian en Ajustes. Acción escalonada: 1.ª señal → aviso en caliente de redacción neutra («Parece que das vueltas…; cambia de enfoque o termina con lo que tienes y explica qué te bloquea»; Claude por stdin, Codex/demo —sin entrada en caliente— reencolando la misma tarea con el aviso en el prompt); si la señal vuelve a saltar tras el aviso, se corta y la tarea va a Revisión con «⚠️ atascado: <señal>» (como el tope de gasto: lo hecho queda en la rama, `t.stuck`, evento `AgentBlocked {reason:'stuck', signal}`). Prueba: `npm run test:unit (tests/stuck.test.mjs)` (cada señal) y `node scripts/stuck-e2e.mjs` (`claude`/`codex` falsos que repiten una orden: aviso, corte y Revisión).
 - **Esfuerzo** (Ajustes, `agentEffort`, medio; `claude --effort`).
 - **Reanudar sesión** en reintentos de la misma tarea en su worktree si el anterior acabó hace <50 min (`claude --resume`, la caché de contexto aún vale).
 - **Paridad Codex (FT-57)** — mismas medidas con `codex exec --json` (`server/engines/codex.js`); `team.js` pasa `budgetUsd`/`maxTokens`/`effort`/`resumeSession` a ambos motores (y con `auto`):
@@ -699,7 +715,7 @@ Ajustes ▸ Proyecto: apagado · solo sugerir · automático. Reglas fijas, sin 
 - **(FT-121) Revisión que bloquea** (`reviewPlan()`): tarea en revisión con otras esperándola más de `reviewNudgeMin` → con política automática y sin `reviewRequired` se **lanza ya** la revisión (`review-now`); si es `reviewRequired`, la política es manual o la automática la retuvo → **aviso prioritario** (`review-alert`: evento `ReviewBlocking` + Telegram si está configurado) con «bloquea a N tareas». Una vez por tarea; en «solo sugerir» los avisos salen igualmente.
 - Cada acción lleva su `why` en `coordLog` y se ve en 📊 Resumen («Lo que hizo el coordinador»). Prueba: `scripts/coordinator-reassign-e2e.mjs` (snapshots sintéticos).
 
-Nunca toca a quien trabaja, tiene tareas suyas (asignadas o pausadas) ni al PO; un cambio de plantilla cada 10 min. Sugerencias con «Aplicar» y registro de 24 h en 🔔 Para ti; evento `TeamAdjusted`; `POST /api/projects/:id/coordinate`. Pruebas: `scripts/coordinator-unit.mjs`, `scripts/coordinator-e2e.mjs`.
+Nunca toca a quien trabaja, tiene tareas suyas (asignadas o pausadas) ni al PO; un cambio de plantilla cada 10 min. Sugerencias con «Aplicar» y registro de 24 h en 🔔 Para ti; evento `TeamAdjusted`; `POST /api/projects/:id/coordinate`. Pruebas: `tests/coordinator.test.mjs`, `scripts/coordinator-e2e.mjs`.
 
 ### 🧑‍⚖️ Coordinador / Supervisor de serie (FT-122)
 
@@ -826,6 +842,17 @@ El escaneo del workspace ya no crea un Coordi por carpeta descubierta: solo `cre
 
 La posición de cada agente REAL la decide solo su estado: `working` → su mesa sentado (sin paseos); `reviewing` → Revisión; esperando o bloqueado por dependencia → Kanban; espera al usuario (❓/✋) → junto a la mesa «Tú»; `failed` y sin cuota → su mesa; libre → Descanso. Solo los libres pasean (`WANDER_SPOTS`: café, nevera, planta, charla). Al cambiar de estado caminan a su sitio nuevo. QA: `aoOffice.simulate(s)` acelera el reloj y `debugState()` da la posición real. Prueba: `node scripts/office-fidelity-e2e.mjs`.
 
+## 🏢 Oficina v3: planta por zonas (FT-149)
+
+Implementa el diseño de Codex (`docs/oficina-v3/planta.md` + `visual-contract-v3.json`, FT-146) en `public/office3d.js`.
+
+- **Contrato**: con 0–8 agentes se usa la planta `team-2/4/6/8` del contrato (`pickLayout` en `public/office-v3.js`); con más de 8 sigue la planta heredada. `public/office-v3-data.js` es un subconjunto minificado del contrato: regénéralo con `node scripts/gen-office-v3-data.mjs`.
+- **Zonas** con suelo propio (moqueta, baldosa, madera), borde del color del tipo y rótulo: Trabajo, Revisión / QA, Reuniones (acristaladas), Café / descanso, Recreo, Recepción / entrada, Kanban / espera (con el nº de pendientes), despacho del PO y mesa «Tú» más ancha con borde doble dorado. Solo hay mesas para los puestos realmente asignados; las rutas van por pasillos.
+- **Posición = estado** (manda sobre FT-148 donde difieren): revisión → zona QA; bloqueado por dependencia se queda en su mesa; libre → sofá del café (o su mesa si no hay plaza); sin deambular de agentes reales.
+- **Ambiente** (visita y limpieza): personajes grises rayados con rombo y rótulo «AMBIENTE», nunca confundibles con agentes; con `prefers-reduced-motion` quedan quietos junto a recepción.
+- **Leyenda** plegable con el botón «🗺 Leyenda» (se recuerda en `localStorage` `ao.office.legend`); oculta en modo edificio.
+- Pruebas: `office-fidelity-e2e`, `bubbles-e2e`, `office-panels-e2e`, `mydesk-e2e`.
+
 ## 🛒 Marketplace: paquetes `ao-pkg/1` de roles, skills y agentes (FT-141)
 
 `server/marketplace.js` exporta e importa paquetes JSON `{format:"ao-pkg/1", kind, name, version, summary, author, files:[{path, content(base64), sha256}], meta, memory?}` (tope 2 MB). No habla con la nube: flow-test hace de puerta (`/account-link/marketplace/*`).
@@ -847,4 +874,19 @@ La posición de cada agente REAL la decide solo su estado: `working` → su mesa
 - **⬇ Instalar**: lista los ficheros; skill con código exige 🛡 (`confirmCode`); agente con memoria exige proyecto destino; si ya existe, casilla de sobrescribir.
 - **API local**: `GET /api/marketplace/status`, `GET /api/marketplace/items?scope=&kind=&q=`, `GET|DELETE /api/marketplace/items/:id`, `POST /api/marketplace/items/:id/install {overwrite?, confirmCode?, projectId?}`, `POST /api/marketplace/preview` y `POST /api/marketplace/publish {kind,id,scope,version?,summary?}`.
 - **Guía**: `marketplace.search` (lectura) y `marketplace.install` (siempre 🛡 con la lista de ficheros); `app.navigate` acepta `view=marketplace`.
-- e2e con flow-test y nube simulados: `node scripts/marketplace-cloud-e2e.mjs` (módulo) y `node scripts/marketplace-ui-e2e.mjs [captura.png]` (UI con Chrome; usa catálogo temporal).
+- e2e con flow-test y nube simulados: `node scripts/marketplace-cloud-e2e.mjs` (módulo) y `node scr
+- (FT-152: ver la sección «📊 Puntuación de agentes» al final.)
+
+## 📊 Puntuación de agentes (FT-152)
+
+`server/scores.js` puntúa a la plantilla con funciones puras sobre el historial (tareas + eventos), sin IA.
+
+- **Ficha por tarea terminada**: aprobada a la primera, nº de devoluciones y motivo, coste frente a la estimación de su rol, duración, si se cortó (`stuck`/`budgetHit`/`cuts`), si la aprobó el revisor automático o una persona y si causó una regresión (otra tarea la cita como «Regresión FT-xxx» / «rompe FT-xxx»).
+- **Motivo de cada devolución** (reglas sobre la nota): `tests-rojos`, `test-inestable`, `seguridad`, `regresion`, `choque-main`, `sin-entregable`, `informe-falso`, `alcance`, `otro`. `reject()` lo guarda en `t.rejectReasons` (y `t.cuts` si se cortó); en el histórico se deduce de `reviewLog`, eventos `TaskReviewed` y `feedback`.
+- **Puntuación 0-100** con `settings.scoreWeights` (`POST /api/settings`): calidad 35 · limpieza (sin regresiones ni seguridad) 20 · coste 15 · tiempo 10 · fiabilidad 10 · honestidad 10. Ventana de 30 días con tendencia frente a los 30 anteriores; menos de 3 tareas → sin puntuar.
+- **Se puntúan entregas, no tareas** (corrección de revisión): cada vez que se entregó a Revisión cuenta aparte y se atribuye al agente y modelo del INTENTO que la hizo (`t.attemptsLog` `{attempt, agentId, agentName, engine, model, startedAt, cut}`; en el histórico se deduce de `modelHistory` + eventos `TaskAssigned`/`AgentStarted`/`AgentBlocked` y de la hora de cada devolución, `t.rejectAt`/`reviewLog`). Así una entrega falsa de haiku corregida luego por sonnet penaliza a haiku. Los cortes se acumulan en `t.stuckCount`/`t.budgetHitCount` (`t.stuck` se limpia al reintentar).
+- **Coste y tiempo** frente a la MEDIANA DEL ROL en la ventana: 1 = la mitad o menos, 0 = el triple o más, lineal entre medias. Una entrega sin coste o duración no cuenta; si un grupo no tiene ningún dato, ese componente se descarta y los pesos se reparten entre los demás. El coste de la tarea se reparte a partes iguales entre sus entregas.
+- **Agentes retirados**: se muestra el nombre guardado (`t.agentName`/`attemptsLog`) o «(agente retirado)», nunca el id.
+- **Agregados** por agente, rol, modelo (`motor/modelo`) y rol+modelo (qa-suite con haiku frente a sonnet).
+- `GET /api/scores?projectId=&days=` → `{agents, roles, models, roleModels, tasks, weights}` con desglose. Se calcula al arrancar sobre todo el histórico y se cachea hasta que cambia la última tarea.
+- Prueba: `node scripts/scores-e2e.mjs`.ipts/marketplace-ui-e2e.mjs [captura.png]` (UI con Chrome; usa catálogo temporal).
