@@ -785,6 +785,18 @@ En la planta, cada agente lleva siempre una burbuja compacta: icono + código de
 
 Ajustes → «Burbujas de estado» (`settings.officeBubbles`, `POST /api/settings`): `'todas'` (por defecto) o `'al pasar'`. Prueba: `node scripts/bubbles-e2e.mjs [captura.png]`.
 
+## 🚀 Rol «release» con lista blanca estricta (FT-171)
+
+Rol de serie `release` (`kind: release`, en `server/roles.js`) que reutiliza el mecanismo de `claudeScope` (`server/engines/toolscope.js`): herramientas `Read, Glob, Grep, Bash`, sin Edit/Write ni MCP, y un `Bash` que **no hereda** las reglas generales (`RELEASE_RULES` en `server/engines/allowlist.js`). Solo se permite:
+
+- `scripts/release/*.sh` (solo existen en flow-test; el rol se asigna a ese proyecto)
+- `docker push juankanh/flow-app:*`
+- `ssh -i ~/.ssh/flowtest_vps root@179.198.198.23`
+- `ssh serverman@192.168.68.118`
+- `git push origin main|master`
+
+`releaseAllowed(cmd)` es la comprobación pura equivalente: coincidencia exacta y rechazo de `;`, `&&`, `|`, `$()`, comillas inversas, redirecciones y rutas con `..` (también `--force`, `rm`, `curl`, otras imágenes/hosts y scripts fuera de `scripts/release/`). Test: `tests/release-role.test.mjs`.
+
 ## 🪑 Oficina v3: asientos en su zona y rótulos legibles (FT-168)
 
 Hallazgos de la QA FT-151. (1) Los asientos del contrato ya caen dentro de su zona: el «hasta 2,62 u fuera» venía de que `office-qa-visual-e2e` leía `x,z` de `debugState().zones` como esquina cuando son el **centro**; el e2e mide ya bien y la distancia 0 es un check duro. (2) El anti-solape de burbujas (FT-123) esquiva además las píldoras de nombre de los demás agentes, con 3 px de holgura: dos libres en el sofá no se pisan. (3) Los rótulos de zona llevan icono (💻 Trabajo, 🔍 QA, 📋 Kanban, 🛎️ Recepción, ☕ Descanso…) para distinguir las que comparten color por tipo (FT-146).

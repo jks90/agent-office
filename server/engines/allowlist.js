@@ -29,6 +29,28 @@ export const rtkAllowed = (cmd) => {
   return RTK_RULES.some((r) => (r.endsWith('*') ? c.startsWith(r.slice(0, -1)) : c === r));
 };
 
+// FT-171 · rol «release»: lista blanca estricta, SIN las reglas generales de BASH_RULES. Solo estos 5 patrones.
+// Los scripts/release/*.sh solo existen en flow-test (el rol vive en ese proyecto). Argumentos: caracteres simples, sin «..».
+const ARG = String.raw`[\w@%+=:,./-]+`;
+export const RELEASE_RULES = [
+  'scripts/release/*.sh', './scripts/release/*.sh', 'docker push juankanh/flow-app:*',
+  'ssh -i ~/.ssh/flowtest_vps root@179.198.198.23', 'ssh serverman@192.168.68.118',
+  'git push origin main', 'git push origin master',
+];
+const RELEASE_RES = [
+  new RegExp(String.raw`^(\./)?scripts/release/[\w.-]+\.sh( ${ARG})*$`),
+  /^docker push juankanh\/flow-app:\w[\w.-]*$/,
+  /^ssh -i ~\/\.ssh\/flowtest_vps root@179\.198\.198\.23$/,
+  /^ssh serverman@192\.168\.68\.118$/,
+  /^git push origin (main|master)$/,
+];
+// ¿Es el comando EXACTAMENTE uno de los permitidos al rol release? Rechaza encadenados, sustituciones, redirecciones y «..».
+export function releaseAllowed(cmd) {
+  const c = String(cmd || '').trim();
+  if (!c || /[;&|<>`$()\\*?{}!'"\n\r]/.test(c) || c.includes('..')) return false;
+  return RELEASE_RES.some((re) => re.test(c));
+}
+
 // ¿Encaja el comando (ya sin metacaracteres de shell) con alguna regla?
 export function bashAllowed(cmd) {
   const c = String(cmd || '').trim();
