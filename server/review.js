@@ -54,7 +54,7 @@ export function sensitiveHits(files, patch, list) {
 // Veredicto estructurado del revisor: el último objeto JSON con `approve` del texto → { approve, reasons[], feedback } | null.
 export function parseVerdict(text) {
   const s = String(text || '');
-  for (let i = s.lastIndexOf('{'); i >= 0; i = s.lastIndexOf('{', i - 1)) {
+  for (let i = s.lastIndexOf('{'); i >= 0; i = i > 0 ? s.lastIndexOf('{', i - 1) : -1) { // FT-160: con i=0, lastIndexOf('{', -1) devolvía 0 otra vez → bucle infinito
     for (let j = s.indexOf('}', i); j >= 0; j = s.indexOf('}', j + 1)) {
       try {
         const o = JSON.parse(s.slice(i, j + 1));
