@@ -59,12 +59,12 @@ try {
   const atSlot = (s) => s && Math.hypot(s.ax - s.x, s.az - s.z) < 0.12 && !s.moving;
   // Los asientos quedan hasta ~1,9 u fuera del rectángulo pintado (borde de la mesa): «en la zona» = su zona es la más cercana
   // y a ≤2,0 u de su rectángulo. Se informa la desviación para el informe.
-  const rectDist = (z, x, zz) => Math.hypot(Math.max(z.x - x, 0, x - z.x - z.w), Math.max(z.z - zz, 0, zz - z.z - z.d));
+  // FT-168: x,z de debugState().zones son el CENTRO del rectángulo (no la esquina); la distancia dura es 0.
+  const rectDist = (z, x, zz) => Math.hypot(Math.max(Math.abs(x - z.x) - z.w / 2, 0), Math.max(Math.abs(zz - z.z) - z.d / 2, 0));
   const devs = [];
-  // Criterio duro: el slot es de la zona del estado y el avatar está aparcado en él; la distancia al rectángulo pintado
-  // se informa como hallazgo (⚠), no como fallo.
+  // Criterio duro: el slot es de la zona del estado, el avatar está aparcado en él y DENTRO del rectángulo pintado (distancia 0).
   const warn = [];
-  const inZone = (z, x, zz) => { const own = rectDist(z, x, zz); devs.push(+own.toFixed(2)); if (own > 0.05) warn.push(own); return !!z; };
+  const inZone = (z, x, zz) => { if (!z) return false; const own = rectDist(z, x, zz); devs.push(+own.toFixed(2)); if (own > 0.01) warn.push(own); return own <= 0.01; };
 
   // ── 1. Equipo real ──
   console.log('\n▶ Escenario 1: equipo real (API, motor demo)');
@@ -178,7 +178,7 @@ try {
   await shot('02-simulado-8-agentes-1920x1080.png');
   check('escenario 2 sin errores de página', errors.length === 0, errors.join(' | '));
 
-  console.log('  ⚠ asientos fuera del rectángulo pintado de su zona:', warn.length, 'de', devs.length, '· máx', Math.max(0, ...warn).toFixed(2), 'u');
+  check('FT-168: todos los asientos dentro del rectángulo pintado de su zona (distancia 0)', warn.length === 0 && devs.length > 0, `${warn.length} fuera de ${devs.length}, máx ${Math.max(0, ...warn).toFixed(2)} u`);
   console.log('  desviación máx. del asiento al rectángulo de su zona (u):', Math.max(...devs));
   // ── 3. fps ──
   console.log(`\n▶ fps: ${fpsSecs} s con ambiente y 12 s sin ambiente (referencia), SwiftShader (CPU)`);
