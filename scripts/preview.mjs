@@ -60,6 +60,13 @@ try {
   if (!demo) demo = await api('POST', '/api/projects', { name: 'Demo — Tienda online' });
   if (!demo.team?.length) for (const [name, role] of [['Olga', 'po'], ['Bruno', 'back'], ['Fina', 'front'], ['Quim', 'qa']]) await api('POST', '/api/agents', { name, role, engine: 'demo', projectId: demo.id });
   const pid = demo.id;
+  // FT-149: --agents N completa el equipo hasta N agentes (capturas de la planta v3 con 6 u 8).
+  const nTeam = Number(opt('agents', 0));
+  if (nTeam) {
+    const have = (await api('GET', '/api/state')).projects.find((p) => p.id === pid)?.team?.length || 0; console.log('equipo base', have);
+    const extra = [['Rita', 'back'], ['Sara', 'front'], ['Tomás', 'qa'], ['Uma', 'back']];
+    for (let i = 0; i < nTeam - have && i < extra.length; i++) await api('POST', '/api/agents', { name: extra[i][0], role: extra[i][1], engine: 'demo', projectId: pid });
+  }
   // Equipo en marcha: PO planificando, back y front en su mesa, QA en la zona de descanso.
   await api('POST', `/api/projects/${pid}/goal`, { goal: 'Alta de clientes con email y verificación' });
   for (const role of ['back', 'front']) await api('POST', '/api/tasks', { projectId: pid, role, title: `Prueba de ${role}` });

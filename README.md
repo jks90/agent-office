@@ -840,6 +840,17 @@ El escaneo del workspace ya no crea un Coordi por carpeta descubierta: solo `cre
 
 La posición de cada agente REAL la decide solo su estado: `working` → su mesa sentado (sin paseos); `reviewing` → Revisión; esperando o bloqueado por dependencia → Kanban; espera al usuario (❓/✋) → junto a la mesa «Tú»; `failed` y sin cuota → su mesa; libre → Descanso. Solo los libres pasean (`WANDER_SPOTS`: café, nevera, planta, charla). Al cambiar de estado caminan a su sitio nuevo. QA: `aoOffice.simulate(s)` acelera el reloj y `debugState()` da la posición real. Prueba: `node scripts/office-fidelity-e2e.mjs`.
 
+## 🏢 Oficina v3: planta por zonas (FT-149)
+
+Implementa el diseño de Codex (`docs/oficina-v3/planta.md` + `visual-contract-v3.json`, FT-146) en `public/office3d.js`.
+
+- **Contrato**: con 0–8 agentes se usa la planta `team-2/4/6/8` del contrato (`pickLayout` en `public/office-v3.js`); con más de 8 sigue la planta heredada. `public/office-v3-data.js` es un subconjunto minificado del contrato: regénéralo con `node scripts/gen-office-v3-data.mjs`.
+- **Zonas** con suelo propio (moqueta, baldosa, madera), borde del color del tipo y rótulo: Trabajo, Revisión / QA, Reuniones (acristaladas), Café / descanso, Recreo, Recepción / entrada, Kanban / espera (con el nº de pendientes), despacho del PO y mesa «Tú» más ancha con borde doble dorado. Solo hay mesas para los puestos realmente asignados; las rutas van por pasillos.
+- **Posición = estado** (manda sobre FT-148 donde difieren): revisión → zona QA; bloqueado por dependencia se queda en su mesa; libre → sofá del café (o su mesa si no hay plaza); sin deambular de agentes reales.
+- **Ambiente** (visita y limpieza): personajes grises rayados con rombo y rótulo «AMBIENTE», nunca confundibles con agentes; con `prefers-reduced-motion` quedan quietos junto a recepción.
+- **Leyenda** plegable con el botón «🗺 Leyenda» (se recuerda en `localStorage` `ao.office.legend`); oculta en modo edificio.
+- Pruebas: `office-fidelity-e2e`, `bubbles-e2e`, `office-panels-e2e`, `mydesk-e2e`.
+
 ## 🛒 Marketplace: paquetes `ao-pkg/1` de roles, skills y agentes (FT-141)
 
 `server/marketplace.js` exporta e importa paquetes JSON `{format:"ao-pkg/1", kind, name, version, summary, author, files:[{path, content(base64), sha256}], meta, memory?}` (tope 2 MB). No habla con la nube: flow-test hace de puerta (`/account-link/marketplace/*`).
