@@ -9,7 +9,7 @@ import { orderTodo, CACHE_WINDOW_MS } from './affinity.js';
 import * as codes from './codes.js';
 import * as questions from './questions.js';
 import * as events from './events.js';
-import { classifyReject } from './scores.js'; // FT-152
+import { classifyReject, REASONS } from './scores.js'; // FT-152
 import * as git from './git.js';
 import { allRoles, roleOf } from './roles.js';
 import { parseTasks } from './engines/describe.js';
@@ -551,9 +551,20 @@ export async function deleteTask(id) {
   changed();
 }
 
-export async function approve(id, { by = null, verdict = null } = {}) {
+// FT-153: valoración opcional del revisor ({rating:1-5, reasons:[...]}) de la entrega n (0 = primera). Valida y la guarda en t.ratings.
+function rate(t, n, { rating, reasons } = {}, by) {
+  const r = Math.round(Number(rating)), ok = r >= 1 && r <= 5;
+  if (rating != null && rating !== '' && !ok) throw fail(400, 'rating debe ser un entero de 1 a 5');
+  if (Array.isArray(reasons) && reasons.some((x) => !REASONS.includes(x))) throw fail(400, `reasons admite: ${REASONS.join(', ')}`);
+  const rs = Array.isArray(reasons) ? reasons : [];
+  if (ok || rs.length) (t.ratings ||= []).push({ n, rating: ok ? r : null, reasons: rs, by: by || 'human', at: Date.now() });
+  return rs;
+}
+
+export async function approve(id, { by = null, verdict = null, rating, reasons } = {}) {
   const t = findOr404(get().tasks, id, 'Tarea');
   if (t.status !== 'review') throw fail(409, 'La tarea no está en revisión');
+  rate(t, t.returns || 0, { rating, reasons }, by); // FT-153: se valida antes de fusionar nada
   const p = projectOf(t);
   if (t.branch) {
     // FT-44: una rama por repo. Primero se pone al día cada una (si alguna choca vuelve al agente con el detalle de ESE repo)
@@ -581,15 +592,16 @@ export async function approve(id, { by = null, verdict = null } = {}) {
   tick();
 }
 
-export async function reject(id, feedback = '', images = [], attachments = [], by = null) {
+export async function reject(id, feedback = '', images = [], attachments = [], by = null, { rating, reasons } = {}) {
   const t = findOr404(get().tasks, id, 'Tarea');
   for (const a of attachments) { if (/\.(png|jpe?g|webp)$/i.test(a.path)) images = [...images, a.path]; else t.files = [...(t.files || []), a.path]; }
   if (!['review', 'failed'].includes(t.status)) throw fail(409, 'Solo se devuelven tareas en revisión o fallidas');
+  const given = rate(t, t.returns || 0, { rating, reasons }, by); // FT-153: valoración del revisor y etiquetas elegidas (valida antes de tocar nada)
   // La rama y el worktree se conservan: el agente corrige sobre su intento anterior.
   t.returns = (t.returns || 0) + 1; // FT-76: devoluciones (KPI «aprobadas a la primera»)
   if (feedback.trim()) t.feedback = [t.feedback, feedback.trim()].filter(Boolean).join('\n');
   (t.rejectAt ||= []).push(Date.now()); // FT-152: cuándo, para atribuir la devolución al intento (modelo) que la provocó
-  (t.rejectReasons ||= []).push(classifyReject(feedback)); // FT-152: motivo de cada devolución (puntuación de agentes)
+  (t.rejectReasons ||= []).push(given[0] || classifyReject(feedback)); // FT-152: motivo de cada devolución (puntuación de agentes); FT-153: manda la etiqueta elegida
   if (t.budgetHit || t.stuck) t.cuts = (t.cuts || 0) + 1; // FT-152: se cortó por tope o atasco (budgetHit se borra más abajo)
   // FT-60: devolver desde revisión = el modelo barato no bastó → el reintento sube de peldaño (desde «fallida» ya subió al fallar;
   // y si se cortó por el tope de gasto, un modelo más caro no arregla nada: sigue con el mismo).
@@ -1305,8 +1317,8 @@ async function superviseTask(p, t) {
   if (t.status !== 'review') return; // una persona decidió mientras tanto
   if (d.action === 'skip') { t.supervisor = { at: Date.now(), sig: t.updatedAt, deleg: delegated, action: 'skip', text: d.text }; return; }
   supNote(p, t, d);
-  if (d.action === 'approve') await approve(t.id, { by: 'coordinador', verdict: { approve: true, text: d.text } });
-  else if (d.action === 'reject') await reject(t.id, d.text, [], [], 'coordinador');
+  if (d.action === 'approve') await approve(t.id, { by: 'coordinador', verdict: { approve: true, text: d.text }, rating: d.rating, reasons: d.reasons });
+  else if (d.action === 'reject') await reject(t.id, d.text, [], [], 'coordinador', { rating: d.rating, reasons: d.reasons });
 }
 async function superviseDeps(p) {
   const tasks = get().tasks.filter((t) => t.projectId === p.id), roles = allRoles();

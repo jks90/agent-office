@@ -133,7 +133,19 @@ console.log('Pesos');
 check('pesos de serie suman 100', Object.values(DEFAULT_WEIGHTS).reduce((a, b) => a + b, 0) === 100);
 const onlyHonest = compute({ ...state, settings: { scoreWeights: { calidad: 0, limpieza: 0, coste: 0, tiempo: 0, fiabilidad: 0, honestidad: 10 } } }, { projectId: 'p1', events, now });
 check('solo honestidad: Julia 100 y Vera = su honestidad', by(onlyHonest.agents, 'julia').score === 100 && by(onlyHonest.agents, 'vera').score === Math.round(vera.breakdown.honestidad.value * 100), String(by(onlyHonest.agents, 'vera').score));
-check('pesos todos a 0 → de serie', weightsOf({ scoreWeights: { calidad: 0, limpieza: 0, coste: 0, tiempo: 0, fiabilidad: 0, honestidad: 0 } }).calidad === 35);
+check('pesos todos a 0 → de serie', weightsOf({ scoreWeights: { calidad: 0, limpieza: 0, coste: 0, tiempo: 0, fiabilidad: 0, honestidad: 0, revisor: 0 } }).calidad === 30);
+
+console.log('Nota del revisor (FT-153)');
+{
+  const mk = (i, rating, extra = {}) => ({ id: `r${i}`, code: `FT-9${i}`, title: 'x', role: 'dev', kind: 'task', projectId: 'p9', status: 'done', agentId: 'ag9', agentName: 'Nora', returns: 0, createdAt: now - 1000 * i, updatedAt: now - 1000 * i, ratings: rating ? [{ n: 0, rating, reasons: [], by: 'human', at: now }] : [], ...extra });
+  const st = { settings: {}, agents: [{ id: 'ag9', name: 'Nora', role: 'dev' }], tasks: [mk(1, 5), mk(2, 1), mk(3, 3), mk(4, 0, { returns: 1, rejectReasons: ['seguridad'], rejectAt: [now - 3000], ratings: [{ n: 0, rating: 2, reasons: ['seguridad'], by: 'human', at: now }] })] };
+  const a = compute(st, { projectId: 'p9', now }).agents[0];
+  check('estrellas medias = (5+1+3+2)/4', a.stars === 2.8 && a.rated === 4, String(a.stars));
+  check('componente revisor = media de (r-1)/4', a.breakdown.revisor.value === 0.44 && a.breakdown.revisor.weight === 10, JSON.stringify(a.breakdown.revisor));
+  check('lastReturns con motivo y valoración', a.lastReturns.length === 1 && a.lastReturns[0].reason === 'seguridad' && a.lastReturns[0].rating === 2);
+  const sin = compute({ ...st, tasks: st.tasks.map((t) => ({ ...t, ratings: [] })) }, { projectId: 'p9', now }).agents[0];
+  check('sin valoraciones el componente se descarta', sin.breakdown.revisor.value === null && sin.stars === null);
+}
 
 console.log('GET /api/scores');
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-scores-'));
