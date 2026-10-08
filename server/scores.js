@@ -218,6 +218,27 @@ export function compute(state, { projectId = '', days = 30, now = Date.now(), es
 }
 
 
+// FT-154 · Notas para el coordinador (server/coordinator.js): { byAgentRole:{'agente|rol':{score,tasks}}, byAgent:{id:{score,tasks}} (últimas 5 entregas),
+// roleModels:[{role,engine,model,score,tasks}] }. Ventana de 90 días y todos los proyectos; la nota solo existe con ≥ MIN_TASKS entregas.
+export function forCoordinator(state, { now = Date.now(), estimates = {}, events = [] } = {}) {
+  const r = compute(state, { days: 90, now, estimates, events });
+  const weights = r.weights;
+  const units = r.tasks.flatMap((c) => c.deliveries.map((d) => ({ ...d })));
+  const med = { cost: {}, dur: {} };
+  for (const role of new Set(units.map((u) => u.role))) {
+    med.cost[role] = median(units.filter((u) => u.role === role).map((u) => u.costUsd).filter((x) => x > 0));
+    med.dur[role] = median(units.filter((u) => u.role === role).map((u) => u.durationMs).filter((x) => x > 0));
+  }
+  const byAgentRole = {}, byAgent = {};
+  for (const row of group(units, (u) => (u.agentId ? `${u.agentId}|${u.role}` : ''), () => ({}), weights, med, [])) if (row.scored) byAgentRole[row.key] = { score: row.score, tasks: row.tasks };
+  for (const id of new Set(units.map((u) => u.agentId).filter(Boolean))) {
+    const last = units.filter((u) => u.agentId === id).sort((a, b) => (a.finishedAt || 0) - (b.finishedAt || 0)).slice(-5);
+    const sc = scoreOf(last, weights, med);
+    if (sc) byAgent[id] = { score: sc.score, tasks: last.length };
+  }
+  return { byAgentRole, byAgent, roleModels: r.roleModels.filter((x) => x.scored).map((x) => ({ role: x.role, engine: x.engine, model: x.model, score: x.score, tasks: x.tasks })) };
+}
+
 // Caché por última tarea: el histórico entero solo se recalcula si cambió algo (nº de tareas, última actualización, devoluciones, pesos).
 let cache = { sig: '', byKey: new Map() };
 export function cached(state, opts = {}) {

@@ -9,7 +9,7 @@ import { orderTodo, CACHE_WINDOW_MS } from './affinity.js';
 import * as codes from './codes.js';
 import * as questions from './questions.js';
 import * as events from './events.js';
-import { classifyReject, REASONS } from './scores.js'; // FT-152
+import { classifyReject, REASONS, forCoordinator } from './scores.js'; // FT-152 · FT-154
 import * as git from './git.js';
 import { allRoles, roleOf } from './roles.js';
 import { parseTasks } from './engines/describe.js';
@@ -1043,7 +1043,13 @@ export function tick() {
       if (affinityOn() && activeRepos.size && !activeRepos.has(repoKey) && todo.some((o) => o !== t && o.status === 'todo' && depsDone(o) && activeRepos.has(repoOfTask(p, o)?.key || ''))) continue;
       // FT-66: una tarea pausada por cuota vuelve con su mismo agente si está libre; si no, la regla de FT-50 (la que ve el usuario en la tarjeta)
       const pref = t.preferAgentId && team.find((a) => a.id === t.preferAgentId && !jobs.has(a.id));
-      const agent = pref || plannedAgentFor(p, t, team, { roles, isBusy: (a) => jobs.has(a.id) });
+      let agent = pref || plannedAgentFor(p, t, team, { roles, isBusy: (a) => jobs.has(a.id) });
+      if (!pref && p.coordinator && !t.assignedAgentId) { // FT-154: con coordinador, entre los libres va el de mejor nota en el rol (y las críticas no van a < 50)
+        const fits = team.filter((a) => !jobs.has(a.id) && (a.role === t.role || (roles[a.role]?.handles || []).includes(t.role)));
+        const pick = coord.pickByScore(t, fits, coordScores());
+        if (pick.why && t.scoreNote !== pick.why) { t.scoreNote = pick.why; coordNote(p, { type: 'dispatch', why: pick.why, auto: true }); }
+        if (fits.length) agent = pick.agent;
+      }
       if (!agent || jobs.has(agent.id)) continue;
       if (t.quotaPaused && !quotaReady(t, agent)) continue; // FT-66: sin cuota → espera a su hora (o sigue con el otro motor si es `auto`)
       if (splitIfBig(p, t)) continue; // FT-63: tarea grande → al PO en vez de lanzarla entera
@@ -1180,8 +1186,18 @@ function coordSnapshot(p) {
   return { team, bench: s.agents.filter((a) => !onTeam.has(a.id)), tasks: s.tasks.filter((t) => t.projectId === p.id), roles: allRoles(), engineOk, repos: p.repos || [],
     reviewPolicy: review.policyOf(s.settings, p), reviewNudgeMin: review.nudgeMin(s.settings),
     busy: new Set(team.filter((a) => jobs.has(a.id)).map((a) => a.id)), idleSince: Object.fromEntries(team.map((a) => [a.id, busySeen.get(a.id)])), now,
-    margin: { claude: quota.margin('claude'), codex: quota.margin('codex') } };
+    margin: { claude: quota.margin('claude'), codex: quota.margin('codex') }, scores: coordScores() };
 }
+const coordActions = (snap) => [...coord.plan(snap), ...coord.reviewPlan(snap), ...coord.scorePlan(snap)];
+// FT-154 · notas de los agentes para el coordinador, en caché 60 s (el cálculo recorre todo el histórico)
+let scoreMemo = { at: 0, v: null };
+function coordScores() {
+  if (Date.now() - scoreMemo.at > 60_000) {
+    try { scoreMemo = { at: Date.now(), v: forCoordinator(get(), { estimates: costEstimates(), events: events.list({}) }) }; } catch { scoreMemo = { at: Date.now(), v: null }; }
+  }
+  return scoreMemo.v;
+}
+export const resetCoordScores = () => { scoreMemo = { at: 0, v: null }; };
 function coordNote(p, entry) {
   (p.coordLog ||= []).push({ at: Date.now(), ...entry });
   p.coordLog = p.coordLog.slice(-30);
@@ -1202,6 +1218,12 @@ export function applyCoordination(p, actions) {
       rt.blockAlerted = true;
       events.emit('ReviewBlocking', events.ctxOf(rt), { taskCode: rt.code || rt.id, minutes: x.minutes, blocks: x.blocks, required: !!x.required });
     }
+    else if (x.type === 'model') { // FT-154: cambia el modelo de los agentes del rol
+      const ags = s.agents.filter((y) => (x.agentIds || []).includes(y.id));
+      if (!ags.length) continue;
+      for (const y of ags) y.model = x.model;
+    }
+    else if (x.type === 'reviewer' && a) a.autoReviewer = true; // FT-154: revisor automático propuesto de su rol
     else if (x.type === 'bench' && a) p.team = p.team.filter((id) => id !== a.id);
     else if (x.type === 'sign' && a && p.team.length < coord.MAX_DESKS && !p.team.includes(a.id)) p.team.push(a.id);
     else if (x.type === 'hire' && p.team.length < coord.MAX_DESKS) {
@@ -1222,7 +1244,7 @@ function coordinate(p) {
   if (now - (p.coordCheckAt || 0) < COORD_EVERY) return;
   p.coordCheckAt = now;
   const snap = coordSnapshot(p);
-  const actions = [...coord.plan(snap), ...coord.reviewPlan(snap)];
+  const actions = coordActions(snap);
   const staffing = actions.some((x) => ['sign', 'hire', 'bench'].includes(x.type));
   if (staffing && now - (p.coordAt || 0) < COORD_COOLDOWN) return; // un cambio de plantilla cada 10 min como mucho
   if (!actions.length) { if (p.coordSuggest) { delete p.coordSuggest; changed(); } return; }
@@ -1235,14 +1257,20 @@ function coordinate(p) {
     if ((p.coordSuggest || []).map((x) => x.why).join('|') !== sig) { p.coordSuggest = actions.map((x) => ({ ...x, at: now })); log(null, `🧑‍✈️ ${p.name} (sugerencia): ${actions.map((x) => x.why).join(' · ')}`); changed(); }
     return;
   }
-  if (staffing) p.coordAt = now;
-  applyCoordination(p, actions);
+  // FT-154: lo que cambia la plantilla por nota (advisory) solo se sugiere, salvo delegación (p.supervisorApproves)
+  const hold = p.supervisorApproves ? [] : actions.filter((x) => x.advisory);
+  const run = actions.filter((x) => !hold.includes(x));
+  if (run.some((x) => ['sign', 'hire', 'bench'].includes(x.type))) p.coordAt = now;
+  if (run.length) applyCoordination(p, run);
+  const sig = hold.map((x) => x.why).join('|');
+  if (!hold.length) { if (p.coordSuggest && run.length) { delete p.coordSuggest; changed(); } return; }
+  if ((p.coordSuggest || []).map((x) => x.why).join('|') !== sig) { p.coordSuggest = hold.map((x) => ({ ...x, at: now })); log(null, `🧑‍✈️ ${p.name} (sugerencia): ${hold.map((x) => x.why).join(' · ')}`); changed(); }
 }
 // «Aplicar» una sugerencia (Para ti) o forzar una pasada ahora.
 export function coordinateNow(projectId) {
   const p = findOr404(get().projects, projectId, 'Proyecto');
   const snap = p.coordSuggest?.length ? null : coordSnapshot(p);
-  const actions = p.coordSuggest?.length ? p.coordSuggest : [...coord.plan(snap), ...coord.reviewPlan(snap)];
+  const actions = p.coordSuggest?.length ? p.coordSuggest : coordActions(snap);
   if (actions.length) { p.coordAt = Date.now(); applyCoordination(p, actions); tick(); }
   return { applied: actions.map((x) => x.why) };
 }
