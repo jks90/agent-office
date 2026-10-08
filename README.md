@@ -789,15 +789,9 @@ Ajustes → «Burbujas de estado» (`settings.officeBubbles`, `POST /api/setting
 
 ## 🚀 Rol «release» con lista blanca estricta (FT-171)
 
-Rol de serie `release` (`kind: release`, en `server/roles.js`) que reutiliza el mecanismo de `claudeScope` (`server/engines/toolscope.js`): herramientas `Read, Glob, Grep, Bash`, sin Edit/Write ni MCP, y un `Bash` que **no hereda** las reglas generales (`RELEASE_RULES` en `server/engines/allowlist.js`). Solo se permite:
+Rol de serie `release` (`kind: release`, en `server/roles.js`) que reutiliza el mecanismo de `claudeScope` (`server/engines/toolscope.js`): herramientas `Read, Glob, Grep, Bash`, sin Edit/Write ni MCP, y un `Bash` que **no hereda** las reglas generales (`RELEASE_RULES` en `server/engines/allowlist.js`). Solo se permite `scripts/release/<paso>.sh [argumentos simples]` (los scripts solo existen en flow-test; el rol se asigna a ese proyecto). Mínimo privilegio: los scripts hacen por dentro el `docker push juankanh/flow-app:*`, el `ssh` a producción y el `git push origin main|master` con destinos fijos; el agente **no** puede lanzar `ssh`, `docker` ni `git push` a mano.
 
-- `scripts/release/*.sh` (solo existen en flow-test; el rol se asigna a ese proyecto)
-- `docker push juankanh/flow-app:*`
-- `ssh -i ~/.ssh/flowtest_vps root@179.198.198.23`
-- `ssh serverman@192.168.68.118`
-- `git push origin main|master`
-
-`releaseAllowed(cmd)` es la comprobación pura equivalente: coincidencia exacta y rechazo de `;`, `&&`, `|`, `$()`, comillas inversas, redirecciones y rutas con `..` (también `--force`, `rm`, `curl`, otras imágenes/hosts y scripts fuera de `scripts/release/`). Test: `tests/release-role.test.mjs`.
+`releaseAllowed(cmd)` valida cada Bash y está conectada como **hook PreToolUse solo para este rol** (`bin/ao-release.mjs`, igual que `ao-nobg.mjs`, FT-134; en `server/engines/claude.js`): lo que no pase se rechaza con un mensaje claro, sin depender de cómo el CLI interprete comodines en `Bash(...)`. Rechaza `;`, `&&`, `|`, `$()`, comillas, redirecciones, `bash -c`, rutas con `..` y scripts fuera de `scripts/release/`. Para este rol no se aplica el hook de RTK. Test: `tests/release-role.test.mjs` (puro + hook por stdin).
 
 ## 🪑 Oficina v3: asientos en su zona y rótulos legibles (FT-168)
 

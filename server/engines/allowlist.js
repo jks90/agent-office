@@ -32,18 +32,9 @@ export const rtkAllowed = (cmd) => {
 // FT-171 · rol «release»: lista blanca estricta, SIN las reglas generales de BASH_RULES. Solo estos 5 patrones.
 // Los scripts/release/*.sh solo existen en flow-test (el rol vive en ese proyecto). Argumentos: caracteres simples, sin «..».
 const ARG = String.raw`[\w@%+=:,./-]+`;
-export const RELEASE_RULES = [
-  'scripts/release/*.sh', './scripts/release/*.sh', 'docker push juankanh/flow-app:*',
-  'ssh -i ~/.ssh/flowtest_vps root@179.198.198.23', 'ssh serverman@192.168.68.118',
-  'git push origin main', 'git push origin master',
-];
-const RELEASE_RES = [
-  new RegExp(String.raw`^(\./)?scripts/release/[\w.-]+\.sh( ${ARG})*$`),
-  /^docker push juankanh\/flow-app:\w[\w.-]*$/,
-  /^ssh -i ~\/\.ssh\/flowtest_vps root@179\.198\.198\.23$/,
-  /^ssh serverman@192\.168\.68\.118$/,
-  /^git push origin (main|master)$/,
-];
+// Mínimo privilegio: los scripts hacen por dentro el ssh, el docker push y el git push (destinos fijos); el agente solo los lanza.
+export const RELEASE_RULES = ['scripts/release/*.sh', './scripts/release/*.sh'];
+const RELEASE_RES = [new RegExp(String.raw`^(\./)?scripts/release/[\w.-]+\.sh( ${ARG})*$`)];
 // ¿Es el comando EXACTAMENTE uno de los permitidos al rol release? Rechaza encadenados, sustituciones, redirecciones y «..».
 export function releaseAllowed(cmd) {
   const c = String(cmd || '').trim();

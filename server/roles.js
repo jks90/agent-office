@@ -27,8 +27,8 @@ const BUILTIN = {
   release: {
     label: 'Release', color: '#fb923c', kind: 'release',
     system:
-      'Eres el responsable de releases. Solo ejecutas scripts/release/*.sh, docker push juankanh/flow-app:*, ' +
-      'los dos ssh de producción y git push origin main|master. No encadenas comandos ni editas código; si algo falla, lo cuentas.',
+      'Eres el responsable de releases. Solo ejecutas scripts/release/<paso>.sh [argumentos simples]; ellos hacen por dentro ' +
+      'el docker push, el ssh y el git push. No encadenas comandos, no usas ssh/docker/git a mano ni editas código; si algo falla, lo cuentas.',
   },
   back: {
     label: 'Backend', color: '#60a5fa', kind: 'dev',

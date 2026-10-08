@@ -37,7 +37,8 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kin
   if (resumeSession) args.push('--resume', resumeSession); // reintento de la MISMA tarea en su worktree: reaprovecha el contexto (y su caché) en vez de volver a explorar
   // FT-134: sin segundo plano en los workers (hook que rechaza run_in_background) + RTK si está instalado; un único --settings.
   const preHooks = [{ matcher: 'Bash', hooks: [{ type: 'command', command: `${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(ROOT, 'bin', 'ao-nobg.mjs'))}` }] }];
-  if (rtkAvailable() && mode !== 'plan') {
+  if (kind === 'release') preHooks.push({ matcher: 'Bash', hooks: [{ type: 'command', command: `${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(ROOT, 'bin', 'ao-release.mjs'))}` }] }); // FT-171
+  if (rtkAvailable() && mode !== 'plan' && kind !== 'release') { // release: sin reescritura de RTK
     preHooks.push({ matcher: 'Bash', hooks: [{ type: 'command', command: `${RTK_BIN} hook claude` }] });
     tools.push(...RTK_RULES.map((r) => `Bash(${r})`));
   }
