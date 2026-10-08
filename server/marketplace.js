@@ -201,8 +201,10 @@ export function validate(pkg) {
 
 const orgDir = (org) => {
   if (org == null || org === '') return 'public';
-  if (!okName(org)) throw fail(422, 'Organización no válida');
-  return String(org).toLowerCase();
+  // FT-144: la nube manda el NOMBRE de la org («Mi Empresa»), no el slug: se normaliza a carpeta segura (sin «..» ni «/»).
+  const dir = String(org).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9._-]+/g, '-').replace(/^[-._]+|-+$/g, '').slice(0, 64);
+  if (!okName(dir)) throw fail(422, 'Organización no válida');
+  return dir;
 };
 const roleTarget = (pkg, org) => path.join(rolesDir(), 'marketplace', orgDir(org), `${pkg.name}.md`);
 const skillTarget = (pkg) => path.join(skillsDir(), pkg.name);
