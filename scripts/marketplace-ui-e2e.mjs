@@ -31,7 +31,7 @@ const fake = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x'); const send = (s, o) => res.writeHead(s, { 'content-type': 'application/json' }).end(JSON.stringify(o));
   const id = u.pathname.split('/')[3]; let body = ''; req.on('data', (c) => { body += c; });
   req.on('end', () => {
-    if (!linked) return send(401, { error: 'sin vincular' });
+    if (!linked) return send(409, { error: 'vincula la instalación a tu cuenta FlowTest' });
     if (req.method === 'POST') { posted.push(JSON.parse(body)); return send(200, { item: { id: 'new' } }); }
     if (!id) { const k = u.searchParams.get('kind'); return send(200, items.filter((i) => i.scope === u.searchParams.get('scope') && (!k || i.kind === k)).map(({ package: _p, ...i }) => i)); }
     const it = items.find((i) => i.id === id); const { package: pkg, ...item } = it; send(200, { item, package: pkg });

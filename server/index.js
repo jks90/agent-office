@@ -52,6 +52,7 @@ const HOST = process.env.AO_HOST || '127.0.0.1'; // lanza procesos con tus permi
 // Si se expone fuera del loopback (p. ej. para que el flow-test en Docker lo proxee), hace falta un token:
 // cabecera `x-ao-token` (flow-test lo manda desde FLOW_AGENTS_TOKEN). Desde 127.0.0.1 no se pide.
 const TOKEN = process.env.AO_TOKEN || (HOST !== '127.0.0.1' && HOST !== 'localhost' ? loadOrCreateToken() : null);
+mpCloud.setToken(TOKEN); // FT-142 — para la puerta /account-link/marketplace de flow-test
 function loadOrCreateToken() {
   const f = path.join(store.DATA_DIR, '.token');
   try { return fs.readFileSync(f, 'utf8').trim(); } catch { /* se crea */ }
