@@ -2,6 +2,7 @@
 // (mensajes, tool calls con su resultado, contexto de cada turno). Cada turno se prepara con <app_context> (FT-2) y
 // <eventos_desde_tu_ultimo_turno> (FT-1) y lo ejecuta un GuideProvider (providers/*.js); sus eventos salen tal cual
 // por SSE (POST /api/guide/chat). Las tools que usa son las de FT-4 (políticas y auditoría incluidas).
+import * as questions from '../questions.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as store from '../store.js';
@@ -189,7 +190,8 @@ export async function* chat({ chatId, text, attachments, client = null }) {
 
 export function stop(chatId) {
   const p = active.get(chatId);
-  if (!p) return { ok: true, stopped: false };
+  const withdrawn = questions.cancelForChat(chatId); // sus 🛡 pendientes no se quedan en la campana
+  if (!p) return { ok: true, stopped: false, withdrawn };
   p.stop();
   return { ok: true, stopped: true };
 }

@@ -618,7 +618,11 @@ function validate(schema, args, where = 'args') {
 }
 
 // Ejecuta una tool con política y auditoría. ctx: { client, via }.
-export async function run(name, args = {}, ctx = {}) {
+// Cada tool corre con el chat en contexto: las 🛡 que pida quedan asociadas a ese chat (questions.cancelForChat al parar).
+export function run(name, args = {}, ctx = {}) {
+  return questions.chatContext.run({ chatId: ctx.chatId || null }, () => runTool(name, args, ctx));
+}
+async function runTool(name, args = {}, ctx = {}) {
   const tool = byName.get(name);
   if (!tool) throw fail(404, `Tool desconocida: ${name}`);
   const t0 = Date.now();
