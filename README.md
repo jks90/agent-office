@@ -787,6 +787,12 @@ En la planta, cada agente lleva siempre una burbuja compacta: icono + código de
 
 Ajustes → «Burbujas de estado» (`settings.officeBubbles`, `POST /api/settings`): `'todas'` (por defecto) o `'al pasar'`. Prueba: `node scripts/bubbles-e2e.mjs [captura.png]`.
 
+## 🚀 Rol «release» con lista blanca estricta (FT-171)
+
+Rol de serie `release` (`kind: release`, en `server/roles.js`) que reutiliza el mecanismo de `claudeScope` (`server/engines/toolscope.js`): herramientas `Read, Glob, Grep, Bash`, sin Edit/Write ni MCP, y un `Bash` que **no hereda** las reglas generales (`RELEASE_RULES` en `server/engines/allowlist.js`). Solo se permite `scripts/release/<paso>.sh [argumentos simples]` (los scripts solo existen en flow-test; el rol se asigna a ese proyecto). Mínimo privilegio: los scripts hacen por dentro el `docker push juankanh/flow-app:*`, el `ssh` a producción y el `git push origin main|master` con destinos fijos; el agente **no** puede lanzar `ssh`, `docker` ni `git push` a mano.
+
+`releaseAllowed(cmd)` valida cada Bash y está conectada como **hook PreToolUse solo para este rol** (`bin/ao-release.mjs`, igual que `ao-nobg.mjs`, FT-134; en `server/engines/claude.js`): lo que no pase se rechaza con un mensaje claro, sin depender de cómo el CLI interprete comodines en `Bash(...)`. Rechaza `;`, `&&`, `|`, `$()`, comillas, redirecciones, `bash -c`, rutas con `..` y scripts fuera de `scripts/release/`. Para este rol no se aplica el hook de RTK. Test: `tests/release-role.test.mjs` (puro + hook por stdin).
+
 ## 🪑 Oficina v3: asientos en su zona y rótulos legibles (FT-168)
 
 Hallazgos de la QA FT-151. (1) Los asientos del contrato ya caen dentro de su zona: el «hasta 2,62 u fuera» venía de que `office-qa-visual-e2e` leía `x,z` de `debugState().zones` como esquina cuando son el **centro**; el e2e mide ya bien y la distancia 0 es un check duro. (2) El anti-solape de burbujas (FT-123) esquiva además las píldoras de nombre de los demás agentes, con 3 px de holgura: dos libres en el sofá no se pisan. (3) Los rótulos de zona llevan icono (💻 Trabajo, 🔍 QA, 📋 Kanban, 🛎️ Recepción, ☕ Descanso…) para distinguir las que comparten color por tipo (FT-146).

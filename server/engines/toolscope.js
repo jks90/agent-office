@@ -3,7 +3,7 @@
 // (nombres de herramientas integradas de Claude: `tools: Read, Grep, Glob, Bash`; una entrada `Bash(patrón)` añade una regla de shell).
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BASH_RULES } from './allowlist.js';
+import { BASH_RULES, RELEASE_RULES } from './allowlist.js';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 const READ_SHELL = ['ls *', 'cat *', 'head *', 'tail *', 'wc *', 'grep *', 'rg *', 'find *', 'sed *', 'awk *', 'sort *', 'uniq *', 'cut *', 'tr *', 'diff *', 'du *', 'file *', 'stat *', 'pwd', 'git status*', 'git diff*', 'git log*', 'git show*'];
@@ -21,6 +21,8 @@ const BY_KIND = {
   planner: { builtin: ['Read', 'Glob', 'Grep', 'Bash'], bash: [...PLAN_SHELL, ASK_RULE], mcp: false },
   // FT-122: supervisor. Solo lee, ejecuta checks y fusiona la base en la rama (resolver choques); sin Edit/Write: no toca código de producto
   supervisor: { builtin: ['Read', 'Glob', 'Grep', 'Bash'], bash: [...READ_SHELL, 'npm test*', 'npm run *', 'node --check *', 'node scripts/*', ...GIT_MERGE, ASK_RULE], mcp: false },
+  // FT-171: release. Solo Bash con la lista blanca estricta de allowlist.js (RELEASE_RULES); ni Edit/Write ni MCP
+  release: { builtin: ['Read', 'Glob', 'Grep', 'Bash'], bash: RELEASE_RULES, mcp: false },
 };
 
 // FT-115 · capacidad «browser»: tools browser.* del Guía por ao-mcp (Chromium dedicado). Solo estos roles; otro rol la activa con `tools: …, browser`.
