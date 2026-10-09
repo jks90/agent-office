@@ -972,7 +972,7 @@ function renderBrowser() {
   u.disabled = !(b.open && mine);
   if (document.activeElement !== u) u.value = b.url || '';
   $('#br-tabs').innerHTML = b.open
-    ? b.tabs.map((t) => `<span class="br-tab ${t.active ? 'on' : ''}"><button data-brtab="${esc(t.id)}" ${mine ? '' : 'disabled'} title="${esc(t.url)}">${esc((t.title || t.url || 'nueva pestaña').slice(0, 28))}</button><button class="x" data-brclose="${esc(t.id)}" ${mine ? '' : 'disabled'} title="Cerrar pestaña">✕</button></span>`).join('') + `<button class="br-new" data-brnew ${mine ? '' : 'disabled'} title="Nueva pestaña">＋</button>`
+    ? b.tabs.map((t) => `<span class="br-tab ${t.active ? 'on' : ''}"><button data-brtab="${esc(t.id)}" ${mine ? '' : 'disabled'} title="${esc(t.url)}">${esc((t.title || t.url || 'nueva pestaña').slice(0, 28))}</button><button class="x" data-brclose="${esc(t.id)}" ${mine ? '' : 'disabled'} title="Cerrar pestaña">✕</button></span>`).join('') + `<button class="br-new" data-brnew ${mine ? '' : 'disabled'} title="Nueva pestaña">+</button>`
     : '';
   if (!b.open) { brFrame = null; $('#br-img').hidden = true; }
   $('#br-empty').hidden = !!b.open && !!brFrame;
