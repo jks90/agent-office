@@ -674,3 +674,5 @@ select.tool-assign { width: auto; max-width: 150px; font-size: 11px; padding: 2p
 /* Marketplace ▸ Privado: los subgrupos no heredan el estilo de títulos de .skills-box (flecha ::before y mayúsculas) */
 .mp-box .mp-group-head { text-transform: none; letter-spacing: 0; color: var(--text, inherit); font-weight: 600; }
 .mp-box .mp-group-head::before { content: none; }
+
+.g-typing.stale { color: var(--warn, #fbbf24); }

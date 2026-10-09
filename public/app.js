@@ -391,7 +391,7 @@ function guideRender() {
     if (panel && $('#guide-panel').hidden) continue;
     const msgs = el.querySelector('.g-msgs');
     const atBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 60;
-    msgs.innerHTML = G.messages.length ? G.messages.map((m, i) => guideMsg(m, i)).join('') + (G.busy ? '<div class="g-typing">🧭 trabajando…</div>' : '')
+    msgs.innerHTML = G.messages.length ? G.messages.map((m, i) => guideMsg(m, i)).join('') + (G.busy ? `<div class="g-typing">${guideTypingText()}</div>` : '')
       : `<div class="g-empty"><h3>🧭 Guía</h3><p>Entiendo lo que estás viendo y puedo crear tareas, contarte cómo van, pararlas o enseñarte lo que han cambiado.</p><div class="g-hint">${GUIDE_HINTS.map((h) => `<button data-ghint="${esc(h)}">${esc(h)}</button>`).join('')}</div></div>`;
     if (atBottom || G.busy) msgs.scrollTop = msgs.scrollHeight;
     const cur = G.chats.find((c) => c.id === G.chatId);
@@ -552,16 +552,30 @@ window.addEventListener('message', (e) => {
   voiceHotkey(!!e.data.down);
 });
 
+// «trabajando…» con tiempo y última novedad: así se distingue si avanza o se ha quedado colgado.
+const GUIDE_STALE_MS = 120_000;
+const dur = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')} s`; };
+function guideTypingText() {
+  const now = Date.now(), quiet = now - (G.lastEventAt || now);
+  const last = G.lastWhat ? ` · último: ${esc(G.lastWhat)} hace ${dur(quiet)}` : ` · sin respuesta todavía`;
+  return quiet > GUIDE_STALE_MS
+    ? `⚠ sin novedades desde hace ${dur(quiet)} — puede haberse quedado colgado: pulsa ■ Parar y vuelve a pedírselo`
+    : `🧭 trabajando… ${dur(now - G.startedAt)}${last}`;
+}
+setInterval(() => { if (!G.busy) return; document.querySelectorAll('.g-typing').forEach((el) => { el.innerHTML = guideTypingText(); el.classList.toggle('stale', Date.now() - (G.lastEventAt || Date.now()) > GUIDE_STALE_MS); }); }, 1000);
+
 async function guideSend(text) {
   voiceSpeak(null); // callar lo que estuviera leyendo (FT-9)
   let said = '';
   G.busy = true;
+  G.startedAt = G.lastEventAt = Date.now(); G.lastWhat = '';
+  const ctl = new AbortController(); G.abort = ctl;
   const sent = G.pending; G.pending = [];
   G.messages.push({ role: 'user', text: text || 'Adjuntos', ...(sent.length ? { attachments: sent } : {}) });
   guideRender();
   const push = (m) => { G.messages.push(m); guideRender(); };
   try {
-    const r = await fetch(BASE + 'api/guide/chat', { method: 'POST', headers: { 'content-type': 'application/json', 'x-ao-client': CLIENT_ID }, body: JSON.stringify({ chatId: G.chatId, text, attachments: sent.map((a) => ({ name: a.name, path: a.path })) }) });
+    const r = await fetch(BASE + 'api/guide/chat', { method: 'POST', signal: ctl.signal, headers: { 'content-type': 'application/json', 'x-ao-client': CLIENT_ID }, body: JSON.stringify({ chatId: G.chatId, text, attachments: sent.map((a) => ({ name: a.name, path: a.path })) }) });
     if (!r.ok) { const j = await r.json().catch(() => ({})); push({ role: 'error', text: j.error || r.statusText }); return; }
     const reader = r.body.getReader(), dec = new TextDecoder();
     let buf = '';
@@ -574,6 +588,8 @@ async function guideSend(text) {
         const data = buf.slice(0, i).match(/^data: (.*)$/m); buf = buf.slice(i + 2);
         if (!data) continue;
         const ev = JSON.parse(data[1]);
+        G.lastEventAt = Date.now();
+        G.lastWhat = ev.type === 'tool_call' ? ev.name : ev.type === 'tool_result' ? `${ev.ok === false ? '✗ ' : '✓ '}resultado` : ev.type === 'text' ? 'mensaje' : G.lastWhat;
         if (ev.type === 'chat') { G.chatId = ev.chat.id; safeSet('ao:guide-chat', G.chatId); guideRefresh(); }
         else if (ev.type === 'text') { said += (said ? '\n' : '') + ev.text; push({ role: 'assistant', text: ev.text }); }
         else if (ev.type === 'tool_call') push({ role: 'tool', id: ev.id, name: ev.name, args: ev.args, ok: null, result: null });
@@ -582,10 +598,16 @@ async function guideSend(text) {
         else if (ev.type === 'error') push({ role: 'error', text: ev.error, stopped: !!ev.stopped });
       }
     }
-  } catch (e) { push({ role: 'error', text: 'Se cortó la conexión con el servidor: ' + e.message }); }
-  finally { G.busy = false; guideRender(); guideRefresh(); voiceSpeak(said); }
+  } catch (e) { push({ role: 'error', text: e.name === 'AbortError' ? 'Parado. Si se había quedado colgado, vuelve a pedírselo.' : 'Se cortó la conexión con el servidor (¿se reinició AgentOffice?): ' + e.message, stopped: e.name === 'AbortError' }); }
+  finally { G.busy = false; G.abort = null; guideRender(); guideRefresh(); voiceSpeak(said); }
 }
-function guideStop() { if (G.chatId) api('POST', '/api/guide/stop', { chatId: G.chatId }); }
+// ■ Parar: pide al servidor que corte el turno; si no hay chat todavía o el servidor ya no lo tiene (p. ej. se reinició),
+// se suelta la conexión en el navegador para que el panel nunca se quede en «trabajando…».
+function guideStop() {
+  const ctl = G.abort;
+  if (!G.chatId) return ctl?.abort();
+  api('POST', '/api/guide/stop', { chatId: G.chatId }).catch(() => {}).finally(() => setTimeout(() => { if (G.abort === ctl) ctl?.abort(); }, 3000));
+}
 
 // ── Voz del Guía 🎤 (FT-9) ───────────────────────────────────────────────────
 // Push-to-talk: mantener 🎤 (o la barra espaciadora con la caja vacía) → MediaRecorder + VAD en el cliente → POST /api/guide/stt →
