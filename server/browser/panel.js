@@ -40,6 +40,8 @@ export async function refresh() {
     const a = tabs.find((t) => t.active) || tabs[0];
     cache = { open: true, tabs, url: a?.url || '', title: a?.title || '', tabId: a?.id || null };
   }
+  // Si lo abrió el AGENTE (no el botón del panel) con alguien mirando, la vista en vivo arranca aquí; al cerrarse, se para
+  if (cache.open) ensureCast(); else endCast();
   const key = JSON.stringify([cache, control, handoffs, waiters.length]);
   if (key !== lastKey) { lastKey = key; store.changed(); } // → evento `state` con `browser`
   return status();
