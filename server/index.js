@@ -196,7 +196,7 @@ const routes = [
   ['DELETE', /^\/api\/projects\/(\w+)$/, ([id]) => team.deleteProject(id)],
   ['PATCH', /^\/api\/projects\/(\w+)$/, ([id], b) => team.updateProject(id, b)],
   ['GET', /^\/api\/version$/, () => selfupdate.state],
-  ['POST', /^\/api\/version\/check$/, () => selfupdate.check()],
+  ['POST', /^\/api\/version\/check$/, (_, __, q) => selfupdate.check({ apply: q.apply !== '0' })], // ?apply=0: solo mirar (el panel de Plugins de flow-test)
   ['POST', /^\/api\/telegram\/test$/, async () => { const c = telegram.config(); return { enabled: c.enabled, chats: c.chats.length, sent: await telegram.send('✅ AgentOffice: los avisos por Telegram funcionan') }; }],
   // Costes de los agentes (FT-76): KPI, desglose y línea base interactiva. Para seguirlo desde flows de flow-test.
   ['GET', /^\/api\/costs$/, (_, __, q) => costs.overview(store.get(), Date.now(), { variant: q.variant })],

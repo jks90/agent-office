@@ -10,7 +10,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RESTART_CODE = 75;
 
 function start() {
-  const child = spawn(process.execPath, [path.join(ROOT, 'server', 'index.js')], { cwd: ROOT, stdio: 'inherit' });
+  const child = spawn(process.execPath, [path.join(ROOT, 'server', 'index.js')], { cwd: ROOT, stdio: 'inherit', env: { ...process.env, AO_SUPERVISED: '1' } });
   for (const sig of ['SIGINT', 'SIGTERM']) process.once(sig, () => child.kill(sig));
   child.on('exit', (code, signal) => {
     if (code === RESTART_CODE) { console.log('↻ AgentOffice se ha actualizado: lo vuelvo a arrancar'); start(); return; }
