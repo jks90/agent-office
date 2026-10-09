@@ -43,11 +43,13 @@ try {
   store.get().settings.browserPolicy = undefined;
   check('file:// y chrome:// → block', classify('file:///etc/passwd').action === 'block' && classify('chrome://settings').action === 'block' && classify('about:config').action === 'block');
   check('about:blank → allow', classify('about:blank').action === 'allow');
-  check('localhost, 127.0.0.1, 192.168.x y host sin punto → block', ['http://localhost:3000/', 'http://127.0.0.1/', 'http://192.168.1.5/', 'http://10.0.0.2/', 'http://intranet/', 'http://[::1]/'].every((u) => classify(u).action === 'block'), JSON.stringify(classify('http://[::1]/')));
+  check('192.168.x, 10.x y host sin punto → block', ['http://192.168.1.5/', 'http://10.0.0.2/', 'http://intranet/'].every((u) => classify(u).action === 'block'));
+  check('loopback (localhost, 127.0.0.1, ::1) → ask 🛡', ['http://localhost:3000/', 'http://127.0.0.1/', 'http://[::1]/'].every((u) => classify(u).action === 'ask'), JSON.stringify(classify('http://[::1]/')));
+  check('paneles propios (AgentOffice :7420, flow-test :9998) → block siempre', ['http://127.0.0.1:7420/', 'http://localhost:9998/'].every((u) => classify(u).action === 'block'));
   check('dominio sin regla → ask por defecto', classify('https://nuevo.test/x').action === 'ask');
   setBrowserPolicy({ default: 'ask', domains: { 'https://Bien.test/algo': 'allow', 'mal.test': 'block', 'pregunta.test': 'ask', localhost: 'allow' } });
   check('allow / block / ask por dominio y subdominios', classify('https://www.bien.test/').action === 'allow' && classify('https://mal.test/').action === 'block' && classify('https://a.mal.test/').action === 'block' && classify('https://pregunta.test/').action === 'ask');
-  check('localhost permitido explícitamente → allow; 127.0.0.1 sigue block', classify('http://localhost:8080/').action === 'allow' && classify('http://127.0.0.1/').action === 'block');
+  check('localhost permitido explícitamente → allow; 127.0.0.1 sigue pidiendo 🛡; :7420 sigue block', classify('http://localhost:8080/').action === 'allow' && classify('http://127.0.0.1/').action === 'ask' && classify('http://localhost:7420/').action === 'block');
   setBrowserPolicy({ default: 'allow' });
   check('default allow no abre la red local', classify('https://otro.test/').action === 'allow' && classify('http://10.1.1.1/').action === 'block');
 
@@ -79,9 +81,9 @@ try {
   check('dominio allow → navega sin preguntar', ok.res.ok && !ok.asked, JSON.stringify(ok.res.body));
   const bl = await withAnswer('browser.navigate', { url: 'https://mal.test/' }, null);
   check('dominio block → 403 sin preguntar', bl.res.status === 403 && !bl.asked && /no permitido/.test(bl.res.body.error || ''), JSON.stringify(bl.res.body));
-  for (const u of ['file:///etc/passwd', 'chrome://settings', 'http://127.0.0.1:7420/', 'http://localhost:3000/']) {
+  for (const u of ['file:///etc/passwd', 'chrome://settings', `http://127.0.0.1:${port}/`, 'http://192.168.1.5/']) {
     const r = await tool('browser.navigate', { url: u });
-    check(`${u} → 403/400`, [400, 403].includes(r.status), `${r.status} ${JSON.stringify(r.body)}`);
+    check(`${u} → 403/400 (o «inside»: el propio panel no se navega)`, [400, 403].includes(r.status) || r.body?.inside === true, `${r.status} ${JSON.stringify(r.body)}`);
   }
   const nw = await withAnswer('browser.tabs', { action: 'new', url: 'https://nuevo.test/a' }, 'No');
   check('dominio nuevo → confirmación 🛡; «No» → 403', nw.asked?.kind === 'confirm' && /nuevo\.test/.test(nw.asked.question) && nw.res.status === 403, JSON.stringify(nw.asked));
