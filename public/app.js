@@ -1,3 +1,4 @@
+import { openEventStream } from './ws-events.js';
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -93,7 +94,7 @@ let settingsEmbedOpened = false;
 let evES = null, evBrowser = false, evHiddenT = 0;
 function connectEvents() {
   if (evES) { evES.close(); evES = null; }
-  const es = new EventSource(BASE + 'events' + (evBrowser ? '?browser=1' : ''));
+  const es = openEventStream(BASE + 'events' + (evBrowser ? '?browser=1' : '')); // WebSocket si se puede (no gasta del cupo de 6 conexiones)
   evES = es;
   es.addEventListener('frame', (e) => brOnFrame(e));
   es.addEventListener('mark', (e) => brOnMark(e));
@@ -1065,7 +1066,7 @@ function showTab(tab) {
     requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
     if (prev !== 'office' && officeInit) applyOfficeDefault(); // al entrar en la pestaña: edificio, planta recordada o la única (FT-47)
   }
-  if (tab === 'agents') { renderSkills(); renderClaudeMemory(); renderTools(); }
+  if (tab === 'agents') setTimeout(() => { renderSkills(); renderClaudeMemory(); renderTools(); }); // diferido: al arrancar en esta vista su estado (toolsData…) aún no está declarado
   if (tab === 'marketplace') setTimeout(renderMarketplace); // FT-142 (diferido: su estado se declara al final)
   if (tab === 'inbox') setTimeout(renderInbox); // al arrancar con «Para ti» guardada, su código aún no está definido: después de cargar
   if (tab === 'browser') brShow(); else brHide();
