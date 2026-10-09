@@ -1213,7 +1213,7 @@ function renderRoles() {
       <div class="desc">${esc(r.description || r.system.slice(0, 160))}</div>
       ${r.skills?.length ? `<div class="sk">🧩 ${r.skills.map(esc).join(' · ')}</div>` : ''}
       <div class="src">${r.custom ? `📄 ${esc(r.file.replace(/^.*\/_agentes\/roles\//, 'catálogo/'))}` : 'de serie'}${team().some((a) => a.role === id) ? ' · en plantilla' : ''}</div>
-      <div class="acts">${r.custom ? `<button class="small ghost" data-role-edit="${id}">✎ Editar</button><button class="small ghost" data-mp-pub="role:${id}" title="Publicar en el marketplace (FT-142)">⬆ Publicar</button><button class="small danger" data-role-del="${id}">✕</button>` : `<button class="small ghost" data-role-dup="${id}">Copiar al catálogo…</button>`}</div>
+      <div class="acts">${r.custom ? `<button class="small ghost" data-role-edit="${id}">✎ Editar</button><button class="small ghost" data-mp-pub="role:${id}" title="Publicar en el marketplace (FT-142)">⬆ Publicar</button><button class="small danger" data-role-del="${id}">✕</button>` : `<button class="small ghost" data-role-dup="${id}">Copiar al catálogo…</button><button class="small ghost" data-mp-pub="role:${id}" title="Publicar en el marketplace (FT-142)">⬆ Publicar</button>`}</div>
     </div>`;
   $('#roles').innerHTML = order.map((g) => {
     const list = groups[g].sort(([a, ra], [b, rb]) => (inTeam(b) - inTeam(a)) || ra.label.localeCompare(rb.label));

@@ -82,7 +82,10 @@ function walk(root, rel = '', out = []) {
 function roleFiles(id) {
   const r = roleOf(id);
   if (!r) throw fail(404, 'Rol no encontrado');
-  if (!r.file) return { role: r, files: [] }; // rol de serie: viaja solo su nombre
+  if (!r.file) { // rol de serie: se publica como un .md generado con su definición (al instalarlo donde ya existe de serie, gana el de serie)
+    const fm = [`name: ${id}`, `description: ${String(r.description || r.label || id).replace(/\n/g, ' ')}`, `kind: ${r.kind || 'dev'}`, ...(r.model ? [`model: ${r.model}`] : []), 'version: 1.0.0'];
+    return { role: { ...r, description: r.description || r.label }, files: [textFile(`roles/${id}.md`, `---\n${fm.join('\n')}\n---\n\n${r.system.trim()}\n`)] };
+  }
   return { role: r, files: [textFile(`roles/${path.basename(r.file)}`, fs.readFileSync(r.file, 'utf8'))] };
 }
 
@@ -114,10 +117,9 @@ export function exportPackage(kind, id, scope = 'public', opts = {}) {
 
   if (kind === 'role') {
     const { role, files: f } = roleFiles(id);
-    if (!f.length) throw fail(400, 'Los roles de serie no se exportan');
     files = f; name = slug(id); summary = role.description || '';
-    meta = { role: name, kindOfRole: role.kind, ...(role.model ? { model: role.model } : {}) };
-    version = parseFrontmatter(fs.readFileSync(role.file, 'utf8')).meta.version || version;
+    meta = { role: name, kindOfRole: role.kind, ...(role.model ? { model: role.model } : {}), ...(role.file ? {} : { builtin: true }) };
+    version = parseFrontmatter(bytes(f[0]).toString('utf8')).meta.version || version;
   } else if (kind === 'skill') {
     const s = skillFiles(id);
     files = s.files; name = slug(id);
