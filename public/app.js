@@ -86,10 +86,17 @@ function toast(text, kind = '') {
 // El EventSource reconecta solo ante cortes de red, pero un error HTTP (p. ej. el 502 del proxy de flow-test mientras
 // el servidor se reinicia) lo cierra para siempre: aquí se vuelve a abrir con espera creciente para que la vista no se
 // quede congelada. Al reconectar llegan `state` y `logs` completos, así que no se pierde nada.
+// Una sola conexión SSE por pestaña: con la vista 🌐 abierta lleva también los fotogramas (?browser=1) y en segundo plano se
+// suelta (Chrome solo admite 6 conexiones HTTP/1.1 por servidor; con varias pestañas de flow-test se agotaban).
 let esRetry = 1000;
 let settingsEmbedOpened = false;
+let evES = null, evBrowser = false, evHiddenT = 0;
 function connectEvents() {
-  const es = new EventSource(BASE + 'events');
+  if (evES) { evES.close(); evES = null; }
+  const es = new EventSource(BASE + 'events' + (evBrowser ? '?browser=1' : ''));
+  evES = es;
+  es.addEventListener('frame', (e) => brOnFrame(e));
+  es.addEventListener('mark', (e) => brOnMark(e));
   es.addEventListener('open', () => { esRetry = 1000; });
   es.addEventListener('state', (e) => {
     const was = new Set(S.tasks.filter((t) => t.status === 'review').map((t) => t.id)), hadState = S.tasks.length > 0;
@@ -137,12 +144,18 @@ function connectEvents() {
     }
   });
   es.addEventListener('error', () => {
-    if (es.readyState !== EventSource.CLOSED) return; // CONNECTING: el navegador ya reintenta solo
-    setTimeout(connectEvents, esRetry);
+    if (es !== evES || es.readyState !== EventSource.CLOSED) return; // sustituida, o CONNECTING: el navegador ya reintenta solo
+    evES = null;
+    setTimeout(() => { if (!evES && !document.hidden) connectEvents(); }, esRetry);
     esRetry = Math.min(esRetry * 2, 15000);
   });
 }
 connectEvents();
+document.addEventListener('visibilitychange', () => {
+  clearTimeout(evHiddenT);
+  if (document.hidden) evHiddenT = setTimeout(() => { if (evES) { evES.close(); evES = null; } }, 15000);
+  else if (!evES) connectEvents(); // al volver llegan `state` y `logs` completos
+});
 
 const project = () => S.projects.find((p) => p.id === projectId);
 // Proyectos que se ven en la UI (Ajustes ▸ Proyectos visibles). Ocultar no para nada: un proyecto oculto en marcha sigue trabajando.
@@ -557,18 +570,20 @@ const GUIDE_STALE_MS = 120_000;
 const dur = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')} s`; };
 function guideTypingText() {
   const now = Date.now(), quiet = now - (G.lastEventAt || now);
+  // El servidor aún no ha contestado ni con cabeceras: casi siempre es el cupo de 6 conexiones del navegador agotado por pestañas
+  if (!G.sent && now - G.startedAt > 10_000) return `⏳ el mensaje no ha salido todavía (${dur(now - G.startedAt)}): tu navegador tiene demasiadas conexiones abiertas con flow-test — cierra otras pestañas de flow-test y pulsa ■ Parar para reintentar`;
   const last = G.lastWhat ? ` · último: ${esc(G.lastWhat)} hace ${dur(quiet)}` : ` · sin respuesta todavía`;
   return quiet > GUIDE_STALE_MS
     ? `⚠ sin novedades desde hace ${dur(quiet)} — puede haberse quedado colgado: pulsa ■ Parar y vuelve a pedírselo`
     : `🧭 trabajando… ${dur(now - G.startedAt)}${last}`;
 }
-setInterval(() => { if (!G.busy) return; document.querySelectorAll('.g-typing').forEach((el) => { el.innerHTML = guideTypingText(); el.classList.toggle('stale', Date.now() - (G.lastEventAt || Date.now()) > GUIDE_STALE_MS); }); }, 1000);
+setInterval(() => { if (!G.busy) return; document.querySelectorAll('.g-typing').forEach((el) => { el.innerHTML = guideTypingText(); el.classList.toggle('stale', Date.now() - (G.lastEventAt || Date.now()) > GUIDE_STALE_MS || (!G.sent && Date.now() - G.startedAt > 10_000)); }); }, 1000);
 
 async function guideSend(text) {
   voiceSpeak(null); // callar lo que estuviera leyendo (FT-9)
   let said = '';
   G.busy = true;
-  G.startedAt = G.lastEventAt = Date.now(); G.lastWhat = '';
+  G.startedAt = G.lastEventAt = Date.now(); G.lastWhat = ''; G.sent = false;
   const ctl = new AbortController(); G.abort = ctl;
   const sent = G.pending; G.pending = [];
   G.messages.push({ role: 'user', text: text || 'Adjuntos', ...(sent.length ? { attachments: sent } : {}) });
@@ -576,6 +591,7 @@ async function guideSend(text) {
   const push = (m) => { G.messages.push(m); guideRender(); };
   try {
     const r = await fetch(BASE + 'api/guide/chat', { method: 'POST', signal: ctl.signal, headers: { 'content-type': 'application/json', 'x-ao-client': CLIENT_ID }, body: JSON.stringify({ chatId: G.chatId, text, attachments: sent.map((a) => ({ name: a.name, path: a.path })) }) });
+    G.sent = true; G.lastEventAt = Date.now();
     if (!r.ok) { const j = await r.json().catch(() => ({})); push({ role: 'error', text: j.error || r.statusText }); return; }
     const reader = r.body.getReader(), dec = new TextDecoder();
     let buf = '';
@@ -949,22 +965,18 @@ document.addEventListener('click', async (e) => {
 const pickModel = (f) => (f.model === '__other' ? (f.model_other || '').trim() : f.model || '');
 // ── Navegador del agente (FT-117) ───────────────────────────────────────────
 // Vista en vivo: el estado (control, pestañas, url, handoffs) llega en `S.browser` (SSE de estado); los fotogramas y la marca
-// del elemento sobre el que actúa el agente, por /api/browser/stream (solo abierto mientras la vista está a la vista).
-let brES = null, brFrame = null, brMarkT = 0, brLastWheel = 0;
+// del elemento sobre el que actúa el agente, por el mismo SSE de eventos con ?browser=1 (solo mientras la vista está a la vista).
+let brFrame = null, brMarkT = 0, brLastWheel = 0;
 const brCall = (p, body) => api('POST', 'api/browser/' + p, body || {}).then((r) => r, () => null);
-function brShow() {
-  renderBrowser();
-  if (brES) return;
-  brES = new EventSource(BASE + 'api/browser/stream');
-  brES.addEventListener('frame', (e) => {
+function brOnFrame(e) {
     brFrame = JSON.parse(e.data);
     const img = $('#br-img');
     img.src = `data:${brFrame.mime};base64,${brFrame.data}`;
     img.dataset.fw = brFrame.w; img.dataset.fh = brFrame.h; // tamaño del viewport del fotograma (px CSS)
     img.hidden = false;
     $('#br-empty').hidden = true;
-  });
-  brES.addEventListener('mark', (e) => {
+}
+function brOnMark(e) {
     const m = JSON.parse(e.data), img = $('#br-img');
     if (!brFrame || !img.clientWidth) return;
     const k = img.clientWidth / brFrame.w, el = $('#br-mark');
@@ -972,9 +984,12 @@ function brShow() {
     el.hidden = false;
     clearTimeout(brMarkT);
     brMarkT = setTimeout(() => { el.hidden = true; }, m.ms || 1000);
-  });
 }
-function brHide() { if (brES) { brES.close(); brES = null; } }
+function brShow() {
+  renderBrowser();
+  if (!evBrowser) { evBrowser = true; connectEvents(); }
+}
+function brHide() { if (evBrowser) { evBrowser = false; connectEvents(); } }
 function renderBrowser() {
   const b = S.browser;
   if (!b || $('#view-browser').hidden) return;

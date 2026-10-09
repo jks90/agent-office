@@ -360,6 +360,7 @@ function events(req, res) {
   const onUi = (cmd) => send('ui', cmd); // FT-4: órdenes del Guide a la UI (navegar, abrir tarea…)
   store.bus.on('activity', onActivity);
   store.bus.on('ui', onUi);
+  if (new URL(req.url, 'http://x').searchParams.get('browser') === '1') browserPanel.attach(req, res); // vídeo del 🌐 por el mismo SSE
   const ping = setInterval(() => res.write(': ping\n\n'), 20000);
   req.on('close', () => { clearInterval(ping); store.bus.off('state', onState); store.bus.off('log', onLog); store.bus.off('activity', onActivity); store.bus.off('ui', onUi); });
 }
