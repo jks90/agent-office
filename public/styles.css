@@ -150,6 +150,16 @@ dialog select[multiple].tall { height: 160px; }
 .member.bench { opacity: .85; }
 #team { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--s-2); padding-bottom: 2px; }
 #view-agents { overflow: auto; }
+#view-marketplace { overflow: auto; }
+.skills-box.mp-box { max-height: none; overflow: visible; }
+#mp-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: var(--s-2); align-items: start; }
+#mp-list > .mp-sec, #mp-list > .mp-group-head, #mp-list > .empty { grid-column: 1 / -1; }
+.mp-sec { margin: 14px 0 0; padding-bottom: 6px; border-bottom: 1px solid var(--line); font-size: 13px; text-transform: uppercase; letter-spacing: .06em; }
+.mp-sec:first-child { margin-top: 2px; }
+.mp-sec .muted { text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 12px; margin-left: 6px; }
+.mp-group-head { margin: 6px 0 0; font-size: 12px; cursor: pointer; user-select: none; }
+.mp-group-head .caret { display: inline-block; width: 14px; transition: transform .15s; }
+.mp-group-head.collapsed .caret { transform: rotate(-90deg); }
 .member { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--s-3); cursor: pointer; transition: transform .16s ease, border-color .16s ease, background .16s ease; }
 .member:hover, .member.sel { border-color: color-mix(in srgb, var(--c) 58%, var(--accent)); background: #202738; transform: translateY(-1px); }
 .member .top { display: flex; align-items: center; gap: var(--s-2); min-width: 0; }
@@ -660,3 +670,6 @@ select.tool-assign { width: auto; max-width: 150px; font-size: 11px; padding: 2p
 .br-side h4 { margin: 0 0 var(--s-2); }
 .br-handoff { background: var(--panel2); border-radius: var(--r-sm); padding: var(--s-2); margin-bottom: var(--s-2); display: flex; flex-direction: column; gap: var(--s-2); }
 @media (max-width: 760px) { .br-body { flex-direction: column; } .br-side { width: auto; max-height: 30%; } .br-stage { min-height: 200px; } }
+/* Marketplace ▸ Privado: los subgrupos no heredan el estilo de títulos de .skills-box (flecha ::before y mayúsculas) */
+.mp-box .mp-group-head { text-transform: none; letter-spacing: 0; color: var(--text, inherit); font-weight: 600; }
+.mp-box .mp-group-head::before { content: none; }

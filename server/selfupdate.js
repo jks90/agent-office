@@ -16,13 +16,17 @@ const EVERY_MS = Math.max(5, Number(process.env.AO_UPDATE_MIN) || 15) * 60e3;
 
 const git = async (...args) => (await run('git', args, { cwd: ROOT, timeout: 60_000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })).stdout.trim();
 
-export const state = { enabled: ENABLED, sha: null, branch: null, upstream: null, behind: 0, ahead: 0, checkedAt: null, skipped: null, error: null, updatedFrom: null };
+// ¿Hay quien lo relance al salir con 75? (bin/ao-run.mjs pone AO_SUPERVISED; systemd pone INVOCATION_ID). Si no, actualizar
+// y salir lo dejaría apagado: se actualiza el disco y se avisa de que hay que reiniciarlo a mano (`restartPending`).
+export const RESTARTABLE = !!(process.env.AO_SUPERVISED || process.env.INVOCATION_ID);
+export const state = { enabled: ENABLED, restartable: RESTARTABLE, restartPending: false, sha: null, branch: null, upstream: null, behind: 0, ahead: 0, checkedAt: null, skipped: null, error: null, updatedFrom: null };
 
 /** Nadie trabajando ni revisando: actualizar ahora no corta nada. */
 export const idle = (s = get()) => !s.agents.some((a) => a.status && a.status !== 'idle') && !s.tasks.some((t) => t.reviewing);
 
 export async function check({ apply = true } = {}) {
   state.checkedAt = Date.now(); state.error = null; state.skipped = null;
+  if (state.restartPending) { state.skipped = 'actualizado en disco: falta reiniciar AgentOffice'; return state; }
   try {
     state.sha = await git('rev-parse', '--short', 'HEAD');
     state.branch = await git('rev-parse', '--abbrev-ref', 'HEAD');
@@ -42,6 +46,7 @@ export async function check({ apply = true } = {}) {
     const to = await git('rev-parse', '--short', 'HEAD');
     console.log(`⬆ AgentOffice actualizado ${from} → ${to} (${behind} cambio(s)); reinicio`);
     await telegram.send(`⬆ <b>AgentOffice actualizado</b> ${from} → ${to}\n${log.split('\n').slice(0, 8).join('\n').replace(/[<>&]/g, '')}${behind > 8 ? `\n… y ${behind - 8} más` : ''}`).catch(() => {});
+    if (!RESTARTABLE) { state.restartPending = true; console.log('⚠ Actualizado en disco, pero nadie me relanzaría: reinicia AgentOffice (mejor con npm start o el servicio)'); return state; }
     setTimeout(() => process.exit(RESTART_CODE), 500);
   } catch (e) {
     state.error = String(e.stderr || e.message || e).trim().slice(0, 300);

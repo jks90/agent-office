@@ -22,7 +22,7 @@ const fake = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   const send = (s, o) => res.writeHead(s, { 'content-type': 'application/json' }).end(JSON.stringify(o));
   if (!u.pathname.startsWith('/account-link/marketplace')) return send(404, { error: 'no' });
-  if (!linked) return send(401, { error: 'sin vincular' });
+  if (!linked) return send(409, { error: 'vincula la instalación a tu cuenta FlowTest' });
   const id = u.pathname.split('/')[3];
   let body = ''; req.on('data', (c) => { body += c; });
   req.on('end', () => {

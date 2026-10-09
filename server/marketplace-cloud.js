@@ -9,17 +9,22 @@ const SCOPES = ['team', 'public'];
 const KINDS = ['role', 'skill', 'agent'];
 const linkUrl = () => `${flowTestUrl()}/account-link`;
 const UNLINKED = 'Esta instalación no está vinculada a una cuenta de FlowTest: vincúlala en flow-test para usar el marketplace';
+// flow-test en Docker no ve a AgentOffice como localhost: hay que identificarse con el mismo token (FLOW_AGENTS_TOKEN)
+let aoToken = null;
+export const setToken = (t) => { aoToken = t || null; };
 
-// Llamada a la puerta de flow-test. Sin vinculación (401/403/412 o `unlinked`) → aviso claro con enlace.
+// Llamada a la puerta de flow-test. Sin vinculación (409/412 o `unlinked`) → aviso claro con enlace.
+// 401/403 es que flow-test no acepta a AgentOffice (token), no falta de vinculación: se muestra tal cual.
 async function call(method, sub, body) {
   let r;
   try {
     r = await fetch(`${flowTestUrl()}/account-link/marketplace${sub}`, {
-      method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(20000),
+      method, headers: { 'content-type': 'application/json', ...(aoToken ? { 'x-ao-token': aoToken } : {}) }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(20000),
     });
   } catch (e) { throw fail(502, `flow-test no responde (${flowTestUrl()}): ${e.message}`); }
   const j = await r.json().catch(() => ({}));
-  if (r.status === 401 || r.status === 403 || r.status === 412 || j.unlinked) throw fail(412, UNLINKED, { unlinked: true, linkUrl: linkUrl() });
+  if (r.status === 409 || r.status === 412 || j.unlinked) throw fail(412, UNLINKED, { unlinked: true, linkUrl: linkUrl() });
+  if (r.status === 401 || r.status === 403) throw fail(502, `flow-test rechaza a AgentOffice (${j.error || r.status}): su FLOW_AGENTS_TOKEN debe ser el token de AgentOffice`);
   if (!r.ok) throw fail(r.status === 404 ? 404 : r.status >= 500 ? 502 : r.status, j.error || j.message || `flow-test respondió ${r.status}`);
   return j;
 }

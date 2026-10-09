@@ -141,4 +141,17 @@ test('exportPackage: argumentos inválidos', () => {
   assert.throws(() => mkt.exportPackage('agent', 'x', 'public'), (e) => e.status === 400);
 });
 
+test('exportPackage: un rol de serie (coordinador) se publica como .md generado, sin memoria', () => {
+  const pkg = mkt.exportPackage('role', 'coordinador', 'public');
+  assert.equal(pkg.name, 'coordinador');
+  assert.equal(pkg.meta.builtin, true);
+  assert.equal(pkg.meta.kindOfRole, 'supervisor');
+  assert.equal(pkg.memory, undefined);
+  const md = Buffer.from(pkg.files[0].content, 'base64').toString('utf8');
+  assert.equal(pkg.files[0].path, 'roles/coordinador.md');
+  assert.match(md, /^---\nname: coordinador\n/);
+  assert.match(md, /kind: supervisor/);
+  assert.match(md, /Eres el coordinador del equipo/);
+});
+
 test.after(() => fs.rmSync(tmp, { recursive: true, force: true }));

@@ -52,6 +52,7 @@ const HOST = process.env.AO_HOST || '127.0.0.1'; // lanza procesos con tus permi
 // Si se expone fuera del loopback (p. ej. para que el flow-test en Docker lo proxee), hace falta un token:
 // cabecera `x-ao-token` (flow-test lo manda desde FLOW_AGENTS_TOKEN). Desde 127.0.0.1 no se pide.
 const TOKEN = process.env.AO_TOKEN || (HOST !== '127.0.0.1' && HOST !== 'localhost' ? loadOrCreateToken() : null);
+mpCloud.setToken(TOKEN); // FT-142 — para la puerta /account-link/marketplace de flow-test
 function loadOrCreateToken() {
   const f = path.join(store.DATA_DIR, '.token');
   try { return fs.readFileSync(f, 'utf8').trim(); } catch { /* se crea */ }
@@ -195,7 +196,7 @@ const routes = [
   ['DELETE', /^\/api\/projects\/(\w+)$/, ([id]) => team.deleteProject(id)],
   ['PATCH', /^\/api\/projects\/(\w+)$/, ([id], b) => team.updateProject(id, b)],
   ['GET', /^\/api\/version$/, () => selfupdate.state],
-  ['POST', /^\/api\/version\/check$/, () => selfupdate.check()],
+  ['POST', /^\/api\/version\/check$/, (_, __, q) => selfupdate.check({ apply: q.apply !== '0' })], // ?apply=0: solo mirar (el panel de Plugins de flow-test)
   ['POST', /^\/api\/telegram\/test$/, async () => { const c = telegram.config(); return { enabled: c.enabled, chats: c.chats.length, sent: await telegram.send('✅ AgentOffice: los avisos por Telegram funcionan') }; }],
   // Costes de los agentes (FT-76): KPI, desglose y línea base interactiva. Para seguirlo desde flows de flow-test.
   ['GET', /^\/api\/costs$/, (_, __, q) => costs.overview(store.get(), Date.now(), { variant: q.variant })],
@@ -297,6 +298,7 @@ const routes = [
     const st = store.get().settings;
     if (typeof b.flowTestUrl === 'string' && b.flowTestUrl.trim()) st.flowTestUrl = b.flowTestUrl.trim().replace(/\/+$/, '').replace(/\/mcp$/, '');
     if (typeof b.workspaceHostDir === 'string') st.workspaceHostDir = b.workspaceHostDir.trim();
+    if (typeof b.authorName === 'string') st.authorName = b.authorName.trim().slice(0, 60) || undefined; // autor en el marketplace (FT-142)
     if (typeof b.officeAmbient === 'boolean') st.officeAmbient = b.officeAmbient; // FT-150: personajes de ambiente de la planta (por defecto on)
     if (typeof b.officePanels === 'boolean') st.officePanels = b.officePanels; // FT-125: paneles de los márgenes de la planta (por defecto on)
     if (['todas', 'al pasar'].includes(b.officeBubbles)) st.officeBubbles = b.officeBubbles; // FT-123
