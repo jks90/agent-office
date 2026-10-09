@@ -114,9 +114,13 @@ try {
   ok('UI: instalar agente pide proyecto destino');
 
   // Publicar desde el catálogo de roles y skills y desde la ficha del agente
+  // los roles y el banquillo viven en Marketplace ▸ 🔒 Privado, con las mismas tarjetas
+  await click('[data-mp-tab="private"]');
+  await page.waitForSelector('#mp-list [data-mp-pub^="role:"]');
+  assert(!(await page.$('#view-agents #roles')) && !(await page.$('#view-agents #bench')));
+  ok('UI: 🔒 Privado lista los roles como tarjetas del marketplace (y ya no están en Agentes)');
   await click('[data-tab="agents"]');
   await page.waitForSelector('[data-mp-pub^="skill:"]');
-  await page.waitForSelector('[data-mp-pub^="role:"]');
   assert(await page.$('[data-mp-pub^="agent:"]'));
   await click('[data-mp-pub="skill:mia"]');
   await dlgOpen();

@@ -289,14 +289,15 @@ document.addEventListener('click', (e) => {
 });
 // Clic en la etiqueta de rol de un agente → baja a su tarjeta en «Roles» (abre la sección si estaba plegada) y la resalta.
 function gotoRole(id) {
-  if (collapsed.roles) { collapsed.roles = false; safeSet('ao:collapsed', JSON.stringify(collapsed)); applyCollapsed(); }
-  const card = [...document.querySelectorAll('#roles .role-card')].find((c) => c.dataset.roleId === id);
-  if (!card) return toast(`El rol «${id}» no está en el catálogo`, 'error');
-  const grp = card.closest('.role-group');
-  if (grp?.classList.contains('collapsed')) { grp.classList.remove('collapsed'); collapsed['roles:' + grp.dataset.roleGroup] = false; safeSet('ao:collapsed', JSON.stringify(collapsed)); }
-  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  card.classList.remove('flash'); void card.offsetWidth; card.classList.add('flash');
-  setTimeout(() => card.classList.remove('flash'), 1800);
+  mpTab = 'private'; mpKind = 'role'; mpQ = S.roles[id]?.label || id; safeSet('ao:mpTab', mpTab);
+  if (activeTab !== 'marketplace') showTab('marketplace'); else renderMarketplace();
+  setTimeout(() => {
+    const card = [...document.querySelectorAll('#mp-list [data-role-id]')].find((c) => c.dataset.roleId === id);
+    if (!card) return toast(`El rol «${id}» no está en el catálogo`, 'error');
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.classList.remove('flash'); void card.offsetWidth; card.classList.add('flash');
+    setTimeout(() => card.classList.remove('flash'), 1800);
+  }, 80);
 }
 document.addEventListener('click', (e) => { const h = e.target.closest('.role-group-head'); if (!h) return; const g = h.parentElement; g.classList.toggle('collapsed'); collapsed['roles:' + g.dataset.roleGroup] = g.classList.contains('collapsed'); safeSet('ao:collapsed', JSON.stringify(collapsed)); });
 document.addEventListener('click', (e) => { const b = e.target.closest('[data-goto-role]'); if (b) { e.stopPropagation(); gotoRole(b.dataset.gotoRole); } });
@@ -1159,6 +1160,7 @@ function renderTeam() {
 // Banquillo agrupado: primero los disponibles; luego uno plegable por proyecto donde ya están fichados (el primero si son
 // varios). Dentro, por rol y nombre. Por defecto solo se abre «Disponibles» (lo elegido se recuerda, como en los roles).
 function renderBench() {
+  if (!$('#bench')) return mpRefreshPrivate(); // FT-142: el banquillo vive en Marketplace ▸ 🔒 Privado
   const list = bench();
   $('#bench-summary').textContent = `${list.length} en la empresa sin fichar aquí`;
   const card = (a) => {
@@ -1201,6 +1203,7 @@ function renderRepos() {
 // Cada grupo se pliega; por defecto solo se abre el que tiene roles del equipo del proyecto activo (lo elegido se recuerda).
 const roleGroupOf = (r) => r.custom ? (r.file.replace(/^.*\/_agentes\/roles\//, '').split('/').slice(0, -1).join('/') || 'General') : 'De serie';
 function renderRoles() {
+  if (!$('#roles')) return mpRefreshPrivate(); // FT-142: los roles viven en Marketplace ▸ 🔒 Privado
   const roles = Object.entries(S.roles);
   $('#roles-summary').textContent = `${roles.filter(([, r]) => r.custom).length} del catálogo · ${roles.filter(([, r]) => !r.custom).length} de serie`;
   const inTeam = (id) => team().some((a) => a.role === id);
@@ -3227,7 +3230,7 @@ function failedDialog(pid) {
 
 // ── 🛒 Marketplace (FT-142): equipo (org) y público, vía flow-test ─────────────────────────────────
 const MP_KIND = { role: '🎭 rol', skill: '🧩 skill', agent: '🤖 agente' };
-let mpTab = 'team', mpKind = '', mpQ = '', mpTimer = null, mpSeq = 0;
+let mpTab = safeGet('ao:mpTab') || 'team', mpKind = '', mpQ = '', mpTimer = null, mpSeq = 0;
 // Como api() pero sin toast: devuelve {ok,status,j} para poder pedir confirmaciones (🛡) según el 409.
 async function mpApi(method, url, body) {
   const r = await fetch(BASE + url.replace(/^\//, ''), { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
@@ -3237,21 +3240,89 @@ const mpUnlinked = (j) => `<div class="empty mp-unlinked">🔗 ${esc(j.error || 
 function renderMarketplace() {
   const el = $('#marketplace');
   if (!el) return;
+  const priv = mpTab === 'private';
+  const tabs = `<button class="small ${priv ? '' : 'ghost'}" data-mp-tab="private">🔒 Privado</button>
+      <button class="small ${mpTab === 'team' ? '' : 'ghost'}" data-mp-tab="team">👥 Mi team</button>
+      <button class="small ${mpTab === 'public' ? '' : 'ghost'}" data-mp-tab="public">🌍 Público</button>`;
+  // 🔒 Privado: lo de tu empresa en esta instalación (banquillo y roles), con las mismas tarjetas (mpPrivateCards)
+  if (priv && mpKind === 'skill') mpKind = '';
   el.innerHTML = `<div class="skills-box mp-box">
     <div class="row mp-bar">
-      <button class="small ${mpTab === 'team' ? '' : 'ghost'}" data-mp-tab="team">👥 Mi team</button>
-      <button class="small ${mpTab === 'public' ? '' : 'ghost'}" data-mp-tab="public">🌍 Público</button>
+      ${tabs}
       <input id="mp-q" type="search" placeholder="Buscar…" value="${esc(mpQ)}" style="flex:1;min-width:140px" />
-      <select id="mp-kind"><option value="">Todo</option>${Object.entries(MP_KIND).map(([k, v]) => `<option value="${k}" ${mpKind === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
+      <select id="mp-kind"><option value="">Todo</option>${Object.entries(MP_KIND).filter(([k]) => !priv || k !== 'skill').map(([k, v]) => `<option value="${k}" ${mpKind === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
       <button class="small ghost" data-mp-reload title="Recargar">↻</button>
+      ${priv ? '<button data-action="new-role" class="ghost small">＋ Nuevo rol</button>' : ''}
     </div>
-    <p class="muted">${mpTab === 'team' ? 'Roles, skills y agentes con memoria de tu organización de FlowTest.' : 'Especificaciones (roles y skills) de todas las organizaciones, ya moderadas. Nunca llevan memoria.'}</p>
+    <p class="muted">${priv ? 'Lo que tiene tu empresa en esta instalación: agentes en el banquillo (sin fichar en este proyecto) y roles. Publícalos con ⬆ en tu team o en el público.' : mpTab === 'team' ? 'Roles, skills y agentes con memoria de tu organización de FlowTest.' : 'Especificaciones (roles y skills) de todas las organizaciones, ya moderadas. Nunca llevan memoria.'}</p>
     <div id="mp-list" class="role-grid"><p class="muted">Cargando…</p></div></div>`;
   loadMarketplace();
 }
+// 🔒 Privado: lo local (banquillo + roles) con las mismas tarjetas que el marketplace
+const mpRefreshPrivate = () => { if (activeTab === 'marketplace' && mpTab === 'private' && $('#mp-list')) loadMarketplace(); };
+const ROLE_KIND = { planner: 'planifica', qa: 'QA', docs: 'documenta', supervisor: 'supervisa', dev: 'desarrolla' };
+function mpPrivateCards() {
+  const q = mpQ.trim().toLowerCase(), hit = (...t) => !q || t.some((x) => String(x || '').toLowerCase().includes(q));
+  const inTeam = (id) => team().some((a) => a.role === id);
+  const agents = mpKind && mpKind !== 'agent' ? [] : bench().filter((a) => hit(a.name, a.role, S.roles[a.role]?.label))
+    .sort((x, y) => (projectsOf(x.id).length - projectsOf(y.id).length) || x.name.localeCompare(y.name));
+  const roles = mpKind && mpKind !== 'role' ? [] : Object.entries(S.roles).filter(([id, r]) => hit(id, r.label, r.description))
+    .sort(([a, ra], [b, rb]) => (inTeam(b) - inTeam(a)) || (!!rb.custom - !!ra.custom) || ra.label.localeCompare(rb.label));
+  const agentCard = (a) => {
+    const r = S.roles[a.role], where = projectsOf(a.id);
+    return `<div class="role-card mp-card" style="--c:var(--accent, #6aa9ff)">
+    <b>${esc(a.name)}</b> <span class="muted">· ${MP_KIND.agent} · ${esc(a.engine)}${a.model ? ' · ' + esc(a.model) : ''}</span>
+    <div class="desc"><button type="button" class="chip-link" data-goto-role="${esc(a.role)}" title="Ver el rol ${esc(r?.label || a.role)}">${roleChip(a.role)}</button> ${busy(a) ? esc(a.activity) : where.length ? 'en ' + where.map(esc).join(', ') : 'disponible'}</div>
+    <div class="src">🪑 banquillo · ${a.status === 'paused' ? 'en pausa' : a.status === 'working' ? 'trabajando' : 'libre'}</div>
+    <div class="acts"><button class="small" data-sign="${a.id}">↑ Fichar</button><button class="small ghost" data-agent-edit="${a.id}">✎</button><button class="small ghost" data-mp-pub="agent:${a.id}" title="Publicar en el marketplace de tu team, con memoria">⬆ Publicar</button><button class="small danger" data-fire="${a.id}" title="Baja definitiva de la empresa">Despedir</button></div>
+  </div>`;
+  };
+  const roleCard = ([id, r]) => `<div class="role-card mp-card" data-role-id="${esc(id)}" style="--c:var(--accent, #6aa9ff)">
+    <b>${esc(r.label)}</b> <span class="muted">· ${MP_KIND.role} · ${ROLE_KIND[r.kind] || 'desarrolla'}${r.model ? ' · ' + esc(r.model) : ''}${r.handles?.length ? ' · atiende ' + r.handles.map(esc).join('/') : ''}</span>
+    <div class="desc">${esc(r.description || r.system.slice(0, 160))}</div>
+    ${r.skills?.length ? `<div class="sk">🧩 ${r.skills.map(esc).join(' · ')}</div>` : ''}
+    <div class="src">${r.custom ? `📄 ${esc(r.file.replace(/^.*\/_agentes\/roles\//, 'catálogo/'))}` : 'de serie'}${inTeam(id) ? ' · en plantilla' : ''}</div>
+    <div class="acts">${r.custom ? `<button class="small ghost" data-role-edit="${id}">✎ Editar</button>` : `<button class="small ghost" data-role-dup="${id}">Copiar al catálogo…</button>`}<button class="small ghost" data-mp-pub="role:${id}" title="Publicar en el marketplace">⬆ Publicar</button>${r.custom ? `<button class="small danger" data-role-del="${id}">✕</button>` : ''}</div>
+  </div>`;
+  // Orden y separación: sección Agentes (🟢 Disponibles primero, luego por proyecto) y sección Roles (por carpeta del
+  // catálogo: primero las que usa la plantilla, «De serie» al final). Subgrupos plegables con las mismas claves que antes.
+  const FREE = 'Disponibles', label = (a) => S.roles[a.role]?.label || a.role;
+  const aGroups = {}; for (const a of agents) (aGroups[projectsOf(a.id)[0] || FREE] ||= []).push(a);
+  const aOrder = Object.keys(aGroups).sort((x, y) => (y === FREE) - (x === FREE) || x.localeCompare(y));
+  const rGroups = {}; for (const e of roles) (rGroups[roleGroupOf(e[1])] ||= []).push(e);
+  const used = (g) => rGroups[g].filter(([id]) => inTeam(id)).length;
+  const rOrder = Object.keys(rGroups).sort((a, b) => (!!used(b) - !!used(a)) || (a === 'De serie') - (b === 'De serie') || a.localeCompare(b));
+  const group = (key, title, n, extra, cards, openByDefault) => {
+    const closed = !q && (key in collapsed ? collapsed[key] : !openByDefault);
+    return `<h4 class="mp-group-head ${closed ? 'collapsed' : ''}" data-mp-group="${esc(key)}"><span class="caret">▾</span> ${title} <span class="muted">(${n}${extra})</span></h4>${closed ? '' : cards}`;
+  };
+  const sec = (title, n, hint) => `<h3 class="mp-sec">${title} <span class="muted">${n}${hint ? ' · ' + hint : ''}</span></h3>`;
+  let html = '';
+  if (agents.length) {
+    html += sec('🤖 Agentes en el banquillo', agents.length, 'sin fichar en este proyecto');
+    html += aOrder.map((g) => {
+      const as = aGroups[g].sort((x, y) => label(x).localeCompare(label(y)) || x.name.localeCompare(y.name));
+      const working = as.filter((a) => a.status === 'working').length;
+      return group('roles:bench:' + g, g === FREE ? '🟢 Disponibles' : `📁 ${esc(g)}`, as.length, working ? ` · ${working} trabajando` : '', as.map(agentCard).join(''), g === FREE);
+    }).join('');
+  }
+  if (roles.length) {
+    html += sec('🎭 Roles', roles.length, `${roles.filter(([, r]) => r.custom).length} del catálogo · ${roles.filter(([, r]) => !r.custom).length} de serie`);
+    html += rOrder.map((g) => {
+      const list = rGroups[g], u = used(g);
+      return group('roles:' + g, g === 'De serie' ? '⭐ De serie' : `📁 ${esc(g)}`, list.length, u ? ` · ${u} en plantilla` : '', list.map(roleCard).join(''), !!u);
+    }).join('');
+  }
+  return html || '<p class="empty">Nada por aquí todavía.</p>';
+}
+document.addEventListener('click', (e) => {
+  const h = e.target.closest('[data-mp-group]'); if (!h) return;
+  const k = h.dataset.mpGroup; collapsed[k] = !h.classList.contains('collapsed'); safeSet('ao:collapsed', JSON.stringify(collapsed)); loadMarketplace();
+});
 async function loadMarketplace() {
   const seq = ++mpSeq, box = $('#mp-list');
   if (!box) return;
+  if (mpTab === 'private') { box.innerHTML = mpPrivateCards(); return; }
   const qs = new URLSearchParams({ scope: mpTab, ...(mpKind ? { kind: mpKind } : {}), ...(mpQ ? { q: mpQ } : {}) });
   const { ok, j } = await mpApi('GET', `/api/marketplace/items?${qs}`);
   if (seq !== mpSeq || !$('#mp-list')) return;
@@ -3321,7 +3392,7 @@ async function mpInstall(id) {
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-mp-tab],[data-mp-reload],[data-mp-install],[data-mp-pub]');
   if (!b) return;
-  if (b.dataset.mpTab) { mpTab = b.dataset.mpTab; renderMarketplace(); }
+  if (b.dataset.mpTab) { mpTab = b.dataset.mpTab; safeSet('ao:mpTab', mpTab); renderMarketplace(); }
   else if (b.dataset.mpReload !== undefined) loadMarketplace();
   else if (b.dataset.mpInstall) mpInstall(b.dataset.mpInstall);
   else if (b.dataset.mpPub) { const [kind, ...id] = b.dataset.mpPub.split(':'); mpPublish(kind, id.join(':')); }
