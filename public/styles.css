@@ -328,6 +328,18 @@ dialog textarea.code { font: 12px/1.45 ui-monospace, monospace; min-height: 360p
 dialog .files { font-size: 11px; color: var(--muted); max-height: 70px; overflow: auto; margin-top: 6px; }
 dialog pre { background: var(--panel3); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--s-3); max-height: 60vh; overflow: auto; font-size: 12px; }
 dialog.wide { width: min(1000px, 94vw); }
+dialog.role-dlg { width: min(1480px, 96vw); }
+dialog .role-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 20px; }
+dialog .role-system { width: 100%; height: max(150px, calc(100vh - 600px)); font: 12px/1.45 ui-monospace, monospace; }
+dialog .checklist { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel3, var(--panel)); padding: 4px 6px; max-height: max(110px, calc((100vh - 330px) / 3)); overflow: auto; }
+dialog .checklist.inline { display: flex; flex-wrap: wrap; gap: 2px 14px; max-height: none; }
+dialog .checklist.empty { padding: 8px; font-size: 12px; }
+dialog .checklist .check, dialog .check-line { display: flex; align-items: baseline; gap: 6px; margin: 0; padding: 3px 2px; font-size: 12px; cursor: pointer; min-width: 0; }
+dialog .checklist .check:hover { background: var(--panel2); }
+dialog .checklist .check input, dialog .check-line input { width: auto; margin: 0; flex: none; }
+dialog .checklist .check b { white-space: nowrap; }
+dialog .checklist .check .ds { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+@media (max-width: 900px) { dialog .role-cols { grid-template-columns: 1fr; } dialog .role-system { height: 220px; } }
 .diff-add { color: #4ade80; } .diff-del { color: #f87171; } .diff-hunk { color: #60a5fa; }
 
 #toasts { position: fixed; bottom: var(--s-4); left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; z-index: 20; }

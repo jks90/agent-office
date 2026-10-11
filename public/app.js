@@ -1333,11 +1333,18 @@ function confirmRisky(next, prev = []) {
 function toolSelects(o, role = null) {
   const mc = toolsData?.mcp?.catalog || [], sc = toolsData?.scripts?.catalog || [];
   const viaRole = (k) => (role?.[k] || []).length ? ` <span class="muted">(su rol ya trae: ${role[k].map(esc).join(', ')})</span>` : '';
-  return `<label>🔌 MCP del catálogo (Ctrl+clic)${viaRole('mcps')}</label>
-    <select name="mcps" multiple class="tall">${mc.map((m) => `<option value="${esc(m.name)}" ${(o.mcps || []).includes(m.name) ? 'selected' : ''}>${RISKY.test(m.name) ? '⚠ ' : ''}${esc(m.name)}${m.description ? ' — ' + esc(m.description.slice(0, 70)) : ''}</option>`).join('') || '<option disabled>(catálogo vacío: añade MCP en Agentes ▸ 🔌 MCP)</option>'}</select>
-    <label>📜 Scripts del catálogo (Ctrl+clic)${viaRole('scripts')}</label>
-    <select name="scripts" multiple class="tall">${sc.map((s) => `<option value="${esc(s.name)}" ${(o.scripts || []).includes(s.name) ? 'selected' : ''}>${esc(s.name)}${s.description ? ' — ' + esc(s.description.slice(0, 70)) : ''}</option>`).join('') || '<option disabled>(catálogo vacío: añade scripts en Agentes ▸ 📜 Scripts)</option>'}</select>`;
+  return `<label>🔌 MCP del catálogo${viaRole('mcps')}</label>
+    ${checkList('mcps', mc.map((m) => ({ value: m.name, label: (RISKY.test(m.name) ? '⚠ ' : '') + m.name, desc: m.description })), o.mcps, 'catálogo vacío: añade MCP en Agentes ▸ 🔌 MCP')}
+    <label>📜 Scripts del catálogo${viaRole('scripts')}</label>
+    ${checkList('scripts', sc.map((x) => ({ value: x.name, label: x.name, desc: x.description })), o.scripts, 'catálogo vacío: añade scripts en Agentes ▸ 📜 Scripts')}`;
 }
+// Lista de casillas (en vez de <select multiple> con Ctrl+clic): nombre en negrita y descripción completa en el title.
+function checkList(name, items, selected = [], empty = '', cls = '') {
+  if (!items.length) return `<div class="checklist empty muted">(${esc(empty)})</div>`;
+  return `<div class="checklist ${cls}">${items.map((it) => `<label class="check" title="${esc(it.desc || '')}"><input type="checkbox" name="${esc(name)}" value="${esc(it.value)}" ${(selected || []).includes(it.value) ? 'checked' : ''} /><b>${esc(it.label)}</b>${it.desc ? `<span class="ds">${esc(it.desc)}</span>` : ''}</label>`).join('')}</div>`;
+}
+// Valores marcados de un campo múltiple del formulario (casillas o <select multiple>).
+const pickedIn = (form, n) => [...form.querySelectorAll(`[name="${n}"]`)].flatMap((el) => el.tagName === 'SELECT' ? [...el.selectedOptions].map((o) => o.value) : el.checked ? [el.value] : []);
 // Quién lo usa: agentes que lo tienen asignado + roles que lo declaran.
 const usersOf = (kind, name) => ({ agents: S.agents.filter((a) => (a[kind] || []).includes(name)), roles: Object.entries(S.roles).filter(([, r]) => (r[kind] || []).includes(name)).map(([id, r]) => ({ id, label: r.label })) });
 function usageCell(kind, name) {
@@ -1469,29 +1476,35 @@ function editRole(id, duplicate = false) {
   const rid = duplicate ? '' : id;
   const catalog = skillsData?.catalog || [];
   const mine = r.skills || [];
+  const minOpts = ['claude', 'codex'].flatMap((g) => (MODELS[g] || []).map((m) => m.id));
+  if (r.minModel && !minOpts.includes(r.minModel)) minOpts.unshift(r.minModel);
   dialog(`
     <h3>${rid ? '✎ Rol «' + esc(r.label) + '»' : '＋ Nuevo rol' + (duplicate ? ' (a partir de «' + esc(r.label) + '»)' : '')}</h3>
+    <div class="role-cols"><div>
     <div class="grid2">
       <div><label>Identificador (sin espacios)</label><input name="id" value="${esc(rid)}" placeholder="unity-dev" ${rid ? 'readonly' : 'required autofocus'} /></div>
       <div><label>Tipo</label><select name="kind"><option value="dev" ${r.kind === 'dev' ? 'selected' : ''}>desarrolla</option><option value="qa" ${r.kind === 'qa' ? 'selected' : ''}>QA (MCP de flow-test)</option><option value="docs" ${r.kind === 'docs' ? 'selected' : ''}>documenta (MCP de flow-test)</option><option value="planner" ${r.kind === 'planner' ? 'selected' : ''}>planifica (PO)</option></select></div>
       <div><label>Modelo por defecto</label>${modelSelect('model', 'auto', r.model || '')}</div>
-      <div><label>Modelo mínimo (cascada FT-60: no empezar más abajo)</label><input name="minModel" value="${esc(r.minModel || '')}" placeholder="vacío = empieza barato (p. ej. sonnet)" /></div>
-      <div><label>Atiende tareas de rol (Ctrl+clic)</label><select name="handles" multiple>${['po', 'back', 'front', 'qa'].map((h) => `<option value="${h}" ${(r.handles || []).includes(h) ? 'selected' : ''}>${h}</option>`).join('')}</select></div>
+      <div><label title="Cascada FT-60: no empezar más abajo">Modelo mínimo</label><select name="minModel"><option value="">ninguno (empieza barato)</option>${minOpts.map((m) => `<option value="${esc(m)}" ${m === r.minModel ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
     </div>
+    <label>Atiende tareas de rol</label>
+    ${checkList('handles', ['po', 'back', 'front', 'qa'].map((h) => ({ value: h, label: h })), r.handles, '', 'inline')}
     <label>Descripción (una línea)</label><input name="description" value="${esc(r.description || '')}" />
-    <label>Skills del catálogo que lleva (Ctrl+clic)</label>
-    <select name="skills" multiple class="tall">${catalog.map((s) => `<option value="${esc(s.name)}" ${mine.includes(s.name) ? 'selected' : ''}>${esc(s.name)} — ${esc(s.description.slice(0, 80))}</option>`).join('') || '<option disabled>(catálogo vacío: añade skills abajo)</option>'}</select>
-    ${toolSelects(r)}
-    <label title="FT-86: reglas de «construir lo mínimo» en el prompt de los agentes de este rol"><input type="checkbox" name="ponytail" ${S.settings.ponytailRoles?.[rid] ? 'checked' : ''} /> Ponytail (prueba): construir lo mínimo</label>
-    <label>Prompt de sistema</label><textarea name="system" rows="12">${esc(r.system || '')}</textarea>
+    <label class="check-line" title="FT-86: reglas de «construir lo mínimo» en el prompt de los agentes de este rol"><input type="checkbox" name="ponytail" ${S.settings.ponytailRoles?.[rid] ? 'checked' : ''} /> Ponytail (prueba): construir lo mínimo</label>
+    <label>Prompt de sistema</label><textarea name="system" class="role-system">${esc(r.system || '')}</textarea>
     <p class="muted">Se guarda como fichero .md en el catálogo central (${esc(short(skillsData?.catalogDir || '~/JksDocs/workspace/_agentes'))}/roles/).</p>
+    </div><div>
+    <label>Skills del catálogo que lleva</label>
+    ${checkList('skills', catalog.map((s) => ({ value: s.name, label: s.name, desc: s.description })), mine, 'catálogo vacío: añade skills abajo')}
+    ${toolSelects(r)}
+    </div></div>
     ${buttons('Guardar')}`, async (f) => {
     const form = $('#dialog form');
-    const pick = (n) => [...form.querySelector(`[name=${n}]`).selectedOptions].map((o) => o.value);
+    const pick = (n) => pickedIn(form, n);
     await api('POST', '/api/roles', { ...f, model: pickModel(f), id: f.id || rid, handles: pick('handles'), skills: pick('skills'), mcps: pick('mcps'), scripts: pick('scripts'), file: rid ? r.file : null });
     await api('POST', '/api/settings', { ponytailRoles: { ...S.settings.ponytailRoles, [f.id || rid]: !!f.ponytail } }); // FT-86
     toast('Rol guardado en el catálogo');
-  });
+  }, 'wide role-dlg');
 }
 
 // Candado de suite: chip en la cabecera y pantalla de bloqueo si flow-test no está o ha caducado.
@@ -2903,7 +2916,7 @@ function editAgent(id) {
     <label title="FT-86: reglas de «construir lo mínimo» en el prompt de este agente"><input type="checkbox" name="ponytail" ${a.ponytail ? 'checked' : ''} /> Ponytail (prueba): construir lo mínimo</label>
     ${toolSelects(a, S.roles[a.role])}
     ${a.status === 'working' ? '<p class="muted">Está trabajando: los cambios se aplican a partir de su siguiente tarea.</p>' : ''}
-    ${buttons('Guardar')}`, async (f) => { const form = $('#dialog form'), pick = (n) => [...form.querySelector(`[name=${n}]`).selectedOptions].map((o) => o.value); if (!confirmRisky(pick('mcps'), a.mcps)) throw new Error('cancelado'); await api('PATCH', `/api/agents/${id}`, { ...f, model: pickModel(f), ponytail: !!f.ponytail, mcps: pick('mcps'), scripts: pick('scripts') }); toast('Agente actualizado'); });
+    ${buttons('Guardar')}`, async (f) => { const form = $('#dialog form'), pick = (n) => pickedIn(form, n); if (!confirmRisky(pick('mcps'), a.mcps)) throw new Error('cancelado'); await api('PATCH', `/api/agents/${id}`, { ...f, model: pickModel(f), ponytail: !!f.ponytail, mcps: pick('mcps'), scripts: pick('scripts') }); toast('Agente actualizado'); });
 }
 
 // Markdown ligero y seguro para descripciones y resúmenes (escapa primero, luego formatea).
