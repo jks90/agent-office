@@ -352,7 +352,7 @@ Guía de uso para el usuario: `~/JksDocs/workspace/flowtest/guide-navegador.md`.
 Fase A de la épica «Navegador del agente»: `server/browser/` con un contrato `BrowserDriver` (documentado en `index.js`) y dos implementaciones: `cdp.js` (Chromium/Chrome/Brave dedicado por CDP con `puppeteer-core`, que se importa en el primer `launch()`) y `fake.js` (`AO_BROWSER=fake`, sin Chromium). `getDriver()` devuelve la instancia compartida única.
 
 - **Perfil persistente** en `data/browser/profile` (las sesiones iniciadas sobreviven); `close()` y el cierre por inactividad (`AO_BROWSER_IDLE_MS`, 15 min) no lo borran.
-- **Visible** por defecto si hay escritorio; headless con `AO_BROWSER_HEADLESS=1` (o sin `DISPLAY`). `AO_BROWSER_PATH` fuerza el binario; `AO_BROWSER_NO_SANDBOX=1` (automático como root).
+- **Oculto** (headless) por defecto: se ve y se controla en el panel «🌐 Navegador» (vista en vivo + «Tomar el control»). `AO_BROWSER_HEADLESS=0` lo saca a una ventana visible si hay escritorio; `AO_BROWSER_SIZE=1366,860` fija su tamaño. `AO_BROWSER_PATH` fuerza el binario; `AO_BROWSER_NO_SANDBOX=1` (automático como root).
 - `snapshot()`: árbol de accesibilidad compacto (incluye iframes) con refs estables por pestaña (`e12`) `{ref, role, name, value, states}`; tope `AO_BROWSER_SNAPSHOT_NODES` (300) con `truncated`/`omitted`. `act`/`type`/`scroll` resuelven la ref por CDP (`backendNodeId`) y caen a `x,y`.
 - `screenshot()` ≤1280 px de ancho en `data/browser/captures`; `console()`/`network()` con anillo de 200 por pestaña y cabeceras sensibles a `***`; solo se navega a `http(s)`.
 - Los popups pasan a ser la pestaña activa. Prueba: `node scripts/browser-driver-e2e.mjs`.

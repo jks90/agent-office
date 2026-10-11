@@ -13,8 +13,9 @@ export function findBrowser() {
   if (forced) return fs.existsSync(forced) ? forced : null;
   return (CANDIDATES[process.platform] || []).find((p) => fs.existsSync(p)) || null;
 }
-// Visible por defecto si hay escritorio; headless con AO_BROWSER_HEADLESS=1 o sin pantalla.
-const headless = () => process.env.AO_BROWSER_HEADLESS === '1'
+// Oculto (headless) por defecto: se ve y se controla desde el panel «🌐 Navegador» (screencast + «Tomar el control»),
+// no en una ventana suelta. AO_BROWSER_HEADLESS=0 lo saca a una ventana visible (si hay escritorio).
+const headless = () => process.env.AO_BROWSER_HEADLESS !== '0'
   || (process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY);
 
 const MAX_NODES = () => Number(process.env.AO_BROWSER_SNAPSHOT_NODES) || 300;
@@ -77,6 +78,7 @@ export function createCdpDriver() {
       fs.mkdirSync(profileDir(), { recursive: true });
       const args = ['--no-first-run', '--no-default-browser-check', '--disable-features=Translate'];
       if (process.env.AO_BROWSER_NO_SANDBOX === '1' || process.getuid?.() === 0) args.push('--no-sandbox');
+      if (headless()) args.push(`--window-size=${process.env.AO_BROWSER_SIZE || '1366,860'}`); // oculto: tamaño de portátil para el panel (si no, 800×600)
       browser = await puppeteer.launch({ executablePath: exe, userDataDir: profileDir(), headless: headless(), defaultViewport: null, args });
       browser.on('disconnected', () => { browser = null; tabs.clear(); active = null; });
       browser.on('targetcreated', async (t) => {

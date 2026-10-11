@@ -54,14 +54,19 @@ test('modo por defecto: ask, allow, block y valor inválido cae en ask', () => {
   store.get().settings.browserPolicy = undefined; assert.equal(act('https://nuevo.org'), 'ask');
 });
 
-test('red local, loopback, metadatos y hosts sin punto: bloqueados salvo allow explícito del host', () => {
+test('red local, metadatos y hosts sin punto: bloqueados salvo allow explícito del host; loopback pide 🛡', () => {
   setPolicy({ default: 'allow', domains: {} });
-  for (const u of ['http://localhost', 'http://localhost:3000', 'http://127.0.0.1', 'http://127.1', 'http://2130706433', 'http://0x7f.0.0.1', 'http://10.0.0.5',
-    'http://192.168.1.1', 'http://172.16.0.1', 'http://172.31.255.255', 'http://169.254.169.254/latest/meta-data', 'http://0.0.0.0', 'http://[::1]/', 'http://[fe80::1]/',
-    'http://nas.local', 'http://api.internal', 'http://intranet', 'http://app.localhost']) {
+  for (const u of ['http://10.0.0.5', 'http://192.168.1.1', 'http://172.16.0.1', 'http://172.31.255.255', 'http://169.254.169.254/latest/meta-data', 'http://0.0.0.0',
+    'http://[fe80::1]/', 'http://nas.local', 'http://api.internal', 'http://intranet']) {
     assert.equal(act(u), 'block', u);
   }
+  // loopback = apps de este PC (demos): confirmación la 1.ª vez, aunque el default sea allow
+  for (const u of ['http://localhost', 'http://localhost:3000', 'http://127.0.0.1', 'http://127.1', 'http://2130706433', 'http://0x7f.0.0.1', 'http://[::1]/', 'http://app.localhost']) {
+    assert.equal(act(u), 'ask', u);
+  }
   assert.equal(act('http://172.32.0.1'), 'allow'); // fuera del rango privado 172.16/12
+  setPolicy({ default: 'block', domains: {} });
+  assert.equal(act('http://localhost:3000'), 'block'); // con default block, loopback también
   setPolicy({ default: 'block', domains: { localhost: 'allow' } });
   assert.equal(act('http://localhost:8080'), 'allow');
   assert.equal(act('http://127.0.0.1'), 'block');
@@ -69,6 +74,12 @@ test('red local, loopback, metadatos y hosts sin punto: bloqueados salvo allow e
   setPolicy({ default: 'allow', domains: { 'foo.local': 'allow' } });
   assert.equal(act('http://foo.local'), 'allow');
   assert.equal(act('http://bar.local'), 'block');
+});
+
+test('los paneles de AgentOffice (:7420) y de flow-test (:9998) se bloquean siempre, aunque se permita localhost', () => {
+  setPolicy({ default: 'allow', domains: { localhost: 'allow', '127.0.0.1': 'allow' } });
+  for (const u of ['http://localhost:7420/', 'http://127.0.0.1:7420/api/tasks', 'http://localhost:9998/', 'http://[::1]:7420/']) assert.equal(act(u), 'block', u);
+  assert.equal(act('http://localhost:8081/'), 'allow');
 });
 
 test('IPv6 mapeado a IPv4 privado se bloquea', () => {

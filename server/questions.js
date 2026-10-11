@@ -3,9 +3,12 @@
 // por SSE (va en el snapshot como `questions`), enseña un modal con las opciones (o respuesta libre) y la respuesta
 // vuelve al comando, que la imprime para que el agente siga. Cada pregunta y su respuesta quedan en `task.questions`
 // (se ven en el modal de la tarea y se repiten al agente si vuelve a intentarla, para que no pregunte dos veces).
+import { AsyncLocalStorage } from 'node:async_hooks';
 import * as store from './store.js';
 import * as events from './events.js';
 
+// Chat del Guía que está ejecutando la tool en curso (lo fija guide/tools.js run): sus 🛡 se retiran al pulsar ■ Parar.
+export const chatContext = new AsyncLocalStorage();
 const pending = new Map(); // id → { id, taskId, agentId, projectId, question, options, allowCustom, createdAt, waiters[] }
 const MAX_OPEN_PER_TASK = 1;
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
@@ -84,7 +87,7 @@ export function choose({ question, context = '', options = ['Sí', 'No'] }) {
   if (dup) return new Promise((resolve, reject) => dup.waiters.push((r) => (r.status === 'timeout' ? reject(timeoutError()) : resolve(r.status === 'answered' ? r.answer : null))));
   if ([...pending.values()].filter((q) => q.kind === 'confirm').length >= MAX_OPEN_CONFIRMS) throw fail(429, 'Hay demasiadas confirmaciones pendientes: resuélvelas antes');
   const q = {
-    id: store.newId(), kind: 'confirm', taskId: null, taskCode: null, agentId: null, agentName: 'Guide', projectId: null,
+    id: store.newId(), kind: 'confirm', taskId: null, taskCode: null, agentId: null, agentName: 'Guide', projectId: null, chatId: chatContext.getStore()?.chatId || null,
     question: String(question).trim().slice(0, 500), options, allowCustom: false,
     context: String(context || '').trim().slice(0, 4000), createdAt: Date.now(), waiters: [],
   };
@@ -107,6 +110,14 @@ export function answer(id, text) {
   if (q.agentId) store.log(q.agentId, `💬 Tu respuesta a ${q.taskCode || q.taskId}: ${a}`);
   settle(q, a.slice(0, 4000));
   return { ok: true };
+}
+
+// ■ Parar en un chat del Guía: sus confirmaciones pendientes se retiran (la tool las ve como «sin respuesta»).
+export function cancelForChat(chatId) {
+  if (!chatId) return 0;
+  let n = 0;
+  for (const q of [...pending.values()]) if (q.chatId === chatId) { settle(q, null); n++; }
+  return n;
 }
 
 // La tarea termina o se para: lo que quedara pendiente se cancela (el comando del agente lo ve como «sin respuesta»).

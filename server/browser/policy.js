@@ -1,10 +1,13 @@
 // FT-116 · Política de dominios del navegador del agente (settings.browserPolicy) y marcado de datos no confiables.
 //   settings.browserPolicy = { default: 'ask'|'allow'|'block', domains: { 'example.com': 'allow'|'block'|'ask' } }
 //   · 'block' gana a todo · file://, chrome://, about: (salvo about:blank), data:, etc. se bloquean siempre
-//   · localhost / 127.x / red local / hosts sin punto: bloqueados salvo que estén en `domains` como 'allow' (explícito)
+//   · red local / metadatos / hosts sin punto: bloqueados salvo que estén en `domains` como 'allow' (explícito)
+//   · loopback (localhost, 127.x, ::1): confirmación 🛡 la 1.ª vez por sesión (demos de tus apps locales); bloqueado con default 'block'
+//   · los paneles de AgentOffice y de flow-test (su puerto en loopback): bloqueados SIEMPRE (el agente no puede aprobarse a sí mismo)
 //   · 'ask' (y el valor por defecto): confirmación 🛡 la 1.ª vez por dominio y sesión (en memoria; se olvida al reiniciar)
 import * as store from '../store.js';
 import * as questions from '../questions.js';
+import { flowTestUrl } from '../suite.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
 const MODES = ['allow', 'block', 'ask'];
@@ -35,6 +38,15 @@ export function normHost(s) {
 const PRIVATE_V4 = /^(127\.|10\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/;
 export const isLocalHost = (h) => h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal') || PRIVATE_V4.test(h) || /^\[?(::1?|fe80:|fc|fd)/i.test(h) || !h.includes('.');
 
+export const isLoopback = (h) => h === 'localhost' || h.endsWith('.localhost') || /^127\./.test(h) || /^\[?::1\]?$/.test(h);
+const defPort = (x) => x.port || (x.protocol === 'https:' ? '443' : '80');
+// Puertos propios en loopback: el de AgentOffice y el del flow-test al que está conectado.
+function selfPorts() {
+  const ports = new Set([String(process.env.AO_PORT || 7420)]);
+  try { const f = new URL(flowTestUrl()); if (isLoopback(f.hostname.replace(/^\[|\]$/g, '')) || f.hostname === 'host.docker.internal') ports.add(defPort(f)); } catch { /* sin flow-test */ }
+  return ports;
+}
+
 const matches = (host, entry) => host === entry || host.endsWith('.' + entry);
 const sessionOk = new Set(); // dominios confirmados en esta sesión del servidor
 export const resetSession = () => sessionOk.clear();
@@ -49,8 +61,14 @@ export function classify(url) {
   const host = x.hostname.toLowerCase().replace(/\.$/, '');
   const { default: def, domains } = getBrowserPolicy();
   const hit = (mode) => Object.entries(domains).filter(([d, m]) => m === mode && matches(host, d)).sort((a, b) => b[0].length - a[0].length)[0];
+  if (isLoopback(host) && selfPorts().has(defPort(x))) return { action: 'block', host, reason: 'es el panel de AgentOffice o de flow-test: el agente no puede controlarlo' };
   if (hit('block')) return { action: 'block', host, reason: 'dominio bloqueado en Ajustes' };
-  if (isLocalHost(host)) return hit('allow') && domains[host] === 'allow' ? { action: 'allow', host, reason: 'red local permitida' } : { action: 'block', host, reason: 'red local / localhost: permítelo explícitamente en Ajustes' };
+  if (isLocalHost(host)) {
+    if (hit('allow') && domains[host] === 'allow') return { action: 'allow', host, reason: 'red local permitida' };
+    // loopback = tus apps en este PC (demos): se pregunta 🛡 la 1.ª vez; el resto de la red local sigue bloqueada
+    if (isLoopback(host) && def !== 'block') return sessionOk.has(host) ? { action: 'allow', host, reason: 'confirmado en esta sesión' } : { action: 'ask', host, local: true, reason: 'localhost: primera vez en esta sesión' };
+    return { action: 'block', host, reason: 'red local: permítela explícitamente en Ajustes' };
+  }
   const mode = hit('allow') ? 'allow' : hit('ask') ? 'ask' : def;
   if (mode === 'allow') return { action: 'allow', host, reason: 'permitido' };
   if (mode === 'block') return { action: 'block', host, reason: 'bloqueado por defecto en Ajustes' };
@@ -62,7 +80,7 @@ export async function guard(url) {
   const c = classify(url);
   if (c.action === 'allow') return c;
   if (c.action === 'block') throw fail(403, `Navegador del agente: «${c.host || url}» no permitido (${c.reason})`);
-  const ok = await questions.confirm({ question: `El agente quiere usar el navegador en «${c.host}». ¿Lo permites en esta sesión?`, context: `Primera vez en esta sesión para este dominio.\nURL: ${String(url).split(/[?#]/)[0]}\n\nPuedes dejarlo fijo en Ajustes ▸ Navegador del agente (permitir / bloquear / preguntar).` });
+  const ok = await questions.confirm({ question: c.local ? `El agente quiere abrir una app de ESTE PC (${String(url).split(/[?#]/)[0]}). ¿Lo permites en esta sesión?` : `El agente quiere usar el navegador en «${c.host}». ¿Lo permites en esta sesión?`, context: `${c.local ? 'Es una dirección local (localhost): solo apruébalo si es una app tuya que quieres que el agente use.' : 'Primera vez en esta sesión para este dominio.'}\nURL: ${String(url).split(/[?#]/)[0]}\n\nPuedes dejarlo fijo en Ajustes ▸ Navegador del agente (permitir / bloquear / preguntar).` });
   if (!ok) throw fail(403, `El usuario rechazó el dominio «${c.host}»`);
   sessionOk.add(c.host);
   return { ...c, action: 'allow' };

@@ -40,6 +40,8 @@ export async function refresh() {
     const a = tabs.find((t) => t.active) || tabs[0];
     cache = { open: true, tabs, url: a?.url || '', title: a?.title || '', tabId: a?.id || null };
   }
+  // Si lo abrió el AGENTE (no el botón del panel) con alguien mirando, la vista en vivo arranca aquí; al cerrarse, se para
+  if (cache.open) ensureCast(); else endCast();
   const key = JSON.stringify([cache, control, handoffs, waiters.length]);
   if (key !== lastKey) { lastKey = key; store.changed(); } // → evento `state` con `browser`
   return status();
@@ -57,11 +59,17 @@ function endCast() { if (stopCast) { stopCast(); stopCast = null; } }
 
 export function subscribe(req, res) {
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+  const ping = setInterval(() => res.write(': ping\n\n'), 20000);
+  req.on('close', () => clearInterval(ping));
+  attach(req, res);
+}
+// Engancha los fotogramas a un SSE ya abierto (el de /events?browser=1): una conexión menos por pestaña. Chrome solo
+// admite 6 conexiones HTTP/1.1 por servidor y con varias pestañas de flow-test se agotaban (el Guía no llegaba a enviar).
+export function attach(req, res) {
   subs.add(res);
   res.write(`event: hello\ndata: ${JSON.stringify(status())}\n\n`);
   ensureCast();
-  const ping = setInterval(() => res.write(': ping\n\n'), 20000);
-  req.on('close', () => { clearInterval(ping); subs.delete(res); if (!subs.size) endCast(); });
+  req.on('close', () => { subs.delete(res); if (!subs.size) endCast(); });
 }
 
 export const mark = (box) => { if (box) send('mark', { ...box, ms: MARK_MS, at: Date.now() }); };

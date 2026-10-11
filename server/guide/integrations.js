@@ -29,12 +29,16 @@ export function scopeOf({ repo: key, task: ref } = {}) {
     repo = project && team.repoOfTask(project, task);
   }
   if (key) {
+    // «proyecto/clave» (o «proyecto:clave»; proyecto = nombre o id) desambigua cuando varios proyectos usan la misma clave
+    const m = String(key).match(/^([^/:]+)[/:]([^/:]+)$/);
+    const want = m && s.projects.find((p) => p.id === m[1] || p.name.toLowerCase() === m[1].toLowerCase());
+    const k = want ? m[2] : key;
     const hits = [];
-    for (const p of s.projects) for (const r of p.repos || []) if (r.key === key || r.path === key) hits.push({ p, r });
+    for (const p of s.projects) for (const r of p.repos || []) if ((!want || p.id === want.id) && (r.key === k || r.path === k)) hits.push({ p, r });
     const mine = task ? hits.find((h) => h.p.id === task.projectId) : null;
     const uniq = new Set(hits.map((h) => h.r.path));
     if (!mine && !hits.length) throw fail(404, `Repo no encontrado en ningún proyecto: ${key}`);
-    if (!mine && uniq.size > 1) throw fail(409, `El repo «${key}» es ambiguo (${[...uniq].join(', ')}); indica la tarea`);
+    if (!mine && uniq.size > 1) throw fail(409, `El repo «${key}» es ambiguo: indica el proyecto, p. ej. ${hits.map((h) => `«${h.p.name}/${h.r.key}» (${h.r.path})`).join(' o ')}, o la tarea`);
     ({ p: project, r: repo } = mine || hits[0]);
   }
   if (!repo?.path) throw fail(400, 'Indica «repo» (clave de un repo del proyecto) o «task» (código de una tarea con repo)');

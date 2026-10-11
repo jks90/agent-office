@@ -26,6 +26,7 @@ import { saveRole, deleteRole } from './roles.js';
 import { ladders, normalizeLadder } from './model-ladder.js'; // FT-60
 import * as activity from './events.js';
 import * as browserPanel from './browser/panel.js'; // FT-117
+import { serveSseOverWs } from './ws-sse.js';
 import * as browser from './browser/index.js'; // FT-118
 import * as browserExt from './browser/extension.js';
 import * as releaseTrigger from './release-trigger.js'; // FT-174
@@ -364,6 +365,7 @@ function events(req, res) {
   const onUi = (cmd) => send('ui', cmd); // FT-4: órdenes del Guide a la UI (navegar, abrir tarea…)
   store.bus.on('activity', onActivity);
   store.bus.on('ui', onUi);
+  if (new URL(req.url, 'http://x').searchParams.get('browser') === '1') browserPanel.attach(req, res); // vídeo del 🌐 por el mismo SSE
   const ping = setInterval(() => res.write(': ping\n\n'), 20000);
   req.on('close', () => { clearInterval(ping); store.bus.off('state', onState); store.bus.off('log', onLog); store.bus.off('activity', onActivity); store.bus.off('ui', onUi); });
 }
@@ -437,7 +439,11 @@ const server = http.createServer(async (req, res) => {
   }
 });
 server.on('upgrade', (req, socket) => { // FT-118: WebSocket de la extensión (solo loopback; se autentica con código/clave)
-  if (new URL(req.url, 'http://x').pathname === '/api/browser/ext') browserExt.handleUpgrade(req, socket); else socket.destroy();
+  const p = new URL(req.url, 'http://x').pathname;
+  if (p === '/api/browser/ext') browserExt.handleUpgrade(req, socket);
+  // /events también por WebSocket (no cuenta en el cupo de 6 conexiones del navegador); pasa por el manejador HTTP normal (token incluido)
+  else if (p === '/events') serveSseOverWs(req, socket, (rq, rs) => server.emit('request', rq, rs));
+  else socket.destroy();
 });
 server.listen(PORT, HOST, () => {
   console.log(`🏢 AgentOffice en http://${HOST}:${PORT}`);
