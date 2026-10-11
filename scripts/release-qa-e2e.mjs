@@ -77,11 +77,10 @@ ok(r.action === 'timeout' && c.runs.length === 0, '3d · 12 h sin respuesta → 
 ok(calls.some((x) => x.method === 'editMessageText' && /caduc/i.test(x.body.text)), '3d · el mensaje se edita como caducado');
 
 // ── Cableado real (lectura del código) ───────────────────────────────
-const trig = fs.readFileSync(path.join(ROOT, 'server/release-trigger.js'), 'utf8');
-const spawnLine = trig.split('\n').find((l) => l.includes("run-all.sh")) || '';
-ok(/--dry-run/.test(spawnLine), '3e · el ✅ real lanza run-all con --dry-run (FT-175: la primera publicación real debe autorizarla el usuario)');
-const notify = trig.split('\n').find((l) => l.includes('RELEASE_NOTIFY_CMD')) || '';
-ok(/\$1|"\$@"/.test(notify), '4b · RELEASE_NOTIFY_CMD reenvía el mensaje ($1): run-all lo invoca con `bash -c "$CMD" _ "$msg"`');
+const spec = rt.runAllSpec('5.24.1', {});
+ok(spec.dry && spec.args.includes('--dry-run'), '3e · por defecto el ✅ lanza run-all con --dry-run (FT-175)');
+ok(!rt.runAllSpec('5.24.1', { releaseDryRun: false }).args.includes('--dry-run'), '3e · solo con settings.releaseDryRun=false publica de verdad');
+ok(/ao-telegram\.mjs "\$1"$/.test(spec.env.RELEASE_NOTIFY_CMD) && spec.stdio[0] === 'ignore', '4b · RELEASE_NOTIFY_CMD lleva "$1" y stdin va en ignore');
 
 // ── Lista blanca (5) ─────────────────────────────────────────────────
 const deny = ['ssh root@179.198.198.23', 'docker push juankanh/flow-app:latest', 'git push origin main', 'git push --force', 'rm -rf /', 'curl http://x',

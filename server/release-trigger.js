@@ -118,6 +118,17 @@ export function flowTestDir(st) {
   return st.settings.flowTestDir || repos.find((p) => /flow-test/.test(path.basename(p))) || null;
 }
 
+/** FT-175: cómo se lanza run-all. Dry-run salvo `settings.releaseDryRun === false`; el aviso recibe el mensaje en "$1"; stdin cerrado. */
+export function runAllSpec(version, settings = {}) {
+  const dry = settings.releaseDryRun !== false;
+  return {
+    dry,
+    args: ['scripts/release/run-all.sh', ...(dry ? ['--dry-run'] : []), version],
+    env: { ...process.env, RELEASE_NOTIFY_CMD: `node ${path.join(ROOT, 'bin', 'ao-telegram.mjs')} "$1"` },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  };
+}
+
 export function realDeps(team, store, telegram) {
   const dir = () => flowTestDir(store.get());
   return {
@@ -126,10 +137,10 @@ export function realDeps(team, store, telegram) {
     createTask: (o) => team.createTask({ projectId: store.get().projects.find((p) => flowTestDir({ projects: [p], settings: {} }))?.id || store.get().projects[0]?.id, ...o }),
     updateTask: (id, patch) => { const t = store.get().tasks.find((x) => x.id === id); if (t) { Object.assign(t, patch); store.changed(); } },
     sendConfirm: telegram.sendConfirm, waitConfirm: telegram.waitConfirm,
-    // RELEASE_NOTIFY_CMD recibe el mensaje como argumento y por stdin; el envío es el de Telegram (bin/ao-telegram.mjs).
+    // FT-175: por defecto --dry-run; publicar de verdad exige settings.releaseDryRun === false.
     runAll: (version) => new Promise((resolve) => {
-      const env = { ...process.env, RELEASE_NOTIFY_CMD: `node ${path.join(ROOT, 'bin', 'ao-telegram.mjs')}` };
-      const p = spawn('bash', ['scripts/release/run-all.sh', version], { cwd: dir(), env });
+      const sp = runAllSpec(version, store.get().settings);
+      const p = spawn('bash', sp.args, { cwd: dir(), env: sp.env, stdio: sp.stdio });
       let out = '';
       p.stdout.on('data', (d) => { out = (out + d).slice(-4000); }); p.stderr.on('data', (d) => { out = (out + d).slice(-4000); });
       p.on('error', (e) => resolve({ ok: false, out: e.message }));
