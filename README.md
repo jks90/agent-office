@@ -924,4 +924,13 @@ Reglas puras en `server/coordinator.js` (`pickByScore`, `scorePlan`) sobre `scor
 - **Modelo por rol** (mismo motor, ≥ 5 entregas): barato < 55 y el mismo rol con un modelo superior > 70 → sube de modelo (en automático lo aplica a los agentes libres del rol, p. ej. `haiku`→`sonnet`); barato ≥ 75 → propone bajar (solo sugerencia).
 - **Plantilla**: nota < 40 en sus últimas 5 entregas → propuesta de banquillo o cambio de rol; > 85 → propuesto como revisor automático de su rol (`agent.autoReviewer`). Son sugerencias (`coordSuggest`, «Para ti») salvo con delegación (`p.supervisorApproves`).
 - Nunca toca al PO, al coordinador, a quien está trabajando ni a quien tiene tareas suyas.
-- Prueba: `node scripts/coordinator-scores-e2e.mjs` (notas sintéticas por regla).ipts/marketplace-ui-e2e.mjs [captura.png]` (UI con Chrome; usa catálogo temporal).
+- Prueba: `node scripts/coordinator-scores-e2e.mjs` (notas sintéticas por regla).
+
+## 🚀 Disparo automático «Publicar X.Y.Z» (FT-174)
+`server/release-trigger.js` (sin IA) revisa cada minuto —si hay Telegram y un flow-test localizable (`settings.flowTestDir` o un repo `flow-test*`)— si hay algo publicable:
+- **Épica completa**: todas sus tareas (mismo prefijo de título «FT-E: …» o mismo `epic`) en Hecho/Descartada, con al menos una Hecha.
+- **Bug aprobado**: tarea en Hecho con título «Bug»/«Fix»/«Regresión», con 📮 o de origen `report`.
+- Versión: `package.json` de flow-test; **minor** si hay épica, **patch** si solo bugs. Crea la tarea «Publicar X.Y.Z» (rol `release`, en Backlog) y pregunta por Telegram (FT-170): «🚀 ¿Publico la X.Y.Z? · qué · cambios · ✅/❌». Si coinciden varias cosas, **una sola pregunta** agrupada.
+- ✅ → `bash scripts/release/run-all.sh X.Y.Z` en flow-test con `RELEASE_NOTIFY_CMD="node bin/ao-telegram.mjs"` (avisa a Telegram) y la tarea pasa a Hecho. ❌, timeout (12 h) o sin Telegram → no publica; lo propuesto queda **acumulado** (`data/release-trigger.json`) y entra en la siguiente pregunta, reutilizando la tarea de Backlog.
+- **Mutex persistente** en ese fichero: nunca dos preguntas ni dos publicaciones a la vez; un segundo ✅ con una ejecución en curso no lanza otra.
+- Pruebas: `node --test tests/release-trigger.test.mjs` (Telegram y run-all simulados; ninguna publica de verdad).ipts/marketplace-ui-e2e.mjs [captura.png]` (UI con Chrome; usa catálogo temporal).

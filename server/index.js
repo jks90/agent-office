@@ -29,6 +29,7 @@ import * as browserPanel from './browser/panel.js'; // FT-117
 import { serveSseOverWs } from './ws-sse.js';
 import * as browser from './browser/index.js'; // FT-118
 import * as browserExt from './browser/extension.js';
+import * as releaseTrigger from './release-trigger.js'; // FT-174
 import * as telegram from './telegram.js'; // avisos al móvil (ReviewPending, bloqueos, fallos)
 import * as selfupdate from './selfupdate.js'; // se pone al día solo con GitHub cuando no hay nadie trabajando
 import * as context from './context.js';
@@ -82,6 +83,9 @@ const sweepUploads = () => { try { const n = uploads.sweep(guide.uploadsInUse())
 sweepUploads();
 setInterval(sweepUploads, 3600e3).unref();
 // Tableros online con autoSync: cada 5 min.
+// FT-174 · cada minuto: ¿épica completa o bug aprobado? → pregunta «¿Publico la X.Y.Z?» por Telegram (solo con flow-test localizable)
+let releasing = false;
+setInterval(() => { if (releasing || !telegram.config().enabled || !releaseTrigger.flowTestDir(store.get())) return; releasing = true; releaseTrigger.check(releaseTrigger.realDeps(team, store, telegram)).catch((e) => console.warn('[release-trigger]', e.message)).finally(() => { releasing = false; }); }, 60_000).unref();
 setInterval(() => { for (const p of store.get().projects) if (p.board?.autoSync) team.syncBoard(p.id).catch(() => {}); }, 5 * 60 * 1000).unref();
 
 // Documentos de oficina → texto plano al lado (los agentes solo leen texto): .docx/.odt por su XML, .pdf con pdftotext si existe.
