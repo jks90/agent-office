@@ -12,6 +12,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { layoutFloor, recommendedFloorSize, toVisualState } from './office-layout.js';
 import { V3, pickLayout, zonesV3, layoutV3, routeV3 } from './office-v3.js';
+import OFFICE_DECOR from './office-decor.js'; // AO-5: catálogo estático de la referencia
 import { createScheduler, stepScheduler, busyRatio, MAX_AMBIENT as AMBIENT_MAX } from './office-ambient.js'; // FT-150: personajes de ambiente // FT-149: planta por zonas (oficina v3)
 
 // ── Geometría de la sala (en unidades Kenney; los modelos son pequeños ≈ 0,7 m/u) ──
@@ -170,6 +171,7 @@ const MEETING_CHAIRS = [
 ];
 
 const FURNITURE_NEEDED = new Set([
+  ...OFFICE_DECOR.items.filter((f) => f.model && f.mounting !== 'existing').map((f) => f.model),
   'desk', 'chairDesk', 'computerScreen', 'computerKeyboard', 'computerMouse',
   'wall', 'wallWindow', 'wallDoorway',
   'bookcaseClosedWide', 'bookcaseClosed', 'plantSmall2', 'laptop', 'sideTableDrawers', 'lampSquareFloor', // FT-78 v2: densidad
@@ -436,11 +438,56 @@ export class Office3D {
     const rc = get('reception-counter'), em = get('entry-mat');
     if (rc) box(rc.w, 0.5, rc.d, WOODC, rc.x, rc.z);
     if (em) box(em.w, 0.02, em.d, 0x6b5a45, em.x, em.z);
-    this.place('pottedPlant', 0.5, this.v3.floor.rz - 0.5, { ry: 0 });
-    this.place('pottedPlant', this.v3.floor.rx - 0.5, this.floorZones.board.z - this.floorZones.board.d / 2 - 0.4, { ry: 0 });
+    this.buildDecorV3();
     // Tablero Kanban: pie central bajo el panel.
     box(0.08, BOARD.y - BOARD.h / 2, 0.08, 0x8a6a45, BOARD.x - BOARD.w / 2 + 0.15, BOARD.z);
     box(0.08, BOARD.y - BOARD.h / 2, 0.08, 0x8a6a45, BOARD.x + BOARD.w / 2 - 0.15, BOARD.z);
+  }
+
+  // AO-5: prototipos persistentes por escena. Clones comparten geometrías/materiales;
+  // solo se colocan al reconstruir la planta, nunca durante frame() ni desde SSE.
+  buildDecorV3() {
+    if (!this.decorTemplates) {
+      this.decorTemplates = new Map();
+      this.decorGeometry = { box: new THREE.BoxGeometry(1, 1, 1), cylinder: new THREE.CylinderGeometry(0.5, 0.5, 1, 12) };
+      this.decorMaterials = new Map();
+    }
+    const material = (color) => {
+      if (!this.decorMaterials.has(color)) this.decorMaterials.set(color, new THREE.MeshStandardMaterial({ color, roughness: 0.85 }));
+      return this.decorMaterials.get(color);
+    };
+    const group = new THREE.Group(); group.name = 'office-decor-v3'; this.room.add(group);
+    for (const item of OFFICE_DECOR.items) {
+      if (item.mounting === 'existing') continue;
+      let template = this.decorTemplates.get(item.id);
+      if (!template) {
+        template = new THREE.Group();
+        if (item.model) {
+          const source = this.furnCache.get(item.model);
+          if (!source) continue; // Una carga fallida no impide abrir la oficina.
+          const model = source.clone(true);
+          const bounds = new THREE.Box3().setFromObject(model), size = bounds.getSize(new THREE.Vector3());
+          const center = bounds.getCenter(new THREE.Vector3());
+          model.position.set(-center.x, -bounds.min.y, -center.z);
+          template.add(model);
+          template.scale.set(...item.size.map((n, i) => n / Math.max(0.001, size.getComponent(i))));
+          if (item.tint) model.traverse((m) => { if (m.isMesh) m.material = material(item.tint); });
+        } else {
+          for (const part of item.recipe) {
+            const mesh = new THREE.Mesh(this.decorGeometry[part.shape], material(part.color));
+            mesh.scale.set(...part.size); mesh.position.set(...part.position); template.add(mesh);
+          }
+        }
+        template.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
+        this.decorTemplates.set(item.id, template);
+      }
+      for (const p of item.placements[this.v3.id] || []) {
+        // El giro vive fuera del prototipo escalado: conserva medidas incluso a 90°.
+        const placed = new THREE.Group(); placed.name = item.id; placed.userData.decorId = item.id;
+        placed.add(template.clone(true)); placed.position.set(p.x, p.y, p.z); placed.rotation.y = p.rotation;
+        group.add(placed);
+      }
+    }
   }
 
   // FT-150: personajes de AMBIENTE (visita, mensajero, limpieza, reunión, mantenimiento). Decorativos: no son agentes, no cuentan en nada y
