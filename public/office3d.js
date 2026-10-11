@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { layoutFloor, recommendedFloorSize, toVisualState } from './office-layout.js';
-import { V3, pickLayout, zonesV3, layoutV3, routeV3 } from './office-v3.js';
+import { V3, pickLayout, zonesV3, layoutV3, routeV3, restSpotsV3 } from './office-v3.js';
 import OFFICE_DECOR from './office-decor.js'; // AO-5: catálogo estático de la referencia
 import { createScheduler, stepScheduler, busyRatio, MAX_AMBIENT as AMBIENT_MAX } from './office-ambient.js'; // FT-150: personajes de ambiente // FT-149: planta por zonas (oficina v3)
 
@@ -534,9 +534,12 @@ export class Office3D {
     }
     if (this.deskPos) { const d = this.project(this.deskPos.x, 0.5, this.deskPos.z); prot.push({ l: d.x - 60, r: d.x + 60, t: d.y - 50, b: d.y + 40 }); }
     let hidden = 0;
+    // Los agentes reales mandan: una figura de ambiente a <0,45 u de uno (p. ej. un libre en la sala de reuniones) no se pinta.
+    const real = [...this.actors.values()].filter((a) => a.group.visible);
+    const nearReal = (c) => real.some((a) => Math.hypot(a.x - c.x, a.z - c.z) < 0.45);
     pool.forEach((o, i) => {
       const c = list[i];
-      if (!c || c.hidden) { o.grp.visible = false; o.el.style.opacity = '0'; return; }
+      if (!c || c.hidden || nearReal(c)) { if (c) c.hidden = true; o.grp.visible = false; o.el.style.opacity = '0'; return; }
       o.grp.position.set(c.x, c.dwell ? 0 : Math.abs(Math.sin(now * 6)) * 0.03, c.z);
       o.grp.rotation.y = c.ang;
       const s = this.project(c.x, 1.15, c.z);
@@ -546,7 +549,7 @@ export class Office3D {
       if (o.el.textContent !== c.label) o.el.textContent = c.label;
       o.el.style.left = s.x + 'px'; o.el.style.top = s.y + 'px';
     });
-    this.ambientNow = list; this.ambientHidden = hidden;
+    this.ambientNow = list.filter((c) => !c.hidden); this.ambientHidden = hidden;
   }
 
 
@@ -1404,12 +1407,12 @@ export class Office3D {
       return { key: 'tu:' + k, zone: 'tu', x: this.deskPos.x - 0.6 + (k % 3) * 0.6, z: this.deskPos.z + 0.75 + Math.floor(k / 3) * 0.5, corr: null, sit: false, status: visual.status };
     }
     const w = visual.status === 'idle' ? a?.wander : null; // FT-148: los paseos son solo de los libres
-    if (w) return { key: 'wander:' + w.id, zone: 'wander', x: w.x, z: w.z, corr: null, sit: false, status: visual.status };
+    if (w) return { key: 'wander:' + w.id, zone: w.zone || 'wander', x: w.x, z: w.z, corr: null, sit: !!w.sit, face: w.face, status: visual.status };
     const s = this.floorLayout?.slots?.[agent.id];
     if (s) return {
       key: `${s.zone}:${s.module}:${s.index}:${visual.status}`,
-      zone: s.zone, x: s.x, z: s.z, corr: s.z,
-      sit: ['development', 'qa', 'docs', 'review', 'meeting', 'po', 'idle'].includes(s.zone) && visual.status !== 'waiting',
+      zone: s.zone, x: s.x, z: s.z, corr: s.z, face: s.face,
+      sit: s.sit ?? (['development', 'qa', 'docs', 'review', 'meeting', 'po', 'idle'].includes(s.zone) && visual.status !== 'waiting'),
       status: visual.status,
     };
     const spot = a?.loungeSpot ?? index;
@@ -1446,7 +1449,8 @@ export class Office3D {
 
   // Los que no tienen tarea dan vueltas por la oficina: café, libros, kanban, charla…
   planWander(agent, a, visual, fuel, now) {
-    if (this.v3 || visual.status !== 'idle' || !fuel) { a.wander = null; a.nextWander = Infinity; return; }
+    if (visual.status !== 'idle' || !fuel) { a.wander = null; a.nextWander = Infinity; return; }
+    if (this.v3) return this.planWanderV3(agent, a, now);
     if (a.nextWander === Infinity) a.nextWander = now + rand(2, 9);
     const w = a.wander;
     if (w) {
@@ -1463,6 +1467,27 @@ export class Office3D {
     a.lastWander = s.id;
   }
 
+  // v3: el libre va cambiando de sitio de descanso (café, futbolín, reunión, Kanban…) cada 20–45 s, a uno que no ocupe nadie.
+  planWanderV3(agent, a, now) {
+    if (a.nextWander === Infinity) a.nextWander = now + rand(10, 25);
+    const w = a.wander;
+    if (w) {
+      if (!a.moving && a.key === 'wander:' + w.id && w.until == null) { w.until = now + rand(...w.stay); a.targetAngle = w.face; a.nextGesture = now + 0.3; }
+      if (w.until != null && now > w.until) { a.wander = null; a.nextWander = now; }
+      return;
+    }
+    if (a.moving || now < a.nextWander) return;
+    const slots = this.floorLayout?.slots || {};
+    const near = (p, q) => Math.abs(p.x - q.x) < 0.05 && Math.abs(p.z - q.z) < 0.05;
+    const others = [...Object.values(slots).filter((s) => s.agentId !== agent.id), ...[...this.actors.entries()].filter(([id, o]) => id !== agent.id && o.wander).map(([, o]) => o.wander)];
+    const amb = this.ambientNow || []; // no ir a un sitio que esté usando una figura de ambiente (visita en reuniones…)
+    const free = restSpotsV3(this.v3).filter((s) => s.id !== a.lastWander && s.id !== slots[agent.id]?.spot && !others.some((o) => near(o, s)) && !amb.some((c) => Math.hypot(c.x - s.x, c.z - s.z) < 0.8));
+    if (!free.length) { a.nextWander = now + rand(6, 12); return; }
+    const s = free[Math.floor(Math.random() * free.length)];
+    a.wander = { ...s, until: null };
+    a.lastWander = s.id;
+  }
+
   step(dt, now) {
     // Al montar la vista o cambiar de proyecto no hay nadie: cada uno aparece ya en su sitio, sin «entrar a trabajar».
     const fresh = this.actors.size === 0;
@@ -1473,7 +1498,7 @@ export class Office3D {
         if (fresh) {
           const t0 = this.targetFor(agent, i, a);
           Object.assign(a, { x: t0.x, z: t0.z, key: t0.key, dest: t0, corr: t0.corr, sitSpot: !!t0.sit, enterAt: now, path: [] });
-          if (t0.sit) a.angle = a.targetAngle = Math.PI;
+          if (t0.sit || t0.face != null) a.angle = a.targetAngle = t0.face ?? Math.PI;
         }
       }
       if (now < a.enterAt) { a.group.visible = false; return; }
@@ -1498,8 +1523,9 @@ export class Office3D {
       } else {
         a.moving = false;
         // En reposo miran al fondo (-z): el que trabaja a su monitor, el PO a la pizarra.
-        if (a.key === 'desk' || a.key === 'board' || a.sitSpot) a.targetAngle = Math.PI;
-        else if (a.wander && a.key === 'wander:' + a.wander.id) a.targetAngle = a.wander.face;
+        if (a.wander && a.key === 'wander:' + a.wander.id) a.targetAngle = a.wander.face;
+        else if (a.dest?.face != null) a.targetAngle = a.dest.face; // sitio de descanso v3: mirando a la mesa, al futbolín o al Kanban
+        else if (a.key === 'desk' || a.key === 'board' || a.sitSpot) a.targetAngle = Math.PI;
       }
 
       // Emotes al llegar según el estado de su tarea.

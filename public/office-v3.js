@@ -35,12 +35,37 @@ function take(prev, pool, id, cap) {
   return idx;
 }
 
+// Sitios de descanso de los LIBRES (café, recreo, reuniones y Kanban), sacados de las anclas del contrato. Orden intercalado por zona
+// para que, con pocos libres, no se amontonen en el mismo sitio. face = hacia dónde miran (atan2(dx, dz)); sit = sentado.
+const restCache = new Map();
+export function restSpotsV3(layout) {
+  if (restCache.has(layout.id)) return restCache.get(layout.id);
+  const A = anchorMap(layout), groups = { sofa: [], foos: [], meet: [], board: [], cafe: [], rec: [] };
+  const spot = (g, id, label, zone, x, z, face, sit, gesture = null, hold = null) => groups[g].push({ id, label, zone, x, z, face, sit, gesture, hold, stay: [20, 45] });
+  for (let k = 0; A.get('idle-seat-' + k); k++) { const s = A.get('idle-seat-' + k); spot('sofa', 'sofa-' + k, '🛋 Descanso', 'idle', s.x, s.z, Math.PI, true); }
+  const fb = A.get('foosball');
+  if (fb) { const h = (Math.abs(Math.sin(fb.rotationY)) > 0.5 ? fb.d : fb.w) / 2 + 0.32; spot('foos', 'foos-0', '⚽ Futbolín', 'recreation', fb.x - h, fb.z, Math.PI / 2, false, 'interact-right'); spot('foos', 'foos-1', '⚽ Futbolín', 'recreation', fb.x + h, fb.z, -Math.PI / 2, false, 'interact-left'); }
+  const mt = A.get('meeting-table');
+  for (const c of layout.anchors.filter((a) => a.id.startsWith('meeting-chair'))) spot('meet', c.id, '🗣 Reunión', 'meeting', c.x, c.z, mt ? Math.atan2(mt.x - c.x, mt.z - c.z) : Math.PI, true);
+  for (const w of layout.anchors.filter((a) => a.id.startsWith('wait-'))) spot('board', 'kanban-' + w.index, '📋 Mirando el Kanban', 'board', w.x, w.z, Math.PI, false, 'interact-right');
+  const cc = A.get('coffee-counter'), ct = A.get('cafe-table');
+  const iz = layout.floorZones.idle, inIdle = (z) => iz ? Math.min(Math.max(z, iz.z - iz.d / 2 + 0.2), iz.z + iz.d / 2 - 0.2) : z; // dentro de la zona café
+  if (cc) spot('cafe', 'cafe-barra', '☕ Café', 'idle', cc.x + 0.2, inIdle(cc.z + cc.d / 2 + 0.3), Math.PI, false, 'interact-right', 'holding-right');
+  if (ct) spot('cafe', 'cafe-mesa', '☕ Café', 'idle', ct.x, inIdle(ct.z - ct.d / 2 - 0.32), 0, false, 'emote-yes', 'holding-right');
+  const rs = A.get('recreation-sofa');
+  if (rs) for (const [k, dx] of [[0, -0.6], [1, 0.6]]) spot('rec', 'rsofa-' + k, '🛋 Recreo', 'recreation', rs.x + dx, rs.z, Math.PI, true);
+  const order = ['sofa', 'foos', 'meet', 'board', 'cafe', 'rec'], out = [];
+  for (let i = 0; order.some((g) => groups[g][i]); i++) for (const g of order) if (groups[g][i]) out.push(groups[g][i]);
+  restCache.set(layout.id, out);
+  return out;
+}
+
 // agents: estados visuales ({id,status,role,…}); raw: Map id → rol sin normalizar (para detectar `po` exacto).
 export function layoutV3(agents, raw, layout, prev = null) {
   const A = anchorMap(layout);
   const cap = layout.capacity;
   const pv = prev?.v3 && prev.v3.id === layout.id ? prev.v3 : {};
-  const home = {}, qa = {}, wait = {}, idle = {};
+  const home = {}, qa = {}, wait = {}, idle = {}, rest = [];
   const pools = { home: new Set(), qa: new Set(), wait: new Set(), idle: new Set() };
   const roleOf = (a) => String(raw?.get(a.id) ?? a.role ?? '');
   const sorted = [...agents].sort((a, b) => roleOf(a).localeCompare(roleOf(b)) || String(a.id).localeCompare(String(b.id)));
@@ -66,11 +91,16 @@ export function layoutV3(agents, raw, layout, prev = null) {
     }
     if (a.id === poId) { put(a, 'po', 0, A.get('po-chair')); continue; }
     if (qa[a.id] != null) { qaSeat(a, qa[a.id]); continue; }
-    if (a.status === 'idle') {
-      idle[a.id] = take(pv.idle, pools.idle, a.id, cap.idleSofa);
-      if (idle[a.id] != null) { put(a, 'idle', idle[a.id], A.get('idle-seat-' + idle[a.id])); continue; }
-    }
+    if (a.status === 'idle') { rest.push(a); continue; } // los libres, al final: no quitan el Kanban a quien espera
     homeSeat(a); // working / sin plaza / estado desconocido: su mesa, nunca café ni ocio
+  }
+  // Libres: café, recreo, reuniones o mirando el Kanban (nunca su mesa de Trabajo, salvo que no quede sitio); conservan el de antes.
+  const spots = restSpotsV3(layout), taken = new Set(Object.values(wait).filter((i) => i != null).map((i) => 'kanban-' + i));
+  for (const a of rest) {
+    const sp = spots.find((x) => x.id === pv.idle?.[a.id] && !taken.has(x.id)) || spots.find((x) => !taken.has(x.id));
+    if (!sp) { homeSeat(a); continue; }
+    taken.add(sp.id); idle[a.id] = sp.id;
+    put(a, sp.zone, spots.indexOf(sp), { x: sp.x, z: sp.z, rotationY: sp.face }, { sit: sp.sit, face: sp.face, spot: sp.id });
   }
   // Mesas que se construyen = las realmente asignadas (no se pueblan los pools con mesas vacías).
   const used = [...desks].map((c) => { const ch = A.get(c); return { chair: ch, desk: A.get(ch.deskId) }; });

@@ -104,7 +104,9 @@ try {
   for (const id of ids) {
     const s = d.slots[id];
     const z = zones[s.zone];
-    check(`real ${id} (${s.status}) en zona «${s.zone}» y posición dentro de ella`, atSlot(s) && !!z && inZone(z, s.ax, s.az), JSON.stringify(s));
+    // v3: el libre va cambiando de sitio de descanso (café, recreo, reuniones, Kanban): vale estar en uno de ellos o yendo hacia él
+    const restOk = (zs) => s.status === 'idle' && (s.moving || s.wander && ['idle', 'recreation', 'meeting', 'board'].some((k) => zs[k] && rectDist(zs[k], s.ax, s.az) <= 0.01));
+    check(`real ${id} (${s.status}) en zona «${s.zone}» y posición dentro de ella`, restOk(zones) || (atSlot(s) && !!z && inZone(z, s.ax, s.az)), JSON.stringify(s));
     if (s.status === 'working') check(`real ${id}: trabajando ⇒ sentado, sin paseo (nunca café)`, s.sit === true && s.wander === null && s.zone !== 'idle', JSON.stringify(s));
     void okZone;
   }
@@ -157,7 +159,8 @@ try {
   const exp = { PO: null, trabaja: 'development', revisa: 'development|qa', cola: 'board', dep: 'board', falla: 'development', cuota: 'development', libre: 'idle' };
   for (const [id, z] of Object.entries(exp)) {
     const s = S[id];
-    check(`sim ${id}: ${z ? 'zona ' + z : 'slot propio'} y en su sitio`, !!s && atSlot(s) && (!z || z.split('|').includes(s.zone)) && inZone(d.zones[s.zone], s.ax, s.az), JSON.stringify(s));
+    const rest = !!s && s.status === 'idle' && (s.moving || s.wander && ['idle', 'recreation', 'meeting', 'board'].some((k) => d.zones[k] && rectDist(d.zones[k], s.ax, s.az) <= 0.01));
+    check(`sim ${id}: ${z ? 'zona ' + z : 'slot propio'} y en su sitio`, rest || (!!s && atSlot(s) && (!z || z.split('|').includes(s.zone)) && inZone(d.zones[s.zone], s.ax, s.az)), JSON.stringify(s));
   }
   check('sim: sin dos agentes en el mismo hueco', new Set(Object.values(S).map((s) => `${s.zone}:${s.slot}:${s.module}`)).size === Object.keys(S).length, JSON.stringify(Object.values(S).map((s) => [s.zone, s.slot])));
   check('sim: nadie solapado (<0,35 u entre agentes)', Object.values(S).every((a, i, all) => all.every((b, j) => i === j || Math.hypot(a.ax - b.ax, a.az - b.az) >= 0.35)), '');

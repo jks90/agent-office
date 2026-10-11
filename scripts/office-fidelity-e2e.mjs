@@ -20,7 +20,7 @@ const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env: { 
 const stop = () => { try { server.kill('SIGTERM'); } catch { /* noop */ } try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch { /* noop */ } };
 process.on('exit', stop);
 const base = `http://127.0.0.1:${port}`;
-const REST = new Set(['cafe', 'nevera', 'planta', 'charla']); // paseos permitidos (descanso/recreo)
+const REST = new Set(['cafe', 'nevera', 'planta', 'charla', 'sofa-0', 'sofa-1', 'foos-0', 'foos-1', 'meeting-chair-0', 'meeting-chair-1', 'meeting-chair-2', 'meeting-chair-3', 'cafe-barra', 'cafe-mesa', 'rsofa-0', 'rsofa-1', ...[0, 1, 2, 3, 4, 5, 6, 7].map((i) => 'kanban-' + i)]); // v3: sitios de descanso de los libres // paseos permitidos (descanso/recreo)
 
 let browser;
 try {
@@ -65,7 +65,7 @@ try {
   check('ask: junto a la mesa «Tú»', !!ask && !ask.moving && Math.hypot(ask.ax - d.deskPos.x, ask.az - d.deskPos.z) < 1.6, JSON.stringify({ ask, desk: d.deskPos }));
   check('free: en descanso o en un paseo de recreo', S.free?.zone === 'idle', JSON.stringify(S.free));
 
-  // 60 s simulados: el que trabaja no se mueve de su mesa; el libre solo pasea por recreo; nadie más pasea.
+  // 60 s simulados: el que trabaja no se mueve de su mesa; el libre cambia de sitio de descanso; nadie más pasea.
   const home = { x: S.work.ax, z: S.work.az };
   let workMoved = false, badWander = [], freeWandered = false;
   for (let t = 0; t < 60; t += 1) {
@@ -79,7 +79,7 @@ try {
   }
   check('work no sale de su mesa en 60 s simulados', !workMoved);
   check('solo el libre pasea y solo por descanso/recreo', badWander.length === 0, badWander.join(','));
-  check('el libre NO pasea (v3: solo el ambiente se mueve)', !freeWandered);
+  check('el libre va cambiando de sitio de descanso (café, recreo, reuniones, Kanban)', freeWandered);
 
   // Cambio de estado: work pasa a revisión y camina a su zona.
   await page.evaluate(() => {
