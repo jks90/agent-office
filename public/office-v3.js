@@ -23,7 +23,8 @@ export function zonesV3(layout) {
 }
 
 const anchorMap = (layout) => new Map(layout.anchors.map((a) => [a.id, a]));
-const isQa = (role) => /qa|test|quality/i.test(String(role || ''));
+// «qa»/«test» como palabra del rol (qa-suite, e2e-test), no dentro de otra («react-flowtest» no es QA)
+const isQa = (role) => /(^|[^a-z])(qa|tests?|tester|testing|quality)([^a-z]|$)/i.test(String(role || ''));
 const isPo = (role) => String(role || '').trim().toLowerCase() === 'po';
 
 // Asigna el menor índice libre conservando el previo mientras siga en rango y libre (sin reindexar en cada SSE).
