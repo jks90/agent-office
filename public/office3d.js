@@ -535,9 +535,7 @@ export class Office3D {
     box(dw, 0.06, 0.6, 0xb98a5a, s.x, 0.42, s.z);
     box(0.06, 0.4, 0.55, 0x8a6a45, s.x - dw / 2 + 0.05, 0.2, s.z);
     box(0.06, 0.4, 0.55, 0x8a6a45, s.x + dw / 2 - 0.05, 0.2, s.z);
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.17, 0.4, 14), mat(0xff7a1a)); body.position.set(s.x, 0.32, s.z - 0.55); body.castShadow = true; g.add(body);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 14, 10), mat(0xffd7b0)); head.position.set(s.x, 0.62, s.z - 0.55); g.add(head);
-    const hat = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.16, 4), mat(0xffc400)); hat.position.set(s.x, 0.82, s.z - 0.55); g.add(hat); // corona: «el jefe»
+    this.buildMe(g, s, mat);
     this.deskPapers = new THREE.Group(); this.deskPapers.position.set(s.x - 0.25, 0.45, s.z + 0.02); g.add(this.deskPapers);
     this.deskN = -1;
     this.room.add(g);
@@ -545,6 +543,31 @@ export class Office3D {
   }
 
   // Pila de papeles proporcional a los avisos (máx. 14 hojas, ligeramente desordenadas).
+  // El usuario tras su mesa: personaje real (como los agentes) sentado de cara a la sala y con corona; sin modelos cargados, el muñeco simple.
+  buildMe(g, s, mat) {
+    const z = s.z - 0.55, gltf = this.charCache.get(CHAR_FILES[hash('__me') % CHAR_FILES.length]);
+    let top = 0.74;
+    if (gltf) {
+      const model = skeletonClone(gltf.scene);
+      const box = new THREE.Box3().setFromObject(model);
+      const sc = CHAR_H / (box.getSize(new THREE.Vector3()).y || 1);
+      model.scale.setScalar(sc);
+      model.position.set(s.x, 0.24 - box.min.y * sc, z); // misma altura de asiento que los agentes
+      model.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.frustumCulled = false; } });
+      const mixer = new THREE.AnimationMixer(model);
+      const clip = gltf.animations.find((c) => c.name === 'sit') || gltf.animations[0];
+      if (clip) { mixer.clipAction(clip).play(); mixer.update(0.4); }
+      g.add(model);
+      this.place('chairDesk', s.x, z, { ry: Math.PI }, g);
+      model.updateMatrixWorld(true);
+      top = new THREE.Box3().setFromObject(model).max.y;
+    } else {
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.17, 0.4, 14), mat(0xff7a1a)); body.position.set(s.x, 0.32, z); body.castShadow = true; g.add(body);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 14, 10), mat(0xffd7b0)); head.position.set(s.x, 0.62, z); g.add(head);
+    }
+    const hat = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.16, 4), mat(0xffc400)); hat.position.set(s.x, top + 0.07, z); g.add(hat); // corona: «el jefe»
+  }
+
   syncDeskPapers() {
     const n = Math.min(14, this.mine?.total || 0);
     if (!this.deskPapers || n === this.deskN) return;
@@ -1730,7 +1753,8 @@ export class Office3D {
       // QA queda delante del Kanban: su píldora va a la esquina del fondo-derecha; la del Kanban, bajo la pizarra.
       if (z.v3) {
         // FT-149: rótulo horizontal en el borde posterior de la zona (ancla del contrato); el del Kanban baja bajo el tablero
-        const p3 = this.project(z.labelAnchor.x, id === 'board' ? 0.05 : z.labelAnchor.y, z.labelAnchor.z + (id === 'board' ? 0.45 : 0));
+        // el de «Tú» se aparta a la derecha: en el centro tapaba al usuario sentado tras su mesa
+        const p3 = this.project(z.labelAnchor.x + (id === 'user' ? 1.05 : 0), id === 'board' ? 0.05 : z.labelAnchor.y, z.labelAnchor.z + (id === 'board' ? 0.45 : 0));
         if (!el.dataset.c) { el.classList.add('v3'); el.style.background = '#' + z.fill.toString(16).padStart(6, '0'); el.style.borderColor = '#' + z.color.toString(16).padStart(6, '0'); el.dataset.c = '1'; }
         el.style.left = p3.x + 'px'; el.style.top = p3.y + 'px'; el.style.opacity = p3.visible ? '1' : '0';
         continue;
