@@ -330,9 +330,10 @@ dialog pre { background: var(--panel3); border: 1px solid var(--line); border-ra
 dialog.wide { width: min(1000px, 94vw); }
 dialog.role-dlg { width: min(1480px, 96vw); }
 dialog .role-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 20px; }
-dialog .role-system { width: 100%; height: max(150px, calc(100vh - 600px)); font: 12px/1.45 ui-monospace, monospace; }
+dialog .role-system { width: 100%; height: max(110px, calc(100vh - 660px)); font: 12px/1.45 ui-monospace, monospace; }
 dialog .checklist { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel3, var(--panel)); padding: 4px 6px; max-height: max(110px, calc((100vh - 330px) / 3)); overflow: auto; }
 dialog .checklist.inline { display: flex; flex-wrap: wrap; gap: 2px 14px; max-height: none; }
+dialog .checklist.cols { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0 10px; max-height: 92px; }
 dialog .checklist.empty { padding: 8px; font-size: 12px; }
 dialog .checklist .check, dialog .check-line { display: flex; align-items: baseline; gap: 6px; margin: 0; padding: 3px 2px; font-size: 12px; cursor: pointer; min-width: 0; }
 dialog .checklist .check:hover { background: var(--panel2); }
@@ -688,3 +689,54 @@ select.tool-assign { width: auto; max-width: 150px; font-size: 11px; padding: 2p
 .mp-box .mp-group-head::before { content: none; }
 
 .g-typing.stale { color: var(--warn, #fbbf24); }
+
+/* Revisión: tablas e imágenes en el resumen, galería de capturas, ficheros clicables y visor de diff */
+.md .md-table { overflow: auto; margin: 6px 0; }
+.md table { border-collapse: collapse; font-size: 12.5px; }
+.md th, .md td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; }
+.md th { background: var(--panel3, #0a0c16); color: var(--text); }
+.md .md-img { display: inline-flex; flex-direction: column; gap: 2px; color: #93c5fd; text-decoration: none; font-size: 11px; }
+.md .md-img img { max-width: 220px; max-height: 140px; border-radius: 6px; border: 1px solid var(--line); background: #0a0c16; }
+.shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.shots a { display: flex; flex-direction: column; gap: 4px; color: #93c5fd; text-decoration: none; font-size: 11px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 6px; }
+.shots img { width: 100%; height: 160px; object-fit: contain; background: #0a0c16; border-radius: 6px; }
+.shots a.broken { color: var(--muted); }
+.stat-list { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 6px; }
+.stat-row { display: grid; grid-template-columns: minmax(0, 1fr) 50px 140px; gap: 10px; align-items: center; width: 100%; background: none; border: 0; border-radius: 6px; padding: 5px 8px; color: var(--text); font: 12.5px ui-monospace, monospace; text-align: left; cursor: pointer; }
+.stat-row:hover { background: var(--panel3, #0a0c16); }
+.stat-row .f { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #93c5fd; }
+.stat-row .n { text-align: right; color: var(--muted); }
+.stat-row .bar { display: flex; height: 8px; background: #0a0c16; border-radius: 4px; overflow: hidden; }
+.stat-row .bar .a { background: #22c55e; } .stat-row .bar .d { background: #ef4444; }
+.stat-tot { padding: 4px 8px 0; font-size: 11.5px; }
+b.a { color: #4ade80; } b.d { color: #f87171; }
+dialog.diffv { width: 97vw; max-width: none; height: 94vh; max-height: 94vh; display: none; padding: 14px 16px; }
+dialog.diffv[open] { display: flex; }
+dialog.diffv > form { display: flex; flex-direction: column; min-height: 0; flex: 1; gap: 8px; }
+.diff-head h3 { margin: 0 0 6px; font-size: 17px; }
+.diff-head .row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.diff-head .seg { display: inline-flex; gap: 2px; }
+.diff-cols { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 10px; min-height: 0; flex: 1; }
+.diff-nav { overflow: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--panel2); padding: 4px; }
+.diff-nav button { display: grid; grid-template-columns: minmax(0, 1fr) auto; width: 100%; text-align: left; background: none; border: 0; border-radius: 6px; padding: 6px 8px; color: var(--text); cursor: pointer; font-size: 12px; }
+.diff-nav button:hover { background: var(--panel3, #0a0c16); }
+.diff-nav .f { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diff-nav small { grid-column: 1; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; }
+.diff-nav .pm { grid-row: 1 / span 2; grid-column: 2; align-self: center; font-size: 11px; }
+.diff-body { overflow: auto; min-height: 0; }
+details.df { border: 1px solid var(--line); border-radius: 10px; margin-bottom: 10px; background: var(--panel2); }
+details.df > summary { position: sticky; top: 0; z-index: 1; display: flex; gap: 8px; align-items: center; padding: 8px 12px; cursor: pointer; background: var(--panel2); border-radius: 10px; font: 600 12.5px ui-monospace, monospace; }
+details.df[open] > summary { border-bottom: 1px solid var(--line); border-radius: 10px 10px 0 0; }
+details.df .f { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+details.df .flag { font: 10.5px system-ui; background: #1e3a8a; color: #bfdbfe; border-radius: 999px; padding: 1px 7px; }
+.dt-wrap { overflow-x: auto; }
+table.dt { border-collapse: collapse; width: 100%; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+table.dt td { padding: 0 8px; white-space: pre; vertical-align: top; }
+table.dt td.ln { width: 1%; min-width: 38px; text-align: right; color: #64748b; user-select: none; border-right: 1px solid var(--line); }
+table.dt td.a { background: rgba(34, 197, 94, .14); color: #d1fae5; }
+table.dt td.d { background: rgba(239, 68, 68, .14); color: #fee2e2; }
+table.dt td.e { background: rgba(148, 163, 184, .06); }
+table.dt tr.h td { background: rgba(59, 130, 246, .12); color: #93c5fd; padding: 3px 8px; }
+table.dt.split td:not(.ln) { width: 49%; white-space: pre-wrap; word-break: break-all; }
+@media (max-width: 900px) { .diff-cols { grid-template-columns: 1fr; } .diff-nav { max-height: 140px; } }
+.diff-head .seg button:not(.ghost) { background: #2563eb; color: #fff; border-color: #2563eb; }
