@@ -65,7 +65,7 @@ function loadOrCreateToken() {
 }
 const isLoopback = (req) => /^(::1|127\.\d+\.\d+\.\d+|::ffff:127\.\d+\.\d+\.\d+)$/.test(req.socket.remoteAddress || '');
 const PUBLIC = path.join(store.ROOT, 'public');
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.json': 'application/json' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.json': 'application/json' };
 
 // Comprobación inicial de la suite (y refresco periódico para el planificador).
 checkSuite().then((s) => console.log(s.ok ? `🧪 flow-test en ${s.url} · ${s.mode}${s.plan ? ' · ' + s.plan : ''}${s.org ? ' · ' + s.org : ''}` : `⛔ ${s.reason}`)).catch(() => {});
@@ -375,7 +375,10 @@ function events(req, res) {
 function serveUpload(req, res) {
   const p = new URL(req.url, 'http://x').searchParams.get('path') || '';
   const abs = path.resolve(p);
-  const allowed = ['uploads', 'feedback'].some((d) => abs.startsWith(path.join(store.DATA_DIR, d) + path.sep));
+  // Además: una imagen que el agente cita (ruta absoluta) en el resumen de ESA tarea (capturas antes/después de la revisión).
+  const tid = new URL(req.url, 'http://x').searchParams.get('task');
+  const cited = !!tid && /\.(png|jpe?g|webp|gif)$/i.test(abs) && path.isAbsolute(p) && !!store.get().tasks.find((t) => t.id === tid && String(t.summary || '').includes(p));
+  const allowed = cited || ['uploads', 'feedback'].some((d) => abs.startsWith(path.join(store.DATA_DIR, d) + path.sep));
   if (!allowed || !fs.existsSync(abs) || fs.statSync(abs).isDirectory()) { res.writeHead(404).end('No encontrado'); return; }
   const ext = path.extname(abs).toLowerCase();
   res.writeHead(200, { 'content-type': MIME[ext] || (ext === '.txt' || ext === '.md' ? 'text/plain; charset=utf-8' : 'application/octet-stream'), 'content-disposition': `inline; filename="${path.basename(abs)}"` });

@@ -1333,11 +1333,18 @@ function confirmRisky(next, prev = []) {
 function toolSelects(o, role = null) {
   const mc = toolsData?.mcp?.catalog || [], sc = toolsData?.scripts?.catalog || [];
   const viaRole = (k) => (role?.[k] || []).length ? ` <span class="muted">(su rol ya trae: ${role[k].map(esc).join(', ')})</span>` : '';
-  return `<label>🔌 MCP del catálogo (Ctrl+clic)${viaRole('mcps')}</label>
-    <select name="mcps" multiple class="tall">${mc.map((m) => `<option value="${esc(m.name)}" ${(o.mcps || []).includes(m.name) ? 'selected' : ''}>${RISKY.test(m.name) ? '⚠ ' : ''}${esc(m.name)}${m.description ? ' — ' + esc(m.description.slice(0, 70)) : ''}</option>`).join('') || '<option disabled>(catálogo vacío: añade MCP en Agentes ▸ 🔌 MCP)</option>'}</select>
-    <label>📜 Scripts del catálogo (Ctrl+clic)${viaRole('scripts')}</label>
-    <select name="scripts" multiple class="tall">${sc.map((s) => `<option value="${esc(s.name)}" ${(o.scripts || []).includes(s.name) ? 'selected' : ''}>${esc(s.name)}${s.description ? ' — ' + esc(s.description.slice(0, 70)) : ''}</option>`).join('') || '<option disabled>(catálogo vacío: añade scripts en Agentes ▸ 📜 Scripts)</option>'}</select>`;
+  return `<label>🔌 MCP del catálogo${viaRole('mcps')}</label>
+    ${checkList('mcps', mc.map((m) => ({ value: m.name, label: (RISKY.test(m.name) ? '⚠ ' : '') + m.name, desc: m.description })), o.mcps, 'catálogo vacío: añade MCP en Agentes ▸ 🔌 MCP')}
+    <label>📜 Scripts del catálogo${viaRole('scripts')}</label>
+    ${checkList('scripts', sc.map((x) => ({ value: x.name, label: x.name, desc: x.description })), o.scripts, 'catálogo vacío: añade scripts en Agentes ▸ 📜 Scripts')}`;
 }
+// Lista de casillas (en vez de <select multiple> con Ctrl+clic): nombre en negrita y descripción completa en el title.
+function checkList(name, items, selected = [], empty = '', cls = '') {
+  if (!items.length) return `<div class="checklist empty muted">(${esc(empty)})</div>`;
+  return `<div class="checklist ${cls}">${items.map((it) => `<label class="check" title="${esc(it.desc || '')}"><input type="checkbox" name="${esc(name)}" value="${esc(it.value)}" ${(selected || []).includes(it.value) ? 'checked' : ''} /><b>${esc(it.label)}</b>${it.desc ? `<span class="ds">${esc(it.desc)}</span>` : ''}</label>`).join('')}</div>`;
+}
+// Valores marcados de un campo múltiple del formulario (casillas o <select multiple>).
+const pickedIn = (form, n) => [...form.querySelectorAll(`[name="${n}"]`)].flatMap((el) => el.tagName === 'SELECT' ? [...el.selectedOptions].map((o) => o.value) : el.checked ? [el.value] : []);
 // Quién lo usa: agentes que lo tienen asignado + roles que lo declaran.
 const usersOf = (kind, name) => ({ agents: S.agents.filter((a) => (a[kind] || []).includes(name)), roles: Object.entries(S.roles).filter(([, r]) => (r[kind] || []).includes(name)).map(([id, r]) => ({ id, label: r.label })) });
 function usageCell(kind, name) {
@@ -1469,29 +1476,35 @@ function editRole(id, duplicate = false) {
   const rid = duplicate ? '' : id;
   const catalog = skillsData?.catalog || [];
   const mine = r.skills || [];
+  const minOpts = ['claude', 'codex'].flatMap((g) => (MODELS[g] || []).map((m) => m.id));
+  if (r.minModel && !minOpts.includes(r.minModel)) minOpts.unshift(r.minModel);
   dialog(`
     <h3>${rid ? '✎ Rol «' + esc(r.label) + '»' : '＋ Nuevo rol' + (duplicate ? ' (a partir de «' + esc(r.label) + '»)' : '')}</h3>
+    <div class="role-cols"><div>
     <div class="grid2">
       <div><label>Identificador (sin espacios)</label><input name="id" value="${esc(rid)}" placeholder="unity-dev" ${rid ? 'readonly' : 'required autofocus'} /></div>
       <div><label>Tipo</label><select name="kind"><option value="dev" ${r.kind === 'dev' ? 'selected' : ''}>desarrolla</option><option value="qa" ${r.kind === 'qa' ? 'selected' : ''}>QA (MCP de flow-test)</option><option value="docs" ${r.kind === 'docs' ? 'selected' : ''}>documenta (MCP de flow-test)</option><option value="planner" ${r.kind === 'planner' ? 'selected' : ''}>planifica (PO)</option></select></div>
       <div><label>Modelo por defecto</label>${modelSelect('model', 'auto', r.model || '')}</div>
-      <div><label>Modelo mínimo (cascada FT-60: no empezar más abajo)</label><input name="minModel" value="${esc(r.minModel || '')}" placeholder="vacío = empieza barato (p. ej. sonnet)" /></div>
-      <div><label>Atiende tareas de rol (Ctrl+clic)</label><select name="handles" multiple>${['po', 'back', 'front', 'qa'].map((h) => `<option value="${h}" ${(r.handles || []).includes(h) ? 'selected' : ''}>${h}</option>`).join('')}</select></div>
+      <div><label title="Cascada FT-60: no empezar más abajo">Modelo mínimo</label><select name="minModel"><option value="">ninguno (empieza barato)</option>${minOpts.map((m) => `<option value="${esc(m)}" ${m === r.minModel ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
     </div>
+    <label title="Una tarea de cualquiera de estos roles la puede coger un agente de este rol. Un rol nuevo («＋ Nuevo rol») aparece aquí solo.">Atiende tareas de rol</label>
+    ${checkList('handles', [...new Set(['po', 'back', 'front', 'qa', ...(r.handles || []), ...Object.keys(S.roles)])].filter((h) => h !== rid).map((h) => ({ value: h, label: h, desc: S.roles[h]?.label && S.roles[h].label !== h ? S.roles[h].label : '' })), r.handles, '', 'cols')}
     <label>Descripción (una línea)</label><input name="description" value="${esc(r.description || '')}" />
-    <label>Skills del catálogo que lleva (Ctrl+clic)</label>
-    <select name="skills" multiple class="tall">${catalog.map((s) => `<option value="${esc(s.name)}" ${mine.includes(s.name) ? 'selected' : ''}>${esc(s.name)} — ${esc(s.description.slice(0, 80))}</option>`).join('') || '<option disabled>(catálogo vacío: añade skills abajo)</option>'}</select>
-    ${toolSelects(r)}
-    <label title="FT-86: reglas de «construir lo mínimo» en el prompt de los agentes de este rol"><input type="checkbox" name="ponytail" ${S.settings.ponytailRoles?.[rid] ? 'checked' : ''} /> Ponytail (prueba): construir lo mínimo</label>
-    <label>Prompt de sistema</label><textarea name="system" rows="12">${esc(r.system || '')}</textarea>
+    <label class="check-line" title="FT-86: reglas de «construir lo mínimo» en el prompt de los agentes de este rol"><input type="checkbox" name="ponytail" ${S.settings.ponytailRoles?.[rid] ? 'checked' : ''} /> Ponytail (prueba): construir lo mínimo</label>
+    <label>Prompt de sistema</label><textarea name="system" class="role-system">${esc(r.system || '')}</textarea>
     <p class="muted">Se guarda como fichero .md en el catálogo central (${esc(short(skillsData?.catalogDir || '~/JksDocs/workspace/_agentes'))}/roles/).</p>
+    </div><div>
+    <label>Skills del catálogo que lleva</label>
+    ${checkList('skills', catalog.map((s) => ({ value: s.name, label: s.name, desc: s.description })), mine, 'catálogo vacío: añade skills abajo')}
+    ${toolSelects(r)}
+    </div></div>
     ${buttons('Guardar')}`, async (f) => {
     const form = $('#dialog form');
-    const pick = (n) => [...form.querySelector(`[name=${n}]`).selectedOptions].map((o) => o.value);
+    const pick = (n) => pickedIn(form, n);
     await api('POST', '/api/roles', { ...f, model: pickModel(f), id: f.id || rid, handles: pick('handles'), skills: pick('skills'), mcps: pick('mcps'), scripts: pick('scripts'), file: rid ? r.file : null });
     await api('POST', '/api/settings', { ponytailRoles: { ...S.settings.ponytailRoles, [f.id || rid]: !!f.ponytail } }); // FT-86
     toast('Rol guardado en el catálogo');
-  });
+  }, 'wide role-dlg');
 }
 
 // Candado de suite: chip en la cabecera y pantalla de bloqueo si flow-test no está o ha caducado.
@@ -1587,6 +1600,83 @@ const mergeChips = (t) => t.status !== 'review' || !t.branch ? '' : [
 ].join(' ');
 // FT-44: tarea con rama en varios repos → un diffStat por repo; escribir fuera del worktree → aviso para el humano.
 const repoStats = (t) => Object.entries(t.repos || {}).filter(([, r]) => r.diffStat);
+const IMG_RE = /\.(png|jpe?g|webp|gif)$/i;
+// Imágenes que cita el agente en su resumen (capturas antes/después…): rutas absolutas; el servidor solo sirve las citadas.
+const shotUrl = (t, f) => `${BASE}api/file?task=${encodeURIComponent(t.id)}&path=${encodeURIComponent(f)}`;
+const summaryShots = (t) => [...new Set([...String(t.summary || '').matchAll(/(\/[^\s()<>|'"`\]]+\.(?:png|jpe?g|webp|gif))/gi)].map((m) => m[1]))];
+// diffstat → filas clicables (abren el visor en ese fichero)
+function statListHtml(t) {
+  const rows = String(t.diffStat || '').split('\n').map((l) => l.match(/^\s*(.+?)\s+\|\s+(\d+|Bin[^+-]*)\s*(\+*)(-*)\s*$/)).filter(Boolean);
+  if (!rows.length) return '';
+  const tot = String(t.diffStat).trim().split('\n').pop();
+  const max = Math.max(...rows.map((r) => r[3].length + r[4].length), 1);
+  return `<div class="stat-list">${rows.map(([, f, n, a, d]) => `<button type="button" class="stat-row" data-diff="${t.id}" data-file="${esc(f)}" title="Ver el diff de ${esc(f)}"><span class="f">${esc(f)}</span><span class="n">${esc(n)}</span><span class="bar"><i class="a" style="width:${(a.length / max) * 100}%"></i><i class="d" style="width:${(d.length / max) * 100}%"></i></span></button>`).join('')}<div class="muted stat-tot">${esc(tot)}</div></div>`;
+}
+// git diff unificado → [{ repo, path, add, del, flags, lines: [{t:'h'|'a'|'d'|'c', o, n, s}] }]
+function parseDiff(text) {
+  const files = []; let f = null, repo = '', o = 0, n = 0, m;
+  for (const l of String(text || '').split('\n')) {
+    if ((m = l.match(/^══ repo (\S+)/))) { repo = m[1]; f = null; continue; }
+    if (l.startsWith('diff --git ')) { m = l.match(/^diff --git a\/(.+?) b\/(.+)$/); f = { repo, path: m ? m[2] : l.slice(11), add: 0, del: 0, flags: [], lines: [], hunk: false }; files.push(f); continue; }
+    if (!f) continue;
+    if ((m = l.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/))) { o = +m[1]; n = +m[2]; f.hunk = true; f.lines.push({ t: 'h', s: m[3].trim() }); continue; }
+    if (!f.hunk) {
+      if (l.startsWith('new file')) f.flags.push('nuevo'); else if (l.startsWith('deleted file')) f.flags.push('borrado');
+      else if (l.startsWith('rename from')) f.flags.push('renombrado'); else if (l.startsWith('Binary files')) f.flags.push('binario');
+      continue;
+    }
+    if (l.startsWith('+')) { f.add++; f.lines.push({ t: 'a', n: n++, s: l.slice(1) }); }
+    else if (l.startsWith('-')) { f.del++; f.lines.push({ t: 'd', o: o++, s: l.slice(1) }); }
+    else if (l.startsWith(' ')) f.lines.push({ t: 'c', o: o++, n: n++, s: l.slice(1) });
+  }
+  return files;
+}
+const DIFF_BIG = 800; // ficheros con más líneas cambiadas empiezan plegados
+function diffFileHtml(f, i, split) {
+  const cell = (l, side) => !l ? '<td class="ln"></td><td class="e"></td>' : `<td class="ln">${side === 'o' ? l.o ?? '' : l.n ?? ''}</td><td class="${l.t}">${esc(l.s)}</td>`;
+  let rows = '';
+  if (!split) rows = f.lines.map((l) => l.t === 'h' ? `<tr class="h"><td colspan="3">⋯ ${esc(l.s)}</td></tr>` : `<tr><td class="ln">${l.o ?? ''}</td><td class="ln">${l.n ?? ''}</td><td class="${l.t}">${l.t === 'a' ? '+' : l.t === 'd' ? '−' : ' '} ${esc(l.s)}</td></tr>`).join('');
+  else {
+    let dels = [], adds = [];
+    const flush = () => { for (let k = 0; k < Math.max(dels.length, adds.length); k++) rows += `<tr>${cell(dels[k], 'o')}${cell(adds[k], 'n')}</tr>`; dels = []; adds = []; };
+    for (const l of f.lines) {
+      if (l.t === 'd') dels.push(l); else if (l.t === 'a') adds.push(l);
+      else { flush(); rows += l.t === 'h' ? `<tr class="h"><td colspan="4">⋯ ${esc(l.s)}</td></tr>` : `<tr>${cell(l, 'o')}${cell(l, 'n')}</tr>`; }
+    }
+    flush();
+  }
+  const big = f.add + f.del > DIFF_BIG;
+  return `<details class="df" id="df-${i}" ${big ? '' : 'open'}><summary><span class="f">${f.repo ? `<small>📁 ${esc(f.repo)}</small> ` : ''}${esc(f.path)}</span>${f.flags.map((x) => `<span class="flag">${x}</span>`).join('')}<span class="pm"><b class="a">+${f.add}</b> <b class="d">−${f.del}</b></span></summary>
+    ${f.lines.length ? `<div class="dt-wrap"><table class="dt ${split ? 'split' : ''}">${rows}</table></div>` : '<p class="muted">(sin cambios de texto)</p>'}</details>`;
+}
+async function openDiff(id, focusFile = '') {
+  const t = S.tasks.find((x) => x.id === id);
+  if (!t) return;
+  const { diff } = await api('GET', `/api/tasks/${id}/diff`);
+  const files = parseDiff(diff);
+  let split = safeGet('ao:diffMode') === 'split';
+  const tot = files.reduce((a, f) => [a[0] + f.add, a[1] + f.del], [0, 0]);
+  const body = () => files.length ? files.map((f, i) => diffFileHtml(f, i, split)).join('') : `<pre>${esc(diff)}</pre>`;
+  const acts = t.status === 'review' ? `${updateBtn(t)}<button type="button" class="small ok" data-approve="${t.id}">✓ Aprobar${t.branch ? ' y fusionar' : ''}</button><button type="button" class="small ghost" data-reject="${t.id}">↩ Devolver</button>` : '';
+  dialog(`<div class="diff-head"><h3>${esc(tcode(t))} · ${esc(t.title)}</h3>
+      <div class="row"><span class="muted">${files.length} ficheros · <b class="a">+${tot[0]}</b> <b class="d">−${tot[1]}</b></span><div class="spacer"></div>
+      <div class="seg"><button type="button" class="small ${split ? 'ghost' : ''}" data-dmode="unified">Unificado</button><button type="button" class="small ${split ? '' : 'ghost'}" data-dmode="split">Lado a lado</button></div>
+      <button type="button" class="small ghost" data-dfold="0">Plegar todo</button><button type="button" class="small ghost" data-dfold="1">Desplegar todo</button></div></div>
+    ${outsideWarn(t)}
+    <div class="diff-cols"><nav class="diff-nav">${files.map((f, i) => `<button type="button" data-dgo="${i}" title="${esc(f.path)}"><span class="f">${esc(f.path.split('/').pop())}</span><small>${esc(f.path.split('/').slice(0, -1).join('/'))}</small><span class="pm"><b class="a">+${f.add}</b> <b class="d">−${f.del}</b></span></button>`).join('')}</nav>
+    <div class="diff-body">${body()}</div></div>
+    <div class="task-acts"><button type="button" class="small ghost" data-dback="${t.id}">← Volver a la tarea</button>${acts}<div class="spacer"></div><button class="ghost" value="cancel">Cerrar</button></div>`, null, 'diffv');
+  const dlg = $('#dialog');
+  const go = (i) => { const el = dlg.querySelector('#df-' + i); if (el) { el.open = true; el.scrollIntoView({ block: 'start' }); } };
+  dlg.querySelector('.diff-cols').addEventListener('click', (e) => { const b = e.target.closest('[data-dgo]'); if (b) go(b.dataset.dgo); });
+  dlg.querySelector('.diff-head').addEventListener('click', (e) => {
+    const m = e.target.closest('[data-dmode]'), fo = e.target.closest('[data-dfold]');
+    if (m) { split = m.dataset.dmode === 'split'; safeSet('ao:diffMode', split ? 'split' : 'unified'); dlg.querySelector('.diff-body').innerHTML = body(); dlg.querySelectorAll('[data-dmode]').forEach((b) => b.classList.toggle('ghost', b !== m)); }
+    if (fo) dlg.querySelectorAll('details.df').forEach((d) => { d.open = fo.dataset.dfold === '1'; });
+  });
+  dlg.querySelector('[data-dback]').addEventListener('click', () => openTask(t.id));
+  if (focusFile) { const key = focusFile.replace(/^\.\.\.\/?/, ''); const i = files.findIndex((f) => f.path === key || f.path.endsWith(key)); if (i >= 0) setTimeout(() => go(i), 30); }
+}
 const diffStatsHtml = (t, cls = '') => repoStats(t).length > 1
   ? repoStats(t).map(([k, r]) => `<pre${cls}><b>📁 ${esc(k)}</b> · ${esc(r.branch || t.branch || '')}\n${esc(r.diffStat)}</pre>`).join('')
   : (t.diffStat ? `<pre${cls}>${esc(t.diffStat)}</pre>` : '');
@@ -2903,16 +2993,32 @@ function editAgent(id) {
     <label title="FT-86: reglas de «construir lo mínimo» en el prompt de este agente"><input type="checkbox" name="ponytail" ${a.ponytail ? 'checked' : ''} /> Ponytail (prueba): construir lo mínimo</label>
     ${toolSelects(a, S.roles[a.role])}
     ${a.status === 'working' ? '<p class="muted">Está trabajando: los cambios se aplican a partir de su siguiente tarea.</p>' : ''}
-    ${buttons('Guardar')}`, async (f) => { const form = $('#dialog form'), pick = (n) => [...form.querySelector(`[name=${n}]`).selectedOptions].map((o) => o.value); if (!confirmRisky(pick('mcps'), a.mcps)) throw new Error('cancelado'); await api('PATCH', `/api/agents/${id}`, { ...f, model: pickModel(f), ponytail: !!f.ponytail, mcps: pick('mcps'), scripts: pick('scripts') }); toast('Agente actualizado'); });
+    ${buttons('Guardar')}`, async (f) => { const form = $('#dialog form'), pick = (n) => pickedIn(form, n); if (!confirmRisky(pick('mcps'), a.mcps)) throw new Error('cancelado'); await api('PATCH', `/api/agents/${id}`, { ...f, model: pickModel(f), ponytail: !!f.ponytail, mcps: pick('mcps'), scripts: pick('scripts') }); toast('Agente actualizado'); });
 }
 
 // Markdown ligero y seguro para descripciones y resúmenes (escapa primero, luego formatea).
-function md(src) {
+function md(src, opts = {}) {
   const lines = esc(src || '').split('\n');
-  let out = '', inList = null, inCode = false;
-  const inline = (s) => s.replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/(^|\s)_([^_]+)_(?=\s|$)/g, '$1<em>$2</em>').replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+  let out = '', inList = null, inCode = false, table = null;
+  // [texto](ruta) y ![alt](ruta): web → enlace; imagen local con opts.img → miniatura que se abre en grande; otra ruta → <code>
+  const link = (all, bang, txt, href) => {
+    const raw = href.replace(/&amp;/g, '&');
+    if (/^https?:\/\//.test(raw)) return `<a href="${href}" target="_blank" rel="noopener">${txt || href}</a>`;
+    if (opts.img && IMG_RE.test(raw)) { const u = esc(opts.img(raw)); return `<a class="md-img" href="${u}" target="_blank" rel="noopener" title="${href}"><img src="${u}" alt="${txt}" loading="lazy" onerror="this.replaceWith('🖼 '+this.alt)" />${txt && !bang ? `<span>${txt}</span>` : ''}</a>`; }
+    return `<code title="${href}">${txt || href}</code>`;
+  };
+  const inline = (s) => s.replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/(^|\s)_([^_]+)_(?=\s|$)/g, '$1<em>$2</em>')
+    .replace(/(!?)\[([^\]]*)\]\(([^)\s]+)\)/g, link).replace(/(^|\s)(https?:\/\/[^\s<]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
   const closeList = () => { if (inList) { out += `</${inList}>`; inList = null; } };
+  const closeTable = () => { if (table) { out += `<div class="md-table"><table>${table.map((r, i) => `<tr>${r.map((c) => i ? `<td>${inline(c)}</td>` : `<th>${inline(c)}</th>`).join('')}</tr>`).join('')}</table></div>`; table = null; } };
   for (const raw of lines) {
+    if (/^\s*\|.*\|\s*$/.test(raw)) { // tabla Markdown: | a | b |, la fila |---|---| se salta
+      closeList();
+      const cells = raw.trim().slice(1, -1).split('|').map((c) => c.trim());
+      if (cells.every((c) => /^:?-{2,}:?$/.test(c))) continue;
+      (table ||= []).push(cells); continue;
+    }
+    closeTable();
     if (raw.startsWith('```')) { closeList(); inCode = !inCode; out += inCode ? '<pre>' : '</pre>'; continue; }
     if (inCode) { out += raw + '\n'; continue; }
     const h = raw.match(/^(#{1,3})\s+(.*)$/);
@@ -2923,7 +3029,7 @@ function md(src) {
     if (!raw.trim()) continue;
     out += `<p>${inline(raw)}</p>`;
   }
-  closeList();
+  closeList(); closeTable();
   if (inCode) out += '</pre>';
   return out || '<p class="muted">(vacío)</p>';
 }
@@ -2966,10 +3072,11 @@ function openTask(id) {
     ${deps || dependents ? `<div class="task-sec task-deps"><h4>Dependencias</h4>${deps ? `<div>Depende de: ${deps}</div>` : ''}${dependents ? `<div>Bloquea a: ${dependents}</div>` : ''}</div>` : ''}
     ${(t.constraints || []).length ? `<div class="task-sec constraints"><h4>Restricciones del cliente</h4><ul>${t.constraints.map((c) => `<li>${esc(c.text)} <small>· ${new Date(c.at).toLocaleString()} · ${esc(c.origin)}</small></li>`).join('')}</ul></div>` : ''}
     ${t.feedback ? `<div class="task-sec"><h4>Comentarios de revisión</h4><div class="md">${md(t.feedback)}</div></div>` : ''}
-    ${t.summary ? `<div class="task-sec"><h4>Resumen del agente</h4><div class="md">${md(t.summary)}</div></div>` : ''}
+    ${t.summary ? `<div class="task-sec"><h4>Resumen del agente</h4><div class="md">${md(t.summary, { img: (f) => shotUrl(t, f) })}</div></div>` : ''}
+    ${summaryShots(t).length ? `<div class="task-sec"><h4>📸 Capturas del agente</h4><div class="shots">${summaryShots(t).map((f) => `<a href="${esc(shotUrl(t, f))}" target="_blank" rel="noopener" title="${esc(f)}"><img src="${esc(shotUrl(t, f))}" alt="${esc(f.split('/').pop())}" loading="lazy" onerror="this.parentNode.classList.add('broken');this.replaceWith('🖼 '+this.alt+' (ya no existe)')" /><span>${esc(f.split('/').pop())}</span></a>`).join('')}</div></div>` : ''}
     ${mergeChips(t) ? `<div class="task-sec"><h4>Estado frente a ${esc(baseOf(t))}</h4><div>${mergeChips(t)}</div>${(t.conflicts || []).length ? `<ul>${t.conflicts.map((f) => `<li><code>${esc(f)}</code></li>`).join('')}</ul>` : ''}</div>` : ''}
     ${outsideWarn(t)}
-    ${t.diffStat || repoStats(t).length ? `<div class="task-sec"><h4>Cambios en la rama ${esc(t.branch || '')}${repoStats(t).length > 1 ? ` (${repoStats(t).length} repos)` : ''}</h4>${diffStatsHtml(t, ' class="md"')}</div>` : ''}
+    ${t.diffStat || repoStats(t).length ? `<div class="task-sec"><h4>Cambios en la rama ${esc(t.branch || '')}${repoStats(t).length > 1 ? ` (${repoStats(t).length} repos)` : ''}${t.branch ? ' <span class="muted">· clic en un fichero para ver su diff</span>' : ''}</h4>${repoStats(t).length > 1 || !t.branch ? diffStatsHtml(t, ' class="md"') : statListHtml(t) || diffStatsHtml(t, ' class="md"')}</div>` : ''}
     ${t.error ? `<div class="task-sec"><h4>Error</h4><div class="md bad">${esc(t.error)}</div></div>` : ''}
     ${t.costUsd > 0 ? '<div class="task-sec" id="task-costs"><h4>💸 Coste (FT-76)</h4><span class="muted">leyendo…</span></div>' : ''}
     <div class="task-acts">${acts.join('')}<div class="spacer"></div><button class="ghost" value="cancel">Cerrar</button></div>`, null, 'task');
@@ -3108,19 +3215,7 @@ document.addEventListener('click', async (e) => {
       ${rateFields(true)}
       ${buttons(t.status === 'failed' ? 'Reintentar' : 'Devolver')}`, (f) => api('POST', `/api/tasks/${t.id}/reject`, { ...f, ...rateBody(f), attachments: pendingAttachments }));
   }
-  if (d.diff) {
-    const { diff } = await api('GET', `/api/tasks/${d.diff}/diff`);
-    const t = S.tasks.find((x) => x.id === d.diff);
-    const html = esc(diff).split('\n').map((l) =>
-      l.startsWith('+') && !l.startsWith('+++') ? `<span class="diff-add">${l}</span>`
-        : l.startsWith('-') && !l.startsWith('---') ? `<span class="diff-del">${l}</span>`
-          : l.startsWith('@@') ? `<span class="diff-hunk">${l}</span>` : l).join('\n');
-    return dialog(`<h3>${esc(tcode(t))} ${esc(t.title)}</h3>
-      ${t.summary ? `<p>${esc(t.summary)}</p>` : ''}
-      ${outsideWarn(t)}
-      ${diffStatsHtml(t)}
-      <pre>${html}</pre>${buttons(null)}`, null, 'wide');
-  }
+  if (d.diff) return openDiff(d.diff, d.file || '');
   if (d.browserPair !== undefined) { // FT-118: código de un solo uso para emparejar la extensión
     const r = await api('POST', '/api/browser/pair');
     const el = $('#bx-code'); if (el) el.textContent = `Código: ${r.code} (caduca en 5 min; un solo uso)`;
