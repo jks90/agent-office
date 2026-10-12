@@ -309,7 +309,7 @@ export const tools = [
   T('flowtest.listFlows', 'Lista los flows del workspace de flow-test (los de cada proyecto están en su carpeta, con enlaces a los repos; NO están solo en el repo, no los busques con ls). Por defecto, la carpeta del proyecto indicado; sin projectId, todos. Filtro opcional por texto en la ruta.', obj({ projectId: str('Id o nombre del proyecto (opcional)'), query: str('Texto a buscar en la ruta (opcional)') }), 'read',
     async ({ projectId, query }) => {
       const p = projectId ? findProject(projectId) : null;
-      const folder = p ? (p.folder || (p.name === 'default' ? '' : null)) : null;
+      const folder = p ? (p.folder === team.ROOT ? '' : p.folder || null) : null;
       const j = await ftGet('/workspace/flows');
       const q = String(query || '').toLowerCase();
       const all = (j.files || []).filter((f) => f.type === 'flow' && !team.isWorktreeCopy(f.path)) // sin las copias de los worktrees de los agentes
@@ -325,8 +325,15 @@ export const tools = [
 
   // — Proyectos y tareas —
   T('project.list', 'Lista los proyectos (id, nombre, prefijo, repos, si están en marcha, tareas por estado).', obj(), 'read',
-    () => store.get().projects.map((p) => ({ id: p.id, name: p.name, prefix: prefixOf(p), running: !!p.running, repos: (p.repos || []).map((r) => r.key), team: p.team,
+    () => store.get().projects.map((p) => ({ id: p.id, name: p.name, folder: p.folder === team.ROOT ? '(raíz)' : p.folder || null, orphan: !!p.orphan, prefix: prefixOf(p), running: !!p.running, repos: (p.repos || []).map((r) => r.key), team: p.team,
       tasks: store.get().tasks.filter((t) => t.projectId === p.id).reduce((m, t) => ((m[t.status] = (m[t.status] || 0) + 1), m), {}) }))),
+  T('project.create', 'Crea un proyecto vinculado (obligatorio) a una carpeta de primer nivel del workspace de flow-test, o a la raíz con folder="default". Una carpeta = un proyecto. Con createFolder=true crea la carpeta si no existe. Repos opcionales (rutas git); sin repo, los agentes trabajan directamente en la carpeta.', obj({
+    name: str('Nombre del proyecto'), folder: str('Carpeta de primer nivel del workspace de flow-test («default» = la raíz)'),
+    createFolder: { type: 'boolean', description: 'Crear la carpeta en flow-test si no existe' },
+    repos: { type: 'array', items: { type: 'object', properties: { key: str('Clave corta del repo'), path: str('Ruta del repo git'), roles: { type: 'array', items: { type: 'string' } } }, required: ['path'], additionalProperties: false } },
+    coordinator: { type: 'boolean', description: 'Añadir el coordinador (supervisor) al equipo; por defecto sí' },
+  }, ['name', 'folder']), 'write',
+    async (a) => { const p = await team.createProject({ ...a, engine: 'auto' }); return { id: p.id, name: p.name, folder: p.folder, repos: p.repos.map((r) => r.key), team: p.team.length }; }),
   T('task.list', 'Lista tareas, filtradas por proyecto y/o estado.', obj({ projectId: str('Id o nombre del proyecto'), status: { type: 'string', enum: team.STATUSES } }), 'read',
     ({ projectId, status }) => { const pid = projectId ? findProject(projectId).id : null; return store.get().tasks.filter((t) => (!pid || t.projectId === pid) && (!status || t.status === status)).map(brief); }),
   T('task.get', 'Detalle de una tarea: descripción, resumen del agente, diffStat, error, preguntas y respuestas.', obj({ code: str('Código de la tarea') }, ['code']), 'read',

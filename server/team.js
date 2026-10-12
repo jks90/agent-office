@@ -164,104 +164,122 @@ async function resolveRepos({ repos, repoPath }) {
   return out;
 }
 
-// ── Sincronización con el workspace de flow-test: cada carpeta de primer nivel de flows/ es un proyecto;
-// los flows de la raíz van al proyecto «default». Los proyectos no se borran solos: si la carpeta desaparece
-// quedan marcados (orphan) para que el usuario decida.
+// ── Proyectos ↔ carpetas del workspace de flow-test. Desde «proyectos manuales» los proyectos ya NO se crean solos por
+// carpeta: se dan de alta a mano y cada uno se vincula (obligatorio) a UNA carpeta de primer nivel de flows/ — o a la raíz
+// (ROOT, la convención histórica «default»: los flows sueltos). Una carpeta, un proyecto. `checkFolders` (al arrancar y cada
+// 5 min) solo refresca el nº de flows y marca `orphan` si la carpeta vinculada desaparece, para re-vincularla en Ajustes.
+export const ROOT = 'default';
 // Copias de flows dentro de los worktrees de los agentes (data/worktrees/… de AgentOffice): aparecen en el workspace de
 // flow-test cuando la carpeta de un proyecto enlaza el repo agent-office entero. No son flows del proyecto: se ignoran.
 export const isWorktreeCopy = (p) => /(^|\/)data\/worktrees\//.test(String(p || ''));
+// assets/ y privado/ son del sistema; las ocultas y las «_» (p. ej. _agentes, el catálogo) tampoco son proyectos.
+const isProjectFolder = (name) => !!name && name !== ROOT && !name.startsWith('.') && !name.startsWith('_') && !['assets', 'privado'].includes(name) && !isWorktreeCopy(name);
 
-// FT-127 · Migración: borra los Coordi que el escaneo creó en proyectos sin repo y sin tareas. Nunca toca uno con tareas o historial.
-function pruneIdleSupervisors() {
-  const s = get(); const drop = new Set();
-  for (const p of s.projects) {
-    if ((p.repos || []).length || s.tasks.some((t) => t.projectId === p.id)) continue;
-    for (const a of teamOf(p)) {
-      if (roleOf(a.role)?.kind !== 'supervisor' || a.taskId || a.status === 'working') continue;
-      if (s.tasks.some((t) => t.agentId === a.id) || a.memory || a.notes) continue;
-      drop.add(a.id);
-    }
-  }
-  if (!drop.size) return;
-  for (const p of s.projects) p.team = (p.team || []).filter((id) => !drop.has(id));
-  s.agents = s.agents.filter((a) => !drop.has(a.id));
-  changed();
-}
-
-export async function syncWorkspace() {
-  let files, dir, dirs;
+async function readWorkspace() {
   try {
     const r = await fetch(`${flowTestUrl()}/workspace/flows`, { signal: AbortSignal.timeout(8000) });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
-    files = j.files || []; dir = j.dir || null; dirs = j.dirs || [];
+    return { files: j.files || [], dir: j.dir || null, dirs: j.dirs || [] };
   } catch (e) { throw fail(502, `No pude leer el workspace de flow-test: ${e.message}`); }
-  pruneIdleSupervisors();
-  const counts = new Map([['default', 0]]);
-  // Toda carpeta de primer nivel es un proyecto aunque aún no tenga flows (solo documentos o subcarpetas, p. ej. «tareas/»);
-  // flow-test ≥ 5.20 manda `dirs` (también las vacías). assets/ y privado/ son del sistema, no proyectos.
-  const topOf = (rel) => String(rel).split('/')[0];
-  const isProjectFolder = (name) => name && !name.startsWith('.') && !name.startsWith('_') && !['assets', 'privado'].includes(name) && !isWorktreeCopy(name);
-  for (const d of dirs) { const top = topOf(d); if (isProjectFolder(top) && !counts.has(top)) counts.set(top, 0); }
-  for (const f of files) { const parts = String(f.path).split('/'); if (parts.length > 1 && isProjectFolder(parts[0]) && !counts.has(parts[0])) counts.set(parts[0], 0); }
-  for (const f of files) {
-    if (f.type && f.type !== 'flow') continue;
-    if (isWorktreeCopy(f.path)) continue;
-    const parts = String(f.path).split('/');
-    const folder = parts.length > 1 ? parts[0] : 'default';
-    if (folder.startsWith('.') || folder.startsWith('_')) continue; // _agentes (catálogo) y similares no son proyectos
-    counts.set(folder, (counts.get(folder) || 0) + 1);
-  }
-  const s = get();
-  let created = 0;
-  const hostDir = expand(s.settings.workspaceHostDir);
-  for (const [folder, n] of counts) {
-    let p = s.projects.find((x) => x.folder === folder);
-    if (!p) {
-      p = { id: newId(), name: folder === 'default' ? 'default' : folder, folder, repos: [], repoPath: null, baseBranch: null, running: false, team: [], coordinator: 'auto', createdAt: Date.now() }; // coordinador encendido de serie: que no queden tareas listas con agentes parados
-      s.projects.push(p);
-      if (!s.agents.length) DEFAULT_TEAM.forEach((m) => { const a = newAgent({ ...m, engine: 'auto' }); s.agents.push(a); p.team.push(a.id); }); // primer arranque: equipo base
-      created++; // FT-127: sin Coordi aquí (solo createProject); «Añadir coordinador» lo da si hace falta
-    }
-    p.flows = n;
-    p.orphan = false;
-    if (folder !== 'default' && hostDir) await autoRepos(p, path.join(hostDir, folder));
-  }
-  for (const p of s.projects) if (p.folder && !counts.has(p.folder)) p.orphan = true;
-  s.workspace = { dir, folders: [...counts.keys()], syncedAt: Date.now() };
-  changed();
-  return { created, folders: [...counts.keys()], dir };
 }
 
-// Repos deducidos de los enlaces simbólicos de la carpeta del proyecto en el hub (p. ej. unityhouse/servidor → …/servidor/flows):
-// cada enlace que apunte dentro de un repo git aporta ese repo (clave = nombre del enlace). No pisa lo configurado a mano.
-async function autoRepos(p, folderPath) {
+// Carpetas de primer nivel (también las vacías: flow-test ≥ 5.20 manda `dirs`) con su nº de flows; la raíz cuenta los sueltos.
+function folderCounts({ files, dirs }) {
+  const counts = new Map([[ROOT, 0]]);
+  const top = (rel) => String(rel).split('/')[0];
+  for (const d of dirs) if (isProjectFolder(top(d)) && !counts.has(top(d))) counts.set(top(d), 0);
+  for (const f of files) {
+    const parts = String(f.path).split('/');
+    const folder = parts.length > 1 ? parts[0] : ROOT;
+    if (folder !== ROOT && !isProjectFolder(folder)) continue;
+    if (!counts.has(folder)) counts.set(folder, 0);
+    if ((f.type && f.type !== 'flow') || isWorktreeCopy(f.path)) continue;
+    counts.set(folder, counts.get(folder) + 1);
+  }
+  return counts;
+}
+
+export async function checkFolders() {
+  const ws = await readWorkspace();
+  const counts = folderCounts(ws);
+  const s = get();
+  const orphans = [];
+  for (const p of s.projects) {
+    if (!p.folder) continue; // sin vincular (proyectos de antes): la UI pide vincularlos
+    p.orphan = !counts.has(p.folder);
+    if (p.orphan) orphans.push(p.name); else p.flows = counts.get(p.folder);
+  }
+  s.workspace = { dir: ws.dir, folders: [...counts.keys()], syncedAt: Date.now() };
+  changed();
+  return { folders: [...counts.keys()], orphans, unlinked: s.projects.filter((p) => !p.folder).map((p) => p.name), dir: ws.dir };
+}
+
+// Selector de «Nuevo proyecto» / Ajustes: cada carpeta con sus flows y el proyecto que ya la usa (si lo hay).
+export async function workspaceFolders() {
+  const ws = await readWorkspace();
+  const counts = folderCounts(ws);
+  const owner = (f) => { const p = get().projects.find((x) => x.folder === f); return p ? { id: p.id, name: p.name } : null; };
+  return { dir: ws.dir, folders: [...counts].map(([name, flows]) => ({ name, root: name === ROOT, flows, project: owner(name) })) };
+}
+
+// Normaliza y valida la carpeta de un proyecto: obligatoria, de primer nivel (o la raíz) y libre (salvo el propio proyecto).
+function checkFolderName(folder, selfId = null) {
+  const f = String(folder ?? '').trim().replace(/^\/+|\/+$/g, '');
+  if (!f) throw fail(400, 'El proyecto necesita una carpeta del workspace de flow-test');
+  if (f !== ROOT && (f.includes('/') || !isProjectFolder(f))) throw fail(400, `«${f}» no vale como carpeta de proyecto (una de primer nivel, sin «.» ni «_» al principio)`);
+  const other = get().projects.find((p) => p.folder === f && p.id !== selfId);
+  if (other) throw fail(409, `La carpeta «${f === ROOT ? 'raíz' : f}» ya es del proyecto «${other.name}»`);
+  return f;
+}
+
+// Comprueba que la carpeta existe en flow-test; con `create` la crea (POST /workspace/folder: vale con flow-test en Docker).
+async function ensureFolder(f, create) {
+  if (f === ROOT) return 0;
+  const counts = folderCounts(await readWorkspace());
+  if (counts.has(f)) return counts.get(f);
+  if (!create) throw fail(400, `No existe la carpeta «${f}» en el workspace de flow-test`);
+  let r;
+  try { r = await fetch(`${flowTestUrl()}/workspace/folder`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: f }), signal: AbortSignal.timeout(8000) }); } catch (e) { throw fail(502, `flow-test no responde: ${e.message}`); }
+  if (!r.ok && r.status !== 409) throw fail(502, `flow-test no creó la carpeta «${f}»: ${(await r.json().catch(() => ({}))).error || 'HTTP ' + r.status}`);
+  return 0;
+}
+
+// Repos sugeridos para una carpeta: sus enlaces simbólicos que apuntan dentro de un repo git (clave = nombre del enlace),
+// p. ej. unityhouse/servidor → …/servidor/flows. Solo se sugieren en el diálogo; nada se añade solo.
+export async function suggestRepos(folder) {
+  const hostDir = expand(get().settings.workspaceHostDir);
+  if (!hostDir || !folder || folder === ROOT) return [];
   let entries;
-  try { entries = fs.readdirSync(folderPath, { withFileTypes: true }); } catch { return; }
-  p.repos = p.repos || [];
+  try { entries = fs.readdirSync(path.join(hostDir, folder), { withFileTypes: true }); } catch { return []; }
+  const out = [];
   for (const e of entries) {
     if (!e.isSymbolicLink() || e.name === 'docs') continue;
     let real;
-    try { real = fs.realpathSync(path.join(folderPath, e.name)); } catch { continue; }
+    try { real = fs.realpathSync(path.join(hostDir, folder, e.name)); } catch { continue; }
     let info;
     try { info = await git.repoInfo(real); } catch { continue; }
-    if (p.repos.some((r) => r.path === info.path)) continue;
     const key = e.name.toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
-    if (p.repos.some((r) => r.key === key)) continue;
-    p.repos.push({ key, path: info.path, baseBranch: info.baseBranch, roles: [], auto: true });
+    if (out.some((r) => r.path === info.path || r.key === key)) continue;
+    out.push({ key, path: info.path });
   }
-  p.repoPath = p.repos[0]?.path || null; p.baseBranch = p.repos[0]?.baseBranch || null;
+  return out;
 }
 
-export async function createProject({ name, repoPath, repos, engine = 'demo', folder = null }) {
+export async function createProject({ name, repoPath, repos, engine = 'demo', folder, createFolder = false, coordinator = true }) {
   if (!name?.trim()) throw fail(400, 'El proyecto necesita un nombre');
+  // Solo para los e2e (arrancan su servidor con un flow-test falso sin /workspace): altas sin carpeta. Nadie la pone en producción.
+  const unlinked = !String(folder ?? '').trim() && process.env.AO_TEST_ALLOW_UNLINKED === '1';
+  const f = unlinked ? null : checkFolderName(folder);
   const list = await resolveRepos({ repos, repoPath });
+  const flows = unlinked ? null : await ensureFolder(f, createFolder);
   if (!ENGINE_IDS.includes(engine)) engine = 'auto';
   const s = get();
-  const project = { id: newId(), name: name.trim(), folder: folder || null, repos: list, repoPath: list[0]?.path || null, baseBranch: list[0]?.baseBranch || null, running: false, team: [], coordinator: 'auto', createdAt: Date.now() };
+  if (f) checkFolderName(f); // otra alta pudo coger la carpeta mientras se esperaba a flow-test
+  const project = { id: newId(), name: name.trim(), folder: f, flows, orphan: false, repos: list, repoPath: list[0]?.path || null, baseBranch: list[0]?.baseBranch || null, running: false, team: [], coordinator: 'auto', createdAt: Date.now() };
   s.projects.push(project);
   if (!s.agents.length) DEFAULT_TEAM.forEach((m) => { const a = newAgent({ ...m, engine }); s.agents.push(a); project.team.push(a.id); });
-  addSupervisor(project); // FT-122: el coordinador viene de serie (ocupa mesa; se puede quitar)
+  if (coordinator !== false) addSupervisor(project); // FT-122: el coordinador viene de serie (casilla del alta; ocupa mesa; se puede quitar)
   changed();
   return project;
 }
@@ -269,7 +287,10 @@ export async function createProject({ name, repoPath, repos, engine = 'demo', fo
 export async function updateProject(id, patch) {
   const p = findOr404(get().projects, id, 'Proyecto');
   if (patch.name?.trim()) p.name = patch.name.trim();
-  if (patch.folder !== undefined) p.folder = patch.folder || null;
+  if (patch.folder !== undefined) { // re-vincular: a una carpeta que exista y esté libre (la vinculación es obligatoria)
+    const f = checkFolderName(patch.folder, p.id);
+    if (f !== p.folder) { p.flows = await ensureFolder(f, !!patch.createFolder); p.folder = f; p.orphan = false; }
+  }
   if (patch.prefix !== undefined) p.prefix = codes.normalizePrefix(patch.prefix) || null; // las tareas ya numeradas conservan su código
   if (patch.coordinator !== undefined) p.coordinator = ['suggest', 'auto'].includes(patch.coordinator) ? patch.coordinator : null; // 🧑‍✈️ apagado | sugerir | automático
   if (patch.supervisorApproves !== undefined) p.supervisorApproves = !!patch.supervisorApproves; // FT-122: delega aprobar y recortar dependencias
@@ -308,7 +329,7 @@ export function setRunning(id, running) {
 export function projectDir(p) {
   if (!p?.folder) return null;
   const base = String(get().settings.workspaceHostDir || path.join(os.homedir(), 'JksDocs', 'workspace')).replace(/^~(?=\/|$)/, os.homedir());
-  const dir = path.join(base, p.folder);
+  const dir = p.folder === ROOT ? base : path.join(base, p.folder);
   return fs.existsSync(dir) ? dir : null;
 }
 
@@ -1554,7 +1575,7 @@ function buildPrompt(p, agent, t) {
       `Divide el objetivo en tareas pequeñas para estos roles: ${roles.join(', ')}.`,
       'Cada tarea debe poder hacerla un agente solo, en una rama aparte, y ser verificable.',
       'Las tareas de QA van al final y dependen de lo que verifican.',
-      roles.some((r) => roleOf(r)?.kind === 'docs') ? `Si el objetivo cambia cómo funciona algo o añade una pieza nueva, incluye al final una tarea para el rol de documentación (${roles.filter((r) => roleOf(r)?.kind === 'docs').join('/')}) que lo documente en flow-test (carpeta «${p.folder || 'default'}/»), dependiente de las tareas que documenta.` : '',
+      roles.some((r) => roleOf(r)?.kind === 'docs') ? `Si el objetivo cambia cómo funciona algo o añade una pieza nueva, incluye al final una tarea para el rol de documentación (${roles.filter((r) => roleOf(r)?.kind === 'docs').join('/')}) que lo documente en flow-test (${p.folder && p.folder !== ROOT ? `carpeta «${p.folder}/»` : 'raíz del workspace'}), dependiente de las tareas que documenta.` : '',
       '',
       t.feedbackImages?.length ? `Imágenes adjuntas a la petición (míralas; están en ${t.feedbackImages.join(', ')}).` : '',
       t.files?.length ? `Ficheros adjuntos a la petición (léelos): ${t.files.join(', ')}.` : '',
@@ -1571,7 +1592,7 @@ function buildPrompt(p, agent, t) {
   // 1) PARTE ESTABLE — nada que cambie por tarea (ni ids, ni fechas, ni rama) — 2) PARTE VARIABLE al final.
   return [
     // ── estable ──
-    p.folder ? `Carpeta del proyecto en el workspace de flow-test: «${p.folder}/» (ahí viven sus flows y su documentación; guarda ahí lo que generes con flow-test).` : '',
+    p.folder ? `Carpeta del proyecto en el workspace de flow-test: ${p.folder === ROOT ? 'la raíz' : `«${p.folder}/»`} (ahí viven sus flows y su documentación; guarda ahí lo que generes con flow-test).` : '',
     repoOfTask(p, t) ? 'Trabajas en una copia aislada del repo (git worktree), en tu propia rama. No cambies de rama ni hagas push.' : `Este proyecto no tiene repo: trabajas DIRECTAMENTE en su carpeta (${projectDir(p) || p.folder}). Escribe solo dentro de ella, no borres nada que no hayas creado tú y deja todo en un estado coherente al terminar.`,
     'Lo que dejes sin confirmar se confirmará solo al terminar.',
     (() => { const r = repoOfTask(p, t); return r?.path ? '\n' + briefingFor(r.path) + (t.codeIndexOn ? '\n' + codeindex.BRIEFING_LINE : '') + '\n' : ''; })(), // FT-58: aviso del índice de código

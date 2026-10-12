@@ -21,7 +21,7 @@ const stubPort = await freePort(), port = await freePort(), base = `http://127.0
 const stub = http.createServer((req, res) => (req.url === '/access' ? res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ mode: 'licensed', plan: 'e2e' })) : res.writeHead(404).end('{}'))).listen(stubPort, '127.0.0.1');
 fs.mkdirSync(path.join(tmp, 'data'));
 fs.writeFileSync(path.join(tmp, 'data', 'state.json'), JSON.stringify({ settings: { workspaceHostDir: path.join(tmp, 'x'), flowTestUrl: `http://127.0.0.1:${stubPort}`, reviewNudgeMin: 999 } }));
-const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env: { ...process.env, HOME: tmp, AO_PORT: String(port), AO_HOST: '127.0.0.1', AO_DATA_DIR: path.join(tmp, 'data'), AO_RTK: 'off' }, stdio: 'ignore' });
+const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env: { ...process.env, HOME: tmp, AO_PORT: String(port), AO_HOST: '127.0.0.1', AO_TEST_ALLOW_UNLINKED: '1', AO_DATA_DIR: path.join(tmp, 'data'), AO_RTK: 'off' }, stdio: 'ignore' });
 const call = async (m, p, b) => (await fetch(base + p, { method: m, headers: { 'content-type': 'application/json' }, body: b === undefined ? undefined : JSON.stringify(b) })).json();
 const cleanup = () => { try { server.kill('SIGTERM'); stub.close(); fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* nada */ } };
 try {

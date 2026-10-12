@@ -25,7 +25,7 @@ const stub = http.createServer((req, res) => res.writeHead(req.url === '/access'
 fs.writeFileSync(path.join(tmp, 'state.json'), JSON.stringify({ settings: { workspaceHostDir: path.join(tmp, 'sin-workspace'), flowTestUrl: `http://127.0.0.1:${stubPort}` } }));
 const port = await freePort();
 const base = `http://127.0.0.1:${port}`;
-const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env: { ...process.env, AO_PORT: String(port), AO_HOST: '127.0.0.1', AO_DATA_DIR: tmp }, stdio: 'ignore' });
+const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env: { ...process.env, AO_PORT: String(port), AO_HOST: '127.0.0.1', AO_TEST_ALLOW_UNLINKED: '1', AO_DATA_DIR: tmp }, stdio: 'ignore' });
 let browser;
 process.on('exit', () => { try { server.kill('SIGTERM'); stub.close(); fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* nada */ } });
 const call = async (m, p, b) => { const r = await fetch(base + p, { method: m, headers: { 'content-type': 'application/json' }, body: b === undefined ? undefined : JSON.stringify(b) }); return r.json(); };

@@ -1108,7 +1108,7 @@ function render() {
   if (project() && isHidden(project()) && visibleProjects().length) { projectId = visibleProjects().find((x) => x.folder !== 'default')?.id || visibleProjects()[0].id; safeSet('ao:project', projectId); } // el abierto se ocultó: al primero visible
   const p = project();
   const sorted = visibleProjects().sort((a, b) => (a.folder === 'default' ? -1 : b.folder === 'default' ? 1 : (a.folder || '~').localeCompare(b.folder || '~')));
-  $('#project').innerHTML = sorted.map((x) => `<option value="${x.id}" ${x.id === projectId ? 'selected' : ''}>${x.folder ? '📁 ' : '• '}${esc(x.name)}${x.folder && x.folder !== x.name ? ` (${esc(x.folder)})` : ''}${x.flows != null ? ` · ${x.flows} flows` : ''}${x.orphan ? ' ⚠ sin carpeta' : ''}${!x.folder ? ' · manual' : ''}</option>`).join('');
+  $('#project').innerHTML = sorted.map((x) => `<option value="${x.id}" ${x.id === projectId ? 'selected' : ''}>${x.folder ? '📁 ' : '• '}${esc(x.name)}${x.folder && x.folder !== x.name ? ` (${esc(x.folder)})` : ''}${x.flows != null ? ` · ${x.flows} flows` : ''}${x.orphan ? ' ⚠ carpeta desaparecida' : ''}${!x.folder ? ' ⚠ sin vincular' : ''}</option>`).join('');
   const repos = p?.repos || [];
   $('#repo').textContent = p ? (repos.length ? `📁 ${repos.map((r) => `${r.key} (${r.baseBranch})`).join(' · ')}` : 'sin repositorio · solo motor demo') : '';
   $('#repo').title = repos.map((r) => `${r.key}: ${r.path}`).join('\n');
@@ -2310,19 +2310,22 @@ const actions = {
 
 Pasos, convenciones y ejemplos…</textarea>
     ${buttons('Crear')}`, async (f) => { const r = await api('POST', '/api/skills/new', f); toast(`Skill «${r.name}» creada en el catálogo`); renderSkills(true); }),
-  sync: async () => { const r = await api('POST', '/api/sync'); toast(`Carpetas de flow-test: ${r.folders.join(', ')}${r.created ? ` · ${r.created} proyecto(s) nuevo(s)` : ''}`); },
-  'new-project': () => dialog(`
+  sync: async () => { const r = await api('POST', '/api/sync'); toast(r.orphans.length || r.unlinked.length ? `⚠ ${[r.orphans.length ? `carpeta desaparecida: ${r.orphans.join(', ')}` : '', r.unlinked.length ? `sin vincular: ${r.unlinked.join(', ')}` : ''].filter(Boolean).join(' · ')} — re-vincúlalos en Ajustes` : 'Carpetas comprobadas: todos los proyectos tienen la suya'); },
+  'new-project': () => { dialog(`
     <h3>Nuevo proyecto</h3>
+    <label>Carpeta del workspace de flow-test (obligatoria: ahí viven sus flows y su documentación; una carpeta = un proyecto)</label>
+    ${folderPick(true)}
     <label>Nombre</label><input name="name" required autofocus />
-    <label>Repositorios git (opcional; uno por línea, <code>clave = ruta</code> o solo la ruta; <code>clave = ruta @ rol1,rol2</code> fija qué roles trabajan en ese repo)</label>
+    <label>Repositorios git (opcional; al elegir carpeta se sugieren los repos que enlaza; uno por línea, <code>clave = ruta</code> o solo la ruta; <code>clave = ruta @ rol1,rol2</code> fija qué roles trabajan en ese repo)</label>
     <textarea name="repos" rows="3" placeholder="~/dev/mi-api @ back,qa&#10;~/dev/mi-web @ front"></textarea>
     <label>Motor del equipo</label><select name="engine">${engineOptions('auto')}</select>
-    <p class="muted">Cada tarea se hace en un git worktree propio del repo que le toca (rama <code>ao/&lt;tarea&gt;</code>); nada llega a tu rama hasta que apruebas. Sin repo solo funciona el motor <b>demo</b>.</p>
+    <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="coordinator" checked /> 🧑‍⚖️ Añadir coordinador (supervisor; ocupa una mesa, se puede quitar)</label>
+    <p class="muted">Cada tarea se hace en un git worktree propio del repo que le toca (rama <code>ao/&lt;tarea&gt;</code>); nada llega a tu rama hasta que apruebas. Sin repo, los agentes trabajan directamente en la carpeta, de una tarea en una.</p>
     ${buttons('Crear')}`, async (f) => {
-    const p = await api('POST', '/api/projects', { name: f.name, engine: f.engine, repos: parseRepos(f.repos) });
+    const p = await api('POST', '/api/projects', { name: f.name, engine: f.engine, repos: parseRepos(f.repos), ...pickedFolder(f), coordinator: !!f.coordinator });
     projectId = p.id;
     safeSet('ao:project', p.id);
-  }),
+  }); fillFolderPick($('#dialog'), { suggest: true }); },
   quota: () => showTab('summary'), // FT-45: el chip de cuota abre el Resumen
   building: () => setOfficeMode('building'), // FT-47: «🏢 Edificio» en el pie de la Oficina
   'office-floor': () => leaveAgentLevel(), // FT-71: agente → planta sin saltar al edificio
@@ -2363,7 +2366,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <div id="local-ai" class="engines"></div>
     <div class="section-title">🧪 Suite</div>
     <label>URL de flow-test (la suite; su MCP se usa para el QA)</label><input name="flowTestUrl" value="${esc(S.settings.flowTestUrl)}" placeholder="http://localhost:9998" />
-    <label>Carpeta del workspace de flow-test en esta máquina (para deducir los repos de cada proyecto por sus enlaces)</label><input name="workspaceHostDir" value="${esc(S.settings.workspaceHostDir || '')}" placeholder="~/JksDocs/workspace" />
+    <label>Carpeta del workspace de flow-test en esta máquina (para sugerir los repos de cada proyecto por sus enlaces y para los proyectos sin repo)</label><input name="workspaceHostDir" value="${esc(S.settings.workspaceHostDir || '')}" placeholder="~/JksDocs/workspace" />
     <label>Agentes trabajando a la vez (máx.)</label><input name="maxParallel" type="number" min="1" max="8" value="${S.settings.maxParallel}" />
     <div class="grid2"><div><label>Tope de gasto por tarea (US$, por intento; al pasarlo se corta)</label><input name="maxTaskUsd" type="number" min="0.5" max="50" step="0.5" value="${S.settings.maxTaskUsd || 3}" /></div>
     <div><label>Esfuerzo de los agentes (más = más tokens)</label><select name="agentEffort">${['low', 'medium', 'high'].map((v) => `<option value="${v}" ${(S.settings.agentEffort || 'medium') === v ? 'selected' : ''}>${({ low: 'bajo', medium: 'medio (recomendado)', high: 'alto' })[v]}</option>`).join('')}</select></div></div>
@@ -2430,7 +2433,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <div id="board-cfg" class="board-cfg"><p class="muted">Cargando…</p></div>
     <div class="section-title">👁 Proyectos visibles</div>
     <p class="muted" style="margin:0 0 6px">Desmarca los proyectos que no quieres ver en el selector, el Resumen y el edificio. Ocultar no los para ni borra nada: un proyecto oculto en marcha sigue trabajando.</p>
-    <div class="vis-projects">${[...S.projects].sort((a, b) => a.name.localeCompare(b.name)).map((x) => `<label class="vis-row"><input type="checkbox" name="vis_${x.id}" ${isHidden(x) ? '' : 'checked'} /> ${x.folder ? '📁' : '•'} ${esc(x.name)} <span class="muted">${x.flows != null ? `${x.flows} flows` : 'manual'}${(x.team || []).length ? ` · ${x.team.length} agentes` : ''}${x.running ? ' · ▶ en marcha' : ''}</span></label>`).join('')}</div>
+    <div class="vis-projects">${[...S.projects].sort((a, b) => a.name.localeCompare(b.name)).map((x) => `<label class="vis-row"><input type="checkbox" name="vis_${x.id}" ${isHidden(x) ? '' : 'checked'} /> ${x.folder ? '📁' : '⚠'} ${esc(x.name)} <span class="muted">${!x.folder ? 'sin vincular' : x.orphan ? 'carpeta desaparecida' : `${x.flows ?? 0} flows`}${(x.team || []).length ? ` · ${x.team.length} agentes` : ''}${x.running ? ' · ▶ en marcha' : ''}</span></label>`).join('')}</div>
     <div class="row" style="justify-content:flex-start;gap:6px;margin:4px 0 10px"><button type="button" class="small ghost" data-vis-all="1">Mostrar todos</button><button type="button" class="small ghost" data-vis-all="0">Ocultar los vacíos</button></div>
     <div class="section-title">📁 Proyecto</div>
     <label>Prefijo de los códigos de tarea del proyecto «${esc(project()?.name)}» (p. ej. <code>GL</code> → GL-1, GL-2…; las tareas ya numeradas no cambian)</label><input name="prefix" value="${esc(project()?.prefix || "")}" placeholder="${esc(project()?.prefixDefault || "")}" maxlength="5" style="text-transform:uppercase;width:120px" />
@@ -2448,6 +2451,8 @@ Pasos, convenciones y ejemplos…</textarea>
     <label>Revisión por defecto de la empresa (proyectos con «Igual que la empresa»)</label>
     <select name="reviewPolicyAll">${['manual', 'auto-qa', 'auto'].map((v) => `<option value="${v}" ${(S.settings.reviewPolicy || 'manual') === v ? 'selected' : ''}>${esc(REVIEW_LABEL[v])}</option>`).join('')}</select>
     <p class="muted" style="margin:2px 0 8px">Nunca se aprueban solas las tareas con «revisión obligatoria», las cortadas por tope o atasco, las que tocan ficheros sensibles ni las que el revisor devolvió dos veces: esas te esperan a ti.</p>
+    <label>Carpeta de flow-test del proyecto «${esc(project()?.name)}» (obligatoria; cámbiala si la renombraste o moviste)</label>
+    ${folderPick(false)}
     <label>Repositorios del proyecto «${esc(project()?.name)}» (uno por línea: <code>clave = ruta @ roles</code>)</label>
     <textarea name="repos" rows="3">${esc((project()?.repos || []).map((r) => `${r.key} = ${r.path}${r.roles?.length ? ' @ ' + r.roles.join(',') : ''}`).join('\n'))}</textarea>
     <label>Importar un tablero de flow-test (notas = tarjetas; las columnas «En revisión»/«Hecho» conservan su estado, el resto entra en Backlog)</label>
@@ -2463,6 +2468,7 @@ Pasos, convenciones y ejemplos…</textarea>
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
     if (repos.map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|') !== cur) await api('PATCH', `/api/projects/${projectId}`, { repos });
+    if (f.folder && (f.folder === NEW_FOLDER || f.folder !== project()?.folder)) await api('PATCH', `/api/projects/${projectId}`, pickedFolder(f));
     if ((f.prefix || '').toUpperCase() !== (project()?.prefix || '')) await api('PATCH', `/api/projects/${projectId}`, { prefix: f.prefix });
     { const hidden = S.projects.filter((x) => !f['vis_' + x.id]).map((x) => x.id); if (hidden.join() !== (S.settings.hiddenProjects || []).join()) await api('POST', '/api/settings', { hiddenProjects: hidden }); }
     if ((f.reviewPolicyAll || 'manual') !== (S.settings.reviewPolicy || 'manual')) await api('POST', '/api/settings', { reviewPolicy: f.reviewPolicyAll });
@@ -2728,7 +2734,7 @@ function renderSummary() {
     const tokens = ts.reduce((n, t) => n + (t.usage?.total || 0), 0);
     return { p, ts, team, busy, free, last, cost, open, tokens };
   }).sort((x, y) => (y.p.running - x.p.running) || (y.busy.length - x.busy.length) || (y.last - x.last));
-  // Carpetas del workspace sin equipo ni tareas: plegadas en una línea (se despliegan con un clic)
+  // Proyectos sin equipo ni tareas: plegados en una línea (se despliegan con un clic)
   const idle = rows.filter((r) => !r.ts.length && !r.team.length && !r.p.running);
   const shown = sumShowEmpty ? rows : rows.filter((r) => !idle.includes(r));
   const n = (st) => all.filter((t) => t.status === st).length;
@@ -2996,6 +3002,7 @@ document.addEventListener('click', (e) => {
     api('GET', '/api/flows').then((flows) => {
       const sel = $('#import-flow');
       const folder = project()?.folder;
+      fillFolderPick($('#dialog'), { current: folder || null, selfId: projectId });
       const mine = (f) => folder === 'default' ? !f.path.includes('/') : folder ? f.path.startsWith(folder + '/') : false;
       const list = [...flows.filter(mine), ...flows.filter((f) => !mine(f))];
       if (sel) sel.innerHTML = '<option value="">— elegir flow —</option>' + list.map((f) => `<option value="${esc(f.path)}">${mine(f) ? '📁 ' : ''}${esc(f.name)} — ${esc(f.path)}</option>`).join('');
@@ -3176,6 +3183,37 @@ function editTask(id) {
     await api('PATCH', `/api/tasks/${id}`, { ...f, dependsOn });
     toast('Tarea actualizada');
   });
+}
+
+// ── Carpeta del proyecto (obligatoria): selector con las carpetas del workspace de flow-test + «＋ Nueva carpeta…».
+// La raíz se guarda como «default» (convención de siempre). Las carpetas de otro proyecto salen deshabilitadas.
+const ROOT_FOLDER = 'default';
+const NEW_FOLDER = '__new__'; // nunca choca: las carpetas con «_» al principio no pueden ser de un proyecto
+// En el alta es obligatoria; en Ajustes no (si flow-test no responde, el resto de Ajustes se sigue guardando).
+const folderPick = (required) => `<select name="folder" data-folder-pick ${required ? 'required' : ''}><option value="">Cargando carpetas de flow-test…</option></select>
+    <input name="newFolder" data-new-folder placeholder="nombre-de-la-carpeta" hidden />`;
+const folderLabel = (f) => f === ROOT_FOLDER ? '(raíz del workspace)' : f;
+const pickedFolder = (f) => f.folder === NEW_FOLDER ? { folder: (f.newFolder || '').trim(), createFolder: true } : { folder: f.folder };
+// `current` = carpeta del proyecto que se edita (Ajustes); `suggest` = rellenar repos y nombre al elegir (alta).
+async function fillFolderPick(root, { current = null, selfId = null, suggest = false } = {}) {
+  const sel = root.querySelector('[data-folder-pick]');
+  if (!sel) return;
+  let data;
+  try { data = await api('GET', '/api/workspace/folders'); } catch { sel.innerHTML = '<option value="">⚠ flow-test no responde: no se pueden leer sus carpetas</option>'; return; }
+  const list = [...data.folders].sort((a, b) => (b.root - a.root) || a.name.localeCompare(b.name));
+  const opts = list.map((f) => { const other = f.project && f.project.id !== selfId; return `<option value="${esc(f.name)}" ${other ? 'disabled' : ''} ${f.name === current ? 'selected' : ''}>📁 ${esc(folderLabel(f.name))} · ${f.flows} flows${other ? ` — de «${esc(f.project.name)}»` : ''}</option>`; });
+  const lost = current && !list.some((f) => f.name === current) ? `<option value="" selected disabled>⚠ ${esc(folderLabel(current))} (ya no existe: elige otra)</option>` : '';
+  sel.innerHTML = (current ? '' : '<option value="" selected disabled>— elige carpeta —</option>') + lost + opts.join('') + `<option value="${NEW_FOLDER}">＋ Nueva carpeta…</option>`;
+  const nf = root.querySelector('[data-new-folder]'), name = root.querySelector('input[name="name"]'), repos = root.querySelector('textarea[name="repos"]');
+  if (repos) repos.addEventListener('input', () => { repos.dataset.touched = '1'; });
+  sel.onchange = async () => {
+    const isNew = sel.value === NEW_FOLDER;
+    nf.hidden = !isNew; nf.required = isNew; if (isNew) nf.focus();
+    if (!suggest || isNew || !sel.value) return;
+    if (name && !name.value.trim() && sel.value !== ROOT_FOLDER) name.value = sel.value;
+    if (!repos || repos.dataset.touched) return;
+    try { const sug = await api('GET', `/api/workspace/repos?folder=${encodeURIComponent(sel.value)}`); repos.value = sug.map((r) => `${r.key} = ${r.path}`).join('\n'); } catch { /* sin sugerencias */ }
+  };
 }
 
 // «clave = ruta @ rol1,rol2» · «ruta @ roles» · «ruta» (la clave sale del nombre de la carpeta)

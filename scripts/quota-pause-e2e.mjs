@@ -61,7 +61,7 @@ const stub = http.createServer((req, res) => {
 fs.writeFileSync(path.join(dataDir, 'state.json'), JSON.stringify({ settings: { maxParallel: 2, workspaceHostDir: path.join(tmp, 'sin-workspace'), flowTestUrl: `http://127.0.0.1:${stubPort}` } }));
 const port = await freePort();
 const base = `http://127.0.0.1:${port}`;
-const env = { ...process.env, HOME: home, AO_PORT: String(port), AO_HOST: '127.0.0.1', AO_DATA_DIR: dataDir, AO_CLAUDE_BIN: fake, AO_RTK: 'off', CLAUDE_CONFIG_DIR: claudeDir, AO_CLAUDE_USAGE_URL: `http://127.0.0.1:${mockPort}/u`, AO_CODEX_USAGE_URL: `http://127.0.0.1:${mockPort}/u`, AO_QUOTA_TTL: '1000' };
+const env = { ...process.env, HOME: home, AO_PORT: String(port), AO_HOST: '127.0.0.1', AO_TEST_ALLOW_UNLINKED: '1', AO_DATA_DIR: dataDir, AO_CLAUDE_BIN: fake, AO_RTK: 'off', CLAUDE_CONFIG_DIR: claudeDir, AO_CLAUDE_USAGE_URL: `http://127.0.0.1:${mockPort}/u`, AO_CODEX_USAGE_URL: `http://127.0.0.1:${mockPort}/u`, AO_QUOTA_TTL: '1000' };
 let server;
 const startServer = async () => { server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env, stdio: 'ignore' }); await until(async () => { try { return (await fetch(base + '/api/state')).ok; } catch { return false; } }, 10_000, 100); };
 const stopServer = async () => { server.kill('SIGTERM'); await new Promise((r) => server.once('exit', r)); };

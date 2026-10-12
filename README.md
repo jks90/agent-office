@@ -44,7 +44,7 @@ escribe un objetivo, pulsa **Encargar al PO** y luego **▶ Poner a trabajar**.
 
 ## Cómo funciona
 
-1. **Proyecto** = un repositorio git (opcional en demo) más su equipo y su tablero.
+1. **Proyecto** = una carpeta del workspace de flow-test (obligatoria) + sus repos git (opcionales) + su equipo y su tablero. Se crea a mano (＋ en la cabecera o `project.create` del Guía); ver «Proyectos manuales con carpeta».
 2. **Objetivo → PO**: el PO lee el repo y devuelve las tareas en JSON (título, descripción, rol, dependencias).
 3. **Planificador** (cada 1,5 s): cada tarea pendiente cuyas dependencias estén **hechas** va al primer agente libre de su rol (como mucho `maxParallel` a la vez).
 4. **Aislamiento**: cada tarea corre en un **git worktree** propio (`data/worktrees/…`, rama `ao/<código>`). Al terminar se hace commit `<código>: <título>` con el agente como autor y la tarea pasa a **Revisión**.
@@ -852,9 +852,18 @@ Desde FT-122 todo proyecto (también los descubiertos en el workspace) lleva a C
 
 **FT-163:** `computeFloors()` (`public/office3d.js`) usaba otro criterio que `teamProjects()` y dibujaba una planta para proyectos que solo tenían a Coordi (p. ej. «Vacío»). Ahora aplica el mismo: una planta exige al menos un agente que no sea `supervisor`. `scripts/building-e2e.mjs` vuelve a estar en verde (Beta también se vacía de Coordi de serie en el fixture y la navegación admite 120 s con la máquina cargada).
 
+### Proyectos manuales con carpeta de flow-test
+
+Los proyectos **ya no se crean solos** por cada carpeta de `flows/`: se dan de alta a mano (＋ junto al desplegable, `POST /api/projects` o la tool del Guía `project.create`) y cada uno se vincula **obligatoriamente** a una carpeta de primer nivel del workspace de flow-test, o a la raíz (`folder: "default"`, los flows sueltos). **Una carpeta = un proyecto** (409 si ya es de otro).
+
+- **Alta**: selector con las carpetas de flow-test (`GET /api/workspace/folders`: nº de flows y proyecto que ya la usa, deshabilitada) + «＋ Nueva carpeta…» (`createFolder: true` → `POST /workspace/folder` de flow-test, vale con flow-test en Docker). Al elegir carpeta se rellenan el nombre y los **repos sugeridos** por sus enlaces simbólicos (`GET /api/workspace/repos?folder=`); nada se añade solo. Casilla «🧑‍⚖️ Añadir coordinador» (`coordinator`, marcada de serie).
+- **Comprobación** (al arrancar, cada 5 min y ↻ = `POST /api/sync` → `checkFolders`): refresca `flows` y marca `orphan` si la carpeta desaparece (⚠ «carpeta desaparecida»); los proyectos antiguos sin carpeta salen como ⚠ «sin vincular». Se re-vinculan en Ajustes ▸ «Carpeta de flow-test del proyecto» (`PATCH /api/projects/:id {folder, createFolder?}`; no se puede dejar vacía).
+- Los proyectos que creó la sincronización antigua se conservan tal cual (con su carpeta).
+- **e2e**: los scripts que arrancan un servidor con un flow-test falso ponen `AO_TEST_ALLOW_UNLINKED=1` para dar de alta proyectos sin carpeta. Solo para pruebas. Unit: `tests/projects-folder.test.mjs`.
+
 ### Coordi solo en proyectos creados a mano (FT-127)
 
-El escaneo del workspace ya no crea un Coordi por carpeta descubierta: solo `createProject` lo añade (reutilizando antes un Coordi libre del banquillo; nunca más de uno por proyecto). En los demás sirve «Añadir coordinador» (FT-122). Al arrancar, una migración borra los Coordi de proyectos sin repo y sin tareas (nunca uno con tareas o historial). Prueba: `node scripts/supervisor-e2e.mjs`.
+(Histórico: desde «proyectos manuales» ya no hay escaneo que cree proyectos.) El escaneo del workspace ya no creaba un Coordi por carpeta descubierta: solo `createProject` lo añade (reutilizando antes un Coordi libre del banquillo; nunca más de uno por proyecto). En los demás sirve «Añadir coordinador» (FT-122). La migración que borraba al arrancar los Coordi de proyectos sin repo y sin tareas se quitó con «proyectos manuales» (también quitaba el de un proyecto recién creado sin repo). Prueba: `node scripts/supervisor-e2e.mjs`.
 
 ### Confirmaciones 🛡 largas del Guía (FT-128)
 

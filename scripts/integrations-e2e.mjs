@@ -62,7 +62,7 @@ fs.mkdirSync(dataDir, { recursive: true });
 fs.writeFileSync(path.join(dataDir, 'state.json'), JSON.stringify({ settings: { flowTestUrl: `http://127.0.0.1:${stubPort}`, maxParallel: 4, workspaceHostDir: path.join(tmp, 'sin-workspace') } }));
 const port = await freePort();
 const base = `http://127.0.0.1:${port}`;
-const envBase = { ...gitEnv, HOME: homeDir, AO_PORT: String(port), AO_HOST: '127.0.0.1', AO_DATA_DIR: dataDir, AO_CLAUDE_BIN: fakeClaude, AO_BROWSER_CMD: `${fakeBrowser} {url}` };
+const envBase = { ...gitEnv, HOME: homeDir, AO_PORT: String(port), AO_HOST: '127.0.0.1', AO_TEST_ALLOW_UNLINKED: '1', AO_DATA_DIR: dataDir, AO_CLAUDE_BIN: fakeClaude, AO_BROWSER_CMD: `${fakeBrowser} {url}` };
 let server;
 const start = (extra = {}) => { server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], env: { ...envBase, ...extra } }); server.stdout.on('data', () => {}); server.stderr.on('data', () => {}); };
 const cleanup = () => { try { server.kill('SIGTERM'); } catch { /* ya parado */ } try { stub.close(); } catch { /* nada */ } try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* nada */ } };

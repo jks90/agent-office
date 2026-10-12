@@ -63,7 +63,7 @@ if (/GASTONA/.test(prompt)) {
 const port = await freePort();
 const base = `http://127.0.0.1:${port}`;
 fs.writeFileSync(path.join(dataDir, 'state.json'), JSON.stringify({ settings: { maxParallel: 1, workspaceHostDir: path.join(tmp, 'sin-workspace'), maxTaskUsd: 0.5, agentEffort: 'low' } }));
-const mkEnv = (extra) => ({ ...process.env, HOME: home, AO_PORT: String(port), AO_HOST: '127.0.0.1', AO_DATA_DIR: dataDir, AO_CODEX_BIN: fake, AO_RTK_BIN: rtkFake, ...extra });
+const mkEnv = (extra) => ({ ...process.env, HOME: home, AO_PORT: String(port), AO_HOST: '127.0.0.1', AO_TEST_ALLOW_UNLINKED: '1', AO_DATA_DIR: dataDir, AO_CODEX_BIN: fake, AO_RTK_BIN: rtkFake, ...extra });
 let server;
 const startServer = async (extra = {}) => { server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env: mkEnv(extra), stdio: 'ignore' }); await until(async () => { try { return (await fetch(base + '/api/state')).ok; } catch { return false; } }, 10_000, 100); };
 const stopServer = async () => { server.kill('SIGTERM'); await new Promise((r) => server.once('exit', r)); };

@@ -47,7 +47,7 @@ fs.writeFileSync(path.join(cat, 'skills/mia/SKILL.md'), '---\nname: mia\ndescrip
 // Catálogo y workspace temporales ANTES de arrancar: instalar nunca debe tocar el catálogo real del usuario.
 fs.mkdirSync(dataDir, { recursive: true });
 fs.writeFileSync(path.join(dataDir, 'state.json'), JSON.stringify({ settings: { catalogDir: cat, workspaceHostDir: path.join(tmp, 'ws'), flowTestUrl: `http://127.0.0.1:${fake.address().port}`, maxParallel: 1 } }));
-const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env: { ...process.env, AO_PORT: String(port), AO_DATA_DIR: dataDir }, stdio: 'ignore' });
+const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env: { ...process.env, AO_PORT: String(port), AO_TEST_ALLOW_UNLINKED: '1', AO_DATA_DIR: dataDir }, stdio: 'ignore' });
 const base = `http://127.0.0.1:${port}`;
 const api = async (m, p, b) => { const r = await fetch(base + p, { method: m, headers: { 'content-type': 'application/json' }, body: b ? JSON.stringify(b) : undefined }); return { s: r.status, j: await r.json().catch(() => ({})) }; };
 let browser;
