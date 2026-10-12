@@ -46,6 +46,7 @@ import * as tts from './guide/tts/index.js'; // FT-52
 import * as quota from './quota.js';
 import * as memory from './memory.js';
 import * as marketplace from './marketplace.js'; // FT-141
+import * as teams from './teams.js'; // 👥 plantillas de equipo
 import * as mpCloud from './marketplace-cloud.js'; // FT-142
 import * as codeindex from './codeindex.js'; // FT-58
 import * as claudeEngine from './engines/claude.js';
@@ -226,6 +227,8 @@ const routes = [
   ['POST', /^\/api\/skills\/write$/, (_, b) => skills.writeSkillFile(b.dir, b.content)],
   ['POST', /^\/api\/skills\/new$/, (_, b) => skills.createSkill(b)],
   // FT-141 · Marketplace: paquetes ao-pkg/1 (el reenvío a la nube lo hace flow-test)
+  ['GET', /^\/api\/teams\/templates$/, () => teams.listTemplates()], // 👥 plantillas de equipo de serie
+  ['POST', /^\/api\/projects\/(\w+)\/team-template$/, ([id], b) => teams.applyBuiltin(b.template, id, { coordinator: typeof b.coordinator === 'boolean' ? b.coordinator : null })], // 👥 aplicar a un proyecto
   ['POST', /^\/api\/marketplace\/export$/, (_, b) => marketplace.exportPackage(b.kind, b.id, b.scope, b)],
   ['POST', /^\/api\/marketplace\/inspect$/, (_, b) => marketplace.inspect(b.package, b)],
   ['POST', /^\/api\/marketplace\/import$/, (_, b) => { const r = marketplace.importPackage(b.package, b); store.changed(); return r; }],

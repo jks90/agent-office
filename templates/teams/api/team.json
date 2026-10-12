@@ -1,0 +1,40 @@
+{
+  "id": "api",
+  "name": "Solo API / backend",
+  "summary": "Servicio sin interfaz: PO, dos backend y QA que prueba cada endpoint con flows.",
+  "icon": "🔌",
+  "members": [
+    {
+      "name": "Olivia",
+      "role": "po"
+    },
+    {
+      "name": "Bruno",
+      "role": "back"
+    },
+    {
+      "name": "Iván",
+      "role": "back"
+    },
+    {
+      "name": "Quique",
+      "role": "qa"
+    }
+  ],
+  "coordinator": true,
+  "skills": [
+    "flows"
+  ],
+  "roleSkills": {
+    "qa": [
+      "flows"
+    ]
+  },
+  "suggestedSkills": {
+    "back": [
+      "nodejs-backend-patterns",
+      "nodejs-best-practices",
+      "typescript-advanced-types"
+    ]
+  }
+}

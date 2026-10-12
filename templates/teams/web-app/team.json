@@ -1,0 +1,49 @@
+{
+  "id": "web-app",
+  "name": "App web (API + front)",
+  "summary": "Producto con API y web: un PO que trocea objetivos, backend, frontend, QA con flows de flow-test y un documentalista.",
+  "icon": "🌐",
+  "members": [
+    {
+      "name": "Olivia",
+      "role": "po"
+    },
+    {
+      "name": "Bruno",
+      "role": "back"
+    },
+    {
+      "name": "Frida",
+      "role": "front"
+    },
+    {
+      "name": "Quique",
+      "role": "qa"
+    },
+    {
+      "name": "Inés",
+      "role": "documentalista"
+    }
+  ],
+  "coordinator": true,
+  "skills": [
+    "flows"
+  ],
+  "roleSkills": {
+    "qa": [
+      "flows"
+    ]
+  },
+  "suggestedSkills": {
+    "front": [
+      "frontend-design",
+      "vercel-react-best-practices",
+      "tailwind-css-patterns",
+      "typescript-advanced-types"
+    ],
+    "back": [
+      "nodejs-backend-patterns",
+      "nodejs-best-practices"
+    ]
+  }
+}

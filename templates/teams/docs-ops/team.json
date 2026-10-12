@@ -1,0 +1,26 @@
+{
+  "id": "docs-ops",
+  "name": "Documentación y operaciones (sin código)",
+  "summary": "Carpetas sin repo (documentación, informes, procesos): documentalista y QA que verifica con flows.",
+  "icon": "📚",
+  "members": [
+    {
+      "name": "Inés",
+      "role": "documentalista"
+    },
+    {
+      "name": "Quique",
+      "role": "qa"
+    }
+  ],
+  "coordinator": true,
+  "skills": [
+    "flows"
+  ],
+  "roleSkills": {
+    "qa": [
+      "flows"
+    ]
+  },
+  "suggestedSkills": {}
+}

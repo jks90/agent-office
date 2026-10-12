@@ -272,7 +272,7 @@ export async function suggestRepos(folder) {
   return out;
 }
 
-export async function createProject({ name, repoPath, repos, engine = 'demo', folder, createFolder = false, coordinator = true }) {
+export async function createProject({ name, repoPath, repos, engine = 'demo', folder, createFolder = false, coordinator = true, defaultTeam = true }) {
   if (!name?.trim()) throw fail(400, 'El proyecto necesita un nombre');
   // Solo para los e2e (arrancan su servidor con un flow-test falso sin /workspace): altas sin carpeta. Nadie la pone en producción.
   const unlinked = !String(folder ?? '').trim() && process.env.AO_TEST_ALLOW_UNLINKED === '1';
@@ -284,7 +284,7 @@ export async function createProject({ name, repoPath, repos, engine = 'demo', fo
   if (f) checkFolderName(f); // otra alta pudo coger la carpeta mientras se esperaba a flow-test
   const project = { id: newId(), name: name.trim(), folder: f, flows, orphan: false, repos: list, repoPath: list[0]?.path || null, baseBranch: list[0]?.baseBranch || null, running: false, team: [], coordinator: 'auto', createdAt: Date.now() };
   s.projects.push(project);
-  if (!s.agents.length) DEFAULT_TEAM.forEach((m) => { const a = newAgent({ ...m, engine }); s.agents.push(a); project.team.push(a.id); });
+  if (!s.agents.length && defaultTeam !== false) DEFAULT_TEAM.forEach((m) => { const a = newAgent({ ...m, engine }); s.agents.push(a); project.team.push(a.id); }); // con plantilla de equipo, no
   if (coordinator !== false) addSupervisor(project); // FT-122: el coordinador viene de serie (casilla del alta; ocupa mesa; se puede quitar)
   changed();
   return project;

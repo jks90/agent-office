@@ -836,3 +836,10 @@ dialog.rlog pre { max-height: 55vh; white-space: pre-wrap; word-break: break-wor
 .tools-props .prop { border-top: 1px solid var(--line-soft); padding: 8px 0 4px; margin-top: 8px; }
 .tools-props .prop-body { color: var(--muted); margin: 4px 0 6px; line-height: 1.45; }
 .tools-props .prop-acts { display: flex; gap: 6px; }
+/* 👋 Bienvenida (sin proyectos) y resumen de equipo aplicado */
+.welcome { display: grid; place-items: center; padding: 24px 0; }
+.welcome-card { max-width: 640px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 24px 28px; box-shadow: var(--shadow); }
+.welcome-card h2 { margin: 0 0 8px; }
+.welcome-card p, .welcome-card li { line-height: 1.55; color: var(--muted); }
+.welcome-card button { margin-top: 8px; }
+.team-applied { margin: 8px 0; padding-left: 18px; line-height: 1.6; }

@@ -852,6 +852,14 @@ Desde FT-122 todo proyecto (también los descubiertos en el workspace) lleva a C
 
 **FT-163:** `computeFloors()` (`public/office3d.js`) usaba otro criterio que `teamProjects()` y dibujaba una planta para proyectos que solo tenían a Coordi (p. ej. «Vacío»). Ahora aplica el mismo: una planta exige al menos un agente que no sea `supervisor`. `scripts/building-e2e.mjs` vuelve a estar en verde (Beta también se vacía de Coordi de serie en el fixture y la navegación admite 120 s con la máquina cargada).
 
+### 👥 Plantillas de equipo (empezar de cero con un equipo bien definido)
+
+- **De serie** (`templates/teams/<id>/{team.json, roles/*.md}` + `templates/skills/flows`, sin cuenta ni red): 🌐 **App web** (PO, back, front, QA, documentalista), 🔌 **Solo API** (PO, 2 back, QA), 🎮 **Juego Unity + servidor** (PO, unity-dev, back, QA, documentalista) y 📚 **Documentación y operaciones** (documentalista, QA). `team.json` = miembros (nombre + rol), coordinador, skills que trae, skills por papel (`roleSkills`) y sugeridas (`suggestedSkills`).
+- **Al crear un proyecto** («Equipo para empezar»; la primera vez viene elegida «App web») o desde el Guía (`project.create {template}`): `server/teams.js` instala los roles que falten (en `_agentes/roles/plantillas/`; nunca pisa uno existente), las skills que trae, pasa al catálogo las sugeridas que ya estén en el PC (y avisa de las que no), **ficha primero a los del banquillo con ese rol** y contrata el resto (tope de 8 mesas), da a cada agente las skills de su papel y añade el coordinador si marcaste la casilla. `GET /api/teams/templates`, `POST /api/projects/:id/team-template {template, coordinator}`.
+- **Marketplace, tipo «👥 equipo»**: «⬆ Publicar equipo» (Agentes ▸ Plantilla) exporta `team.json` + los roles propios + sus skills, **nunca memoria**; instalarlo pide el proyecto al que aplicarlo y hace lo mismo que una plantilla de serie. flow-accounts acepta `kind: team` (en team y en público).
+- 👋 **Sin proyectos**, la Oficina enseña una bienvenida con el paso siguiente.
+- Pruebas: `tests/teams.test.mjs`.
+
 ### 🧰 Herramientas de los agentes (skills, MCP y scripts)
 
 Pestaña propia en la barra lateral (antes estaban al final de Agentes), con subpestañas **Skills · MCP · Scripts**. Cada herramienta del catálogo es una tarjeta con su descripción, **quién la usa** (roles —con el nº de agentes— y agentes sueltos, con ＋ rol… / ＋ agente… y ✕ para quitar) y sus **cifras de uso**. Arriba, los **avisos** de lo que se declara y no le llega a nadie (script fuera del catálogo, rol con herramientas y sin agentes…), con el contador en la barra lateral.

@@ -5,6 +5,7 @@
 // `run()` es lo único que se expone (POST /api/guide/tool y bin/ao-mcp.mjs): valida → política → handler → auditoría.
 import * as store from '../store.js';
 import * as team from '../team.js';
+import * as teams from '../teams.js'; // 👥 plantillas de equipo
 import * as git from '../git.js';
 import * as context from '../context.js';
 import * as activity from '../events.js';
@@ -332,8 +333,9 @@ export const tools = [
     createFolder: { type: 'boolean', description: 'Crear la carpeta en flow-test si no existe' },
     repos: { type: 'array', items: { type: 'object', properties: { key: str('Clave corta del repo'), path: str('Ruta del repo git'), roles: { type: 'array', items: { type: 'string' } } }, required: ['path'], additionalProperties: false } },
     coordinator: { type: 'boolean', description: 'Añadir el coordinador (supervisor) al equipo; por defecto sí' },
+    template: str('Plantilla de equipo de serie (opcional): web-app, api, unity-game o docs-ops'),
   }, ['name', 'folder']), 'write',
-    async (a) => { const p = await team.createProject({ ...a, engine: 'auto' }); return { id: p.id, name: p.name, folder: p.folder, repos: p.repos.map((r) => r.key), team: p.team.length }; }),
+    async (a) => { const { template, ...rest } = a; const p = await team.createProject({ ...rest, engine: 'auto', ...(template ? { coordinator: false, defaultTeam: false } : {}) }); const applied = template ? teams.applyBuiltin(template, p.id, { coordinator: a.coordinator !== false }) : null; return { id: p.id, name: p.name, folder: p.folder, repos: p.repos.map((r) => r.key), team: p.team.length, ...(applied ? { hired: applied.hired, fromBench: applied.fromBench, missingSkills: applied.suggested.missing } : {}) }; }),
   T('task.list', 'Lista tareas, filtradas por proyecto y/o estado.', obj({ projectId: str('Id o nombre del proyecto'), status: { type: 'string', enum: team.STATUSES } }), 'read',
     ({ projectId, status }) => { const pid = projectId ? findProject(projectId).id : null; return store.get().tasks.filter((t) => (!pid || t.projectId === pid) && (!status || t.status === status)).map(brief); }),
   T('task.get', 'Detalle de una tarea: descripción, resumen del agente, diffStat, error, preguntas y respuestas.', obj({ code: str('Código de la tarea') }, ['code']), 'read',

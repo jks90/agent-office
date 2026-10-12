@@ -1,5 +1,5 @@
 // FT-141 · Marketplace: exportar e importar paquetes «ao-pkg/1» de roles, skills y agentes.
-// Paquete: { format, kind:'role'|'skill'|'agent', name, version, summary, author:{name}, files:[{path,content(base64),sha256}],
+// Paquete: { format, kind:'role'|'skill'|'agent'|'team', name, version, summary, author:{name}, files:[{path,content(base64),sha256}],
 //            meta:{role?,engine?,model?,kindOfRole?,hasCode?}, memory?:{agent,project?} }  (tope 2 MB).
 //   - scope 'team' (la organización): roles, skills y agentes completos CON memoria.
 //   - scope 'public' (todas las organizaciones): solo roles y skills, NUNCA memoria ni agentes.
@@ -14,6 +14,7 @@ import * as memory from './memory.js';
 import * as team from './team.js';
 import { allRoles, roleOf } from './roles.js';
 import { skillsDir, rolesDir, ensureCatalog, parseFrontmatter } from './skills.js';
+import * as teams from './teams.js'; // 👥 paquetes de tipo «team» (plantilla de equipo)
 
 export const FORMAT = 'ao-pkg/1';
 export const MAX_PKG = 2 * 1024 * 1024;
@@ -110,7 +111,7 @@ function skillFiles(name) {
 const hasCode = (files) => files.some((f) => f.exec || (CODE_EXT.test(f.path) && !/^roles\//.test(f.path)));
 
 export function exportPackage(kind, id, scope = 'public', opts = {}) {
-  if (!['role', 'skill', 'agent'].includes(kind)) throw fail(400, 'Tipo desconocido (role|skill|agent)');
+  if (!['role', 'skill', 'agent', 'team'].includes(kind)) throw fail(400, 'Tipo desconocido (role|skill|agent|team)');
   if (!['team', 'public'].includes(scope)) throw fail(400, 'Ámbito desconocido (team|public)');
   if (kind === 'agent' && scope !== 'team') throw fail(400, 'Los agentes (con estado y memoria) solo se comparten dentro del equipo');
   let files = []; let meta = {}; let name; let summary = ''; let version = '1.0.0'; let mem;
@@ -126,6 +127,14 @@ export function exportPackage(kind, id, scope = 'public', opts = {}) {
     const fm = parseFrontmatter(Buffer.from(files.find((f) => f.path === 'SKILL.md').content, 'base64').toString('utf8')).meta;
     summary = fm.description || ''; version = fm.version || version;
     meta = { hasCode: hasCode(files), ...(s.skipped.length ? { skipped: s.skipped } : {}) };
+  } else if (kind === 'team') { // 👥 equipo de un proyecto: quién, con qué rol, roles propios y sus skills (nunca memoria)
+    const t = teams.teamSpecOf(id);
+    name = slug(t.project.name) || t.project.id; summary = t.spec.summary;
+    files = [textFile('team.json', JSON.stringify(t.spec, null, 2))];
+    for (const r of t.roleIds) files.push({ ...roleFiles(r).files[0], path: `roles/${r}.md` });
+    const skipped = [];
+    for (const n of t.skillNames) { try { const sk = skillFiles(n); files.push(...sk.files.map((f) => ({ ...f, path: `skills/${n}/${f.path}` }))); skipped.push(...sk.skipped.map((x) => `${n}/${x}`)); } catch { skipped.push(n); } }
+    meta = { members: t.spec.members.length, hasCode: hasCode(files.filter((f) => f.path.startsWith('skills/'))), ...(skipped.length ? { skipped } : {}) };
   } else {
     const a = store.get().agents.find((x) => x.id === id || x.name === id);
     if (!a) throw fail(404, 'Agente no encontrado');
@@ -181,7 +190,7 @@ function assertNoLink(base, dest) {
 
 export function validate(pkg) {
   if (!pkg || pkg.format !== FORMAT) throw fail(400, `Formato no soportado (se espera ${FORMAT})`);
-  if (!['role', 'skill', 'agent'].includes(pkg.kind)) throw fail(400, 'Tipo de paquete desconocido');
+  if (!['role', 'skill', 'agent', 'team'].includes(pkg.kind)) throw fail(400, 'Tipo de paquete desconocido');
   if (!okName(pkg.name)) throw fail(422, 'Nombre de paquete no válido');
   if (!/^\d+\.\d+\.\d+/.test(String(pkg.version || ''))) throw fail(400, 'Versión no válida (semver)');
   if (Buffer.byteLength(JSON.stringify(pkg)) > MAX_PKG) throw fail(413, 'El paquete supera los 2 MB');
@@ -223,7 +232,7 @@ export function inspect(pkg, opts = {}) {
   const text = pkg.files.filter((f) => isText(bytes(f))).map((f) => ({ where: f.path, text: bytes(f).toString('utf8') }));
   return {
     kind: pkg.kind, name: pkg.name, version: pkg.version, target, exists, installedVersion: prev?.version || null,
-    hasCode: !!pkg.meta?.hasCode || (pkg.kind === 'skill' && hasCode(pkg.files)),
+    hasCode: !!pkg.meta?.hasCode || (pkg.kind === 'skill' && hasCode(pkg.files)) || (pkg.kind === 'team' && hasCode(pkg.files.filter((f) => f.path.startsWith('skills/')))),
     hasMemory: !!pkg.memory, secrets: scanSecrets(text),
   };
 }
@@ -278,6 +287,13 @@ export function importPackage(pkg, opts = {}) {
     writeFiles(target, pkg.files);
     record(key, { ...base, target, hasCode: info.hasCode });
     return { kind: 'skill', name: pkg.name, version: pkg.version, target, hasCode: info.hasCode };
+  }
+
+  if (pkg.kind === 'team') { // 👥 se aplica a un proyecto: roles que falten, skills, fichajes y coordinador
+    if (!opts.projectId) throw fail(400, 'Elige el proyecto al que aplicar este equipo', { needsConfirm: 'project' });
+    const res = teams.applyTeam(teams.sourceFromPackage(pkg), opts.projectId, { confirmCode: !!opts.confirmCode, expandText, org: orgDir(opts.org) });
+    record(key, { ...base, projectId: opts.projectId });
+    return { kind: 'team', name: pkg.name, version: pkg.version, ...res };
   }
 
   // agente: rol (si falta) + agente fichado en el proyecto elegido (o al banquillo) + memoria en ese proyecto

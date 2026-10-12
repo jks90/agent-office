@@ -1,0 +1,44 @@
+{
+  "id": "unity-game",
+  "name": "Juego Unity + servidor",
+  "summary": "Juego en Unity con su servidor: PO, desarrollador Unity, backend del servidor, QA y documentalista.",
+  "icon": "🎮",
+  "members": [
+    {
+      "name": "Olivia",
+      "role": "po"
+    },
+    {
+      "name": "Frida",
+      "role": "unity-dev"
+    },
+    {
+      "name": "Bruno",
+      "role": "back"
+    },
+    {
+      "name": "Quique",
+      "role": "qa"
+    },
+    {
+      "name": "Inés",
+      "role": "documentalista"
+    }
+  ],
+  "coordinator": true,
+  "skills": [
+    "flows"
+  ],
+  "roleSkills": {
+    "qa": [
+      "flows"
+    ]
+  },
+  "suggestedSkills": {
+    "unity-dev": [
+      "unity-cli",
+      "ui",
+      "unity-package-management"
+    ]
+  }
+}

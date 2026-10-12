@@ -1137,6 +1137,7 @@ function render() {
   renderRoles();
   renderBoard();
   renderToolProposals(); // 🧰 propuestas de los agentes (y el contador de la barra lateral)
+  renderWelcome(); // 👋 sin proyectos
   renderSummary();
   renderInbox();
   renderBrowser();
@@ -2448,6 +2449,7 @@ const actions = {
 Pasos, convenciones y ejemplos…</textarea>
     ${buttons('Crear')}`, async (f) => { const r = await api('POST', '/api/skills/new', f); toast(`Skill «${r.name}» creada en el catálogo`); renderSkills(true); }),
   sync: async () => { const r = await api('POST', '/api/sync'); toast(r.orphans.length || r.unlinked.length ? `⚠ ${[r.orphans.length ? `carpeta desaparecida: ${r.orphans.join(', ')}` : '', r.unlinked.length ? `sin vincular: ${r.unlinked.join(', ')}` : ''].filter(Boolean).join(' · ')} — re-vincúlalos en Ajustes` : 'Carpetas comprobadas: todos los proyectos tienen la suya'); },
+  'publish-team': () => projectId && mpPublish('team', projectId),
   'new-project': () => { dialog(`
     <h3>Nuevo proyecto</h3>
     <label>Carpeta del workspace de flow-test (obligatoria: ahí viven sus flows y su documentación; una carpeta = un proyecto)</label>
@@ -2455,14 +2457,18 @@ Pasos, convenciones y ejemplos…</textarea>
     <label>Nombre</label><input name="name" required autofocus />
     <label>Repositorios git (opcional; al elegir carpeta se sugieren los repos que enlaza; uno por línea, <code>clave = ruta</code> o solo la ruta; <code>clave = ruta @ rol1,rol2</code> fija qué roles trabajan en ese repo)</label>
     <textarea name="repos" rows="3" placeholder="~/dev/mi-api @ back,qa&#10;~/dev/mi-web @ front"></textarea>
+    <label>Equipo para empezar (👥 plantilla de serie: roles, quién hace qué y skills; luego lo ajustas)</label>
+    <select name="template" data-team-templates><option value="">Cargando plantillas…</option></select>
+    <div class="muted" data-team-preview style="font-size:12px;margin-top:4px"></div>
     <label>Motor del equipo</label><select name="engine">${engineOptions('auto')}</select>
     <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="coordinator" checked /> 🧑‍⚖️ Añadir coordinador (supervisor; ocupa una mesa, se puede quitar)</label>
     <p class="muted">Cada tarea se hace en un git worktree propio del repo que le toca (rama <code>ao/&lt;tarea&gt;</code>); nada llega a tu rama hasta que apruebas. Sin repo, los agentes trabajan directamente en la carpeta, de una tarea en una.</p>
     ${buttons('Crear')}`, async (f) => {
-    const p = await api('POST', '/api/projects', { name: f.name, engine: f.engine, repos: parseRepos(f.repos), ...pickedFolder(f), coordinator: !!f.coordinator });
+    const p = await api('POST', '/api/projects', { name: f.name, engine: f.engine, repos: parseRepos(f.repos), ...pickedFolder(f), coordinator: f.template ? false : !!f.coordinator, ...(f.template ? { defaultTeam: false } : {}) });
+    if (f.template) { try { teamApplied(await api('POST', `/api/projects/${p.id}/team-template`, { template: f.template, coordinator: !!f.coordinator })); } catch { /* el toast ya avisó; el proyecto queda creado */ } }
     projectId = p.id;
     safeSet('ao:project', p.id);
-  }); fillFolderPick($('#dialog'), { suggest: true }); },
+  }); fillFolderPick($('#dialog'), { suggest: true }); fillTeamTemplates($('#dialog')); },
   quota: () => showTab('summary'), // FT-45: el chip de cuota abre el Resumen
   building: () => setOfficeMode('building'), // FT-47: «🏢 Edificio» en el pie de la Oficina
   'office-floor': () => leaveAgentLevel(), // FT-71: agente → planta sin saltar al edificio
@@ -3360,6 +3366,43 @@ async function fillFolderPick(root, { current = null, selfId = null, suggest = f
   };
 }
 
+// 👥 Plantillas de equipo de serie en «Nuevo proyecto» (y el resumen de lo que se hizo al aplicar una, aquí o desde el marketplace).
+let teamTemplates = null;
+async function fillTeamTemplates(root) {
+  const sel = root.querySelector('[data-team-templates]'), prev = root.querySelector('[data-team-preview]');
+  if (!sel) return;
+  try { teamTemplates ||= await api('GET', '/api/teams/templates'); } catch { teamTemplates = []; }
+  const none = S.agents.length ? 'Ninguno: lo monto yo (ficha del banquillo o contrata)' : 'Equipo básico (PO, back, front y QA)';
+  sel.innerHTML = `<option value="">${none}</option>` + teamTemplates.map((t) => `<option value="${esc(t.id)}">${esc(t.icon)} ${esc(t.name)} · ${t.members.length} agentes</option>`).join('');
+  if (!S.agents.length && teamTemplates.some((t) => t.id === 'web-app')) sel.value = 'web-app'; // la primera vez, una plantilla completa
+  const show = () => { const t = teamTemplates.find((x) => x.id === sel.value); prev.innerHTML = t ? `${esc(t.summary)}<br>👥 ${t.members.map((m) => `${esc(m.name)} <span class="muted">(${esc(m.label)})</span>`).join(' · ')}${t.coordinator ? ' · + Coordi' : ''}${t.skills.length ? `<br>🧩 ${t.skills.map(esc).join(', ')}` : ''}<br><span class="muted">Si ya tienes agentes de ese rol en el banquillo, se fichan ellos en vez de contratar.</span>` : ''; };
+  sel.onchange = show; show();
+}
+function teamApplied(r) {
+  if (!r) return;
+  const lines = [
+    r.fromBench?.length ? `🪑 Fichados del banquillo: ${r.fromBench.join(', ')}` : '',
+    r.hired?.length ? `🤝 Contratados: ${r.hired.join(', ')}` : '',
+    r.coordinator ? '🧑‍⚖️ Coordinador añadido' : '',
+    r.rolesInstalled?.length ? `🎭 Roles nuevos: ${r.rolesInstalled.join(', ')}` : '',
+    r.skillsInstalled?.length ? `🧩 Skills instaladas: ${r.skillsInstalled.join(', ')}` : '',
+    r.suggested?.added?.length ? `🧩 Skills sugeridas que ya tenías: ${r.suggested.added.join(', ')}` : '',
+    r.suggested?.missing?.length ? `⚠ Skills sugeridas que no están en tu PC (instálalas cuando quieras): ${r.suggested.missing.join(', ')}` : '',
+    r.benched?.length ? `⚠ Sin mesa (8 máx.): ${r.benched.join(', ')}` : '',
+  ].filter(Boolean);
+  dialog(`<h3>👥 Equipo «${esc(r.template || r.name || '')}» listo</h3><ul class="team-applied">${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul><p class="muted">Ajusta roles, skills y scripts en 🧰 Herramientas; la plantilla del proyecto está en Agentes.</p><div class="row"><button class="ghost" value="cancel">Cerrar</button></div>`);
+}
+// 👋 Sin proyectos: bienvenida en la Oficina con el paso siguiente (crear el primero con un equipo).
+function renderWelcome() {
+  const el = $('#welcome');
+  if (!el) return;
+  el.hidden = S.projects.length > 0;
+  if (el.hidden) return;
+  el.innerHTML = `<div class="welcome-card"><h2>👋 Bienvenido a AgentOffice</h2>
+    <p>Un proyecto = una carpeta de flow-test (sus flows y documentación) + sus repos + un equipo de agentes. Empieza creando el primero con una <b>plantilla de equipo</b>: roles definidos, quién hace qué y las skills de cada uno.</p>
+    <ol><li>Elige o crea la carpeta en flow-test.</li><li>Añade el repo (opcional: sin repo trabajan en la carpeta).</li><li>Elige el equipo: App web, Solo API, Juego Unity o Documentación.</li></ol>
+    <button data-action="new-project">＋ Crear mi primer proyecto</button></div>`;
+}
 // «clave = ruta @ rol1,rol2» · «ruta @ roles» · «ruta» (la clave sale del nombre de la carpeta)
 function parseRepos(text) {
   return String(text || '').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
@@ -3659,7 +3702,7 @@ function failedDialog(pid) {
 }
 
 // ── 🛒 Marketplace (FT-142): equipo (org) y público, vía flow-test ─────────────────────────────────
-const MP_KIND = { role: '🎭 rol', skill: '🧩 skill', agent: '🤖 agente' };
+const MP_KIND = { role: '🎭 rol', skill: '🧩 skill', agent: '🤖 agente', team: '👥 equipo' };
 let mpTab = safeGet('ao:mpTab') || 'team', mpKind = '', mpQ = '', mpTimer = null, mpSeq = 0;
 // Como api() pero sin toast: devuelve {ok,status,j} para poder pedir confirmaciones (🛡) según el 409.
 async function mpApi(method, url, body) {
@@ -3809,6 +3852,7 @@ async function mpInstall(id) {
     ${info.secrets?.length ? `<p class="bad">⛔ Posibles secretos: ${info.secrets.map((s) => esc(s.kind + ' en ' + s.where)).join('; ')}</p>` : ''}
     ${info.hasCode ? '<label><input type="checkbox" name="confirmCode" required /> 🛡 Confirmo que he revisado el código y quiero instalarlo</label>' : ''}
     ${info.exists ? `<label><input type="checkbox" name="overwrite" ${info.installedVersion ? 'checked' : ''} /> Ya existe${info.installedVersion ? ` (v${esc(info.installedVersion)})` : ''}: sobrescribir</label>` : ''}
+    ${item.kind === 'team' ? `<label>Proyecto al que aplicar este equipo (se instalan los roles y skills que falten y se ficha a su gente)</label><select name="projectId" required><option value="">Elige…</option>${S.projects.map((p) => `<option value="${p.id}" ${p.id === projectId ? 'selected' : ''}>${esc(p.name)} (${(p.team || []).length}/8 mesas)</option>`).join('')}</select>` : ''}
     ${item.kind === 'agent' ? `<label>Proyecto donde ficharlo${info.hasMemory ? ' (y guardar su memoria)' : ''}</label><select name="projectId" ${info.hasMemory ? 'required' : ''}><option value="">${info.hasMemory ? 'Elige…' : 'Ninguno: al banquillo'}</option>${projects.map((p) => { const full = (S.projects.find((x) => x.id === p.id)?.team || []).length >= 8; return `<option value="${esc(p.id)}" ${p.id === projectId ? 'selected' : ''}>${esc(p.name)}${full ? ' (8 mesas ocupadas: irá al banquillo)' : ''}</option>`; }).join('')}</select>` : ''}
     ${buttons(info.installedVersion && info.installedVersion !== item.version ? '⟳ Actualizar' : '⬇ Instalar')}`, async (f) => {
     const r = await mpApi('POST', `/api/marketplace/items/${encodeURIComponent(id)}/install`, { confirmCode: !!f.confirmCode, overwrite: !!f.overwrite, projectId: f.projectId || undefined });
@@ -3816,6 +3860,7 @@ async function mpInstall(id) {
     const pname = (id) => S.projects.find((p) => p.id === id)?.name || id;
     toast(`«${item.name}» v${item.version} instalado${r.j.target ? ' en ' + short(r.j.target) : ''}${item.kind !== 'agent' ? '' : r.j.teamProject ? ` y fichado en ${pname(r.j.teamProject)}` : ` · está en el banquillo (Agentes)${r.j.teamFull ? ': ese proyecto ya tiene 8 mesas' : ''}`}`);
     if (item.kind === 'skill') renderSkills(true);
+    if (item.kind === 'team') teamApplied(r.j);
     if (activeTab === 'marketplace') loadMarketplace();
   }, 'wide');
 }
