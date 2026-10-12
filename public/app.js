@@ -2445,7 +2445,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <div class="section-title" data-group="Empresa" title="FT-86">🧪 Experimentos</div>
     <label title="Reglas de «construir lo mínimo» en la parte estable del prompt (FT-86). Se etiqueta cada intento en 💸 Costes para comparar con/sin.">Ponytail (prueba, FT-86): roles que construyen lo mínimo</label>
     <div class="pt-roles">${Object.entries(S.roles).filter(([, r]) => r.kind !== 'planner').map(([id, r]) => `<label><input type="checkbox" name="pt_${esc(id)}" ${S.settings.ponytailRoles?.[id] ? 'checked' : ''} /> ${esc(r.label || id)}</label>`).join(' ')}</div>
-    <div class="section-title" data-group="Proyecto «${esc(project()?.name)}»">📁 Proyecto</div>
+    <div class="section-title" data-group="${project() ? `Proyecto «${esc(project().name)}»` : 'Proyecto'}">📁 Proyecto</div>
     <label>Carpeta de flow-test del proyecto «${esc(project()?.name)}» (obligatoria; cámbiala si la renombraste o moviste)</label>
     ${folderPick(false)}
     <label>Repositorios del proyecto «${esc(project()?.name)}» (uno por línea: <code>clave = ruta @ roles</code>)</label>
@@ -2462,9 +2462,9 @@ Pasos, convenciones y ejemplos…</textarea>
     <div style="display:flex;gap:8px"><select name="importFlow" id="import-flow"><option value="">— elegir flow —</option></select><button type="button" class="small" data-import-flow>Importar</button></div>
     <hr style="border-color:var(--line);margin:16px 0" />
     <button type="button" class="danger small" data-delete-project>Borrar el proyecto «${esc(project()?.name)}»</button>
-    <div class="section-title" data-group="Proyecto «${esc(project()?.name)}»">🔗 Tablero online</div>
+    <div class="section-title" data-group="${project() ? `Proyecto «${esc(project().name)}»` : 'Proyecto'}">🔗 Tablero online</div>
     <div id="board-cfg" class="board-cfg"><p class="muted">Cargando…</p></div>
-    <div class="section-title" data-group="Proyecto «${esc(project()?.name)}»">👁 Proyectos visibles</div>
+    <div class="section-title" data-group="${project() ? `Proyecto «${esc(project().name)}»` : 'Proyecto'}">👁 Proyectos visibles</div>
     <p class="muted" style="margin:0 0 6px">Desmarca los proyectos que no quieres ver en el selector, el Resumen y el edificio. Ocultar no los para ni borra nada: un proyecto oculto en marcha sigue trabajando.</p>
     <div class="vis-projects">${[...S.projects].sort((a, b) => a.name.localeCompare(b.name)).map((x) => `<label class="vis-row"><input type="checkbox" name="vis_${x.id}" ${isHidden(x) ? '' : 'checked'} /> ${x.folder ? '📁' : '⚠'} ${esc(x.name)} <span class="muted">${!x.folder ? 'sin vincular' : x.orphan ? 'carpeta desaparecida' : `${x.flows ?? 0} flows`}${(x.team || []).length ? ` · ${x.team.length} agentes` : ''}${x.running ? ' · ▶ en marcha' : ''}</span></label>`).join('')}</div>
     <div class="row" style="justify-content:flex-start;gap:6px;margin:4px 0 10px"><button type="button" class="small ghost" data-vis-all="1">Mostrar todos</button><button type="button" class="small ghost" data-vis-all="0">Ocultar los vacíos</button></div>
