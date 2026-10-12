@@ -2642,6 +2642,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <select name="sttProvider"><option value="local-cmd" ${S.settings.sttProvider !== 'openai' ? 'selected' : ''}>Local · faster-whisper / AO_STT_CMD</option><option value="openai" ${S.settings.sttProvider === 'openai' ? 'selected' : ''}>OpenAI · /v1/audio/transcriptions</option></select>
     <label>Idioma hablado</label>
     <select name="sttLang">${[['es', 'Español'], ['en', 'English'], ['ca', 'Català'], ['fr', 'Français'], ['de', 'Deutsch'], ['pt', 'Português'], ['it', 'Italiano'], ['auto', 'Detectar']].map(([k, n]) => `<option value="${k}" ${(S.settings.sttLang || 'es') === k ? 'selected' : ''}>${n}</option>`).join('')}</select>
+    <label title="Ya entran solos los nombres de tus proyectos, agentes y roles, y palabras como AgentOffice, flow-test, worktree, PO o QA">Vocabulario extra para el dictado (palabras o nombres que no entiende bien, separados por comas)</label><input name="sttVocabulary" value="${esc(S.settings.sttVocabulary || '')}" placeholder="Revert, Uniswap, GestionLab, Hicham…" />
     <label><input type="checkbox" name="voiceReview" ${voicePref.review() ? 'checked' : ''} /> Revisar antes de enviar (el texto dictado queda en la caja)</label>
     <label><input type="checkbox" name="voiceTts" ${voicePref.tts() ? 'checked' : ''} /> Leer en voz alta las respuestas cortas del Guía (solo en este navegador)</label>
     <div class="section-title" data-group="Guía y voz" title="FT-52">🔊 Voz del Guía</div>

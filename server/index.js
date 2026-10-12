@@ -82,6 +82,8 @@ quota.setOnChange(() => store.changed()); // FT-45: cuota de las suscripciones �
 quota.startPolling();
 auth.cachedEnginesStatus(); // precargar las sesiones de los motores para el motor automático
 setInterval(sync, 5 * 60 * 1000).unref();
+// 🎤 Voz: con el STT local elegido y faster-whisper instalado, el modelo se carga ya (proceso persistente de bin/stt-whisper.py)
+setTimeout(() => { if ((store.get().settings.sttProvider || 'local-cmd') !== 'local-cmd') return; import('./guide/stt/local-cmd.js').then((l) => l.available().then((a) => a.ok && l.warm())).catch(() => {}); }, 5000).unref();
 // FT-96: adjuntos subidos que ningún chat ni tarea usa (chips quitados, modales cancelados): fuera pasado 1 día; al arrancar y cada hora.
 const sweepUploads = () => { try { const n = uploads.sweep(guide.uploadsInUse()); if (n) console.log(`🧹 ${n} carpeta(s) de adjuntos temporales borradas`); } catch { /* sin uploads */ } };
 sweepUploads();
@@ -332,6 +334,7 @@ const routes = [
     if (typeof b.agentMemory === 'boolean') st.agentMemory = b.agentMemory; // FT-75
     if (b.ponytailRoles && typeof b.ponytailRoles === 'object') st.ponytailRoles = ponytail.cleanRoles(b.ponytailRoles); // FT-86
     if (typeof b.claudeMemory === 'boolean') st.claudeMemory = b.claudeMemory;
+    if (typeof b.sttVocabulary === 'string') st.sttVocabulary = b.sttVocabulary.slice(0, 1000); // 🎤 palabras extra para el reconocedor de voz
     if (Array.isArray(b.hiddenWarnings)) st.hiddenWarnings = [...new Set(b.hiddenWarnings.map(String))].slice(0, 300); // 🧰 avisos de Herramientas ocultados (p. ej. roles que se usan en otra máquina)
     if (Array.isArray(b.hiddenProjects)) st.hiddenProjects = b.hiddenProjects.map(String).filter((id) => /^\w+$/.test(id)).slice(0, 500); // proyectos ocultos en la UI (siguen funcionando)
     if (typeof b.codeIndex === 'boolean') st.codeIndex = b.codeIndex; // FT-58
