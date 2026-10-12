@@ -21,8 +21,9 @@ export const canWork = (a, engineOk) => (a.engine === 'auto' ? ENGINES.some((e) 
 
 // snap: { team, bench, tasks (del proyecto), roles, engineOk:{claude,codex}, busy:Set(agentId), idleSince:{id: ms}, now, margin:{claude,codex} }
 export function plan(snap) {
-  const { team, bench = [], tasks, roles, engineOk, busy = new Set(), idleSince = {}, now = Date.now(), margin = {}, repos = [] } = snap;
-  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const { team, bench = [], tasks: allTasks, roles, engineOk, busy = new Set(), idleSince = {}, now = Date.now(), margin = {}, repos = [] } = snap;
+  const tasks = allTasks.filter((t) => t.assignedAgentId !== 'human'); // FT-189: las del humano no son trabajo de ningún agente
+  const byId = new Map(allTasks.map((t) => [t.id, t]));
   const depsDone = (t) => (t.dependsOn || []).every((d) => ['done', 'discarded'].includes(byId.get(d)?.status ?? 'done'));
   const ready = tasks.filter((t) => t.status === 'todo' && t.kind !== 'plan' && depsDone(t));
   const pendingRoles = new Set(tasks.filter((t) => ['todo', 'backlog'].includes(t.status)).map((t) => t.role));
