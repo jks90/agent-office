@@ -10,7 +10,7 @@ export async function available() {
   return getApiKey('openai') ? { ok: true, detail: MODEL } : { ok: false, reason: 'sin clave de OpenAI (OPENAI_API_KEY o la clave de Codex)' };
 }
 
-export async function transcribe(buffer, mime, lang) {
+export async function transcribe(buffer, mime, lang, { prompt = '' } = {}) {
   const key = getApiKey('openai');
   const t0 = Date.now();
   const type = String(mime).split(';')[0];
@@ -18,6 +18,7 @@ export async function transcribe(buffer, mime, lang) {
   form.set('model', MODEL);
   if (lang && lang !== 'auto') form.set('language', String(lang).slice(0, 2));
   form.set('response_format', 'json');
+  if (prompt) form.set('prompt', String(prompt).slice(0, 800)); // vocabulario: nombres propios que debe escribir bien
   form.set('file', new Blob([buffer], { type }), 'audio.' + (/ogg/.test(type) ? 'ogg' : /mp4/.test(type) ? 'm4a' : /wav/.test(type) ? 'wav' : 'webm'));
   const r = await fetch(URL_, { method: 'POST', headers: { authorization: `Bearer ${key}` }, body: form, signal: AbortSignal.timeout(60_000) });
   const j = await r.json().catch(() => ({}));

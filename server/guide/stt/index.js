@@ -19,6 +19,18 @@ export async function status() {
   return { provider: current(), lang: store.get().settings.sttLang || 'es', providers: out };
 }
 
+// Vocabulario para el reconocedor (initial_prompt de Whisper / prompt de OpenAI): nombres propios que el modelo no conoce y
+// adivinaría por sonido. Sale del estado (proyectos, agentes, roles, skills) + palabras de la casa. ≤ 600 caracteres.
+const BASE_WORDS = ['AgentOffice', 'flow-test', 'FlowTest', 'flows', 'worktree', 'PO', 'QA', 'MCP', 'skill', 'skills', 'Coordi', 'backlog', 'commit', 'merge', 'endpoint', 'Docker', 'Kanban'];
+export function vocabulary(s = store.get()) {
+  const words = [...BASE_WORDS, ...s.projects.map((p) => p.name), ...s.agents.map((a) => a.name),
+    ...Object.values(s.roles || {}).map((r) => r.label).filter(Boolean), ...(s.settings.sttVocabulary || '').split(/[,\n]/)]
+    .map((w) => String(w).trim()).filter((w) => w.length > 1);
+  let out = '';
+  for (const w of [...new Set(words)]) { if ((out + ', ' + w).length > 600) break; out = out ? `${out}, ${w}` : w; }
+  return out;
+}
+
 // audio: Buffer. Devuelve {text, lang, ms, provider}.
 export async function transcribe(audio, mime = 'audio/webm', lang) {
   if (!audio?.length) throw fail(400, 'Audio vacío');
@@ -27,6 +39,6 @@ export async function transcribe(audio, mime = 'audio/webm', lang) {
   const a = await PROVIDERS[name].available();
   if (!a.ok) throw fail(503, `STT «${name}» no disponible: ${a.reason}`);
   const t0 = Date.now();
-  const r = await PROVIDERS[name].transcribe(audio, String(mime || 'audio/webm'), String(lang || store.get().settings.sttLang || 'es'));
+  const r = await PROVIDERS[name].transcribe(audio, String(mime || 'audio/webm'), String(lang || store.get().settings.sttLang || 'es'), { prompt: vocabulary() });
   return { text: String(r.text || '').trim(), lang: r.lang || lang || null, ms: r.ms ?? Date.now() - t0, provider: name };
 }
