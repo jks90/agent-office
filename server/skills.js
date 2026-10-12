@@ -96,7 +96,14 @@ export function centralize(dir, name) {
 }
 export function uncentralize(name) {
   const link = path.join(skillsDir(), String(name).replace(/[^a-z0-9_-]+/gi, '-'));
-  try { if (fs.lstatSync(link).isSymbolicLink()) fs.unlinkSync(link); else throw new Error('no es un enlace'); } catch (e) { throw Object.assign(new Error(`No pude quitar «${name}» del catálogo: ${e.message}`), { status: 400 }); }
+  try {
+    if (fs.lstatSync(link).isSymbolicLink()) fs.unlinkSync(link);
+    else { // carpeta real (vino del marketplace o de «Nueva skill»): no se borra, va a la papelera del catálogo
+      const trash = path.join(catalogDir(), '.papelera', 'skills');
+      fs.mkdirSync(trash, { recursive: true });
+      fs.renameSync(link, path.join(trash, `${path.basename(link)}-${new Date().toISOString().replace(/[:.]/g, '-')}`));
+    }
+  } catch (e) { throw Object.assign(new Error(`No pude quitar «${name}» del catálogo: ${e.message}`), { status: 400 }); }
 }
 
 // Leer / escribir el SKILL.md de una skill (del catálogo o del inventario; solo bajo $HOME) y crear skills en el catálogo.

@@ -22,7 +22,8 @@ import * as boards from './boards/index.js';
 import * as skills from './skills.js';
 import { draftTask } from './ai-draft.js';
 import crypto2 from 'node:crypto';
-import { saveRole, deleteRole } from './roles.js';
+import { saveRole, deleteRole, setRoleTools } from './roles.js';
+import * as toolkit from './toolkit.js'; // 🧰 uso de herramientas y avisos
 import { ladders, normalizeLadder } from './model-ladder.js'; // FT-60
 import * as activity from './events.js';
 import * as browserPanel from './browser/panel.js'; // FT-117
@@ -243,6 +244,8 @@ const routes = [
   ['POST', /^\/api\/tools\/scripts$/, (_, b) => toolcat.addScript(b)],
   ['DELETE', /^\/api\/tools\/scripts\/([\w.-]+)$/, ([n]) => toolcat.removeScript(n)],
   ['DELETE', /^\/api\/skills\/([\w-]+)$/, ([name]) => skills.uncentralize(name)],
+  ['GET', /^\/api\/tools\/usage$/, () => { const st = store.get(); return { usage: toolkit.usage(st.tasks), warnings: toolkit.warnings({ roles: allRoles(), agents: st.agents }) }; }], // 🧰
+  ['POST', /^\/api\/roles\/([\w-]+)\/tools$/, ([id], b) => { const r = setRoleTools(id, b.kind, b.names); store.changed(); return r; }], // 🧰
   ['POST', /^\/api\/roles$/, (_, b) => { const r = saveRole(b); store.changed(); return r; }],
   ['DELETE', /^\/api\/roles\/([\w-]+)$/, ([id]) => { deleteRole(id); store.changed(); }],
   // Tableros online por proyecto

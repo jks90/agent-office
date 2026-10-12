@@ -807,3 +807,28 @@ dialog.rlog pre { max-height: 55vh; white-space: pre-wrap; word-break: break-wor
 .who-chip.human { border-color: #c084fc88; background: #c084fc22; color: #e9d5ff; cursor: default; }
 .human-badge { display: inline-block; font-weight: 600; padding: 1px 8px; border-radius: 99px; border: 1px solid #c084fc88; background: #c084fc22; color: #e9d5ff; }
 #mine-filter.on { background: #c084fc33; border-color: #c084fc; color: #e9d5ff; }
+
+/* 🧰 Herramientas: intro, avisos, subpestañas y cifras de uso */
+.tools-intro h2 { margin: 0 0 4px; font-size: 20px; }
+.tools-intro p { margin: 0 0 12px; max-width: 980px; line-height: 1.5; }
+.tools-warn { border: 1px solid color-mix(in srgb, #f59e0b 50%, var(--line)); background: rgba(245,158,11,.07); border-radius: var(--r-lg); padding: 10px 14px; margin: 0 0 12px; font-size: 13px; }
+.tools-warn ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+.subtabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); margin: 4px 0 12px; }
+.subtabs button { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); padding: 8px 12px; font-weight: 600; cursor: pointer; border-radius: 0; }
+.subtabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+.tool-stats { font-size: 11px; color: #b8f4d8; white-space: nowrap; }
+.tool-stats.low { color: #fcd48a; }
+.tool-stats.muted { color: var(--muted); }
+/* Tarjetas del catálogo en 🧰 Herramientas: catálogo a lo ancho y el inventario debajo */
+#view-tools .skills-wrap { grid-template-columns: 1fr; }
+#view-tools .skills-box { max-height: none; }
+.tool-card { border: 1px solid var(--line); border-radius: var(--r-lg); padding: 10px 12px; margin: 8px 0; background: rgba(255,255,255,.02); display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+.tool-card .tc-head { display: flex; align-items: center; gap: 10px; }
+.tool-card .tc-head .nm { font-size: 14px; }
+.tool-card .tc-actions { margin-left: auto; display: flex; gap: 6px; }
+.tool-card .tc-desc { color: var(--muted); line-height: 1.45; }
+.tool-card .tc-users { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tool-card .tc-users .tool-users { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.tool-card .tc-users .tool-assign { width: auto; min-width: 150px; padding: 3px 8px; font-size: 12px; }
+.tool-card .tc-foot { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.tool-card .tc-where { font-size: 11px; }

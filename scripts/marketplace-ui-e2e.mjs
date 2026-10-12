@@ -119,9 +119,8 @@ try {
   await page.waitForSelector('#mp-list [data-mp-pub^="role:"]');
   assert(!(await page.$('#view-agents #roles')) && !(await page.$('#view-agents #bench')));
   ok('UI: 🔒 Privado lista los roles como tarjetas del marketplace (y ya no están en Agentes)');
-  await click('[data-tab="agents"]');
+  await click('[data-tab="tools"]'); // las skills viven en 🧰 Herramientas
   await page.waitForSelector('[data-mp-pub^="skill:"]');
-  assert(await page.$('[data-mp-pub^="agent:"]'));
   await click('[data-mp-pub="skill:mia"]');
   await dlgOpen();
   await page.waitForFunction(() => /SKILL\.md/.test(document.querySelector('#mp-prev')?.textContent || ''));
@@ -132,6 +131,10 @@ try {
   assert.equal(posted.at(-1).scope, 'public'); assert.equal(posted.at(-1).package.name, 'mia');
   ok('UI: ⬆ Publicar skill con previsualización y ámbito público');
 
+  await click('[data-tab="agents"]'); // la plantilla es un organigrama: «Publicar» está en la tarjeta desplegada
+  await page.waitForSelector('#team button.org-card');
+  await click('#team button.org-card');
+  await page.waitForSelector('[data-mp-pub^="agent:"]');
   const agentBtn = await page.$eval('[data-mp-pub^="agent:"]', (e) => e.dataset.mpPub);
   await click(`[data-mp-pub="${agentBtn}"]`);
   await dlgOpen();

@@ -34,6 +34,7 @@ import * as compact from './compact.js';
 import * as stuck from './stuck.js';
 import * as review from './review.js'; // FT-56
 import * as toolcat from './toolcatalog.js';
+import * as toolkit from './toolkit.js'; // 🧰 skills + MCP + scripts del agente: prompt «úsalas primero» y rastreo de uso
 import * as coord from './coordinator.js';
 import * as sup from './supervisor.js'; // FT-122
 import * as ladder from './model-ladder.js';
@@ -382,6 +383,7 @@ export function updateAgent(id, patch) {
   if (typeof patch.ponytail === 'boolean') a.ponytail = patch.ponytail; // FT-86
   if (Array.isArray(patch.mcps)) a.mcps = [...new Set(patch.mcps.map(String).filter(Boolean))].slice(0, 30); // MCP del catálogo (toolcatalog.js)
   if (Array.isArray(patch.scripts)) a.scripts = [...new Set(patch.scripts.map(String).filter(Boolean))].slice(0, 50);
+  if (Array.isArray(patch.skills)) a.skills = [...new Set(patch.skills.map(String).filter(Boolean))].slice(0, 30); // 🧰 skills del catálogo además de las del rol
   changed();
   return a;
 }
@@ -808,10 +810,8 @@ export async function reReview(id) {
 }
 
 // MCP y scripts del catálogo que lleva el agente (los suyos + los de su rol), para la parte estable del prompt.
-function toolsPromptBlock(agent) {
-  const role = roleOf(agent.role);
-  const mcps = toolcat.assignedMcps(agent, role), scripts = toolcat.resolveScripts(toolcat.assignedScripts(agent, role));
-  return (mcps.length ? `\nMCP que tienes además de los de serie: ${mcps.join(', ')} (úsalos solo si la tarea los necesita).\n` : '') + toolcat.scriptsPromptBlock(scripts);
+function toolsPromptBlock(agent, kit) {
+  return toolkit.promptBlock(kit || toolkit.kitOf(agent, roleOf(agent.role)));
 }
 
 // Al pasar a revisión automática, lo que ya esperaba revisión no se queda atascado: se revisa ahora (de una en una).
@@ -1564,7 +1564,7 @@ function worktreesBlock(p, t) {
   ].join('\n');
 }
 
-function buildPrompt(p, agent, t) {
+function buildPrompt(p, agent, t, kit = null) {
   if (t.kind === 'plan') {
     const roles = teamRoles(p);
     const repos = p.repos || [];
@@ -1601,7 +1601,7 @@ function buildPrompt(p, agent, t) {
     'Lo que dejes sin confirmar se confirmará solo al terminar.',
     (() => { const r = repoOfTask(p, t); return r?.path ? '\n' + briefingFor(r.path) + (t.codeIndexOn ? '\n' + codeindex.BRIEFING_LINE : '') + '\n' : ''; })(), // FT-58: aviso del índice de código
     get().settings.claudeMemory !== false ? memory.claudePromptBlock(repoOfTask(p, t)?.path) : '', // índice de la memoria de Claude Code del repo
-    toolsPromptBlock(agent), // MCP y scripts del catálogo asignados (agente + rol)
+    toolsPromptBlock(agent, kit), // 🧰 skills, MCP y scripts del catálogo (agente + rol), «úsalas primero»
     get().settings.agentMemory !== false ? memory.promptBlock(p.id, agent.id) : '', // FT-75: lecciones de tareas anteriores
     askRules(),
     economyBlock(t.codeIndexOn),
@@ -1668,6 +1668,7 @@ async function runTask(p, agent, t) {
   reflect(t, `▶ ${agent.name} (${roleOf(agent.role)?.label || agent.role}) empieza a trabajar en AgentOffice`);
 
   let engineId;
+  let nativeSkills = []; // 🧰 skills enlazadas en el worktree (Claude con repo); las demás van por ruta
   let agentError = false; // FT-60: el motor terminó con error (no un fallo de git/preparación)
   const resumingQuota = !!t.quotaPaused;
   const excludeEngine = t.quotaPaused && Date.now() < (t.quotaPaused.resetsAt || 0) && !t.quotaPaused.force ? t.quotaPaused.engine : null;
@@ -1726,7 +1727,7 @@ async function runTask(p, agent, t) {
           } catch (e) { log(agent.id, `⚠ No pude actualizar con ${x.repo.baseBranch}: ${e.message}`); }
         }
       } else log(agent.id, `🌿 Rama ${wt.branch} en el repo ${repo.key}`);
-      if (engineId === 'claude' && role.skills?.length) { const linked = linkSkillsInto(cwd, role.skills); if (linked.length) log(agent.id, `🧩 Skills: ${linked.join(', ')}`); }
+      if (engineId === 'claude' && t.kind !== 'plan') { const names = toolkit.skillsOf(agent, role).map((x) => x.name); if (names.length) { nativeSkills = linkSkillsInto(cwd, names); if (nativeSkills.length) log(agent.id, `🧩 Skills: ${nativeSkills.join(', ')}`); } }
     }
     if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true });
 
@@ -1740,7 +1741,10 @@ async function runTask(p, agent, t) {
     const model = pickedModel.model;
     let res;
     for (let seg = 0; ; seg++) {
-    const prompt = buildPrompt(p, agent, t) + (engineId === 'codex' && t.kind !== 'plan' && role.kind !== 'docs' ? CODEX_VISION : '');
+    const kit = toolkit.kitOf(agent, role, { nativeNames: nativeSkills }); // 🧰 lo que lleva en este intento
+    const kitUse = toolkit.tracker(kit);
+    if (kit.skills.some((x) => !x.native)) log(agent.id, `🧩 Skills por ruta: ${kit.skills.filter((x) => !x.native).map((x) => x.name).join(', ')}`);
+    const prompt = buildPrompt(p, agent, t, kit) + (engineId === 'codex' && t.kind !== 'plan' && role.kind !== 'docs' ? CODEX_VISION : '');
     t.pendingMessages = []; // ya van en el prompt
     const baseUsage = t.usage || null; // FT-26: consumo de intentos anteriores; t.usage es acumulado y se actualiza en vivo
     agent.usage = null; // sesión nueva
@@ -1783,17 +1787,17 @@ async function runTask(p, agent, t) {
     const mcpRes = toolcat.resolveMcps(toolcat.assignedMcps(agent, role));
     if (mcpRes.missing.length) log(agent.id, `⚠ MCP asignados que ya no existen en tu config: ${mcpRes.missing.join(', ')}`);
     const scriptList = toolcat.resolveScripts(toolcat.assignedScripts(agent, role));
-    const scriptDirs = [...new Set(scriptList.map((x) => path.dirname(x.path)))].filter((d) => !d.startsWith(cwd + path.sep) && !addDirs.includes(d));
+    const scriptDirs = toolkit.kitDirs(kit, cwd).filter((d) => !addDirs.includes(d)); // carpetas de scripts y de skills no enlazadas
     if (Object.keys(mcpRes.claude).length || mcpRes.codexKeep.length || scriptList.length) log(agent.id, `🔌 ${[...Object.keys(mcpRes.claude), ...mcpRes.codexKeep.filter((n) => !mcpRes.claude[n])].join(', ') || 'sin MCP extra'}${scriptList.length ? ` · 📜 ${scriptList.map((x) => x.name).join(', ')}` : ''}`);
     const job = await engine.start({ // FT-54: el motor local prueba el servidor antes de lanzar
       extraMcp: mcpRes.claude, codexMcp: mcpRes, extraBash: scriptList.flatMap((x) => [toolcat.runnerOf(x.path), x.path]),
-      onEvent: (e) => rec.feed(e),
+      onEvent: (e) => { rec.feed(e); kitUse.feed(e, engineId); },
       agent, task: t, project: p, cwd, mode: t.kind === 'plan' ? 'plan' : 'work', goal: t.goal, roles,
       prompt, addDirs: [...addDirs, ...scriptDirs],
       images: (t.feedbackImages || []).filter((f) => fs.existsSync(f)),
       system: role.system,
       model,
-      kind: role.kind, roleId: agent.role, roleTools: role.tools, hasSkills: !!role.skills?.length, // FT-59: herramientas acotadas por rol
+      kind: role.kind, roleId: agent.role, roleTools: role.tools, hasSkills: nativeSkills.length > 0, // FT-59: herramientas acotadas por rol
       // Reintento de la MISMA tarea en su worktree (<50 min o tras pausa por cuota) y solo con una sesión DEL MISMO motor (FT-57); en un relanzamiento por compactación (seg>0, FT-63) se empieza limpio.
       resumeSession: seg === 0 && t.reused && t.sessionId && (t.sessionEngine || 'claude') === engineId && (t.resumeAfterQuota || Date.now() - (t.sessionAt || 0) < 50 * 60_000) ? t.sessionId : null,
       maxTokens: Number(s.settings.maxTaskTokens) > 0 ? Number(s.settings.maxTaskTokens) : null, // FT-57: tope en tokens (Codex; por defecto el equivalente a budgetUsd)
@@ -1827,6 +1831,7 @@ async function runTask(p, agent, t) {
     Object.assign(entry, { stop: job.stop, engine: engineId, pid: job.pid, pause: job.pause, resume: job.resume, message: job.message });
     res = await job.done;
     rec.finish(); // FT-76
+    toolkit.record(t, kit, kitUse.used); // 🧰 qué se le dio y qué usó (acumulado entre intentos)
     if (res.costUsd == null && agent.usage?.costEstimated) { res.costUsd = agent.usage.costUsd; t.costEstimated = true; } // coste ≈ de este segmento (Codex)
     if (!cmp.asked || res.budgetHit || !(res.ok || cmp.cut && res.stopped)) break;
     const notesPath = path.join(cwd, compact.NOTES_FILE);

@@ -852,6 +852,17 @@ Desde FT-122 todo proyecto (también los descubiertos en el workspace) lleva a C
 
 **FT-163:** `computeFloors()` (`public/office3d.js`) usaba otro criterio que `teamProjects()` y dibujaba una planta para proyectos que solo tenían a Coordi (p. ej. «Vacío»). Ahora aplica el mismo: una planta exige al menos un agente que no sea `supervisor`. `scripts/building-e2e.mjs` vuelve a estar en verde (Beta también se vacía de Coordi de serie en el fixture y la navegación admite 120 s con la máquina cargada).
 
+### 🧰 Herramientas de los agentes (skills, MCP y scripts)
+
+Pestaña propia en la barra lateral (antes estaban al final de Agentes), con subpestañas **Skills · MCP · Scripts**. Cada herramienta del catálogo es una tarjeta con su descripción, **quién la usa** (roles —con el nº de agentes— y agentes sueltos, con ＋ rol… / ＋ agente… y ✕ para quitar) y sus **cifras de uso**. Arriba, los **avisos** de lo que se declara y no le llega a nadie (script fuera del catálogo, rol con herramientas y sin agentes…), con el contador en la barra lateral.
+
+- **Llegan siempre** (`server/toolkit.js`): skills del rol + de la ficha del agente (`agent.skills`, nuevo). Con Claude y repo se enlazan en el worktree (herramienta Skill); con Codex, sin repo o si no se pudo enlazar, el prompt dice «lee `<ruta>/SKILL.md`» y su carpeta va por `--add-dir`.
+- **Prompt «úsalas PRIMERO»**: bloque estable (caché) con cada skill (cuándo usarla y cómo), MCP y script (comando + qué hace), y la regla de usarlas antes de improvisar.
+- **Uso medido**: cada tarea guarda `toolkit {given, used}` (skills por la herramienta Skill o leyendo su carpeta; MCP por sus llamadas; scripts por los comandos de Bash que los nombran, también en Codex). `GET /api/tools/usage` da por herramienta tareas que la tenían / que la usaron / usos y el **coste medio con/sin** (tareas hechas del mismo rol).
+- **Asignar a un rol** desde aquí: `POST /api/roles/:id/tools {kind, names}` cambia solo esa línea del `.md` (solo roles del catálogo). Quitar del catálogo una skill que es carpeta real la mueve a `_agentes/.papelera/skills/`.
+- Fix: editar un rol sin haber abierto antes la lista de skills le quitaba sus skills al guardar.
+- Pruebas: `tests/toolkit.test.mjs`, `scripts/tools-catalog-e2e.mjs`.
+
 ### Plantilla como organigrama
 
 Agentes ▸ Plantilla del proyecto se pinta como un organigrama (`renderTeam` en `public/app.js`, estilos `.org*`): **👤 Tú** (tareas por revisar y asignadas a ti) → **Coordinador** (`kind: supervisor`) → **PO** (`planner`) y **Release** (`release`) → **una columna por rol** (dev, luego QA, luego docs y el resto) colgando del primer PO; sin PO cuelgan del nivel de encima y sin Coordi el PO cuelga de ti. Tarjetas compactas (avatar, nombre, estado y tarea en curso); un clic despliega la tarjeta completa de siempre (Registro, Editar, Publicar, Banquillo) y ▴ la pliega. Si no cabe, scroll horizontal dentro de la plantilla. Prueba: `node scripts/org-chart-e2e.mjs`.

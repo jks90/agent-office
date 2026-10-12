@@ -120,7 +120,7 @@ try {
   const allowed = rc.args.slice(rc.args.indexOf('--allowedTools') + 1);
   check('mcp__ de los asignados en las herramientas permitidas', allowed.includes('mcp__demo-mcp') && allowed.includes('mcp__de-proyecto'), allowed.join(' ').slice(0, 300));
   check('el script en la lista blanca (Bash(node <ruta>:*))', allowed.includes(`Bash(node ${inv.path}:*)`));
-  check('el prompt lista el script y los MCP', /Scripts del equipo/.test(rc.prompt) && rc.prompt.includes(`node ${inv.path}`) && /MCP que tienes además/.test(rc.prompt));
+  check('el prompt lista el script y los MCP', /Scripts del equipo/.test(rc.prompt) && rc.prompt.includes(`node ${inv.path}`) && /úsalas PRIMERO/.test(rc.prompt) && /### MCP/.test(rc.prompt) && rc.prompt.includes('**demo-mcp**'));
   const addDirs = rc.args.flatMap((x, i) => (rc.args[i - 1] === '--add-dir' ? [x] : []));
   check('la carpeta del script va en --add-dir', rc.args.includes(path.join(repo, 'scripts')), JSON.stringify(addDirs));
 

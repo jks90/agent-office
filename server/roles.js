@@ -125,7 +125,7 @@ export function saveRole({ id, description = '', kind = 'dev', model = '', minMo
   if (!system.trim()) throw Object.assign(new Error('El rol necesita un prompt de sistema'), { status: 400 });
   ensureCatalog();
   const target = file && file.startsWith(rolesDir()) ? file : path.join(rolesDir(), `${rid}.md`);
-  const fm = [`name: ${rid}`, `description: ${String(description).replace(/\n/g, ' ').trim()}`, `kind: ${['planner', 'dev', 'qa', 'docs'].includes(kind) ? kind : 'dev'}`];
+  const fm = [`name: ${rid}`, `description: ${String(description).replace(/\n/g, ' ').trim()}`, `kind: ${['planner', 'dev', 'qa', 'docs', 'supervisor', 'release'].includes(kind) ? kind : 'dev'}`];
   if (model) fm.push(`model: ${model}`);
   if (minModel) fm.push(`minModel: ${minModel}`); // FT-60: peldaño mínimo de la cascada de modelos
   if (handles.length) fm.push(`handles: ${handles.join(', ')}`);
@@ -134,6 +134,21 @@ export function saveRole({ id, description = '', kind = 'dev', model = '', minMo
   if (scripts.length) fm.push(`scripts: ${scripts.join(', ')}`);
   fs.writeFileSync(target, `---\n${fm.join('\n')}\n---\n\n${system.trim()}\n`);
   return allRoles()[rid];
+}
+// 🧰 Asignar herramientas a un rol desde la pestaña Herramientas: cambia SOLO la línea `skills:` / `mcps:` / `scripts:` del
+// frontmatter (el resto del fichero —tools, model, prompt…— queda igual). Solo roles del catálogo (los de un repo son del repo).
+export function setRoleTools(id, key, names) {
+  if (!['skills', 'mcps', 'scripts'].includes(key)) throw Object.assign(new Error('Tipo de herramienta no válido'), { status: 400 });
+  const r = allRoles()[id];
+  if (!r?.custom || !r.file?.startsWith(rolesDir())) throw Object.assign(new Error('Solo se editan roles del catálogo (los de serie y los de un repo no)'), { status: 400 });
+  const text = fs.readFileSync(r.file, 'utf8');
+  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!m) throw Object.assign(new Error('El rol no tiene frontmatter'), { status: 400 });
+  const list = [...new Set((names || []).map(String).map((x) => x.trim()).filter(Boolean))];
+  let fm = m[1].split(/\r?\n/).filter((l) => !new RegExp(`^${key}:`).test(l));
+  if (list.length) fm.push(`${key}: ${list.join(', ')}`);
+  fs.writeFileSync(r.file, text.replace(m[0], `---\n${fm.join('\n')}\n---`));
+  return allRoles()[id];
 }
 export function deleteRole(id) {
   const r = allRoles()[id];

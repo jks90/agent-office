@@ -1057,7 +1057,7 @@ $('#view-browser').addEventListener('click', (e) => {
   else if (t.dataset.brhand) brCall('control', { mode: 'user' });
 });
 const VIEW_PARAM = new URLSearchParams(location.search).get('view'); // ?view=guide (botón «Guía» de flow-test, FT-3)
-let activeTab = ['office', 'tasks', 'agents', 'guide', 'browser', 'marketplace'].includes(VIEW_PARAM) ? VIEW_PARAM : safeGet('ao:tab') || 'office';
+let activeTab = ['office', 'tasks', 'agents', 'tools', 'guide', 'browser', 'marketplace'].includes(VIEW_PARAM) ? VIEW_PARAM : safeGet('ao:tab') || 'office';
 function showTab(tab) {
   const prev = activeTab;
   activeTab = tab;
@@ -1068,7 +1068,8 @@ function showTab(tab) {
     requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
     if (prev !== 'office' && officeInit) applyOfficeDefault(); // al entrar en la pestaña: edificio, planta recordada o la única (FT-47)
   }
-  if (tab === 'agents') setTimeout(() => { renderSkills(); renderClaudeMemory(); renderTools(); }); // diferido: al arrancar en esta vista su estado (toolsData…) aún no está declarado
+  if (tab === 'agents') setTimeout(() => renderClaudeMemory()); // diferido: al arrancar en esta vista su estado aún no está declarado
+  if (tab === 'tools') setTimeout(() => renderToolsView()); // 🧰 skills, MCP y scripts (diferido por lo mismo)
   if (tab === 'marketplace') setTimeout(renderMarketplace); // FT-142 (diferido: su estado se declara al final)
   if (tab === 'inbox') setTimeout(renderInbox); // al arrancar con «Para ti» guardada, su código aún no está definido: después de cargar
   if (tab === 'browser') brShow(); else brHide();
@@ -1319,7 +1320,7 @@ async function renderSkills(reload = false) {
   const groups = {};
   for (const s of inventory) (groups[s.sourceLabel] = groups[s.sourceLabel] || []).push(s);
   el.innerHTML = `<div class="skills-wrap">
-    <div class="skills-box"><h4>Catálogo central (lo que pueden usar los roles)</h4>${catalog.length ? catalog.map((s) => `<div class="skill"><span class="nm">${esc(s.name)}</span><span class="ds" title="${esc(s.description)}">${esc(s.description)}</span><span class="src" title="${esc(s.target)}">${s.broken ? '⚠ roto' : '→ ' + esc(short(s.target))}</span><button class="small ghost" data-skill-edit="${esc(s.target)}" title="Editar SKILL.md">✎</button><button class="small ghost" data-mp-pub="skill:${esc(s.name)}" title="Publicar en el marketplace (FT-142)">⬆ Publicar</button><button class="small danger" data-skill-del="${esc(s.name)}" title="Quitar del catálogo (no borra la skill)">✕</button></div>`).join('') : '<p class="muted">Vacío. Añade skills desde el inventario →</p>'}</div>
+    <div class="skills-box"><h4>Catálogo central (lo que pueden usar los roles)</h4>${catalog.length ? catalog.map((s) => toolCard({ kind: 'skills', name: esc(s.name), title: s.name, desc: esc(s.description), where: s.broken ? '⚠ enlace roto' : '→ ' + esc(short(s.target)), actions: `<button class="small ghost" data-skill-edit="${esc(s.target)}" title="Editar SKILL.md">✎ Editar</button><button class="small ghost" data-mp-pub="skill:${esc(s.name)}" title="Publicar en el marketplace (FT-142)">⬆ Publicar</button><button class="small danger" data-skill-del="${esc(s.name)}" title="Quitar del catálogo (no borra la skill)">✕</button>` })).join('') : '<p class="muted">Vacío. Añade skills desde el inventario →</p>'}</div>
     <div class="skills-box"><h4>Inventario del PC</h4>${Object.entries(groups).map(([g, list]) => `<div class="muted skill-group ${collapsed['skills:' + g] === false ? '' : 'collapsed'}" data-group="${esc(g)}" style="margin:8px 0 4px;font-weight:600">${esc(g)} <span class="muted">(${list.length}${list.filter((s) => s.central).length ? ` · ${list.filter((s) => s.central).length} en catálogo` : ''})</span></div><div class="grp-items">${list.map((s) => `<div class="skill" data-group="${esc(g)}"><span class="nm">${esc(s.name)}</span><span class="ds" title="${esc(s.description)}">${esc(s.description)}</span><button class="small ghost" data-skill-edit="${esc(s.dir)}" title="Editar SKILL.md">✎</button>${s.central ? `<span class="src">✓ en catálogo${s.central !== s.name ? ' como ' + esc(s.central) : ''}</span>` : `<button class="small ghost" data-skill-add="${esc(s.dir)}" title="${esc(s.dir)}">→ Catálogo</button>`}</div>`).join('')}</div>`).join('')}</div>
   </div>`;
 }
@@ -1376,13 +1377,16 @@ function confirmRisky(next, prev = []) {
   const added = next.filter((n) => RISKY.test(n) && !(prev || []).includes(n));
   return !added.length || confirm(`⚠ ${added.join(', ')} puede hacer acciones con coste o tocar producción (comprar, renovar, desplegar…). Los agentes lo usarán sin preguntarte.\n\n¿Dárselo de todos modos?`);
 }
-function toolSelects(o, role = null) {
+function toolSelects(o, role = null, withSkills = false) {
   const mc = toolsData?.mcp?.catalog || [], sc = toolsData?.scripts?.catalog || [];
   const viaRole = (k) => (role?.[k] || []).length ? ` <span class="muted">(su rol ya trae: ${role[k].map(esc).join(', ')})</span>` : '';
-  return `<label>🔌 MCP del catálogo${viaRole('mcps')}</label>
-    ${checkList('mcps', mc.map((m) => ({ value: m.name, label: (RISKY.test(m.name) ? '⚠ ' : '') + m.name, desc: m.description })), o.mcps, 'catálogo vacío: añade MCP en Agentes ▸ 🔌 MCP')}
+  const sk = (skillsData?.catalog || []).filter((x) => !x.broken);
+  return `${withSkills ? `<label>🧩 Skills del catálogo (además de las de su rol)${viaRole('skills')}</label>
+    ${checkList('skills', sk.map((x) => ({ value: x.name, label: x.name, desc: x.description })), o.skills, 'catálogo vacío: añade skills en 🧰 Herramientas')}` : ''}
+    <label>🔌 MCP del catálogo${viaRole('mcps')}</label>
+    ${checkList('mcps', mc.map((m) => ({ value: m.name, label: (RISKY.test(m.name) ? '⚠ ' : '') + m.name, desc: m.description })), o.mcps, 'catálogo vacío: añade MCP en 🧰 Herramientas ▸ MCP')}
     <label>📜 Scripts del catálogo${viaRole('scripts')}</label>
-    ${checkList('scripts', sc.map((x) => ({ value: x.name, label: x.name, desc: x.description })), o.scripts, 'catálogo vacío: añade scripts en Agentes ▸ 📜 Scripts')}`;
+    ${checkList('scripts', sc.map((x) => ({ value: x.name, label: x.name, desc: x.description })), o.scripts, 'catálogo vacío: añade scripts en 🧰 Herramientas ▸ Scripts')}`;
 }
 // Lista de casillas (en vez de <select multiple> con Ctrl+clic): nombre en negrita y descripción completa en el title.
 function checkList(name, items, selected = [], empty = '', cls = '') {
@@ -1391,15 +1395,79 @@ function checkList(name, items, selected = [], empty = '', cls = '') {
 }
 // Valores marcados de un campo múltiple del formulario (casillas o <select multiple>).
 const pickedIn = (form, n) => [...form.querySelectorAll(`[name="${n}"]`)].flatMap((el) => el.tagName === 'SELECT' ? [...el.selectedOptions].map((o) => o.value) : el.checked ? [el.value] : []);
-// Quién lo usa: agentes que lo tienen asignado + roles que lo declaran.
-const usersOf = (kind, name) => ({ agents: S.agents.filter((a) => (a[kind] || []).includes(name)), roles: Object.entries(S.roles).filter(([, r]) => (r[kind] || []).includes(name)).map(([id, r]) => ({ id, label: r.label })) });
+// Quién lo usa: agentes que lo tienen asignado + roles que lo declaran. Los roles del catálogo se asignan/quitan aquí mismo
+// (POST /api/roles/:id/tools cambia solo esa línea de su .md); los de serie o de un repo se ven pero no se tocan desde aquí.
+const usersOf = (kind, name) => ({ agents: S.agents.filter((a) => (a[kind] || []).includes(name)), roles: Object.entries(S.roles).filter(([, r]) => (r[kind] || []).includes(name)).map(([id, r]) => ({ id, label: r.label || id, editable: r.source === 'catálogo' })) });
+const roleUsers = (id) => S.agents.filter((a) => a.role === id).length;
+let toolsUsage = null; // GET /api/tools/usage: { usage:{skills,mcps,scripts}, warnings }
+const usdT = (n) => (n == null ? '—' : `${n.toFixed(2)} $`);
+function usageStats(kind, name) {
+  const u = toolsUsage?.usage?.[kind]?.[name];
+  if (!u || !u.given) return '<span class="tool-stats muted">sin datos de uso todavía</span>';
+  const pct = Math.round((u.used / u.given) * 100);
+  const cmp = u.avgWith != null && u.avgWithout != null ? ` · coste medio <b>${usdT(u.avgWith)}</b> con / ${usdT(u.avgWithout)} sin (${u.nWith}/${u.nWithout} tareas)` : '';
+  return `<span class="tool-stats ${pct < 30 ? 'low' : ''}" title="Tareas que la tenían · tareas que la usaron · veces que se usó">usada en ${u.used}/${u.given} tareas (${pct} %) · ${u.uses} usos${cmp}</span>`;
+}
 function usageCell(kind, name) {
   const u = usersOf(kind, name);
-  const chips = u.agents.map((a) => `<span class="tool-chip">${esc(a.name)}<button class="linklike" data-tool-unassign="${kind}:${esc(name)}:${a.id}" title="Quitárselo a ${esc(a.name)}">✕</button></span>`).join('')
-    + u.roles.map((r) => `<span class="tool-chip role" title="Lo declara el rol (editor de rol)">rol ${esc(r.label)}</span>`).join('');
+  const chips = u.roles.map((r) => `<span class="tool-chip role" title="${r.editable ? 'Lo lleva el rol (todos sus agentes)' : 'Rol de serie o de un repo: se cambia en su fichero'}">rol ${esc(r.label)} <span class="muted">(${roleUsers(r.id)})</span>${r.editable ? `<button class="linklike" data-role-tool-del="${kind}:${esc(name)}:${esc(r.id)}" title="Quitárselo al rol ${esc(r.label)}">✕</button>` : ''}</span>`).join('')
+    + u.agents.map((a) => `<span class="tool-chip">${esc(a.name)}<button class="linklike" data-tool-unassign="${kind}:${esc(name)}:${a.id}" title="Quitárselo a ${esc(a.name)}">✕</button></span>`).join('');
+  const roleOpts = Object.entries(S.roles).filter(([id, r]) => r.source === 'catálogo' && !(r[kind] || []).includes(name)).sort((x, y) => String(x[1].label || x[0]).localeCompare(String(y[1].label || y[0])));
   const options = S.agents.filter((a) => !(a[kind] || []).includes(name)).sort((x, y) => x.name.localeCompare(y.name));
-  return `<span class="tool-users">${chips || '<span class="muted">nadie</span>'}</span><select class="tool-assign" data-tool-assign="${kind}:${esc(name)}"><option value="">＋ agente…</option>${options.map((a) => `<option value="${a.id}">${esc(a.name)} · ${esc(S.roles[a.role]?.label || a.role)}</option>`).join('')}</select>`;
+  return `<span class="tool-users">${chips || '<span class="muted">nadie</span>'}</span>
+    <select class="tool-assign" data-role-tool-add="${kind}:${esc(name)}"><option value="">＋ rol…</option>${roleOpts.map(([id, r]) => `<option value="${esc(id)}">${esc(r.label || id)} (${roleUsers(id)} agentes)</option>`).join('')}</select>
+    <select class="tool-assign" data-tool-assign="${kind}:${esc(name)}"><option value="">＋ agente…</option>${options.map((a) => `<option value="${a.id}">${esc(a.name)} · ${esc(S.roles[a.role]?.label || a.role)}</option>`).join('')}</select>`;
 }
+async function setRoleTool(kind, name, roleId, on) {
+  const r = S.roles[roleId];
+  if (!r) return;
+  const next = on ? [...new Set([...(r[kind] || []), name])] : (r[kind] || []).filter((n) => n !== name);
+  if (on && kind === 'mcps' && !confirmRisky(next, r.mcps)) { renderToolsView(); return; }
+  await api('POST', `/api/roles/${roleId}/tools`, { kind, names: next });
+  toast(on ? `${name} → rol ${r.label || roleId}` : `${name} ya no es del rol ${r.label || roleId}`);
+  setTimeout(() => renderToolsView(), 300);
+}
+document.addEventListener('change', (e) => {
+  const s = e.target.closest?.('[data-role-tool-add]');
+  if (!s || !s.value) return;
+  const [kind, ...rest] = s.dataset.roleToolAdd.split(':');
+  setRoleTool(kind, rest.join(':'), s.value, true).catch(() => {});
+});
+document.addEventListener('click', (e) => {
+  const b = e.target.closest?.('[data-role-tool-del]');
+  if (!b) return;
+  const [kind, name, roleId] = b.dataset.roleToolDel.split(':');
+  if (confirm(`¿Quitar «${name}» del rol ${S.roles[roleId]?.label || roleId}? Sus agentes dejarán de tenerla.`)) setRoleTool(kind, name, roleId, false).catch(() => {});
+});
+// 🧰 Pestaña Herramientas: subpestañas (Skills · MCP · Scripts), avisos y cifras de uso.
+const TOOL_KIND_LABEL = { skills: 'skill', mcps: 'MCP', scripts: 'script', rol: 'rol' };
+async function renderToolsView(reload = false) {
+  try { toolsUsage = await api('GET', '/api/tools/usage'); } catch { toolsUsage = null; }
+  const w = toolsUsage?.warnings || [];
+  const badge = $('#tab-tools-warn'); if (badge) badge.textContent = w.length ? String(w.length) : '';
+  const box = $('#tools-warnings');
+  if (box) box.innerHTML = w.length ? `<div class="tools-warn"><b>⚠ ${w.length} cosa${w.length === 1 ? '' : 's'} que no le llega${w.length === 1 ? '' : 'n'} a nadie</b><ul>${w.map((x) => `<li>${esc(x.owner)} · ${esc(TOOL_KIND_LABEL[x.kind] || x.kind)} <b>${esc(x.name)}</b>: ${esc(x.why)}</li>`).join('')}</ul></div>` : '';
+  const tab = safeGet('ao:toolsTab') || 'skills';
+  document.querySelectorAll('[data-tools-tab]').forEach((b) => b.classList.toggle('active', b.dataset.toolsTab === tab));
+  document.querySelectorAll('[data-tools-pane]').forEach((p) => { p.hidden = p.dataset.toolsPane !== tab; });
+  await Promise.all([renderSkills(reload), renderTools(reload)]);
+  const n = (k, v) => { const el = $('#tools-n-' + k); if (el) el.textContent = v; };
+  n('skills', skillsData ? `(${skillsData.catalog.length})` : ''); n('mcps', toolsData ? `(${toolsData.mcp.catalog.length})` : ''); n('scripts', toolsData ? `(${toolsData.scripts.catalog.length})` : '');
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest?.('[data-tools-tab]');
+  if (!b) return;
+  safeSet('ao:toolsTab', b.dataset.toolsTab);
+  document.querySelectorAll('[data-tools-tab]').forEach((x) => x.classList.toggle('active', x === b));
+  document.querySelectorAll('[data-tools-pane]').forEach((p) => { p.hidden = p.dataset.toolsPane !== b.dataset.toolsTab; });
+});
+// 🧰 Tarjeta de una herramienta del catálogo: nombre y descripción · quién la usa (roles y agentes, con asignar/quitar) · cifras y acciones.
+const toolCard = ({ kind, name, title = '', desc = '', where = '', actions = '' }) => `<div class="tool-card">
+  <div class="tc-head"><b class="nm" title="${esc(title)}">${name}</b><span class="tc-actions">${actions}</span></div>
+  ${desc ? `<div class="tc-desc">${desc}</div>` : ''}
+  <div class="tc-users">${usageCell(kind, title || name)}</div>
+  <div class="tc-foot">${usageStats(kind, title || name)}${where ? `<span class="muted tc-where">${where}</span>` : ''}</div>
+</div>`;
 async function renderTools(reload = false) {
   const em = $('#mcps'), es = $('#scripts');
   if (!em || !es) return;
@@ -1407,14 +1475,14 @@ async function renderTools(reload = false) {
   const { mcp, scripts } = toolsData;
   $('#mcps-summary').textContent = `${mcp.catalog.length} en el catálogo · ${mcp.inventory.length} en el PC (Claude Code y Codex)`;
   em.innerHTML = `<div class="skills-wrap">
-    <div class="skills-box"><h4>Catálogo (lo que puedes dar a los agentes)</h4>${mcp.catalog.map((m) => { const inv = mcp.inventory.find((x) => x.name === m.name); return `<div class="skill tool-row"><span class="nm">${inv?.risky ? '⚠ ' : ''}${esc(m.name)}</span><span class="ds" title="${esc(inv?.summary || '')}">${esc(m.description || inv?.summary || '')}${inv ? '' : ' <b class="bad">(ya no está en tu config)</b>'}</span>${usageCell('mcps', m.name)}<button class="small danger" data-mcp-del="${esc(m.name)}" title="Quitar del catálogo (no toca tu config)">✕</button></div>`; }).join('') || '<p class="muted">Vacío. Añade MCP desde el inventario →</p>'}</div>
+    <div class="skills-box"><h4>Catálogo (lo que puedes dar a los agentes)</h4>${mcp.catalog.map((m) => { const inv = mcp.inventory.find((x) => x.name === m.name); return toolCard({ kind: 'mcps', name: `${inv?.risky ? '⚠ ' : ''}${esc(m.name)}`, title: m.name, desc: `${esc(m.description || inv?.summary || '')}${inv ? '' : ' <b class="bad">(ya no está en tu config)</b>'}`, where: inv ? esc(inv.sources.join(' + ')) : '', actions: `<button class="small danger" data-mcp-del="${esc(m.name)}" title="Quitar del catálogo (no toca tu config)">✕</button>` }); }).join('') || '<p class="muted">Vacío. Añade MCP desde el inventario →</p>'}</div>
     <div class="skills-box"><h4>En este PC</h4>${mcp.inventory.map((m) => `<div class="skill"><span class="nm">${m.risky ? '⚠ ' : ''}${esc(m.name)}</span><span class="ds" title="${esc(m.summary)}">${esc(m.type)} · ${esc(m.sources.join(' + '))}</span>${m.central ? '<span class="src">✓ en catálogo</span>' : `<button class="small ghost" data-mcp-add="${esc(m.name)}">→ Catálogo</button>`}</div>`).join('') || '<p class="muted">No encuentro MCP en ~/.claude.json ni en ~/.codex/config.toml</p>'}</div>
   </div>`;
   $('#scripts-summary').textContent = `${scripts.catalog.length} en el catálogo · ${scripts.inventory.length} en las carpetas scripts/ de tus repos`;
   const groups = {};
   for (const s of scripts.inventory) (groups[s.group] ||= []).push(s);
   es.innerHTML = `<div class="skills-wrap">
-    <div class="skills-box"><h4>Catálogo (lo que puedes dar a los agentes)</h4>${scripts.catalog.map((s) => `<div class="skill tool-row"><span class="nm" title="${esc(s.path)}">${esc(s.name)}</span><span class="ds" title="${esc(s.path)}">${esc(s.description || short(s.path))}</span>${usageCell('scripts', s.name)}<button class="small danger" data-script-del="${esc(s.name)}" title="Quitar del catálogo (no borra el fichero)">✕</button></div>`).join('') || '<p class="muted">Vacío. Añade scripts desde el inventario → o «＋ Añadir por ruta»</p>'}</div>
+    <div class="skills-box"><h4>Catálogo (lo que puedes dar a los agentes)</h4>${scripts.catalog.map((s) => toolCard({ kind: 'scripts', name: esc(s.name), title: s.name, desc: esc(s.description || ''), where: `<code>${esc(short(s.path))}</code>`, actions: `<button class="small danger" data-script-del="${esc(s.name)}" title="Quitar del catálogo (no borra el fichero)">✕</button>` })).join('') || '<p class="muted">Vacío. Añade scripts desde el inventario → o «＋ Añadir por ruta»</p>'}</div>
     <div class="skills-box"><h4>En tus repos</h4>${Object.entries(groups).map(([g, list]) => `<div class="muted skill-group ${collapsed['scripts:' + g] === false ? '' : 'collapsed'}" data-group="${esc(g)}" data-group-kind="scripts" style="margin:8px 0 4px;font-weight:600">${esc(g)} <span class="muted">(${list.length}${list.filter((s) => s.central).length ? ` · ${list.filter((s) => s.central).length} en catálogo` : ''})</span></div><div class="grp-items">${list.map((s) => `<div class="skill" data-group="${esc(g)}"><span class="nm" title="${esc(s.path)}">${esc(s.name)}</span><span class="ds" title="${esc(s.description)}">${esc(s.description || '')}</span>${s.central ? '<span class="src">✓ en catálogo</span>' : `<button class="small ghost" data-script-add="${esc(s.path)}">→ Catálogo</button>`}</div>`).join('')}</div>`).join('') || '<p class="muted">Ningún repo de tus proyectos tiene carpeta scripts/</p>'}</div>
   </div>`;
 }
@@ -1517,6 +1585,7 @@ function editRepo(key) {
 }
 
 function editRole(id, duplicate = false) {
+  if (!skillsData) { api('GET', '/api/skills').then((d) => { skillsData = d; editRole(id, duplicate); }, () => toast('No pude leer el catálogo de skills: no edito el rol para no perder sus skills', 'bad')); return; } // sin esto, guardar quitaba las skills del rol
   if (!toolsData) { loadTools().then(() => editRole(id, duplicate), () => { toolsData = { mcp: { catalog: [] }, scripts: { catalog: [] } }; editRole(id, duplicate); }); return; } // los selectores de MCP/scripts necesitan el catálogo
   const r = S.roles[id] || {};
   const rid = duplicate ? '' : id;
@@ -1529,7 +1598,7 @@ function editRole(id, duplicate = false) {
     <div class="role-cols"><div>
     <div class="grid2">
       <div><label>Identificador (sin espacios)</label><input name="id" value="${esc(rid)}" placeholder="unity-dev" ${rid ? 'readonly' : 'required autofocus'} /></div>
-      <div><label>Tipo</label><select name="kind"><option value="dev" ${r.kind === 'dev' ? 'selected' : ''}>desarrolla</option><option value="qa" ${r.kind === 'qa' ? 'selected' : ''}>QA (MCP de flow-test)</option><option value="docs" ${r.kind === 'docs' ? 'selected' : ''}>documenta (MCP de flow-test)</option><option value="planner" ${r.kind === 'planner' ? 'selected' : ''}>planifica (PO)</option></select></div>
+      <div><label>Tipo</label><select name="kind"><option value="dev" ${r.kind === 'dev' ? 'selected' : ''}>desarrolla</option><option value="qa" ${r.kind === 'qa' ? 'selected' : ''}>QA (MCP de flow-test)</option><option value="docs" ${r.kind === 'docs' ? 'selected' : ''}>documenta (MCP de flow-test)</option><option value="planner" ${r.kind === 'planner' ? 'selected' : ''}>planifica (PO)</option><option value="supervisor" ${r.kind === 'supervisor' ? 'selected' : ''}>coordinador / supervisor</option><option value="release" ${r.kind === 'release' ? 'selected' : ''}>release (publica)</option></select></div>
       <div><label>Modelo por defecto</label>${modelSelect('model', 'auto', r.model || '')}</div>
       <div><label title="Cascada FT-60: no empezar más abajo">Modelo mínimo</label><select name="minModel"><option value="">ninguno (empieza barato)</option>${minOpts.map((m) => `<option value="${esc(m)}" ${m === r.minModel ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
     </div>
@@ -3103,6 +3172,7 @@ function editAgent(id) {
   const a = S.agents.find((x) => x.id === id);
   if (!a) return;
   if (!toolsData) { loadTools().then(() => editAgent(id), () => { toolsData = { mcp: { catalog: [] }, scripts: { catalog: [] } }; editAgent(id); }); return; }
+  if (!skillsData) { api('GET', '/api/skills').then((d) => { skillsData = d; editAgent(id); }, () => { skillsData = { catalog: [], inventory: [] }; editAgent(id); }); return; }
   dialog(`
     <h3>✎ ${esc(a.name)}</h3>
     <label>Nombre</label><input name="name" value="${esc(a.name)}" required autofocus />
@@ -3112,9 +3182,9 @@ function editAgent(id) {
       <div><label>Modelo</label>${modelSelect('model', a.engine, a.model || '')}</div>
     </div>
     <label title="FT-86: reglas de «construir lo mínimo» en el prompt de este agente"><input type="checkbox" name="ponytail" ${a.ponytail ? 'checked' : ''} /> Ponytail (prueba): construir lo mínimo</label>
-    ${toolSelects(a, S.roles[a.role])}
+    ${toolSelects(a, S.roles[a.role], true)}
     ${a.status === 'working' ? '<p class="muted">Está trabajando: los cambios se aplican a partir de su siguiente tarea.</p>' : ''}
-    ${buttons('Guardar')}`, async (f) => { const form = $('#dialog form'), pick = (n) => pickedIn(form, n); if (!confirmRisky(pick('mcps'), a.mcps)) throw new Error('cancelado'); await api('PATCH', `/api/agents/${id}`, { ...f, model: pickModel(f), ponytail: !!f.ponytail, mcps: pick('mcps'), scripts: pick('scripts') }); toast('Agente actualizado'); });
+    ${buttons('Guardar')}`, async (f) => { const form = $('#dialog form'), pick = (n) => pickedIn(form, n); if (!confirmRisky(pick('mcps'), a.mcps)) throw new Error('cancelado'); await api('PATCH', `/api/agents/${id}`, { ...f, model: pickModel(f), ponytail: !!f.ponytail, mcps: pick('mcps'), scripts: pick('scripts'), skills: pick('skills') }); toast('Agente actualizado'); });
 }
 
 // Markdown ligero y seguro para descripciones y resúmenes (escapa primero, luego formatea).
