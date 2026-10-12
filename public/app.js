@@ -2548,12 +2548,14 @@ Pasos, convenciones y ejemplos…</textarea>
   'new-task': () => { pendingAttachments = []; dialog(`
     <h3>Nueva tarea</h3>
     <label>Título <span class="muted">(con «Redactar con IA» puedes dejarlo vacío)</span></label>${micField('<input name="title" autofocus />')}
-    <label>Descripción <span class="muted">(a mano, dictada con 🎤, o en bruto para que la IA la redacte)</span></label>${micField('<textarea name="description" rows="5" placeholder="Qué hay que hacer y cómo saber que está bien. Con ✨ basta con contarlo a tu manera: la IA lo convierte en una tarea completa."></textarea>')}
+    <label>Descripción <span class="muted">(a mano, dictada con 🎤, o en bruto para que la IA la redacte)</span></label>${micField('<textarea name="description" rows="9" data-autogrow placeholder="Qué hay que hacer y cómo saber que está bien. Con ✨ basta con contarlo a tu manera: la IA lo convierte en una tarea completa."></textarea>')}
     ${attachArea()}
-    <label>Para quién</label><select name="role">${whoOptions()}</select>
-    ${(project()?.repos || []).length > 1 ? `<label>Repositorio</label><select name="repo"><option value="">(el que diga el rol)</option>${project().repos.map((r) => `<option value="${r.key}">${esc(r.key)} — ${esc(r.path)}</option>`).join('')}</select>` : ''}
-    <label>Quién la hace</label><select name="assignedAgentId"><option value="">(automático: por rol)</option><option value="human">👤 Yo (humano)</option></select>
-    <label>Estado inicial</label><select name="status"><option value="todo">Por hacer (el equipo la coge en cuanto pueda)</option><option value="backlog">Backlog (esperar)</option></select>
+    <div class="task-grid">
+      <div><label>Para quién</label><select name="role">${whoOptions()}</select></div>
+      ${(project()?.repos || []).length > 1 ? `<div><label>Repositorio</label><select name="repo"><option value="">(el que diga el rol)</option>${project().repos.map((r) => `<option value="${r.key}">${esc(r.key)} — ${esc(r.path)}</option>`).join('')}</select></div>` : ''}
+      <div><label>Quién la hace</label><select name="assignedAgentId"><option value="">(automático: por rol)</option><option value="human">👤 Yo (humano)</option></select></div>
+      <div><label>Estado inicial</label><select name="status"><option value="todo">Por hacer (el equipo la coge en cuanto pueda)</option><option value="backlog">Backlog (esperar)</option></select></div>
+    </div>
     <div class="row"><button type="button" class="ghost" data-ai-draft title="Pasa tu texto y los adjuntos por la IA (Claude), que propone título, descripción con criterios de «hecho cuando», rol y repo. Rellena el formulario para que lo revises: no crea nada hasta que pulses Crear">✨ Redactar con IA</button><div class="spacer"></div><button class="ghost" value="cancel">Cancelar</button><button>Crear</button></div>`, async (f) => {
     if (f.role === '__po') {
       const goal = [f.title, f.description].filter((x) => x?.trim()).join('\n\n');
@@ -2565,7 +2567,7 @@ Pasos, convenciones y ejemplos…</textarea>
     if (!f.title?.trim()) { toast('Pon un título o usa «Redactar con IA»', 'error'); throw new Error('sin título'); }
     if (!f.assignedAgentId) delete f.assignedAgentId;
     return api('POST', '/api/tasks', { ...f, projectId, attachments: pendingAttachments });
-  }); },
+  }, 'wide task-dlg'); },
   settings: () => dialog(`
     <h3>Ajustes</h3>
     <div class="section-title" data-group="Empresa" title="Las inteligencias que llevan la empresa">🧠 Motores de IA</div>
@@ -3470,6 +3472,9 @@ function renderWelcome() {
     <ol><li>Elige o crea la carpeta en flow-test.</li><li>Añade el repo (opcional: sin repo trabajan en la carpeta).</li><li>Elige el equipo: App web, Solo API, Juego Unity o Documentación.</li></ol>
     <button data-action="new-project">＋ Crear mi primer proyecto</button></div>`;
 }
+// Textareas que crecen con su contenido (hasta 62 % del alto de la ventana) para leerlo sin scroll interno.
+function autogrow(el) { if (!el) return; el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight + 4, Math.round(innerHeight * 0.62)) + 'px'; }
+document.addEventListener('input', (e) => { if (e.target.matches?.('textarea[data-autogrow]')) autogrow(e.target); });
 // «clave = ruta @ rol1,rol2» · «ruta @ roles» · «ruta» (la clave sale del nombre de la carpeta)
 function parseRepos(text) {
   return String(text || '').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
@@ -3530,6 +3535,7 @@ document.addEventListener('click', async (e) => {
       set('title', draft.title); set('description', draft.description); set('role', draft.role); set('repo', draft.repo || '');
       form.querySelector('.ai-preview')?.remove();
       form.querySelector('h3').insertAdjacentHTML('afterend', `<div class="ai-preview">✨ <b>Propuesta de la IA</b> <span class="muted">(${esc(S.roles[draft.role]?.label || draft.role)}${draft.repo ? ' · ' + esc(draft.repo) : ''}${draft.costUsd ? ` · ≈ ${draft.costUsd.toFixed(2)} $` : ''})</span> — revísala y edítala; se crea al pulsar <b>Crear</b>.<div class="ai-preview-acts"><button type="button" class="small ghost" data-ai-undo>↩ Volver a mi texto</button><button type="button" class="small ghost" data-ai-draft>↻ Redactar otra vez</button></div></div>`);
+      autogrow(form.description);
       form.title?.focus();
     } catch { /* el toast ya avisó */ }
     form.querySelectorAll('[data-ai-draft]').forEach((b) => { b.disabled = false; b.textContent = b.closest('.ai-preview') ? '↻ Redactar otra vez' : (b.dataset.label || '✨ Redactar con IA'); });
