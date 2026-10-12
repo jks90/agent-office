@@ -150,6 +150,21 @@ export function setRoleTools(id, key, names) {
   fs.writeFileSync(r.file, text.replace(m[0], `---\n${fm.join('\n')}\n---`));
   return allRoles()[id];
 }
+// 🧭 Modelo por defecto de un rol del catálogo (Guía · role.update): cambia SOLO la línea `model:` del frontmatter.
+export function setRoleModel(id, model) {
+  const m0 = String(model || '').trim();
+  if (!/^[\w.:/-]{2,80}$/.test(m0)) throw Object.assign(new Error('Modelo no válido'), { status: 400 });
+  const r = allRoles()[id];
+  if (!r) throw Object.assign(new Error(`No existe el rol «${id}»`), { status: 404 });
+  if (!r.custom || !r.file?.startsWith(rolesDir())) throw Object.assign(new Error('Solo se edita el modelo de los roles del catálogo (los de serie y los de un repo no)'), { status: 403 });
+  const text = fs.readFileSync(r.file, 'utf8');
+  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!m) throw Object.assign(new Error('El rol no tiene frontmatter'), { status: 400 });
+  const fm = m[1].split(/\r?\n/).filter((l) => !/^model:/.test(l));
+  fm.push(`model: ${m0}`);
+  fs.writeFileSync(r.file, text.replace(m[0], `---\n${fm.join('\n')}\n---`));
+  return { role: id, from: r.model || null, to: m0 };
+}
 export function deleteRole(id) {
   const r = allRoles()[id];
   if (!r?.custom || !r.file?.startsWith(rolesDir())) throw Object.assign(new Error('Solo se borran roles del catálogo'), { status: 400 });

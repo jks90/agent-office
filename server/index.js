@@ -40,6 +40,7 @@ import * as guideTools from './guide/tools.js';
 import * as guidePolicy from './guide/policy.js';
 import * as browserPolicy from './browser/policy.js';
 import * as guide from './guide/index.js';
+import * as guideReport from './guide/report.js'; // 📮 reportes del Guía al admin
 import { getProvider as desktopProvider } from './desktop/index.js';
 import * as stt from './guide/stt/index.js';
 import * as wake from './guide/stt/wake.js';
@@ -170,6 +171,9 @@ const routes = [
   ['GET', /^\/api\/guide\/chats$/, () => guide.listChats()],
   ['GET', /^\/api\/guide\/chats\/([\w-]+)$/, ([id]) => guide.getChat(id)],
   ['DELETE', /^\/api\/guide\/chats\/([\w-]+)$/, ([id]) => guide.deleteChat(id)],
+  // 📮 Lo que el Guía no pudo hacer: estado de los reportes ofrecidos y envío (solo cuando el usuario pulsa el botón)
+  ['GET', /^\/api\/guide\/reports$/, () => guideReport.list()],
+  ['POST', /^\/api\/guide\/reports\/(\w+)\/send$/, ([id]) => guideReport.send(id)],
   // Voz (FT-9): GET = proveedores STT y su estado; POST {audio: base64, mime, lang?} → {text, lang, ms}. El texto lo manda el cliente a /api/guide/chat
   ['GET', /^\/api\/guide\/stt$/, async () => ({ ...(await stt.status()), wake: await wake.status() })], // wake (FT-35): ¿puede la UI ofrecer escucha continua?
   ['POST', /^\/api\/guide\/stt$/, (_, b) => {

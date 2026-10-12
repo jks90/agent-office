@@ -536,12 +536,34 @@ function guideMsg(m, i) {
   if (m.role === 'assistant') return `<div class="g-msg assistant">${md(m.text)}${ttsButton(i, m.text)}</div>`;
   if (m.role === 'meta') return `<div class="g-meta" title="${esc(m.provider || '')}">${esc(m.model || m.provider || '')}${m.costUsd != null ? ` · ≈ ${m.costUsd.toFixed(4)} $` : ''}${m.usage ? ` · ${m.usage.input + m.usage.cacheRead + m.usage.cacheWrite} tok entrada${m.usage.cacheRead ? ` (${m.usage.cacheRead} en caché)` : ''} / ${m.usage.output} salida` : ''}</div>`;
   if (m.role === 'error') return `<div class="g-msg error ${m.stopped ? 'stopped' : ''}">${m.stopped ? '■ ' : '⚠ '}${esc(m.text)}</div>`;
+  if (/(^|_)guide[._]report$/.test(m.name || '') && m.ok) { const rep = guideReportCard(m); if (rep) return rep; }
   const state = m.ok == null ? '<span class="st">⏳</span>' : m.ok ? '<span class="st ok">✓</span>' : '<span class="st bad">✗</span>';
   const args = Object.keys(m.args || {}).length ? JSON.stringify(m.args) : '';
   return `<details class="g-tool" data-i="${i}" ${m.open ? 'open' : ''}><summary>🔧 <b>${esc(m.name)}</b><span class="args">${esc(args.slice(0, 120))}</span>${state}</summary>
     <pre>${esc(JSON.stringify(m.args || {}, null, 1))}</pre>${m.result != null ? `<pre class="${m.ok ? '' : 'bad'}">${esc(m.result.slice(0, 4000))}</pre>` : ''}</details>`;
 }
 
+// 📮 Reporte ofrecido por el Guía (guide.report): botón para enviarlo al admin; después solo «enviado» o «no se pudo».
+const GR = { map: {}, loaded: false, sending: new Set() };
+async function guideReportsLoad() { try { GR.map = await api('GET', '/api/guide/reports'); } catch { /* sin servidor */ } GR.loaded = true; guideRender(); }
+function guideReportCard(m) {
+  let id; try { id = JSON.parse(m.result || '{}').reportId; } catch { return ''; }
+  if (!id) return '';
+  if (!GR.loaded) { GR.loaded = true; guideReportsLoad(); }
+  const st = GR.map[id]?.status || 'offered';
+  const body = GR.sending.has(id) ? '<span class="muted">Enviando…</span>'
+    : st === 'sent' ? '<b>✅ Reporte enviado</b>'
+    : `${st === 'failed' ? '<b>❌ No se pudo enviar</b> ' : ''}<button class="small" data-greport="${esc(id)}">${st === 'failed' ? 'Reintentar' : '📮 Reportar al admin'}</button>`;
+  return `<div class="g-report"><span>No he podido hacerlo. Puedes avisar al equipo para que lo revise.</span>${body}</div>`;
+}
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest?.('[data-greport]');
+  if (!b) return;
+  const id = b.dataset.greport;
+  GR.sending.add(id); guideRender();
+  try { GR.map[id] = await api('POST', `/api/guide/reports/${id}/send`); } catch { GR.map[id] = { ...(GR.map[id] || {}), status: 'failed' }; }
+  GR.sending.delete(id); guideRender();
+});
 const guideGone = new Set(); // ids borrados: una carga de la lista en vuelo no los resucita (FT-51)
 async function guideRefresh() { try { G.chats = (await api('GET', '/api/guide/chats')).filter((c) => !guideGone.has(c.id)); } catch { /* sin servidor */ } G.loaded = true; guideRender(); }
 async function guideOpen(id) {

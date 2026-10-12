@@ -871,3 +871,6 @@ dialog.task-dlg textarea[name="description"] { min-height: 220px; resize: vertic
 /* 👁 Ver propuesta */
 #dialog pre.prop-view { max-height: 55vh; overflow: auto; background: var(--panel3); padding: 10px; border-radius: 6px; font-size: 12px; white-space: pre; }
 #dialog button:disabled { opacity: .45; cursor: not-allowed; }
+
+/* 📮 Reporte del Guía */
+.g-report { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0; padding: 8px 10px; border: 1px solid var(--panel2); border-radius: 8px; background: var(--panel3); font-size: 13px; }

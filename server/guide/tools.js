@@ -27,6 +27,8 @@ import * as questions from '../questions.js';
 import * as secrets from './secrets.js'; // FT-137
 import * as mpCloud from '../marketplace-cloud.js'; // FT-142
 import { resolveRefs } from '../uploads.js'; // FT-130
+import * as guideReport from './report.js'; // 📮 reportar al admin lo que el Guía no puede hacer
+import { setRoleModel, allRoles as rolesNow } from '../roles.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
 const VIEWS = ['office', 'summary', 'tasks', 'agents', 'guide', 'browser', 'marketplace', 'settings'];
@@ -386,6 +388,16 @@ export const tools = [
     ({ projectId }) => { const ids = projectId ? new Set(findProject(projectId).team) : null; return store.get().agents.filter((a) => !ids || ids.has(a.id)).map(briefAgent); }),
   T('agent.status', 'Estado de un agente y la tarea que lleva.', obj({ agentId: str('Id o nombre del agente') }, ['agentId']), 'read',
     ({ agentId }) => { const a = findAgent(agentId); const t = store.get().tasks.find((x) => x.agentId === a.id && x.status === 'doing'); return { ...briefAgent(a), task: t ? brief(t) : null }; }),
+  // 🧭 Cambiar modelo: SIEMPRE con permiso (🛡), con el antes → después a la vista
+  T('agent.update', 'Cambia el motor y/o el modelo de UN agente (p. ej. model «claude-sonnet-5-5» o «sonnet»). SIEMPRE pide permiso al usuario (🛡). Para todos los agentes de un rol usa role.update.', obj({ agentId: str('Id o nombre del agente'), engine: str('Motor (claude|codex|…; opcional)'), model: str('Modelo (opcional)') }, ['agentId']), 'write',
+    ({ agentId, engine, model }) => { const a = findAgent(agentId); if (!engine && !model) throw fail(400, 'Indica engine o model'); const before = { engine: a.engine, model: a.model || null }; const out = team.updateAgent(a.id, { ...(engine ? { engine } : {}), ...(model ? { model } : {}) }); return { agent: out.name, before, after: { engine: out.engine, model: out.model || null } }; },
+    { dynamic: async ({ agentId, engine, model }) => { const a = findAgent(agentId); return { policy: 'irreversible', question: `¿Cambio a ${a.name}${engine ? ` al motor «${engine}»` : ''}${model ? ` al modelo «${model}»` : ''}?`, context: `Agente: ${a.name} (${a.role})\nAhora: ${a.engine} · ${a.model || 'modelo del rol'}\nDespués: ${engine || a.engine} · ${model || a.model || 'modelo del rol'}` }; } }),
+  T('role.update', 'Cambia el modelo por defecto de un ROL del catálogo (p. ej. qa-suite → claude-sonnet-5-5): afecta a todos los agentes de ese rol que no tengan modelo propio. SIEMPRE pide permiso (🛡). Los roles de serie o de un repo no se editan (403): entonces usa guide.report.', obj({ role: str('Id del rol (p. ej. qa-suite)'), model: str('Modelo nuevo') }, ['role', 'model']), 'write',
+    ({ role, model }) => setRoleModel(role, model),
+    { dynamic: async ({ role, model }) => { const r = rolesNow()[role]; const users = store.get().agents.filter((a) => a.role === role); return { policy: 'irreversible', question: `¿Cambio el modelo del rol «${r?.label || role}» a «${model}»?`, context: `Rol: ${role}\nAhora: ${r?.model || 'sin modelo (el del motor)'}\nDespués: ${model}\nAgentes con este rol: ${users.map((a) => a.name + (a.model ? ` (modelo propio ${a.model}: no cambia)` : '')).join(', ') || 'ninguno'}` }; } }),
+  // 📮 Lo que el Guía no puede hacer: deja OFRECIDO un reporte (el usuario decide enviarlo con el botón del chat)
+  T('guide.report', 'Úsala cuando NO puedas hacer lo que te piden: ninguna tool lo cubre, o la que lo haría responde 403 (permisos de la app, rol no editable…) o 501. Llámala UNA vez con un título corto, la petición del usuario y por qué no se pudo. No envía nada: el usuario ve un botón «📮 Reportar al admin» y decide. NO la uses si el usuario simplemente rechazó tu confirmación.', obj({ title: str('Título corto, p. ej. «Cambiar el modelo de un rol de serie»'), request: str('Lo que pidió el usuario'), reason: str('Por qué no se pudo (tool que falta o error recibido)') }, ['title', 'request', 'reason']), 'read',
+    ({ title, request, reason }, ctx) => { const c = context.get(ctx?.client) || {}; const where = [c.view && `vista ${c.view}`, c.project?.name && `proyecto ${c.project.name}`, c.task?.code].filter(Boolean).join(' · ') || null; return guideReport.offer({ title, request, reason }, { chatId: ctx?.chatId, where }); }),
   T('agent.getLastActions', 'Últimas acciones de un agente: líneas de su log y eventos recientes.', obj({ agentId: str('Id o nombre del agente'), limit: { type: 'integer', description: 'Máx. (20 por defecto)' } }, ['agentId']), 'read',
     ({ agentId, limit }) => { const a = findAgent(agentId); return { agent: a.name, log: lastActions(a.id, limit), events: activity.list({ agentId: a.id, limit: Number(limit) || 20 }) }; }),
   T('agent.getModifiedFiles', 'Ficheros que ha modificado una tarea/agente (git diff --name-only base...rama, en cada repo con rama; los de repos secundarios llevan «repo:» delante).', obj({ code: str('Código de la tarea'), agentId: str('Alternativa: agente (su tarea actual o la última)') }), 'read',
