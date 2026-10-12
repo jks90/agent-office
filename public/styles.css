@@ -740,3 +740,15 @@ table.dt tr.h td { background: rgba(59, 130, 246, .12); color: #93c5fd; padding:
 table.dt.split td:not(.ln) { width: 49%; white-space: pre-wrap; word-break: break-all; }
 @media (max-width: 900px) { .diff-cols { grid-template-columns: 1fr; } .diff-nav { max-height: 140px; } }
 .diff-head .seg button:not(.ghost) { background: #2563eb; color: #fff; border-color: #2563eb; }
+
+/* Revisión automática visible y tareas archivadas */
+.rw-live { margin-top: 6px; padding-top: 6px; border-top: 1px dashed rgba(251, 191, 36, .35); font-size: 11.5px; }
+.rw-live .rw-meta { color: #fcd34d; opacity: .9; }
+.rw-live .ln { margin: 4px 0; font: 11px ui-monospace, monospace; color: #e5e7eb; background: rgba(0, 0, 0, .25); border-radius: 6px; padding: 4px 6px; max-height: 3.2em; overflow: hidden; word-break: break-word; }
+dialog.rlog pre { max-height: 55vh; white-space: pre-wrap; word-break: break-word; }
+.rlog-hist { font-size: 12px; padding-left: 18px; } .rlog-hist li { margin: 4px 0; }
+.col h4 .h4-r { display: inline-flex; align-items: center; gap: 6px; }
+.col-arch { background: none; border: 1px solid var(--line); border-radius: 6px; padding: 0 5px; cursor: pointer; font-size: 12px; line-height: 18px; color: var(--muted); }
+.col-arch:hover { background: var(--panel2); color: var(--text); }
+.card.archived { opacity: .55; }
+#show-archived.on { background: #1e3a8a; color: #bfdbfe; border-color: #1e3a8a; }

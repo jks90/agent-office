@@ -516,6 +516,21 @@ export function updateTask(id, patch) {
   return t;
 }
 
+// Archivar: oculta tareas Hechas o Descartadas del tablero sin borrarlas (siguen en el estado, en la búsqueda y en «Ver archivadas»).
+// { ids } o { projectId, status } (todas las de esa columna); archived:false las devuelve. No toca updatedAt (el orden de «Hecho»).
+export function archiveTasks({ ids = null, projectId = null, status = null, archived = true }) {
+  const s = get();
+  const pool = Array.isArray(ids) ? s.tasks.filter((t) => ids.includes(t.id)) : s.tasks.filter((t) => t.projectId === projectId && t.status === status);
+  if (!Array.isArray(ids) && !['done', 'discarded'].includes(status)) throw fail(400, 'Solo se archivan las columnas Hecho y Descartada');
+  let n = 0;
+  for (const t of pool) {
+    if (!['done', 'discarded'].includes(t.status)) continue;
+    if (archived && !t.archived) { t.archived = Date.now(); n++; } else if (!archived && t.archived) { delete t.archived; n++; }
+  }
+  if (n) changed();
+  return { changed: n };
+}
+
 // Fija qué agente hará la tarea (FT-4); null = vuelve a elegirse por rol. Solo antes de empezar.
 export function assignTask(id, agentId) {
   const s = get();
@@ -630,9 +645,12 @@ function reviewNote(t, by, verdict, text) {
 const reviewing = new Set();
 const BASE_FILES = /^diff --git a\/(.+?) b\//gm;
 // Verificaciones declaradas, ejecutadas en el worktree (o en el repo si la tarea no tiene rama, p. ej. motor demo). → { ok, failed? }
-async function runChecks(cwd, checks) {
-  for (const c of checks) {
+async function runChecks(cwd, checks, t = null, logId = null) {
+  for (const [i, c] of checks.entries()) {
+    if (t) { t.reviewStep = `verificación ${i + 1}/${checks.length}: ${c}`; changed(); }
+    if (logId) log(logId, `🔎 ▶ ${c}`);
     const ok = await new Promise((r) => { const ch = spawn('sh', ['-c', c], { cwd, stdio: 'ignore', timeout: 300_000 }); ch.on('error', () => r(false)); ch.on('close', (code) => r(code === 0)); });
+    if (logId) log(logId, `🔎 ${ok ? '✓' : '✗'} ${c}`);
     if (!ok) return { ok: false, failed: c };
   }
   return { ok: true };
@@ -652,6 +670,8 @@ async function runReviewer(p, t, repo, cwd, checks) {
   // Sin autor ni equipo (tarea creada ya en revisión, proyecto sin plantilla) revisa un «Revisor» genérico en vez de fallar
   const agent = s.agents.find((a) => a.id === t.agentId) || teamOf(p)[0] || { id: 'revisor', name: 'Revisor', role: 'qa', engine: engineId, model: '' };
   const role = Object.values(allRoles()).find((r) => r.kind === 'qa') || roleOf(agent.role) || roleOf('back');
+  // Visible en la tarjeta: quién revisa (motor/modelo), en qué paso va y en qué registro escribe (el del autor, líneas 🔎)
+  Object.assign(t, { reviewBy: `${engineId}${modelFor(engineId, agent, role).model ? ' · ' + modelFor(engineId, agent, role).model : ''}`, reviewStep: 'el revisor lee el diff y ejecuta comprobaciones', reviewLogAgent: agent.id }); changed();
   const job = await ENGINES[engineId].start({
     agent, task: t, project: p, cwd, mode: engineId === 'demo' ? 'review' : 'work', goal: null, roles: teamRoles(p),
     prompt: review.reviewPrompt(t, repo?.baseBranch || 'main', checks), system: role.system, model: modelFor(engineId, agent, role).model, // FT-60: modelFor devuelve {model, level, why}
@@ -687,9 +707,11 @@ export async function autoReview(p, t) {
     const hits = review.sensitiveHits(files, patch, review.sensitiveList(s.settings));
     if (hits.length) return hold(`✋ toca ficheros sensibles (${hits.slice(0, 3).join(', ')}): la revisa una persona`);
     if (policy === 'auto' && !checks.length) return; // sin verificaciones declaradas se comporta como manual
-    t.reviewing = policy; changed();
+    const logId = s.agents.find((a) => a.id === t.agentId)?.id || teamOf(p)[0]?.id || 'revisor';
+    Object.assign(t, { reviewing: policy, reviewStartedAt: Date.now(), reviewStep: 'preparando la revisión', reviewLogAgent: logId }); changed();
+    log(logId, `🔎 Revisión automática (${policy === 'auto' ? 'tests' : 'QA'}) de ${t.code || t.id} · ${checks.length ? 'verificaciones: ' + checks.join('; ') : 'sin verificaciones declaradas'}`);
     if (policy === 'auto') {
-      const r = await runChecks(cwd, checks);
+      const r = await runChecks(cwd, checks, t, logId);
       if (t.status !== 'review') return;
       if (!r.ok) return hold(`✋ la verificación «${r.failed}» falló: no se aprueba sola`);
       await approve(t.id, { by: 'auto', verdict: { approve: true, text: `pasan las verificaciones declaradas (${checks.join('; ')})` } });
@@ -697,11 +719,13 @@ export async function autoReview(p, t) {
     }
     // La rama se pone al día con la base ANTES de revisar (el revisor ve el código real y no devuelve por desfase). Choques solo en
     // historiales (CHANGELOG…) se combinan solos; un choque de verdad vuelve al agente sin gastar intento de revisión.
+    t.reviewStep = `poniendo la rama al día con ${repo?.baseBranch || 'main'}`; changed();
     for (const x of taskRepos(p, t)) {
       try { await syncWithBase(p, x, t); } catch (e) { if (e.conflicts) return; throw e; }
     }
     if (t.status !== 'review') return;
     const v = await runReviewer(p, t, repo, cwd, checks); // auto-qa
+    if (v) log(t.reviewLogAgent || logId, `🔎 Veredicto: ${v.approve ? '✅ aprueba' : '↩ devuelve'}${v.reasons.length ? ' · ' + v.reasons.join('; ').slice(0, 300) : ''}`);
     if (t.status !== 'review') return; // un humano decidió mientras tanto
     if (!v) return hold('✋ el revisor no devolvió un veredicto válido: la revisa una persona');
     if (v.approve) {
@@ -716,7 +740,7 @@ export async function autoReview(p, t) {
     if (e.quotaWait) { t.reviewWaitQuota = e.quotaWait; reviewNote(t, 'auto', 'skipped', `⏸ revisión en espera de cuota (${e.message})`); return; } // se reintenta sola
     hold(`✋ la revisión automática falló (${e.message}): la revisa una persona`);
   }
-  finally { reviewing.delete(t.id); delete t.reviewing; changed(); }
+  finally { reviewing.delete(t.id); for (const k of ['reviewing', 'reviewStartedAt', 'reviewStep', 'reviewBy']) delete t[k]; changed(); } // reviewLogAgent se queda: el registro sigue consultable
 }
 
 // «🔎 Revisar otra vez»: relanza la revisión automática de una tarea que se quedó esperando por un fallo técnico.
