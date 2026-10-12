@@ -102,7 +102,7 @@ function connectEvents() {
   es.addEventListener('state', (e) => {
     const was = new Set(S.tasks.filter((t) => t.status === 'review').map((t) => t.id)), hadState = S.tasks.length > 0;
     S = JSON.parse(e.data);
-    if (hadState) for (const t of S.tasks) if (t.status === 'review' && !was.has(t.id)) toast(`${S.agents.find((a) => a.id === t.agentId)?.name || 'Un agente'} terminó ${t.code || '#' + t.id}: ${t.reviewing ? 'se está revisando sola' : 'revísala'}`, 'review'); // FT-56
+    if (hadState) for (const t of S.tasks) if (t.status === 'review' && !isHuman(t) && !was.has(t.id)) toast(`${S.agents.find((a) => a.id === t.agentId)?.name || 'Un agente'} terminó ${t.code || '#' + t.id}: ${t.reviewing ? 'se está revisando sola' : 'revísala'}`, 'review'); // FT-56
     if (!S.projects.some((p) => p.id === projectId)) projectId = S.projects[0]?.id ?? null;
     // FT-131: una excepción en render() (p. ej. WebGL o un panel dentro del iframe de flow-test) no puede dejar sin 🛡 ni barra de preguntas
     try { render(); } catch (err) { console.error('render()', err); }
@@ -167,6 +167,7 @@ const team = () => { const ids = new Set(project()?.team || []); return S.agents
 const bench = () => { const ids = new Set(project()?.team || []); return S.agents.filter((a) => !ids.has(a.id)); };
 const projectsOf = (agentId) => S.projects.filter((p) => (p.team || []).includes(agentId) && p.id !== projectId).map((p) => p.name);
 const tasks = () => S.tasks.filter((t) => t.projectId === projectId);
+const isHuman = (t) => t?.assignedAgentId === 'human'; // FT-191: tarea del usuario (FT-189): fuera de agentes, avisos y revisión
 function goProject(id) { if (id && S.projects.some((p) => p.id === id) && id !== projectId) { projectId = id; safeSet('ao:project', id); closeDrawer(); } } // closeDrawer repinta
 // Proyecto al que pertenece un flow del workspace: su carpeta de primer nivel (como en team.js: sin carpeta → «default»).
 function projectOfFlow(flow) {
@@ -1142,7 +1143,7 @@ function render() {
   const working = team().filter((a) => a.status === 'working');
   const paused = team().filter((a) => a.status === 'paused').length;
   $('#tab-tasks-count').textContent = ts.filter((t) => ['todo', 'doing', 'review'].includes(t.status)).length || '';
-  const nRev = ts.filter((t) => t.status === 'review').length, allRev = S.tasks.filter((t) => t.status === 'review'); // FT-56
+  const nRev = ts.filter((t) => t.status === 'review' && !isHuman(t)).length, allRev = S.tasks.filter((t) => t.status === 'review'); // FT-56
   $('#tab-tasks-review').textContent = nRev ? `✋${nRev}` : '';
   // El chip cuenta las revisiones del proyecto ACTIVO; si este no tiene y otros sí, lo dice explícitamente («en otros proyectos»).
   // 🔔 de la barra: los avisos de «Para ti» (lo que te espera a ti, de todos los proyectos visibles); clic → esa vista
@@ -1151,7 +1152,7 @@ function render() {
   rc.textContent = `🔔 ${inbox.length}`;
   rc.title = `Para ti: ${Object.entries(inbox.reduce((m, i) => ((m[i.kind] = (m[i.kind] || 0) + 1), m), {})).map(([k, n]) => `${n} ${INBOX_KIND[k][1].toLowerCase()}`).join(' · ')}`;
   $('#tab-agents-count').textContent = team().length || '';
-  $('#tab-summary').innerHTML = `${ts.filter((t) => t.status === 'doing').length} en curso<br>${ts.filter((t) => t.status === 'review').length} por revisar<br>${working.length}/${team().length} agentes trabajando${paused ? ` · ${paused} en pausa` : ''}`;
+  $('#tab-summary').innerHTML = `${ts.filter((t) => t.status === 'doing').length} en curso<br>${nRev} por revisar<br>${working.length}/${team().length} agentes trabajando${paused ? ` · ${paused} en pausa` : ''}`;
   renderOfficeFoot();
   renderOfficeList();
   const b = p?.board;
@@ -1544,14 +1545,17 @@ const COLS = [
 ];
 
 let taskFilter = '';
+let mineOnly = safeGet('ao:mineOnly') === '1'; // FT-191: filtro «Mías» = asignadas al humano
 let showArchived = safeGet('ao:showArchived') === '1'; // Hechas/Descartadas archivadas: ocultas salvo con «Ver archivadas» o al buscar
 $('#task-filter').addEventListener('input', (e) => { taskFilter = e.target.value.trim().toLowerCase(); renderBoard(); publishContext(); });
 let lastBoardHtml = '';
+function syncMineButton() { const b = $('#mine-filter'); if (b) { const n = tasks().filter(isHuman).length; b.classList.toggle('on', mineOnly); b.textContent = `👤 Mías${n ? ` (${n})` : ''}`; } }
+$('#mine-filter')?.addEventListener('click', () => { mineOnly = !mineOnly; safeSet('ao:mineOnly', mineOnly ? '1' : '0'); lastBoardHtml = ''; renderBoard(); });
 function renderBoard() {
   $('#board').classList.toggle('compact', boardDensity === 'compact'); syncDensityButtons();
   const all = tasks();
-  const list = all.filter((t) => (!taskFilter || `${t.id} ${t.code || ''} ${t.title} ${t.role} ${t.repo || ''} ${t.description}`.toLowerCase().includes(taskFilter)) && (!t.archived || showArchived || taskFilter));
-  syncArchivedButton(all.filter((t) => t.archived).length);
+  const list = all.filter((t) => (!taskFilter || `${t.id} ${t.code || ''} ${t.title} ${t.role} ${t.repo || ''} ${t.description}`.toLowerCase().includes(taskFilter)) && (!mineOnly || isHuman(t)) && (!t.archived || showArchived || taskFilter));
+  syncArchivedButton(all.filter((t) => t.archived).length); syncMineButton();
   const html = COLS.map(([st, label, c]) => {
     const items = list.filter((t) => t.status === st || (st === 'todo' && t.status === 'failed'))
       .sort((a, b) => (st === 'done' || st === 'discarded' ? b.updatedAt - a.updatedAt : a.createdAt - b.createdAt));
@@ -1579,6 +1583,10 @@ async function moveTask(id, status) {
   const t = S.tasks.find((x) => x.id === id);
   if (!t) return;
   if (t.status === status) return;
+  if (isHuman(t)) { // FT-191: a mano a cualquier columna (también Revisión y Hecho), sin agente que lo impida
+    try { await api('PATCH', `/api/tasks/${id}`, { status }); toast(`${tcode(t)} → ${COL_NAME[status]}`); } catch { /* api() ya mostró el aviso */ }
+    return;
+  }
   if (!MOVABLE.includes(t.status)) return toast(`${tcode(t)} ${t.status === 'doing' ? 'está en curso: para al agente antes de moverla' : 'está en «' + (COL_NAME[t.status] || t.status) + '»: usa Aprobar / Devolver en la tarjeta'}`, 'error');
   if (!['backlog', 'todo', 'discarded'].includes(status)) return toast(`No se puede mover a «${COL_NAME[status]}» a mano: esa columna la gestiona el agente al ejecutar la tarea`, 'error');
   try { await api('PATCH', `/api/tasks/${id}`, { status }); toast(`${tcode(t)} → ${COL_NAME[status]}`); } catch { /* api() ya mostró el aviso */ }
@@ -1702,12 +1710,14 @@ function whoRow(t) {
   const planned = !fixed && byId(t.plannedAgentId);
   const a = fixed || planned;
   const open = UNSTARTED.includes(t.status);
-  const chip = a
+  const mine = isHuman(t);
+  const chip = mine ? `<span class="who-chip human" title="Esta tarea la haces tú: ningún agente la coge ni genera avisos. Muévela a mano entre columnas o reasígnala con «Asignar a…»">👤 asignada a ti</span>`
+    : a
     ? `<button type="button" class="who-chip${planned ? ' planned' : ''}" data-agent="${a.id}" title="${planned ? `Previsto: ${esc(a.name)} es el primer agente del equipo libre con ese rol (cambia con «Asignar a…»). ` : ''}Abrir a ${esc(a.name)} para configurarlo (motor, modelo) o ver su registro">👤 ${planned ? '<i>previsto:</i> ' : ''}${esc(a.name)} · <span class="eng-tag">${esc(engineTag(a))}</span></button>`
     : open ? `<button type="button" class="who-chip warn" data-hire-role="${esc(t.role)}" title="${esc(t.plannedReason || 'nadie del equipo tiene ese rol')}. Clic: contratar un agente con ese rol">⚠️ sin agente para este rol</button>` : '';
   if (!chip) return '';
-  const opts = open ? assignable(t) : [];
-  const pick = opts.length || t.assignedAgentId ? `<select class="who-pick" data-assign="${t.id}" title="Asignar a… fija quién hará la tarea (sin pasar por la regla del rol)"><option value="">Asignar a…</option>${opts.map((x) => `<option value="${x.id}">${esc(x.name)} · ${esc(engineTag(x))}</option>`).join('')}${t.assignedAgentId ? '<option value="__auto">(automático: por rol)</option>' : ''}</select>` : '';
+  const opts = open || mine ? assignable(t) : [];
+  const pick = opts.length || t.assignedAgentId || open ? `<select class="who-pick" data-assign="${t.id}" title="Asignar a… fija quién hará la tarea (sin pasar por la regla del rol)"><option value="">Asignar a…</option>${mine ? '' : '<option value="human">👤 Yo (humano)</option>'}${opts.map((x) => `<option value="${x.id}">${esc(x.name)} · ${esc(engineTag(x))}</option>`).join('')}${t.assignedAgentId ? '<option value="__auto">(automático: por rol)</option>' : ''}</select>` : '';
   return `<div class="who">${chip}${pick}</div>`;
 }
 // El modal «Ver la tarea» no se repinta por SSE: solo se refresca su fila de agente al llegar un estado nuevo.
@@ -1754,7 +1764,7 @@ function compactCard(t) {
   else if (t.budgetHit && t.status === 'review') ind.push('<span class="ind warn" title="Cortada por el tope de gasto: revisa y decide">⚠</span>');
   if (t.status === 'review' && t.behind) ind.push(`<span class="ind" title="Desfasada ${t.behind} commit${t.behind === 1 ? '' : 's'} respecto a ${esc(baseOf(t))}">⇣${t.behind}</span>`);
   if (t.quotaPaused || t.quotaBlocked) ind.push(`<span class="ind warn" title="${esc(t.activity || '⏸ sin cuota')}${t.quotaPaused?.resetsAt > Date.now() ? ` (en ${esc(fmtLeft(t.quotaPaused.resetsAt))})` : ''}">⏸</span>`);
-  if (t.status === 'review') ind.push(`<span class="ind warn" title="${t.reviewing ? 'Revisión automática en curso' : `Esperando tu revisión${t.reviewSince ? ' desde hace ' + waitTxt(t.reviewSince) : ''}`}${(t.blocks || []).length ? ' · bloquea: ' + t.blocks.map((b) => b.code).join(', ') : ''}">✋${t.reviewSince ? waitMin(t.reviewSince) + '′' : ''}</span>`); // FT-56 en compacto
+  if (t.status === 'review' && !isHuman(t)) ind.push(`<span class="ind warn" title="${t.reviewing ? 'Revisión automática en curso' : `Esperando tu revisión${t.reviewSince ? ' desde hace ' + waitTxt(t.reviewSince) : ''}`}${(t.blocks || []).length ? ' · bloquea: ' + t.blocks.map((b) => b.code).join(', ') : ''}">✋${t.reviewSince ? waitMin(t.reviewSince) + '′' : ''}</span>`); // FT-56 en compacto
   if (!['review', 'done'].includes(t.status) && t.waitingOn?.length) ind.push(`<span class="ind" title="Espera a ${esc(t.waitingOn.map((w) => w.code + ' (' + (TSTATUS[w.status] || w.status) + ')').join(', '))}">⏳</span>`);
   if (depsOpen.length && !t.waitingOn?.length) ind.push(`<span class="ind" title="Depende de ${esc(depsOpen.map(tcode).join(', '))}">⏳</span>`);
   if (t.costUsd) ind.push(`<span class="ind" title="Coste de la tarea: ${t.costEstimated ? '≈ ' : ''}${t.costUsd.toFixed(3)} $${t.costEstimated ? ' (estimado: Codex no informa el coste)' : ''}">💲${t.costEstimated ? '≈' : ''}${t.costUsd.toFixed(2)}</span>`);
@@ -1779,10 +1789,10 @@ function compactCard(t) {
   if (['todo', 'failed', 'done'].includes(t.status)) more.push(btn('del', 'Borrar', 'danger'));
   more.push(btn('open', '🔍 Ver la tarea'));
   const bar = `<div class="bar">${main.join('')}<button class="small ghost" data-more title="Más acciones" aria-label="Más acciones">⋯</button><div class="more-menu">${more.join('')}</div></div>`;
-  const who = a ? `👤 ${planned ? 'previsto: ' : ''}${esc(a.name)} · ${esc(engineTag(a))}` : UNSTARTED.includes(t.status) ? '⚠ sin agente para este rol' : '';
+  const who = isHuman(t) ? '<span class="human-badge" title="La haces tú: ningún agente la coge">👤 asignada a ti</span>' : a ? `👤 ${planned ? 'previsto: ' : ''}${esc(a.name)} · ${esc(engineTag(a))}` : UNSTARTED.includes(t.status) ? '⚠ sin agente para este rol' : '';
   const live = t.status === 'doing' && fixed ? `● ${esc(fixed.activity)}` : '';
   const epic = t.splitInto ? epicStrip(t) : '';
-  return `<div class="card compact ${t.status}${conflict ? ' conflict' : ''}${t.archived ? ' archived' : ''}" tabindex="0" data-task="${t.id}" draggable="${MOVABLE.includes(t.status)}" style="--c:${role?.color}">
+  return `<div class="card compact ${t.status}${conflict ? ' conflict' : ''}${t.archived ? ' archived' : ''}" tabindex="0" data-task="${t.id}" draggable="${MOVABLE.includes(t.status) || isHuman(t)}" style="--c:${role?.color}">
     <div class="card-head"><span class="chip" style="--c:${role?.color}" title="${esc(label)}">${esc(label.length > 5 ? label.slice(0, 4) + '.' : label)}</span><span class="task-id" title="Código de la tarea (rama ao/${t.code || t.id})">${esc(tcode(t))}</span>${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? `<span class="repo-chip" title="Repo">📁 ${esc(t.repo || '?')}</span>` : ''}<span class="inds">${ind.join('')}</span></div>
     <div class="t" title="${esc(t.title)}">${t.splitInto ? '🧩 ' : ''}${esc(t.title)}</div>
     ${epic || `<div class="who-line${live ? ' live' : ''}">${live || who}</div>`}
@@ -1820,7 +1830,7 @@ function inboxAll() {
   }
   for (const t of S.tasks) {
     const p = vis.get(t.projectId);
-    if (!p) continue;
+    if (!p || isHuman(t)) continue; // FT-191: las del humano no son avisos (misma regla que el servidor)
     if (t.status === 'review' && !t.reviewing && (policyFor(p) === 'manual' || t.reviewNote)) items.push({ kind: t.stuck || t.budgetHit ? 'cut' : 'review', p, t, sort: 1, imported: !!t.source && !t.agentId });
     else if (t.status === 'failed') items.push({ kind: 'failed', p, t, sort: 2 });
     else if (['backlog', 'todo'].includes(t.status) && isManualTask(t)) items.push({ kind: 'manual', p, t, sort: 3 });
@@ -2332,6 +2342,7 @@ Pasos, convenciones y ejemplos…</textarea>
     ${attachArea()}
     <label>Para quién</label><select name="role">${whoOptions()}</select>
     ${(project()?.repos || []).length > 1 ? `<label>Repositorio</label><select name="repo"><option value="">(el que diga el rol)</option>${project().repos.map((r) => `<option value="${r.key}">${esc(r.key)} — ${esc(r.path)}</option>`).join('')}</select>` : ''}
+    <label>Quién la hace</label><select name="assignedAgentId"><option value="">(automático: por rol)</option><option value="human">👤 Yo (humano)</option></select>
     <label>Estado inicial</label><select name="status"><option value="todo">Por hacer (el equipo la coge en cuanto pueda)</option><option value="backlog">Backlog (esperar)</option></select>
     <div class="row"><button type="button" class="ghost" data-ai-draft title="Pasa tu texto y los adjuntos por la IA (Claude), que redacta título, descripción con criterios de «hecho cuando», rol y repo, y crea la tarea en Backlog para que la revises">✨ Redactar con IA y crear</button><div class="spacer"></div><button class="ghost" value="cancel">Cancelar</button><button>Crear</button></div>`, async (f) => {
     if (f.role === '__po') {
@@ -2342,6 +2353,7 @@ Pasos, convenciones y ejemplos…</textarea>
       return;
     }
     if (!f.title?.trim()) { toast('Pon un título o usa «Redactar con IA»', 'error'); throw new Error('sin título'); }
+    if (!f.assignedAgentId) delete f.assignedAgentId;
     return api('POST', '/api/tasks', { ...f, projectId, attachments: pendingAttachments });
   }); },
   settings: () => dialog(`
@@ -2749,7 +2761,7 @@ function renderSummary() {
     ${scoresHtml()}
     <p class="muted" style="margin:8px 2px">Clic en una fila: abre sus tareas. Los datos llegan por SSE: la tabla se actualiza sola.</p>`;
   refreshSumModal();
-  const sc = $('#tab-summary-count'); if (sc) sc.textContent = (all.filter((t) => t.status === 'review' && S.projects.find((p) => p.id === t.projectId)?.running).length + qs.length) || ''; // solo lo que pide acción: revisiones de proyectos en marcha + preguntas
+  const sc = $('#tab-summary-count'); if (sc) sc.textContent = (all.filter((t) => t.status === 'review' && !isHuman(t) && S.projects.find((p) => p.id === t.projectId)?.running).length + qs.length) || ''; // solo lo que pide acción: revisiones de proyectos en marcha + preguntas
 }
 document.addEventListener('click', async (e) => {
   if (e.target.matches?.('[data-cost-variant]')) return;
@@ -3152,6 +3164,7 @@ function editTask(id) {
       <div><label>Rol</label><select name="role">${roleOptions(t.role, true)}</select></div>
       ${repos.length > 1 ? `<div><label>Repositorio</label><select name="repo"><option value="">(el que diga el rol)</option>${repos.map((r) => `<option value="${r.key}" ${r.key === t.repo ? 'selected' : ''}>${esc(r.key)}</option>`).join('')}</select></div>` : ''}
     </div>
+    <label>Quién la hace</label><select name="assignedAgentId"><option value="" ${isHuman(t) ? '' : 'selected'}>${t.assignedAgentId ? '(sin cambios: agente fijado)' : '(automático: por rol)'}</option><option value="human" ${isHuman(t) ? 'selected' : ''}>👤 Yo (humano)</option>${t.assignedAgentId ? '<option value="__auto">(automático: por rol)</option>' : ''}</select>
     <label>Depende de (Ctrl+clic para varias)</label>
     <select name="dependsOn" multiple size="${Math.min(6, Math.max(2, others.length))}">${others.map((o) => `<option value="${o.id}" ${t.dependsOn.includes(o.id) ? 'selected' : ''}>${o.status === 'done' ? '✓' : '⏳'} ${esc(tcode(o))} · ${esc(o.title.slice(0, 70))}</option>`).join('')}</select>
     ${['backlog', 'todo', 'failed'].includes(t.status) ? `<label>Estado</label><select name="status"><option value="backlog" ${t.status === 'backlog' ? 'selected' : ''}>Backlog</option><option value="todo" ${t.status !== 'backlog' ? 'selected' : ''}>Por hacer</option></select>` : ''}
@@ -3159,6 +3172,7 @@ function editTask(id) {
     ${buttons('Guardar')}`, async (f) => {
     const form = $('#dialog form');
     const dependsOn = [...form.querySelector('[name=dependsOn]').selectedOptions].map((o) => o.value);
+    if (!f.assignedAgentId) delete f.assignedAgentId; // FT-191: vacío = sin cambios (el servidor lo leería como «automático»)
     await api('PATCH', `/api/tasks/${id}`, { ...f, dependsOn });
     toast('Tarea actualizada');
   });
@@ -3301,6 +3315,7 @@ document.addEventListener('change', async (e) => {
   if (!sel || !sel.value) return;
   const v = sel.value, t = S.tasks.find((x) => x.id === sel.dataset.assign), a = S.agents.find((x) => x.id === v);
   sel.value = '';
+  if (v === 'human') { try { await api('POST', `/api/tasks/${sel.dataset.assign}/assign`, { agentId: 'human' }); toast(`${tcode(t)} → asignada a ti`); } catch { /* api() ya avisó */ } return; }
   try { await api('POST', `/api/tasks/${sel.dataset.assign}/assign`, { agentId: v === '__auto' ? null : v }); toast(a ? `${tcode(t)} → la hará ${a.name}` : `${tcode(t)}: el agente vuelve a elegirse por rol`); } catch { /* api() ya avisó */ }
 });
 $('#project').onchange = (e) => { projectId = e.target.value; safeSet('ao:project', projectId); closeDrawer(); };
