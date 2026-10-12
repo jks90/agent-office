@@ -91,7 +91,7 @@ setInterval(sweepUploads, 3600e3).unref();
 // Tableros online con autoSync: cada 5 min.
 // FT-174 · cada minuto: ¿épica completa o bug aprobado? → pregunta «¿Publico la X.Y.Z?» por Telegram (solo con flow-test localizable)
 let releasing = false;
-setInterval(() => { if (releasing || !telegram.config().enabled || !releaseTrigger.flowTestDir(store.get())) return; releasing = true; releaseTrigger.check(releaseTrigger.realDeps(team, store, telegram)).catch((e) => console.warn('[release-trigger]', e.message)).finally(() => { releasing = false; }); }, 60_000).unref();
+setInterval(() => { if (releasing || store.get().settings.releaseAuto === false || !releaseTrigger.flowTestDir(store.get())) return; releasing = true; releaseTrigger.check(releaseTrigger.realDeps(team, store, telegram, questions)).then((r) => { if (r && !['none', 'busy'].includes(r.action)) console.log(`🚀 release: ${r.action}${r.version ? ' ' + r.version : ''}`); }).catch((e) => console.warn('[release-trigger]', e.message)).finally(() => { releasing = false; }); }, 60_000).unref(); // 🚀 sin Telegram también (pregunta en 🔔)
 setInterval(() => { for (const p of store.get().projects) if (p.board?.autoSync) team.syncBoard(p.id).catch(() => {}); }, 5 * 60 * 1000).unref();
 
 // Documentos de oficina → texto plano al lado (los agentes solo leen texto): .docx/.odt por su XML, .pdf con pdftotext si existe.
