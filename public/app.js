@@ -121,6 +121,7 @@ function connectEvents() {
     if (arr.length > 400) arr.shift();
     logs.set(entry.agentId, arr);
     if (drawerAgent === entry.agentId) renderLog();
+    if (String(entry.line).startsWith('🔎')) liveReviewLine(entry);
   });
   es.addEventListener('activity', (e) => {
     const ev = JSON.parse(e.data);
@@ -1543,15 +1544,20 @@ const COLS = [
 ];
 
 let taskFilter = '';
+let showArchived = safeGet('ao:showArchived') === '1'; // Hechas/Descartadas archivadas: ocultas salvo con «Ver archivadas» o al buscar
 $('#task-filter').addEventListener('input', (e) => { taskFilter = e.target.value.trim().toLowerCase(); renderBoard(); publishContext(); });
 let lastBoardHtml = '';
 function renderBoard() {
   $('#board').classList.toggle('compact', boardDensity === 'compact'); syncDensityButtons();
-  const list = tasks().filter((t) => !taskFilter || `${t.id} ${t.code || ''} ${t.title} ${t.role} ${t.repo || ''} ${t.description}`.toLowerCase().includes(taskFilter));
+  const all = tasks();
+  const list = all.filter((t) => (!taskFilter || `${t.id} ${t.code || ''} ${t.title} ${t.role} ${t.repo || ''} ${t.description}`.toLowerCase().includes(taskFilter)) && (!t.archived || showArchived || taskFilter));
+  syncArchivedButton(all.filter((t) => t.archived).length);
   const html = COLS.map(([st, label, c]) => {
     const items = list.filter((t) => t.status === st || (st === 'todo' && t.status === 'failed'))
       .sort((a, b) => (st === 'done' || st === 'discarded' ? b.updatedAt - a.updatedAt : a.createdAt - b.createdAt));
-    return `<div class="col" data-col="${st}" style="--c:${c}"><h4><span>${label}</span><span class="count">${items.length}</span></h4><div class="cards">${items.map(card).join('') || '<div class="empty">Nada por aquí</div>'}</div></div>`;
+    const hidden = ['done', 'discarded'].includes(st) && !showArchived && !taskFilter ? all.filter((t) => t.status === st && t.archived).length : 0;
+    const arch = ['done', 'discarded'].includes(st) && items.some((t) => !t.archived) ? `<button type="button" class="col-arch" data-arch-col="${st}" title="Archivar todas las de «${label}» (se ocultan, no se borran)">🗄</button>` : '';
+    return `<div class="col" data-col="${st}" style="--c:${c}"><h4><span>${label}${hidden ? ` <small class="muted" title="Archivadas: «🗄 Ver archivadas» o búscalas en el filtro">+${hidden} 🗄</small>` : ''}</span><span class="h4-r">${arch}<span class="count">${items.length}</span></span></h4><div class="cards">${items.map(card).join('') || '<div class="empty">Nada por aquí</div>'}</div></div>`;
   }).join('');
   // Cada SSE de estado llama aquí: si el tablero no cambió, no se toca (no se pierde el scroll ni se cierra un «Asignar a…»
   // abierto); si cambió, se repinta conservando el scroll de cada columna y el horizontal del tablero.
@@ -1715,6 +1721,11 @@ function refreshTaskWho() {
 // fila 2: título a 2 líneas; fila 3: agente (o previsto). Las acciones salen al pasar el ratón / foco: la principal según la
 // columna y un «⋯» con el resto; el clic en la tarjeta abre «Ver la tarea» con todo. «Detallado» conserva `card()` tal cual.
 let boardDensity = safeGet('ao:boardDensity') === 'detailed' ? 'detailed' : 'compact';
+function syncArchivedButton(n) {
+  const b = $('#show-archived'); if (!b) return;
+  b.textContent = `🗄 Archivadas${n ? ` (${n})` : ''}`; b.classList.toggle('on', showArchived); b.hidden = !n && !showArchived;
+}
+$('#show-archived')?.addEventListener('click', () => { showArchived = !showArchived; safeSet('ao:showArchived', showArchived ? '1' : '0'); lastBoardHtml = ''; renderBoard(); });
 function syncDensityButtons() { document.querySelectorAll('#density [data-density]').forEach((b) => b.classList.toggle('on', b.dataset.density === boardDensity)); }
 $('#density').addEventListener('click', (e) => {
   const b = e.target.closest('[data-density]'); if (!b || b.dataset.density === boardDensity) return;
@@ -1764,12 +1775,13 @@ function compactCard(t) {
   if (t.status !== 'doing') more.push(btn('edit', '✎ Editar'));
   if (['todo', 'failed'].includes(t.status)) more.push(btn('park', '← Backlog'));
   if (['review', 'done'].includes(t.status)) more.push(btn('nomove', '⇄ Mover a…'));
+  if (['done', 'discarded'].includes(t.status)) more.push(t.archived ? btn('unarchive', '📦 Desarchivar') : btn('archive', '🗄 Archivar'));
   if (['todo', 'failed', 'done'].includes(t.status)) more.push(btn('del', 'Borrar', 'danger'));
   more.push(btn('open', '🔍 Ver la tarea'));
   const bar = `<div class="bar">${main.join('')}<button class="small ghost" data-more title="Más acciones" aria-label="Más acciones">⋯</button><div class="more-menu">${more.join('')}</div></div>`;
   const who = a ? `👤 ${planned ? 'previsto: ' : ''}${esc(a.name)} · ${esc(engineTag(a))}` : UNSTARTED.includes(t.status) ? '⚠ sin agente para este rol' : '';
   const live = t.status === 'doing' && fixed ? `● ${esc(fixed.activity)}` : '';
-  return `<div class="card compact ${t.status}${conflict ? ' conflict' : ''}" tabindex="0" data-task="${t.id}" draggable="${MOVABLE.includes(t.status)}" style="--c:${role?.color}">
+  return `<div class="card compact ${t.status}${conflict ? ' conflict' : ''}${t.archived ? ' archived' : ''}" tabindex="0" data-task="${t.id}" draggable="${MOVABLE.includes(t.status)}" style="--c:${role?.color}">
     <div class="card-head"><span class="chip" style="--c:${role?.color}" title="${esc(label)}">${esc(label.length > 5 ? label.slice(0, 4) + '.' : label)}</span><span class="task-id" title="Código de la tarea (rama ao/${t.code || t.id})">${esc(tcode(t))}</span>${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? `<span class="repo-chip" title="Repo">📁 ${esc(t.repo || '?')}</span>` : ''}<span class="inds">${ind.join('')}</span></div>
     <div class="t" title="${esc(t.title)}">${esc(t.title)}</div>
     <div class="who-line${live ? ' live' : ''}">${live || who}</div>
@@ -1879,13 +1891,39 @@ const taskLink = (x) => `<button class="linklike" data-open="${x.id}">${esc(x.co
 function reviewStrip(t) {
   if (t.status === 'review') {
     const blocks = (t.blocks || []).length ? `<div class="rw-blocks">bloquea: ${t.blocks.map(taskLink).join(', ')}</div>` : '';
-    const head = t.reviewing ? `🔎 Revisión automática en curso (${t.reviewing === 'auto' ? 'tests' : 'QA'})…` : `✋ Esperando tu revisión desde hace <span class="rw-t" data-since="${t.reviewSince}">${waitTxt(t.reviewSince)}</span>`;
+    const head = t.reviewing ? `🔎 Revisión automática en curso (${t.reviewing === 'auto' ? 'tests' : 'QA'})…${reviewLiveHtml(t)}` : `✋ Esperando tu revisión desde hace <span class="rw-t" data-since="${t.reviewSince}">${waitTxt(t.reviewSince)}</span>`;
     const again = t.reviewNote && !t.reviewing && /falló|veredicto válido/.test(t.reviewNote) ? ` <button class="small ghost" data-review-again="${t.id}" title="Relanzar la revisión automática (falló por un problema técnico)">🔎 Revisar otra vez</button>` : '';
     return `<div class="review-wait">${head}${blocks}${t.reviewNote ? `<div class="rw-note">${esc(t.reviewNote)}${again}</div>` : ''}</div>`;
   }
   if (t.autoApproved) return `<div class="review-ok">✅ aprobada por revisión automática (${t.autoApproved.by === 'auto' ? 'tests' : 'QA'})${t.autoApproved.text ? ': ' + esc(t.autoApproved.text) : ''}</div>`;
   if (t.waitingOn?.length) return `<div class="rw-dep">⏳ espera a ${t.waitingOn.map((w) => `${taskLink(w)} (${TSTATUS[w.status] || w.status})`).join(', ')}</div>`;
   return '';
+}
+// Revisión automática visible: cuánto lleva, quién revisa, en qué paso va y la última línea de su registro (líneas 🔎 del autor).
+const reviewLines = (t) => (logs.get(t.reviewLogAgent) || []).filter((e) => String(e.line).startsWith('🔎') && (!t.reviewStartedAt || e.ts >= t.reviewStartedAt - 1000));
+function reviewLiveHtml(t) {
+  const last = reviewLines(t).at(-1)?.line || '';
+  return `<div class="rw-live" data-rl="${esc(t.reviewLogAgent || '')}" data-rt="${t.id}">
+    <div class="rw-meta">${t.reviewStartedAt ? `⏱ lleva <span class="rw-t" data-since="${t.reviewStartedAt}">${waitTxt(t.reviewStartedAt)}</span>` : ''}${t.reviewBy ? ` · 🤖 ${esc(t.reviewBy)}` : ''}${t.reviewStep ? ` · ${esc(t.reviewStep)}` : ''}</div>
+    <div class="ln">${esc(last.replace(/^🔎\s*/, '').slice(0, 180)) || '<span class="muted">esperando la primera línea…</span>'}</div>
+    <button type="button" class="small ghost" data-review-log="${t.id}">📜 Ver lo que hace</button></div>`;
+}
+function liveReviewLine(entry) {
+  const txt = String(entry.line).replace(/^🔎\s*/, '').slice(0, 180);
+  document.querySelectorAll(`.rw-live[data-rl="${CSS.escape(entry.agentId)}"] .ln`).forEach((el) => { el.textContent = txt; });
+  const pre = $('#dialog.rlog pre');
+  if (pre && pre.dataset.agent === entry.agentId) { pre.textContent += `${new Date(entry.ts).toLocaleTimeString()}  ${String(entry.line).replace(/^🔎\s*/, '')}\n`; pre.scrollTop = pre.scrollHeight; }
+}
+function openReviewLog(id) {
+  const t = S.tasks.find((x) => x.id === id);
+  if (!t) return;
+  const lines = reviewLines(t).slice(-300);
+  dialog(`<h3>📜 Revisión de ${esc(tcode(t))}</h3><p class="muted">${esc(t.title)}${t.reviewBy ? ` · 🤖 ${esc(t.reviewBy)}` : ''}${t.reviewStep ? ` · ${esc(t.reviewStep)}` : ''}</p>
+    <pre data-agent="${esc(t.reviewLogAgent || '')}">${lines.map((e) => `${new Date(e.ts).toLocaleTimeString()}  ${esc(String(e.line).replace(/^🔎\s*/, ''))}`).join('\n')}${lines.length ? '\n' : ''}</pre>
+    ${lines.length ? '' : '<p class="muted">Sin líneas todavía (el registro vive en memoria: tras reiniciar AgentOffice se pierde).</p>'}
+    ${(t.reviewLog || []).length ? `<h4>Historial de decisiones</h4><ul class="rlog-hist">${t.reviewLog.slice(-8).reverse().map((r) => `<li><small>${new Date(r.at).toLocaleString()} · ${esc(r.by)} · ${esc(r.verdict)}</small><br>${esc(r.text)}</li>`).join('')}</ul>` : ''}
+    ${buttons(null)}`, null, 'wide rlog');
+  const pre = $('#dialog.rlog pre'); if (pre) pre.scrollTop = pre.scrollHeight;
 }
 setInterval(() => document.querySelectorAll('.rw-t[data-since]').forEach((el) => { el.textContent = waitTxt(Number(el.dataset.since)); }), 15000); // tiempo vivo sin repintar
 
@@ -1911,8 +1949,9 @@ function card(t) {
   if (['backlog', 'todo', 'failed'].includes(t.status)) acts.push(`<button class="small ghost" data-discard="${t.id}" title="No se va a hacer: pasa a Descartada (se puede recuperar)">✕ Descartar</button>`);
   if (t.status === 'discarded') acts.push(`<button class="small ghost" data-park="${t.id}" title="Volver al Backlog">↩ Recuperar</button>`);
   if (['review', 'done'].includes(t.status)) acts.push(`<button class="small ghost" data-nomove="${t.id}" title="Mover a otra columna">⇄ Mover a…</button>`);
+  if (['done', 'discarded'].includes(t.status)) acts.push(t.archived ? `<button class="small ghost" data-unarchive="${t.id}" title="Volver a mostrarla en su columna">📦 Desarchivar</button>` : `<button class="small ghost" data-archive="${t.id}" title="Ocultarla del tablero sin borrarla (se encuentra con el filtro o «Ver archivadas»)">🗄 Archivar</button>`);
   if (['todo', 'failed', 'done'].includes(t.status)) acts.push(`<button class="small danger" data-del="${t.id}">Borrar</button>`);
-  return `<div class="card ${t.status}" data-task="${t.id}" draggable="${['backlog', 'todo', 'failed', 'discarded'].includes(t.status)}" style="--c:${S.roles[t.role]?.color}">
+  return `<div class="card ${t.status}${t.archived ? ' archived' : ''}" data-task="${t.id}" draggable="${['backlog', 'todo', 'failed', 'discarded'].includes(t.status)}" style="--c:${S.roles[t.role]?.color}">
     <div class="card-head">${roleChip(t.role)} <span class="task-id" title="Código de la tarea (rama ao/${t.code || t.id}; cítalo en commits y docs)">${esc(tcode(t))}</span>${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? ` <span class="repo-chip">📁 ${esc(t.repo || '?')}</span>` : ''}${t.source?.flow ? ` <span title="Importada del tablero «${esc(t.source.flow)}» · columna ${esc(t.source.column)}">🗂</span>` : ''}${(t.feedbackImages?.length || t.files?.length) ? ` <span title="${esc([...(t.feedbackImages || []), ...(t.files || [])].map((f) => f.split('/').pop()).join(', '))}">📎${(t.feedbackImages?.length || 0) + (t.files?.length || 0)}</span>` : ''}${t.source?.url ? ` <a class="ext" href="${esc(t.source.url)}" target="_blank" rel="noopener" title="${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} · ${esc(t.source.id)}${t.source.remoteStatus ? ' · fuera: ' + esc(t.source.remoteStatus) : ''}">🔗 ${esc(t.source.id)}</a>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}</div>
     <div class="t">${esc(t.title)}</div>
     ${whoRow(t)}
@@ -3201,6 +3240,10 @@ document.addEventListener('click', async (e) => {
   if (d.cmemDel) { if (confirm(`¿Borrar la memoria «${d.cmemDel}»? (también su línea del índice)`)) api('DELETE', cmemUrl(d.cmemRepo, d.cmemDel)).then(() => { toast('Memoria borrada'); renderClaudeMemory(true); }); return; }
   if (d.agentEdit) return editAgent(d.agentEdit);
   if (d.nomove) return moveTask(d.nomove, 'backlog');
+  if (d.archive) return api('POST', '/api/tasks/archive', { ids: [d.archive], archived: true }).then(() => toast('Archivada: búscala con el filtro o «🗄 Archivadas»'));
+  if (d.unarchive) return api('POST', '/api/tasks/archive', { ids: [d.unarchive], archived: false }).then(() => toast('Vuelve a su columna'));
+  if (d.archCol) { const n = tasks().filter((t) => t.status === d.archCol && !t.archived).length; if (!confirm(`¿Archivar las ${n} tareas de «${COL_NAME[d.archCol]}»? Se ocultan del tablero, no se borran (las verás con «🗄 Archivadas» o buscándolas).`)) return; return api('POST', '/api/tasks/archive', { projectId, status: d.archCol, archived: true }).then((r) => toast(`${r.changed} archivadas`)); }
+  if (d.reviewLog) return openReviewLog(d.reviewLog);
   if (d.park) return api('PATCH', `/api/tasks/${d.park}`, { status: 'backlog' });
   if (d.discard) return api('PATCH', `/api/tasks/${d.discard}`, { status: 'discarded' });
   if (d.del) { if (confirm('¿Borrar la tarea?')) api('DELETE', `/api/tasks/${d.del}`); return; }

@@ -253,6 +253,7 @@ const routes = [
   ['POST', /^\/api\/projects\/(\w+)\/board\/test$/, ([id]) => boards.testBoard(store.get().projects.find((p) => p.id === id))],
   ['POST', /^\/api\/projects\/(\w+)\/board\/sync$/, gated(([id]) => team.syncBoard(id))],
   ['POST', /^\/api\/projects\/(\w+)\/board\/sync-all$/, gated(([id]) => team.syncAll(id))],
+  ['POST', /^\/api\/tasks\/archive$/, (_, b) => team.archiveTasks(b)], // archivar/desarchivar Hechas y Descartadas (no se borran)
   ['PATCH', /^\/api\/tasks\/([\w-]+)$/, ([id], b) => team.updateTask(id, b)],
   // Preguntas de los agentes al usuario (bin/ao-ask.mjs ↔ modal de la UI)
   ['GET', /^\/api\/questions$/, () => questions.list()],
