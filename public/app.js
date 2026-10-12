@@ -1124,12 +1124,15 @@ function showTab(tab) {
 $('#sidebar').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) showTab(b.dataset.tab); });
 // Secciones plegables de la pantalla Agentes (cabecera = plegar/desplegar; los botones de la cabecera siguen funcionando).
 const collapsed = (() => { try { return JSON.parse(localStorage.getItem('ao:collapsed') || '{}'); } catch { return {}; } })();
-const applyCollapsed = () => document.querySelectorAll('[data-section]').forEach((h) => h.classList.toggle('collapsed', !!collapsed[h.dataset.section]));
+// Repositorios y Memoria de la vista Agentes salen plegadas mientras no se hayan abierto (FT-209); el resto, abiertas
+const CLOSED_BY_DEFAULT = new Set(['repos', 'cmemory']);
+const isCollapsed = (k) => (k in collapsed ? !!collapsed[k] : CLOSED_BY_DEFAULT.has(k));
+const applyCollapsed = () => document.querySelectorAll('[data-section]').forEach((h) => h.classList.toggle('collapsed', isCollapsed(h.dataset.section)));
 applyCollapsed();
 document.addEventListener('click', (e) => {
   if (e.target.closest('button, a, input, select')) return;
   const h = e.target.closest('[data-section]');
-  if (h) { collapsed[h.dataset.section] = !collapsed[h.dataset.section]; safeSet('ao:collapsed', JSON.stringify(collapsed)); applyCollapsed(); return; }
+  if (h) { collapsed[h.dataset.section] = !isCollapsed(h.dataset.section); safeSet('ao:collapsed', JSON.stringify(collapsed)); applyCollapsed(); return; }
   const box = e.target.closest('.skills-box h4');
   if (box) { box.parentElement.classList.toggle('collapsed'); return; }
   const g = e.target.closest('.skill-group');
