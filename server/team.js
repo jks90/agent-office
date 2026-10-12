@@ -35,7 +35,8 @@ import * as stuck from './stuck.js';
 import * as review from './review.js'; // FT-56
 import * as toolcat from './toolcatalog.js';
 import * as toolkit from './toolkit.js';
-import * as proposals from './proposals.js'; // 🧰 notas de negocio por skill y scripts nuevos que proponen los agentes // 🧰 skills + MCP + scripts del agente: prompt «úsalas primero» y rastreo de uso
+import * as proposals from './proposals.js';
+import * as releaseTrigger from './release-trigger.js'; // 🚀 «Publicar X.Y.Z»: el pipeline lo ejecuta AgentOffice en nombre del agente de Release // 🧰 notas de negocio por skill y scripts nuevos que proponen los agentes // 🧰 skills + MCP + scripts del agente: prompt «úsalas primero» y rastreo de uso
 import * as coord from './coordinator.js';
 import * as sup from './supervisor.js'; // FT-122
 import * as ladder from './model-ladder.js';
@@ -651,6 +652,8 @@ export async function approve(id, { by = null, verdict = null, rating, reasons }
       await git.cleanup(p, x.repo, t, x.dir);
     }
   }
+  // 🚀 Se fusionó en el propio repo de AgentOffice: se publica solo (push + reinicio cuando nadie trabaje)
+  if (t.branch && taskRepos(p, t).some((x) => path.resolve(x.repo.path) === path.resolve(store.ROOT))) import('./selfupdate.js').then((u) => u.publishSelf(t.code || t.id)).catch(() => {});
   t.status = 'done';
   t.updatedAt = Date.now();
   events.emit('TaskReviewed', events.ctxOf(t), { decision: 'approved', merged: !!t.branch, ...(by ? { by, verdict } : {}) });
@@ -1677,6 +1680,74 @@ function economyBlock(codeIndexOn) {
   ].join('\n');
 }
 
+// 🚀 Ficheros con cambios sin commitear por repo: {dir: [ruta…]} (para commitear después solo lo nuevo de la tarea).
+async function dirtyMap(dirs) {
+  const out = {};
+  for (const d of dirs) { try { out[d] = (await git.git(d, 'status', '--porcelain', '--untracked-files=all')).split('\n').filter(Boolean).map((l) => l.slice(3)); } catch { out[d] = null; } }
+  return out;
+}
+async function commitOnMain(t, agent) {
+  const lines = [];
+  const now = await dirtyMap(Object.keys(t.onMainBefore));
+  for (const [d, before] of Object.entries(t.onMainBefore)) {
+    if (!before || !now[d]) continue;
+    const mine = now[d].filter((f) => !before.includes(f) && !/^"?\.\.?\//.test(f));
+    if (!mine.length) continue;
+    try {
+      await git.git(d, 'add', '--', ...mine.map((f) => f.replace(/^"|"$/g, '').split(' -> ').pop()));
+      await git.git(d, '-c', `user.name=${agent.name} (AgentOffice)`, '-c', 'user.email=agentoffice@local', 'commit', '-q', '-m', `${t.code || t.id}: ${t.title}\n\nCo-Authored-By: AgentOffice <noreply@agentoffice.local>`);
+      lines.push(`📝 Commit en ${path.basename(d)}: ${mine.length} fichero(s)`);
+    } catch (e) { lines.push(`⚠ No pude commitear en ${path.basename(d)}: ${String(e.message).split('\n')[0]}`); }
+  }
+  return lines;
+}
+
+// 🚀 «Publicar X.Y.Z»: AgentOffice ejecuta scripts/release/run-all.sh en nombre del agente de Release (sin IA ni tope de
+// tiempo de un comando), con cada paso en su registro. Aprobado = publicado; si un paso falla, la tarea queda «Fallida» con su log.
+async function runReleasePipeline(p, agent, t, ev) {
+  const v = t.releaseVersion, dir = releaseTrigger.flowTestDir(get());
+  const sp = releaseTrigger.runAllSpec(v, { releaseDryRun: get().settings.releaseDryRun === true });
+  let tail = '';
+  try {
+    if (!dir) throw new Error('No encuentro flow-test (settings.flowTestDir o un repo llamado flow-test)');
+    agent.activity = `🚀 Publicando ${v}${sp.dry ? ' (en seco)' : ''}`; changed();
+    log(agent.id, `🚀 scripts/release/run-all.sh ${sp.dry ? '--dry-run ' : ''}${v} en ${dir}`);
+    const code = await new Promise((resolve) => {
+      const child = spawn('bash', sp.args, { cwd: dir, env: sp.env, stdio: sp.stdio });
+      Object.assign(jobs.get(agent.id), { stop: () => child.kill('SIGTERM'), pid: child.pid });
+      let buf = '';
+      const onData = (d) => {
+        tail = (tail + d).slice(-6000); buf += d;
+        let i;
+        while ((i = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+          if (/^\[run-all\]/.test(line) || /❌|✅/.test(line)) { log(agent.id, line); agent.activity = line.replace(/^\[run-all\]\s*/, '').slice(0, 120); events.emit('AgentProgress', ev, { activity: agent.activity }); changed(); }
+        }
+      };
+      child.stdout.on('data', onData); child.stderr.on('data', onData);
+      child.on('error', (e) => { tail += `\n${e.message}`; resolve(1); });
+      child.on('close', (c) => resolve(c ?? 1));
+    });
+    const last = tail.trim().split('\n').slice(-12).join('\n');
+    if (code !== 0) throw new Error(`El pipeline se paró (código ${code}):\n${last}`);
+    Object.assign(t, { status: 'done', summary: `🚀 ${v} publicada${sp.dry ? ' (EN SECO: no se publicó nada)' : ''}.\n\n${last}`, doneAt: Date.now() });
+    events.emit('AgentCompleted', ev, { status: 'done', summary: t.summary.slice(0, 500) });
+    log(agent.id, `✅ ${v} publicada`);
+    reflect(t, `🚀 ${v} publicada en todas partes`);
+  } catch (e) {
+    Object.assign(t, { status: 'failed', error: e.message });
+    events.emit('AgentFailed', ev, { error: String(e.message).slice(0, 500) });
+    log(agent.id, '❌ ' + String(e.message).split('\n')[0]);
+    reflect(t, `❌ La publicación ${v} se paró: ${String(e.message).slice(0, 500)}`);
+  } finally {
+    jobs.delete(agent.id);
+    t.updatedAt = Date.now();
+    Object.assign(agent, { status: 'idle', taskId: null, activity: '', activeEngine: null });
+    changed();
+    tick();
+  }
+}
+
 async function runTask(p, agent, t) {
   if (t.assignedAgentId === HUMAN) return; // FT-189: red de seguridad
   const s = get();
@@ -1690,6 +1761,7 @@ async function runTask(p, agent, t) {
   events.emit('AgentStarted', ev, { engine: agent.engine, attempt: t.attempts });
   if (t.attempts > 1) events.emit('AgentResumed', ev, { reason: 'retry', attempt: t.attempts });
   reflect(t, `▶ ${agent.name} (${roleOf(agent.role)?.label || agent.role}) empieza a trabajar en AgentOffice`);
+  if (t.releaseVersion && roleOf(agent.role)?.kind === 'release') return runReleasePipeline(p, agent, t, ev); // 🚀 sin IA
 
   let engineId;
   let nativeSkills = []; // 🧰 skills enlazadas en el worktree (Claude con repo); las demás van por ruta
@@ -1711,12 +1783,16 @@ async function runTask(p, agent, t) {
   let addDirs = [];
 
   try {
-    if (real && t.kind !== 'plan' && !repo) {
-      const dir = projectDir(p);
+    if (real && t.kind !== 'plan' && (!repo || t.onMain)) {
+      const dir = t.onMain && repo ? repo.path : projectDir(p);
       if (!dir) throw new Error('El proyecto no tiene repositorio git ni carpeta en el workspace de flow-test');
-      Object.assign(t, { repo: null, branch: null, folderMode: true });
+      Object.assign(t, { repo: t.onMain && repo ? repo.key : null, branch: null, folderMode: true });
       cwd = dir;
-      log(agent.id, `📁 Sin repo: trabaja directamente en ${dir}`);
+      if (t.onMain) { // 🚀 documentación de una release: sobre main y los repos de docs; al terminar se commitea solo lo suyo
+        addDirs = (t.onMainDirs || []).map((d) => String(d).replace(/^~(?=\/|$)/, os.homedir())).filter((d) => fs.existsSync(d));
+        t.onMainBefore = await dirtyMap([cwd, ...addDirs]);
+        log(agent.id, `📝 Trabaja sobre main en ${dir}${addDirs.length ? ` (+ ${addDirs.join(', ')})` : ''}`);
+      } else log(agent.id, `📁 Sin repo: trabaja directamente en ${dir}`);
     } else if (real && t.kind !== 'plan') {
       t.repo = repo.key;
       const wt = await git.createWorktree(p, repo, t);
@@ -1914,6 +1990,10 @@ async function runTask(p, agent, t) {
     }
     if (!res.ok) { if (!res.stopped) agentError = true; throw new Error(res.error || 'El agente no terminó bien'); }
     t.summary = res.summary || '';
+    if (t.onMain && t.onMainBefore) { // 🚀 commitea en cada repo SOLO lo que cambió el agente (no lo que ya estaba sin commitear)
+      for (const line of await commitOnMain(t, agent)) log(agent.id, line);
+      delete t.onMainBefore;
+    }
     if (t.kind !== 'plan' && s.settings.agentMemory !== false) { // FT-75: el bloque «LECCIONES:» del resumen pasa a la memoria
       const h = memory.harvest(p.id, agent.id, t.summary, t.code || t.id);
       t.summary = h.summary;
