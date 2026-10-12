@@ -104,7 +104,9 @@ try {
   check('tarjeta qa: chip ámbar «⚠️ sin agente para este rol» con el rol para contratar', /sin agente para este rol/.test(c2.text) && /warn/.test(c2.cls) && c2.hireRole === 'qa', JSON.stringify(c2));
   const amber = await page.$eval(chipSel(t2.id), (el) => getComputedStyle(el).color);
   check('…pintado en ámbar', /251,\s*191,\s*36/.test(amber), amber);
-  check('la tarjeta qa no ofrece «Asignar a…» (nadie compatible)', !(await page.$(`.card[data-task="${t2.id}"] select[data-assign]`)));
+  // FT-193: desde FT-187 el selector siempre ofrece «👤 Yo (humano)» (value=human); «nadie compatible» = ninguna opción de agente
+  const qaOpts = await page.$$eval(`.card[data-task="${t2.id}"] select[data-assign] option`, (os) => os.map((o) => o.value).filter((v) => v && v !== 'human' && v !== '__auto'));
+  check('la tarjeta qa no ofrece agentes en «Asignar a…» (nadie compatible; solo puede quedar «Yo (humano)»)', qaOpts.length === 0, JSON.stringify(qaOpts));
 
   await page.click(chipSel(t1.id));
   await page.waitForSelector('#drawer:not([hidden]) h2', { timeout: 5000 });
@@ -113,7 +115,9 @@ try {
   await page.click('#drawer [data-close]');
   await page.waitForSelector('#drawer[hidden]', { timeout: 5000 });
 
-  const opts = await page.$$eval(`.card[data-task="${t1.id}"] select[data-assign] option`, (os) => os.map((o) => [o.value, o.textContent]));
+  const allOpts = await page.$$eval(`.card[data-task="${t1.id}"] select[data-assign] option`, (os) => os.map((o) => [o.value, o.textContent]));
+  check('«Asignar a…» ofrece «Yo (humano)» (FT-187)', allOpts.some(([v]) => v === 'human'), JSON.stringify(allOpts));
+  const opts = allOpts.filter(([v]) => v !== 'human'); // FT-193: la opción humana se cuenta aparte
   check('«Asignar a…» lista a los del equipo compatibles con el rol (Bruno y Berta), no a Frida', opts.some(([v]) => v === bruno.id) && opts.some(([v]) => v === berta.id) && opts.length === 3, JSON.stringify(opts));
   await page.select(`.card[data-task="${t1.id}"] select[data-assign]`, berta.id);
   check('elegir a Berta → assignedAgentId = Berta en el servidor', !!(await until(async () => (await taskIn(t1.id)).assignedAgentId === berta.id)));
@@ -159,7 +163,8 @@ try {
 finally {
   await browser?.close().catch(() => {});
   server.kill('SIGTERM'); stub.close();
-  fs.rmSync(tmp, { recursive: true, force: true });
+  await new Promise((r) => setTimeout(r, 500)); // el servidor aún escribe al recibir SIGTERM
+  try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* temporal */ }
 }
 console.log(`\n${failed ? '✗' : '✓'} ${passed} correctos · ${failed} fallos`);
 process.exit(failed ? 1 : 0);
