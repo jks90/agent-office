@@ -90,3 +90,23 @@ test('exportar el equipo de un proyecto (kind team) e importarlo en otro', () =>
   assert.equal(r.kind, 'team');
   assert.ok(dest.team.length >= 4);
 });
+
+test('🔒 plantilla privada: guardar el equipo de un proyecto, listarla, aplicarla en otro y borrarla', () => {
+  const p = get().projects.find((x) => x.name === 'Tienda');
+  const saved = teams.saveLocal(p.id, { name: 'Mi tienda base' });
+  assert.equal(saved.id, 'mine:mi-tienda-base');
+  assert.ok(fs.existsSync(path.join(cat, 'plantillas-equipo', 'mi-tienda-base', 'team.json')));
+  assert.ok(fs.existsSync(path.join(cat, 'plantillas-equipo', 'mi-tienda-base', 'roles', 'documentalista.md')));
+  const l = teams.listTemplates();
+  const mine = l.find((t) => t.id === saved.id);
+  assert.ok(mine && mine.mine && mine.icon === '🔒');
+  assert.equal(l.at(-1).id, saved.id, 'las privadas van después de las de serie');
+  const dest = { id: 'p5', name: 'Otra', folder: 'w', repos: [], team: [] };
+  get().projects.push(dest);
+  const r = teams.applyBuiltin(saved.id, dest.id);
+  assert.ok(dest.team.length >= 5, JSON.stringify(r));
+  assert.ok(r.skillsKept.includes('flows') || !r.skillsInstalled.length, 'usa las skills del catálogo, no las copia');
+  assert.deepEqual(teams.deleteLocal(saved.id), { ok: true });
+  assert.ok(!teams.listTemplates().some((t) => t.id === saved.id));
+  assert.throws(() => teams.deleteLocal('web-app'), (e) => e.status === 400, 'las de serie no se borran');
+});

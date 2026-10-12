@@ -1466,6 +1466,13 @@ document.addEventListener('click', async (e) => {
   } catch { /* el toast ya avisó */ }
 });
 document.addEventListener('click', async (e) => {
+  const d = e.target.closest?.('[data-tpl-del]');
+  if (!d) return;
+  const t = (teamTemplates || []).find((x) => x.id === d.dataset.tplDel);
+  if (!confirm(`¿Borrar la plantilla privada «${t?.name || d.dataset.tplDel}»? Los proyectos que la usaron no cambian.`)) return;
+  try { await api('DELETE', `/api/teams/templates/${d.dataset.tplDel}`); teamTemplates = null; toast('Plantilla borrada'); mpRefreshPrivate(); } catch { /* el toast ya avisó */ }
+});
+document.addEventListener('click', async (e) => {
   const h = e.target.closest?.('[data-warn-hide]'), sh = e.target.closest?.('[data-warn-show]');
   if (!h && !sh) return;
   const next = h ? [...new Set([...(S.settings.hiddenWarnings || []), h.dataset.warnHide])] : [];
@@ -3382,7 +3389,9 @@ async function fillTeamTemplates(root) {
   if (!sel) return;
   try { teamTemplates ||= await api('GET', '/api/teams/templates'); } catch { teamTemplates = []; }
   const none = S.agents.length ? 'Ninguno: lo monto yo (ficha del banquillo o contrata)' : 'Equipo básico (PO, back, front y QA)';
-  sel.innerHTML = `<option value="">${none}</option>` + teamTemplates.map((t) => `<option value="${esc(t.id)}">${esc(t.icon)} ${esc(t.name)} · ${t.members.length} agentes</option>`).join('');
+  const opt = (t) => `<option value="${esc(t.id)}">${esc(t.icon)} ${esc(t.name)} · ${t.members.length} agentes</option>`;
+  const mine = teamTemplates.filter((t) => t.mine), serie = teamTemplates.filter((t) => !t.mine);
+  sel.innerHTML = `<option value="">${none}</option><optgroup label="De serie">${serie.map(opt).join('')}</optgroup>${mine.length ? `<optgroup label="🔒 Mis plantillas">${mine.map(opt).join('')}</optgroup>` : ''}`;
   if (!S.agents.length && teamTemplates.some((t) => t.id === 'web-app')) sel.value = 'web-app'; // la primera vez, una plantilla completa
   const show = () => { const t = teamTemplates.find((x) => x.id === sel.value); prev.innerHTML = t ? `${esc(t.summary)}<br>👥 ${t.members.map((m) => `${esc(m.name)} <span class="muted">(${esc(m.label)})</span>`).join(' · ')}${t.coordinator ? ' · + Coordi' : ''}${t.skills.length ? `<br>🧩 ${t.skills.map(esc).join(', ')}` : ''}<br><span class="muted">Si ya tienes agentes de ese rol en el banquillo, se fichan ellos en vez de contratar.</span>` : ''; };
   sel.onchange = show; show();
@@ -3780,6 +3789,19 @@ function mpPrivateCards() {
   };
   const sec = (title, n, hint) => `<h3 class="mp-sec">${title} <span class="muted">${n}${hint ? ' · ' + hint : ''}</span></h3>`;
   let html = '';
+  if (!mpKind || mpKind === 'team') { // 🔒 plantillas de equipo privadas (solo en este AgentOffice)
+    if (teamTemplates === null) api('GET', '/api/teams/templates').then((t) => { teamTemplates = t; mpRefreshPrivate(); }, () => { teamTemplates = []; });
+    const mine = (teamTemplates || []).filter((t) => t.mine && hit(t.name, t.summary));
+    if (mine.length) {
+      html += sec('👥 Mis plantillas de equipo', mine.length, 'solo en este AgentOffice; se eligen al crear un proyecto');
+      html += mine.map((t) => `<div class="role-card mp-card" style="--c:var(--accent, #6aa9ff)">
+        <b>🔒 ${esc(t.name)}</b> <span class="muted">· ${MP_KIND.team} · ${t.members.length} agentes${t.coordinator ? ' + Coordi' : ''}</span>
+        <div class="desc">${t.members.map((m) => `${esc(m.name)} <span class="muted">(${esc(m.label)})</span>`).join(' · ')}</div>
+        ${t.skills.length ? `<div class="sk">🧩 ${t.skills.map(esc).join(' · ')}</div>` : ''}
+        <div class="src">${t.savedAt ? 'guardada ' + new Date(t.savedAt).toLocaleDateString() : ''}</div>
+        <div class="acts"><button class="small ghost danger" data-tpl-del="${esc(t.id)}">🗑 Borrar</button></div></div>`).join('');
+    }
+  }
   if (agents.length) {
     html += sec('🤖 Agentes en el banquillo', agents.length, 'sin fichar en este proyecto');
     html += aOrder.map((g) => {
@@ -3822,12 +3844,20 @@ async function mpPublish(kind, id) {
   const isAgent = kind === 'agent';
   dialog(`<h3>⬆ Publicar ${MP_KIND[kind]} <span class="muted">· ${esc(id)}</span></h3>
     <label>Ámbito</label>
-    <select name="scope" id="mp-scope"><option value="team">👥 Mi team (con memoria${isAgent ? ' del agente' : ' si la hay'})</option>${isAgent ? '' : '<option value="public">🌍 Público (pasa por moderación; sin memoria)</option>'}</select>
+    <select name="scope" id="mp-scope">${kind === 'team' ? '<option value="private">🔒 Privado: plantilla solo en este AgentOffice (no se sube a ningún sitio)</option><option value="team">👥 Mi team (toda tu organización en el cloud; un equipo nunca lleva memoria)</option>' : `<option value="team">👥 Mi team (con memoria${isAgent ? ' del agente' : ' si la hay'})</option>`}${isAgent ? '' : '<option value="public">🌍 Público (pasa por moderación; sin memoria)</option>'}</select>
+    ${kind === 'team' ? `<div id="mp-private-name"><label>Nombre de la plantilla</label><input name="tplName" value="${esc(S.projects.find((p) => p.id === id)?.name || '')}" maxlength="80" /></div>` : ''}
     ${isAgent ? '<p class="muted">Los agentes (con estado y memoria) solo se comparten dentro del team.</p>' : ''}
     <label>Versión</label><input name="version" id="mp-ver" placeholder="1.0.0" pattern="\\d+\\.\\d+\\.\\d+.*" />
     <label>Resumen</label><textarea name="summary" id="mp-sum" rows="2" maxlength="300"></textarea>
     <h4>Qué se va a subir</h4><div id="mp-prev" class="muted">Calculando…</div>
     ${buttons('⬆ Publicar')}`, async (f) => {
+    if (f.scope === 'private') { // 🔒 plantilla local: no pasa por el cloud
+      const t = await api('POST', '/api/teams/templates', { projectId: id, name: f.tplName, summary: f.summary });
+      teamTemplates = null;
+      toast(`🔒 Plantilla «${t.name}» guardada (${t.members} agentes): la tienes en «Equipo para empezar» y en Marketplace ▸ 🔒 Privado`);
+      if (activeTab === 'marketplace') mpRefreshPrivate();
+      return;
+    }
     const r = await mpApi('POST', '/api/marketplace/publish', { kind, id, scope: f.scope, version: f.version, summary: f.summary });
     if (!r.ok) { toast(r.j.unlinked ? `${r.j.error} (${r.j.linkUrl})` : r.j.error || 'No se pudo publicar', 'error'); throw new Error(r.j.error); }
     toast(r.j.pending ? `«${r.j.name}» enviado: pendiente de moderación` : `«${r.j.name}» v${r.j.version} publicado en tu team`);
@@ -3836,7 +3866,13 @@ async function mpPublish(kind, id) {
   const prev = async () => {
     const box = $('#mp-prev'), v = $('#mp-ver'), s = $('#mp-sum');
     if (!box) return;
-    const { ok, j } = await mpApi('POST', '/api/marketplace/preview', { kind, id, scope: $('#mp-scope').value, version: v.value.trim() || undefined, summary: s.value.trim() || undefined });
+    const sc = $('#mp-scope').value;
+    const pn = $('#mp-private-name'); if (pn) pn.hidden = sc !== 'private';
+    { const priv = sc === 'private', ver = $('#mp-ver'), dlgEl = $('#dialog'); // en privado no hay versión ni subida
+      if (ver) { ver.style.display = priv ? 'none' : ''; if (ver.previousElementSibling) ver.previousElementSibling.style.display = priv ? 'none' : ''; } // `hidden` no gana al display de dialog label
+      const h = [...dlgEl.querySelectorAll('h4')].find((x) => /Qué se va a (subir|guardar)/.test(x.textContent)); if (h) h.textContent = priv ? 'Qué se va a guardar (solo en este AgentOffice)' : 'Qué se va a subir';
+      const ok = [...dlgEl.querySelectorAll('.row button')].find((x) => x.value !== 'cancel'); if (ok) ok.textContent = priv ? '🔒 Guardar plantilla' : '⬆ Publicar'; }
+    const { ok, j } = await mpApi('POST', '/api/marketplace/preview', { kind, id, scope: sc === 'private' ? 'team' : sc, version: v.value.trim() || undefined, summary: s.value.trim() || undefined });
     if (!$('#mp-prev')) return;
     if (!ok) { box.innerHTML = `<p class="bad">⛔ ${esc(j.error || 'No se puede publicar')}${(j.findings || []).map((x) => `<br>· ${esc(x.kind)} en ${esc(x.where)}`).join('')}</p>`; return; }
     if (!v.value) v.value = j.version;

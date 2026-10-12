@@ -33,10 +33,16 @@ function walk(dir, rel = '') {
   }
   return out;
 }
-// Carga una plantilla de serie como «fuente»: { spec, roles: {id: texto}, skills: {nombre: [{path, buf, exec}]} }
+// 🔒 Plantillas privadas: el equipo de un proyecto guardado SOLO en este AgentOffice (<catálogo>/plantillas-equipo/<nombre>/),
+// sin subirlo a ningún sitio. Se listan como «mine:<nombre>» junto a las de serie.
+const localDir = () => path.join(skills.catalogDir(), 'plantillas-equipo');
+const MINE = 'mine:';
+const dirOf = (id) => String(id).startsWith(MINE) ? path.join(localDir(), String(id).slice(MINE.length)) : path.join(TPL, 'teams', id);
+// Carga una plantilla (de serie o privada) como «fuente»: { spec, roles: {id: texto}, skills: {nombre: [{path, buf, exec}]} }
 function loadBuiltin(id) {
-  if (!okId(id)) throw fail(400, 'Plantilla no válida');
-  const dir = path.join(TPL, 'teams', id);
+  const bare = String(id || '').replace(MINE, '');
+  if (!okId(bare)) throw fail(400, 'Plantilla no válida');
+  const dir = dirOf(id);
   if (!fs.existsSync(path.join(dir, 'team.json'))) throw fail(404, 'Plantilla no encontrada');
   const spec = readTeamJson(fs.readFileSync(path.join(dir, 'team.json'), 'utf8'));
   const roles = {};
@@ -48,20 +54,41 @@ function loadBuiltin(id) {
     if (!okId(n) || !fs.existsSync(path.join(sdir, 'SKILL.md'))) continue;
     sk[n] = walk(sdir).map((rel) => ({ path: rel, buf: fs.readFileSync(path.join(sdir, rel)), exec: !!(fs.statSync(path.join(sdir, rel)).mode & 0o111) }));
   }
-  return { spec: { ...spec, id }, roles, skills: sk, origin: 'serie' };
+  return { spec: { ...spec, id }, roles, skills: sk, origin: 'serie' }; // las privadas usan las skills que ya hay en el catálogo
 }
 
 export function listTemplates() {
-  const dir = path.join(TPL, 'teams');
-  if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir).filter((id) => fs.existsSync(path.join(dir, id, 'team.json'))).map((id) => {
+  const ids = (dir, prefix = '') => (fs.existsSync(dir) ? fs.readdirSync(dir).filter((id) => fs.existsSync(path.join(dir, id, 'team.json'))).map((id) => prefix + id) : []);
+  return [...ids(path.join(TPL, 'teams')), ...ids(localDir(), MINE)].map((id) => {
     try {
       const { spec, roles } = loadBuiltin(id);
       const labels = allRoles();
-      return { id, name: spec.name, summary: spec.summary || '', icon: spec.icon || '👥', coordinator: spec.coordinator !== false,
+      return { id, mine: id.startsWith(MINE), name: spec.name, summary: spec.summary || '', icon: id.startsWith(MINE) ? '🔒' : spec.icon || '👥', coordinator: spec.coordinator !== false, savedAt: spec.savedAt || null,
         members: spec.members.map((m) => ({ name: m.name, role: m.role, label: labels[m.role]?.label || m.role })), newRoles: Object.keys(roles).filter((r) => !labels[r]), skills: spec.skills || [] };
     } catch { return null; }
-  }).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name));
+  }).filter(Boolean).sort((a, b) => (a.mine - b.mine) || a.name.localeCompare(b.name));
+}
+
+// Guardar el equipo de un proyecto como plantilla privada (copia de sus roles propios; las skills se quedan en el catálogo).
+export function saveLocal(projectId, { name = '', summary = '' } = {}) {
+  const t = teamSpecOf(projectId);
+  const nm = String(name || t.project.name).trim().slice(0, 80);
+  const id = nm.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+  if (!okId(id)) throw fail(400, 'Ponle un nombre a la plantilla');
+  const dir = path.join(localDir(), id);
+  fs.mkdirSync(path.join(dir, 'roles'), { recursive: true });
+  for (const f of fs.readdirSync(path.join(dir, 'roles'))) fs.rmSync(path.join(dir, 'roles', f)); // se sustituye entera
+  const roles = allRoles();
+  for (const r of t.roleIds) fs.writeFileSync(path.join(dir, 'roles', `${r}.md`), fs.readFileSync(roles[r].file, 'utf8'));
+  fs.writeFileSync(path.join(dir, 'team.json'), JSON.stringify({ ...t.spec, name: nm, summary: String(summary || t.spec.summary).slice(0, 500), savedAt: Date.now(), from: t.project.name }, null, 2));
+  return { id: MINE + id, name: nm, dir, members: t.spec.members.length };
+}
+export function deleteLocal(id) {
+  if (!String(id).startsWith(MINE) || !okId(String(id).slice(MINE.length))) throw fail(400, 'Solo se borran plantillas privadas');
+  const dir = dirOf(id);
+  if (!fs.existsSync(dir)) throw fail(404, 'Plantilla no encontrada');
+  fs.rmSync(dir, { recursive: true, force: true });
+  return { ok: true };
 }
 
 // Paquete del marketplace (ya validado por marketplace.validate) → misma «fuente» que una plantilla de serie.

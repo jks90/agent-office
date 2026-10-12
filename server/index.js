@@ -228,6 +228,8 @@ const routes = [
   ['POST', /^\/api\/skills\/new$/, (_, b) => skills.createSkill(b)],
   // FT-141 · Marketplace: paquetes ao-pkg/1 (el reenvío a la nube lo hace flow-test)
   ['GET', /^\/api\/teams\/templates$/, () => teams.listTemplates()], // 👥 plantillas de equipo de serie
+  ['POST', /^\/api\/teams\/templates$/, (_, b) => teams.saveLocal(b.projectId, b)], // 🔒 guardar el equipo como plantilla privada (no sale de esta máquina)
+  ['DELETE', /^\/api\/teams\/templates\/(mine:[\w-]+)$/, ([id]) => teams.deleteLocal(id)],
   ['POST', /^\/api\/projects\/(\w+)\/team-template$/, ([id], b) => teams.applyBuiltin(b.template, id, { coordinator: typeof b.coordinator === 'boolean' ? b.coordinator : null })], // 👥 aplicar a un proyecto
   ['POST', /^\/api\/marketplace\/export$/, (_, b) => marketplace.exportPackage(b.kind, b.id, b.scope, b)],
   ['POST', /^\/api\/marketplace\/inspect$/, (_, b) => marketplace.inspect(b.package, b)],
