@@ -130,7 +130,7 @@ export function warnings({ roles, agents }) {
       if (kind === 'mcps' && !mcpCat.has(n)) out.push({ owner, kind, name: n, why: 'no está en el catálogo de MCP' });
       if (kind === 'scripts') {
         const s = scriptCat.get(n);
-        if (!s) out.push({ owner, kind, name: n, why: 'no está en el catálogo de scripts (no le llega al agente)' });
+        if (!s) out.push({ owner, kind, name: n, why: 'no está en el catálogo de scripts de este AgentOffice (aquí no le llega al agente)' });
         else if (!fs.existsSync(s.path)) out.push({ owner, kind, name: n, why: `el fichero ya no existe (${s.path})` });
       }
     }
@@ -138,8 +138,8 @@ export function warnings({ roles, agents }) {
   for (const [id, r] of Object.entries(roles)) {
     for (const k of ['skills', 'mcps', 'scripts']) check(`rol ${r.label || id}`, k, r[k]);
     const has = ['skills', 'mcps', 'scripts'].some((k) => (r[k] || []).length);
-    if (has && !agents.some((a) => a.role === id)) out.push({ owner: `rol ${r.label || id}`, kind: 'rol', name: id, why: 'tiene herramientas pero ningún agente con este rol: no las usa nadie' });
+    if (has && !agents.some((a) => a.role === id)) out.push({ owner: `rol ${r.label || id}`, kind: 'rol', name: id, why: 'tiene herramientas, pero en este AgentOffice no hay ningún agente con este rol (si lo usas en otra máquina, oculta el aviso)' });
   }
   for (const a of agents) for (const k of ['skills', 'mcps', 'scripts']) check(`agente ${a.name}`, k, a[k]);
-  return out;
+  return out.map((w) => ({ ...w, key: `${w.owner}|${w.kind}|${w.name}` })); // key: para ocultarlo (settings.hiddenWarnings)
 }

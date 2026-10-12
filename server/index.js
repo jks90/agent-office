@@ -328,6 +328,7 @@ const routes = [
     if (typeof b.agentMemory === 'boolean') st.agentMemory = b.agentMemory; // FT-75
     if (b.ponytailRoles && typeof b.ponytailRoles === 'object') st.ponytailRoles = ponytail.cleanRoles(b.ponytailRoles); // FT-86
     if (typeof b.claudeMemory === 'boolean') st.claudeMemory = b.claudeMemory;
+    if (Array.isArray(b.hiddenWarnings)) st.hiddenWarnings = [...new Set(b.hiddenWarnings.map(String))].slice(0, 300); // 🧰 avisos de Herramientas ocultados (p. ej. roles que se usan en otra máquina)
     if (Array.isArray(b.hiddenProjects)) st.hiddenProjects = b.hiddenProjects.map(String).filter((id) => /^\w+$/.test(id)).slice(0, 500); // proyectos ocultos en la UI (siguen funcionando)
     if (typeof b.codeIndex === 'boolean') st.codeIndex = b.codeIndex; // FT-58
     if (browser.MODES.includes(b.browserMode)) { st.browserMode = b.browserMode; browser.setMode(b.browserMode); } // FT-118

@@ -1445,7 +1445,8 @@ document.addEventListener('click', (e) => {
 function renderToolProposals() {
   const list = S.proposals || [];
   const badge = $('#tab-tools-warn');
-  if (badge) badge.textContent = (list.length + (toolsUsage?.warnings?.length || 0)) || '';
+  const hiddenW = new Set(S.settings.hiddenWarnings || []);
+  if (badge) badge.textContent = (list.length + (toolsUsage?.warnings || []).filter((x) => !hiddenW.has(x.key)).length) || '';
   const box = $('#tools-proposals');
   if (!box) return;
   const pname = (id) => S.projects.find((p) => p.id === id)?.name || '¿?';
@@ -1464,14 +1465,22 @@ document.addEventListener('click', async (e) => {
     else { await api('POST', `/api/proposals/${r.dataset.propReject}/reject`); toast('Propuesta descartada'); }
   } catch { /* el toast ya avisó */ }
 });
+document.addEventListener('click', async (e) => {
+  const h = e.target.closest?.('[data-warn-hide]'), sh = e.target.closest?.('[data-warn-show]');
+  if (!h && !sh) return;
+  const next = h ? [...new Set([...(S.settings.hiddenWarnings || []), h.dataset.warnHide])] : [];
+  try { await api('POST', '/api/settings', { hiddenWarnings: next }); S.settings.hiddenWarnings = next; renderToolsView(); } catch { /* el toast ya avisó */ }
+});
 // 🧰 Pestaña Herramientas: subpestañas (Skills · MCP · Scripts), avisos y cifras de uso.
 const TOOL_KIND_LABEL = { skills: 'skill', mcps: 'MCP', scripts: 'script', rol: 'rol' };
 async function renderToolsView(reload = false) {
   try { toolsUsage = await api('GET', '/api/tools/usage'); } catch { toolsUsage = null; }
-  const w = toolsUsage?.warnings || [];
+  const hiddenW = new Set(S.settings.hiddenWarnings || []);
+  const all = toolsUsage?.warnings || [];
+  const w = all.filter((x) => !hiddenW.has(x.key)), wHidden = all.length - w.length;
   renderToolProposals();
   const box = $('#tools-warnings');
-  if (box) box.innerHTML = w.length ? `<div class="tools-warn"><b>⚠ ${w.length} cosa${w.length === 1 ? '' : 's'} que no le llega${w.length === 1 ? '' : 'n'} a nadie</b><ul>${w.map((x) => `<li>${esc(x.owner)} · ${esc(TOOL_KIND_LABEL[x.kind] || x.kind)} <b>${esc(x.name)}</b>: ${esc(x.why)}</li>`).join('')}</ul></div>` : '';
+  if (box) box.innerHTML = w.length || wHidden ? `<div class="tools-warn">${w.length ? `<b>⚠ ${w.length} aviso${w.length === 1 ? '' : 's'} de herramientas que aquí no llegan</b><ul>${w.map((x) => `<li>${esc(x.owner)} · ${esc(TOOL_KIND_LABEL[x.kind] || x.kind)} <b>${esc(x.name)}</b>: ${esc(x.why)} <button class="linklike" data-warn-hide="${esc(x.key)}" title="No volver a avisar de esto en este AgentOffice">Ocultar</button></li>`).join('')}</ul>` : ''}${wHidden ? `<div class="muted" style="font-size:12px;margin-top:4px">${wHidden} aviso${wHidden === 1 ? '' : 's'} oculto${wHidden === 1 ? '' : 's'} · <button class="linklike" data-warn-show>volver a mostrarlos</button></div>` : ''}</div>` : '';
   const tab = safeGet('ao:toolsTab') || 'skills';
   document.querySelectorAll('[data-tools-tab]').forEach((b) => b.classList.toggle('active', b.dataset.toolsTab === tab));
   document.querySelectorAll('[data-tools-pane]').forEach((p) => { p.hidden = p.dataset.toolsPane !== tab; });
