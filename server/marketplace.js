@@ -14,6 +14,7 @@ import * as memory from './memory.js';
 import * as team from './team.js';
 import { allRoles, roleOf } from './roles.js';
 import { skillsDir, rolesDir, ensureCatalog, parseFrontmatter } from './skills.js';
+import { MAX_DESKS } from './coordinator.js';
 import * as teams from './teams.js'; // 👥 paquetes de tipo «team» (plantilla de equipo)
 
 export const FORMAT = 'ao-pkg/1';
@@ -308,7 +309,7 @@ export function importPackage(pkg, opts = {}) {
   }
   // Se ficha en el proyecto elegido si tiene mesa libre (tope 8); si no, al banquillo (Agentes) para ficharlo a mano.
   const proj = opts.projectId ? store.get().projects.find((p) => p.id === opts.projectId) : null;
-  const seat = proj && proj.team.length < 8 ? proj.id : null;
+  const seat = proj && proj.team.length < MAX_DESKS ? proj.id : null;
   const agent = team.hire({ projectId: seat, name: opts.agentName || pkg.meta.agentName || pkg.name, role: roleId, engine: pkg.meta.engine, model: pkg.meta.model });
   if (pkg.memory) {
     if (pkg.memory.agent) memory.write(opts.projectId, agent.id, expandText(pkg.memory.agent));

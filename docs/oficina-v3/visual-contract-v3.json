@@ -70,7 +70,7 @@
       "label": "AMBIENTE"
     }
   },
-  "layoutSelection": "Choose first layout where minAgents <= real project team count <= maxAgents. User and ambient characters do not count. Outside 2..8: adapter required, no silent fallback.",
+  "layoutSelection": "Choose first layout where minAgents <= real project team count <= maxAgents. User and ambient characters do not count. Outside 2..10: adapter required, no silent fallback.",
   "layouts": [
     {
       "id": "team-2",
@@ -3693,6 +3693,1252 @@
         "home": 8,
         "qa": 8,
         "waiting": 8,
+        "idleSofa": 2
+      }
+    },
+    {
+      "id": "team-10",
+      "minAgents": 9,
+      "maxAgents": 10,
+      "floor": {
+        "rx": 14,
+        "rz": 16.2,
+        "wallHeight": 0.8,
+        "openEdges": [
+          "+x",
+          "+z"
+        ]
+      },
+      "floorZones": {
+        "development": {
+          "label": "Trabajo",
+          "type": "work",
+          "x": 3.1,
+          "z": 7.8,
+          "w": 5.4,
+          "d": 8.8,
+          "labelAnchor": {
+            "x": 3.1,
+            "z": 3.5799999999999996,
+            "y": 0.025
+          },
+          "floor": "carpet",
+          "color": "#417EA6",
+          "fill": "#DDECF5",
+          "labelX": 3.1,
+          "labelZ": 3.5799999999999996
+        },
+        "qa": {
+          "label": "Revisión / QA",
+          "type": "work",
+          "x": 8.5,
+          "z": 7.8,
+          "w": 3.4,
+          "d": 8.8,
+          "labelAnchor": {
+            "x": 8.5,
+            "z": 3.5799999999999996,
+            "y": 0.025
+          },
+          "floor": "carpet",
+          "color": "#417EA6",
+          "fill": "#DDECF5",
+          "labelX": 8.5,
+          "labelZ": 3.5799999999999996
+        },
+        "board": {
+          "label": "Kanban / espera",
+          "type": "waiting",
+          "x": 12.4,
+          "z": 7.8,
+          "w": 2.4,
+          "d": 8.8,
+          "labelAnchor": {
+            "x": 12.4,
+            "z": 3.5799999999999996,
+            "y": 0.025
+          },
+          "floor": "tile",
+          "color": "#B07B25",
+          "fill": "#F7E8C8",
+          "labelX": 12.4,
+          "labelZ": 3.5799999999999996
+        },
+        "meeting": {
+          "label": "Reuniones",
+          "type": "work",
+          "x": 3.1,
+          "z": 1.4,
+          "w": 5.4,
+          "d": 2,
+          "labelAnchor": {
+            "x": 3.1,
+            "z": 0.5799999999999998,
+            "y": 0.025
+          },
+          "floor": "carpet",
+          "color": "#417EA6",
+          "fill": "#DDECF5",
+          "labelX": 3.1,
+          "labelZ": 0.5799999999999998
+        },
+        "po": {
+          "label": "PO · despacho",
+          "type": "key",
+          "x": 8.15,
+          "z": 1.4,
+          "w": 2.7,
+          "d": 2,
+          "labelAnchor": {
+            "x": 8.15,
+            "z": 0.5799999999999998,
+            "y": 0.025
+          },
+          "floor": "wood",
+          "color": "#8C68BD",
+          "fill": "#ECE2F5",
+          "labelX": 8.15,
+          "labelZ": 0.5799999999999998
+        },
+        "user": {
+          "label": "Tú · avisos",
+          "type": "key",
+          "paletteOverride": "user",
+          "x": 12.05,
+          "z": 1.4,
+          "w": 3.1,
+          "d": 2,
+          "labelAnchor": {
+            "x": 12.05,
+            "z": 0.5799999999999998,
+            "y": 0.025
+          },
+          "floor": "wood",
+          "color": "#B38A27",
+          "fill": "#FFF0BF",
+          "labelX": 12.05,
+          "labelZ": 0.5799999999999998
+        },
+        "idle": {
+          "label": "Café / descanso",
+          "type": "rest",
+          "x": 2.25,
+          "z": 14.5,
+          "w": 3.7,
+          "d": 2.6,
+          "labelAnchor": {
+            "x": 2.25,
+            "z": 13.38,
+            "y": 0.025
+          },
+          "floor": "wood",
+          "color": "#43836B",
+          "fill": "#DDECE2",
+          "labelX": 2.25,
+          "labelZ": 13.38
+        },
+        "recreation": {
+          "label": "Recreo",
+          "type": "rest",
+          "x": 7.15,
+          "z": 14.5,
+          "w": 4.1,
+          "d": 2.6,
+          "labelAnchor": {
+            "x": 7.15,
+            "z": 13.38,
+            "y": 0.025
+          },
+          "floor": "wood",
+          "color": "#43836B",
+          "fill": "#DDECE2",
+          "labelX": 7.15,
+          "labelZ": 13.38
+        },
+        "reception": {
+          "label": "Recepción / entrada",
+          "type": "waiting",
+          "x": 11.9,
+          "z": 14.5,
+          "w": 3.4,
+          "d": 2.6,
+          "labelAnchor": {
+            "x": 11.9,
+            "z": 13.38,
+            "y": 0.025
+          },
+          "floor": "tile",
+          "color": "#B07B25",
+          "fill": "#F7E8C8",
+          "labelX": 11.9,
+          "labelZ": 13.38
+        }
+      },
+      "anchors": [
+        {
+          "id": "desk-0",
+          "kind": "desk",
+          "zone": "development",
+          "x": 1.6,
+          "z": 4.05,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 1.25,
+          "d": 0.6,
+          "index": 0,
+          "row": 0,
+          "column": 0,
+          "seatId": "chair-0"
+        },
+        {
+          "id": "chair-0",
+          "kind": "chair",
+          "zone": "development",
+          "x": 1.6,
+          "z": 4.6,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 0,
+          "deskId": "desk-0"
+        },
+        {
+          "id": "qa-desk-0",
+          "kind": "desk",
+          "zone": "qa",
+          "x": 7.45,
+          "z": 4.05,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.95,
+          "d": 0.6,
+          "index": 0,
+          "row": 0,
+          "column": 0,
+          "seatId": "qa-chair-0"
+        },
+        {
+          "id": "qa-chair-0",
+          "kind": "chair",
+          "zone": "qa",
+          "x": 7.45,
+          "z": 4.6,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 0,
+          "deskId": "qa-desk-0"
+        },
+        {
+          "id": "wait-0",
+          "kind": "standing-slot",
+          "zone": "board",
+          "x": 11.75,
+          "z": 4.5,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 0
+        },
+        {
+          "id": "desk-1",
+          "kind": "desk",
+          "zone": "development",
+          "x": 4.6,
+          "z": 4.05,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 1.25,
+          "d": 0.6,
+          "index": 1,
+          "row": 0,
+          "column": 1,
+          "seatId": "chair-1"
+        },
+        {
+          "id": "chair-1",
+          "kind": "chair",
+          "zone": "development",
+          "x": 4.6,
+          "z": 4.6,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 1,
+          "deskId": "desk-1"
+        },
+        {
+          "id": "qa-desk-1",
+          "kind": "desk",
+          "zone": "qa",
+          "x": 9.5,
+          "z": 4.05,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.95,
+          "d": 0.6,
+          "index": 1,
+          "row": 0,
+          "column": 1,
+          "seatId": "qa-chair-1"
+        },
+        {
+          "id": "qa-chair-1",
+          "kind": "chair",
+          "zone": "qa",
+          "x": 9.5,
+          "z": 4.6,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 1,
+          "deskId": "qa-desk-1"
+        },
+        {
+          "id": "wait-1",
+          "kind": "standing-slot",
+          "zone": "board",
+          "x": 12.85,
+          "z": 4.5,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 1
+        },
+        {
+          "id": "desk-2",
+          "kind": "desk",
+          "zone": "development",
+          "x": 1.6,
+          "z": 5.65,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 1.25,
+          "d": 0.6,
+          "index": 2,
+          "row": 1,
+          "column": 0,
+          "seatId": "chair-2"
+        },
+        {
+          "id": "chair-2",
+          "kind": "chair",
+          "zone": "development",
+          "x": 1.6,
+          "z": 6.2,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 2,
+          "deskId": "desk-2"
+        },
+        {
+          "id": "qa-desk-2",
+          "kind": "desk",
+          "zone": "qa",
+          "x": 7.45,
+          "z": 5.65,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.95,
+          "d": 0.6,
+          "index": 2,
+          "row": 1,
+          "column": 0,
+          "seatId": "qa-chair-2"
+        },
+        {
+          "id": "qa-chair-2",
+          "kind": "chair",
+          "zone": "qa",
+          "x": 7.45,
+          "z": 6.2,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 2,
+          "deskId": "qa-desk-2"
+        },
+        {
+          "id": "wait-2",
+          "kind": "standing-slot",
+          "zone": "board",
+          "x": 11.75,
+          "z": 6.1000000000000005,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 2
+        },
+        {
+          "id": "desk-3",
+          "kind": "desk",
+          "zone": "development",
+          "x": 4.6,
+          "z": 5.65,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 1.25,
+          "d": 0.6,
+          "index": 3,
+          "row": 1,
+          "column": 1,
+          "seatId": "chair-3"
+        },
+        {
+          "id": "chair-3",
+          "kind": "chair",
+          "zone": "development",
+          "x": 4.6,
+          "z": 6.2,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 3,
+          "deskId": "desk-3"
+        },
+        {
+          "id": "qa-desk-3",
+          "kind": "desk",
+          "zone": "qa",
+          "x": 9.5,
+          "z": 5.65,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.95,
+          "d": 0.6,
+          "index": 3,
+          "row": 1,
+          "column": 1,
+          "seatId": "qa-chair-3"
+        },
+        {
+          "id": "qa-chair-3",
+          "kind": "chair",
+          "zone": "qa",
+          "x": 9.5,
+          "z": 6.2,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 3,
+          "deskId": "qa-desk-3"
+        },
+        {
+          "id": "wait-3",
+          "kind": "standing-slot",
+          "zone": "board",
+          "x": 12.85,
+          "z": 6.1000000000000005,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 3
+        },
+        {
+          "id": "desk-4",
+          "kind": "desk",
+          "zone": "development",
+          "x": 1.6,
+          "z": 7.25,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 1.25,
+          "d": 0.6,
+          "index": 4,
+          "row": 2,
+          "column": 0,
+          "seatId": "chair-4"
+        },
+        {
+          "id": "chair-4",
+          "kind": "chair",
+          "zone": "development",
+          "x": 1.6,
+          "z": 7.8,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 4,
+          "deskId": "desk-4"
+        },
+        {
+          "id": "qa-desk-4",
+          "kind": "desk",
+          "zone": "qa",
+          "x": 7.45,
+          "z": 7.25,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.95,
+          "d": 0.6,
+          "index": 4,
+          "row": 2,
+          "column": 0,
+          "seatId": "qa-chair-4"
+        },
+        {
+          "id": "qa-chair-4",
+          "kind": "chair",
+          "zone": "qa",
+          "x": 7.45,
+          "z": 7.8,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 4,
+          "deskId": "qa-desk-4"
+        },
+        {
+          "id": "wait-4",
+          "kind": "standing-slot",
+          "zone": "board",
+          "x": 11.75,
+          "z": 7.7,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 4
+        },
+        {
+          "id": "desk-5",
+          "kind": "desk",
+          "zone": "development",
+          "x": 4.6,
+          "z": 7.25,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 1.25,
+          "d": 0.6,
+          "index": 5,
+          "row": 2,
+          "column": 1,
+          "seatId": "chair-5"
+        },
+        {
+          "id": "chair-5",
+          "kind": "chair",
+          "zone": "development",
+          "x": 4.6,
+          "z": 7.8,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 5,
+          "deskId": "desk-5"
+        },
+        {
+          "id": "qa-desk-5",
+          "kind": "desk",
+          "zone": "qa",
+          "x": 9.5,
+          "z": 7.25,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.95,
+          "d": 0.6,
+          "index": 5,
+          "row": 2,
+          "column": 1,
+          "seatId": "qa-chair-5"
+        },
+        {
+          "id": "qa-chair-5",
+          "kind": "chair",
+          "zone": "qa",
+          "x": 9.5,
+          "z": 7.8,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 5,
+          "deskId": "qa-desk-5"
+        },
+        {
+          "id": "wait-5",
+          "kind": "standing-slot",
+          "zone": "board",
+          "x": 12.85,
+          "z": 7.7,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 5
+        },
+        {
+          "id": "desk-6",
+          "kind": "desk",
+          "zone": "development",
+          "x": 1.6,
+          "z": 8.850000000000001,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 1.25,
+          "d": 0.6,
+          "index": 6,
+          "row": 3,
+          "column": 0,
+          "seatId": "chair-6"
+        },
+        {
+          "id": "chair-6",
+          "kind": "chair",
+          "zone": "development",
+          "x": 1.6,
+          "z": 9.400000000000002,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 6,
+          "deskId": "desk-6"
+        },
+        {
+          "id": "qa-desk-6",
+          "kind": "desk",
+          "zone": "qa",
+          "x": 7.45,
+          "z": 8.850000000000001,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.95,
+          "d": 0.6,
+          "index": 6,
+          "row": 3,
+          "column": 0,
+          "seatId": "qa-chair-6"
+        },
+        {
+          "id": "qa-chair-6",
+          "kind": "chair",
+          "zone": "qa",
+          "x": 7.45,
+          "z": 9.400000000000002,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 6,
+          "deskId": "qa-desk-6"
+        },
+        {
+          "id": "wait-6",
+          "kind": "standing-slot",
+          "zone": "board",
+          "x": 11.75,
+          "z": 9.3,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 6
+        },
+        {
+          "id": "desk-7",
+          "kind": "desk",
+          "zone": "development",
+          "x": 4.6,
+          "z": 8.850000000000001,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 1.25,
+          "d": 0.6,
+          "index": 7,
+          "row": 3,
+          "column": 1,
+          "seatId": "chair-7"
+        },
+        {
+          "id": "chair-7",
+          "kind": "chair",
+          "zone": "development",
+          "x": 4.6,
+          "z": 9.400000000000002,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 7,
+          "deskId": "desk-7"
+        },
+        {
+          "id": "qa-desk-7",
+          "kind": "desk",
+          "zone": "qa",
+          "x": 9.5,
+          "z": 8.850000000000001,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.95,
+          "d": 0.6,
+          "index": 7,
+          "row": 3,
+          "column": 1,
+          "seatId": "qa-chair-7"
+        },
+        {
+          "id": "qa-chair-7",
+          "kind": "chair",
+          "zone": "qa",
+          "x": 9.5,
+          "z": 9.400000000000002,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 7,
+          "deskId": "qa-desk-7"
+        },
+        {
+          "id": "wait-7",
+          "kind": "standing-slot",
+          "zone": "board",
+          "x": 12.85,
+          "z": 9.3,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 7
+        },
+        {
+          "id": "meeting-table",
+          "kind": "meeting-table",
+          "zone": "meeting",
+          "x": 3.1,
+          "z": 1.35,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 2.15,
+          "d": 0.65
+        },
+        {
+          "id": "meeting-chair-0",
+          "kind": "chair",
+          "zone": "meeting",
+          "x": 2.5,
+          "z": 1.95,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.4,
+          "d": 0.4
+        },
+        {
+          "id": "meeting-chair-1",
+          "kind": "chair",
+          "zone": "meeting",
+          "x": 3.7,
+          "z": 1.95,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.4,
+          "d": 0.4
+        },
+        {
+          "id": "meeting-chair-2",
+          "kind": "chair",
+          "zone": "meeting",
+          "x": 2.5,
+          "z": 0.75,
+          "y": 0,
+          "rotationY": 0,
+          "w": 0.4,
+          "d": 0.4
+        },
+        {
+          "id": "meeting-chair-3",
+          "kind": "chair",
+          "zone": "meeting",
+          "x": 3.7,
+          "z": 0.75,
+          "y": 0,
+          "rotationY": 0,
+          "w": 0.4,
+          "d": 0.4
+        },
+        {
+          "id": "meeting-door",
+          "kind": "door",
+          "zone": "meeting",
+          "x": 5.25,
+          "z": 2.4,
+          "y": 0,
+          "rotationY": 0,
+          "w": 0.85,
+          "d": 0.08
+        },
+        {
+          "id": "po-desk",
+          "kind": "desk",
+          "zone": "po",
+          "x": 8.15,
+          "z": 1.25,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 1.4,
+          "d": 0.6,
+          "seatId": "po-chair"
+        },
+        {
+          "id": "po-chair",
+          "kind": "chair",
+          "zone": "po",
+          "x": 8.15,
+          "z": 1.85,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "deskId": "po-desk"
+        },
+        {
+          "id": "user-desk",
+          "kind": "desk",
+          "zone": "user",
+          "x": 12.05,
+          "z": 1.25,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 1.85,
+          "d": 0.65,
+          "seatId": "user-chair",
+          "priority": 1
+        },
+        {
+          "id": "user-chair",
+          "kind": "chair",
+          "zone": "user",
+          "x": 12.05,
+          "z": 1.9,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "deskId": "user-desk",
+          "priority": 1
+        },
+        {
+          "id": "user-bell",
+          "kind": "notice-anchor",
+          "zone": "user",
+          "x": 12.05,
+          "z": 1.25,
+          "y": 1.25,
+          "rotationY": 3.141592653589793,
+          "w": 0.3,
+          "d": 0.3,
+          "source": "FT-124 mine/inboxItems"
+        },
+        {
+          "id": "kanban",
+          "kind": "board",
+          "zone": "board",
+          "x": 12.4,
+          "z": 3.55,
+          "y": 0.8,
+          "rotationY": 3.141592653589793,
+          "w": 2.05,
+          "d": 0.12
+        },
+        {
+          "id": "coffee-machine",
+          "kind": "coffee-machine",
+          "zone": "idle",
+          "x": 1.05,
+          "z": 13.85,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.65,
+          "d": 0.55
+        },
+        {
+          "id": "coffee-counter",
+          "kind": "counter",
+          "zone": "idle",
+          "x": 1.25,
+          "z": 13.85,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 1.5,
+          "d": 0.65
+        },
+        {
+          "id": "cafe-table",
+          "kind": "table",
+          "zone": "idle",
+          "x": 2.8,
+          "z": 13.95,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 1.1,
+          "d": 0.6
+        },
+        {
+          "id": "cafe-chair",
+          "kind": "chair",
+          "zone": "idle",
+          "x": 2.8,
+          "z": 14.5,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.4,
+          "d": 0.4
+        },
+        {
+          "id": "idle-sofa",
+          "kind": "sofa",
+          "zone": "idle",
+          "x": 2.4,
+          "z": 15.25,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 2.25,
+          "d": 0.65
+        },
+        {
+          "id": "idle-seat-0",
+          "kind": "seated-slot",
+          "zone": "idle",
+          "x": 1.85,
+          "z": 15.25,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45
+        },
+        {
+          "id": "idle-seat-1",
+          "kind": "seated-slot",
+          "zone": "idle",
+          "x": 2.95,
+          "z": 15.25,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45
+        },
+        {
+          "id": "foosball",
+          "kind": "foosball",
+          "zone": "recreation",
+          "x": 6.25,
+          "z": 14,
+          "y": 0,
+          "rotationY": 1.5707963267948966,
+          "w": 1.5,
+          "d": 0.85
+        },
+        {
+          "id": "recreation-sofa",
+          "kind": "sofa",
+          "zone": "recreation",
+          "x": 7.5,
+          "z": 15.25,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 2.7,
+          "d": 0.65
+        },
+        {
+          "id": "reception-counter",
+          "kind": "reception-counter",
+          "zone": "reception",
+          "x": 11.3,
+          "z": 13.9,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 1.6,
+          "d": 0.65
+        },
+        {
+          "id": "reception-door",
+          "kind": "door",
+          "zone": "reception",
+          "x": 12.8,
+          "z": 16.2,
+          "y": 0,
+          "rotationY": 0,
+          "w": 1,
+          "d": 0.1,
+          "boundary": true
+        },
+        {
+          "id": "entry-mat",
+          "kind": "entry-mat",
+          "zone": "reception",
+          "x": 12.8,
+          "z": 15.25,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 1.1,
+          "d": 0.65
+        },
+        {
+          "id": "desk-8",
+          "kind": "desk",
+          "zone": "development",
+          "x": 1.6,
+          "z": 10.45,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 1.25,
+          "d": 0.6,
+          "index": 8,
+          "row": 4,
+          "column": 0,
+          "seatId": "chair-8"
+        },
+        {
+          "id": "chair-8",
+          "kind": "chair",
+          "zone": "development",
+          "x": 1.6,
+          "z": 11,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 8,
+          "deskId": "desk-8"
+        },
+        {
+          "id": "qa-desk-8",
+          "kind": "desk",
+          "zone": "qa",
+          "x": 7.45,
+          "z": 10.45,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.95,
+          "d": 0.6,
+          "index": 8,
+          "row": 4,
+          "column": 0,
+          "seatId": "qa-chair-8"
+        },
+        {
+          "id": "qa-chair-8",
+          "kind": "chair",
+          "zone": "qa",
+          "x": 7.45,
+          "z": 11,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 8,
+          "deskId": "qa-desk-8"
+        },
+        {
+          "id": "wait-8",
+          "kind": "standing-slot",
+          "zone": "board",
+          "x": 11.75,
+          "z": 10.9,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 8
+        },
+        {
+          "id": "desk-9",
+          "kind": "desk",
+          "zone": "development",
+          "x": 4.6,
+          "z": 10.45,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 1.25,
+          "d": 0.6,
+          "index": 9,
+          "row": 4,
+          "column": 1,
+          "seatId": "chair-9"
+        },
+        {
+          "id": "chair-9",
+          "kind": "chair",
+          "zone": "development",
+          "x": 4.6,
+          "z": 11,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 9,
+          "deskId": "desk-9"
+        },
+        {
+          "id": "qa-desk-9",
+          "kind": "desk",
+          "zone": "qa",
+          "x": 9.5,
+          "z": 10.45,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.95,
+          "d": 0.6,
+          "index": 9,
+          "row": 4,
+          "column": 1,
+          "seatId": "qa-chair-9"
+        },
+        {
+          "id": "qa-chair-9",
+          "kind": "chair",
+          "zone": "qa",
+          "x": 9.5,
+          "z": 11,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 9,
+          "deskId": "qa-desk-9"
+        },
+        {
+          "id": "wait-9",
+          "kind": "standing-slot",
+          "zone": "board",
+          "x": 12.85,
+          "z": 10.9,
+          "y": 0,
+          "rotationY": 3.141592653589793,
+          "w": 0.45,
+          "d": 0.45,
+          "index": 9
+        }
+      ],
+      "walkways": [
+        {
+          "id": "north",
+          "x": 7,
+          "z": 2.9,
+          "w": 13.2,
+          "d": 1
+        },
+        {
+          "id": "south",
+          "x": 7,
+          "z": 12.7,
+          "w": 13.2,
+          "d": 1
+        },
+        {
+          "id": "spine-west",
+          "x": 6.3,
+          "z": 7.8,
+          "w": 1,
+          "d": 8.8
+        },
+        {
+          "id": "spine-east",
+          "x": 10.7,
+          "z": 7.8,
+          "w": 1,
+          "d": 8.8
+        },
+        {
+          "id": "entry",
+          "x": 12.8,
+          "z": 15,
+          "w": 1,
+          "d": 2.4
+        }
+      ],
+      "routes": {
+        "visitor": [
+          {
+            "x": 12.8,
+            "z": 16.2
+          },
+          {
+            "x": 12.8,
+            "z": 14.85
+          },
+          {
+            "x": 12.8,
+            "z": 12.7
+          },
+          {
+            "x": 6.3,
+            "z": 12.7
+          },
+          {
+            "x": 6.3,
+            "z": 2.9
+          },
+          {
+            "x": 5.25,
+            "z": 2.9
+          },
+          {
+            "x": 5.25,
+            "z": 1.9
+          }
+        ],
+        "cleaner": [
+          {
+            "x": 12.8,
+            "z": 16.2
+          },
+          {
+            "x": 12.8,
+            "z": 14.85
+          },
+          {
+            "x": 12.8,
+            "z": 12.7
+          },
+          {
+            "x": 6.3,
+            "z": 12.7
+          },
+          {
+            "x": 6.3,
+            "z": 2.9
+          },
+          {
+            "x": 10.7,
+            "z": 2.9
+          },
+          {
+            "x": 10.7,
+            "z": 12.7
+          },
+          {
+            "x": 12.8,
+            "z": 12.7
+          },
+          {
+            "x": 12.8,
+            "z": 16.2
+          }
+        ]
+      },
+      "capacity": {
+        "home": 10,
+        "qa": 10,
+        "waiting": 10,
         "idleSofa": 2
       }
     }

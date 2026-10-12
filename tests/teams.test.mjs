@@ -64,12 +64,12 @@ test('segunda vez: no duplica, conserva el rol y la skill; banquillo antes que c
   assert.equal(r.coordinator, false, 'la casilla del alta manda sobre la plantilla');
 });
 
-test('tope de 8 mesas: lo que no cabe se avisa', async () => {
+test('tope de 10 mesas: lo que no cabe se avisa', async () => {
   const p = { id: 'p3', name: 'Lleno', folder: 'y', repos: [], team: [] };
   get().projects.push(p);
-  for (let i = 0; i < 7; i++) team.hire({ projectId: p.id, name: `X${i}`, role: 'back', engine: 'demo' });
+  for (let i = 0; i < 9; i++) team.hire({ projectId: p.id, name: `X${i}`, role: 'back', engine: 'demo' });
   const r = teams.applyBuiltin('docs-ops', p.id);
-  assert.equal(p.team.length, 8);
+  assert.equal(p.team.length, 10);
   assert.equal(r.benched.length, 1);
 });
 

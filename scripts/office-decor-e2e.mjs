@@ -38,7 +38,7 @@ try {
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   await page.goto(base, { waitUntil: 'networkidle2' });
   await page.waitForFunction(() => window.aoOffice?.ready, { timeout: 30000 });
-  for (const n of (before ? [2, 8] : [2, 4, 6, 8])) {
+  for (const n of (before ? [2, 8] : [2, 4, 6, 8, 10])) {
     await page.evaluate((n) => {
       const agents = Array.from({ length: n }, (_, i) => ({ id: `decor-${i}`, name: `Agente ${i + 1}`, role: 'back', engine: 'demo', status: 'working', taskId: `AO-5-${i}`, projectId: 'ao5' }));
       const tasks = agents.map((a) => ({ id: a.taskId, code: a.taskId, title: 'Decoración de oficina', status: 'doing', agentId: a.id, projectId: 'ao5' }));

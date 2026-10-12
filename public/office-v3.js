@@ -7,9 +7,9 @@ import DATA from './office-v3-data.js';
 export const V3 = DATA;
 const hex = (s) => parseInt(String(s).replace('#', ''), 16);
 
-// Se elige el primer contrato cuyo rango contiene al equipo real; 0–1 usan team-2. Fuera de 2..8 → null (planta heredada).
+// Se elige el primer contrato cuyo rango contiene al equipo real; 0–1 usan team-2. Fuera de 2..10 → null (planta heredada).
 export function pickLayout(count) {
-  if (count > 8) return null;
+  if (count > 10) return null;
   return DATA.layouts.find((l) => count >= l.minAgents && count <= l.maxAgents) || DATA.layouts[0];
 }
 

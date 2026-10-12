@@ -10,7 +10,7 @@
 //      → 'restore' (vuelve a su homeRole). Revisiones que bloquean tareas: ver reviewPlan().
 // Nunca toca a quien trabaja, ni a quien tiene tareas suyas esperando (asignadas o pausadas por cuota), ni al PO.
 import { blocksOf, waitingSince, nudgeMin } from './review.js';
-export const MAX_DESKS = 8;
+export const MAX_DESKS = 10; // mesas por proyecto (la planta v3 llega hasta team-10)
 export const IDLE_MIN = 10;      // minutos sin trabajo listo antes de poder ir al banquillo
 export const RATIO = 3;          // tareas listas por agente a partir de las que se refuerza un rol
 export const MAX_PER_ROLE = 3;   // no se refuerza un rol que ya tiene tantos agentes que pueden trabajar

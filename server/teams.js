@@ -2,7 +2,7 @@
 //   · De serie: templates/teams/<id>/{team.json, roles/*.md} + templates/skills/<nombre>/ (funcionan sin cuenta ni red).
 //   · Del marketplace: paquete ao-pkg/1 de tipo «team» con los mismos ficheros (exportTeam / applyTeam con el paquete).
 // Aplicar: instala los roles que falten (nunca pisa uno existente), las skills que trae y las sugeridas que ya estén en el PC,
-// ficha primero a los del banquillo con ese rol y contrata el resto (tope de 8 mesas), da a cada agente las skills de su papel
+// ficha primero a los del banquillo con ese rol y contrata el resto (tope de MAX_DESKS mesas), da a cada agente las skills de su papel
 // y añade el coordinador si la plantilla lo pide.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,7 +14,7 @@ import { allRoles } from './roles.js';
 const TPL = path.join(store.ROOT, 'templates');
 const fail = (status, message, extra = {}) => Object.assign(new Error(message), { status, ...extra });
 const okId = (s) => /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(String(s || ''));
-const MAX_DESKS = 8;
+import { MAX_DESKS } from './coordinator.js';
 
 function readTeamJson(text) {
   let t;
@@ -157,7 +157,7 @@ export function applyTeam(src, projectId, { confirmCode = false, expandText = (t
     }
   }
 
-  // 4) Plantilla: primero los del banquillo con ese rol; después, contratar. Sin pasar de 8 mesas.
+  // 4) Plantilla: primero los del banquillo con ese rol; después, contratar. Sin pasar de MAX_DESKS mesas.
   const inTeam = (a) => p.team.includes(a.id);
   const busyElsewhere = new Set(s.projects.flatMap((x) => x.team || []));
   for (const m of spec.members) {

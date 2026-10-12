@@ -59,7 +59,7 @@ test('dependsOn: una dependencia descartada o hecha libera a la tarea', () => {
   assert.deepEqual(plan({ team, tasks: tasks('review'), roles, engineOk: both, now }), []);
 });
 
-const full = (extra = {}) => [ag('PO', 'po'), ag('Q1', 'qa', 'codex'), ag('Q2', 'qa', 'claude'), ag('W1', 'web'), ag('W2', 'web'), ag('D1', 'web'), ag('D2', 'web'), ag('X', 'web', 'claude', extra)];
+const full = (extra = {}) => [ag('PO', 'po'), ag('Q1', 'qa', 'codex'), ag('Q2', 'qa', 'claude'), ag('W1', 'web'), ag('W2', 'web'), ag('D1', 'web'), ag('D2', 'web'), ag('D3', 'web'), ag('D4', 'web'), ag('X', 'web', 'claude', extra)]; // MAX_DESKS = 10
 const idle = (min) => Object.fromEntries(full().map((x) => [x.id, now - min * 60_000]));
 
 test('mesas llenas: con repos separados por rol → banquillo + contratación (FT-121)', () => {
@@ -73,8 +73,8 @@ test('mesas llenas: ociosos de hace poco no se tocan', () => {
 });
 
 test('mesas llenas: nunca al PO, ni al único QA con QA pendiente, ni a quien tiene tareas suyas', () => {
-  const team = [ag('PO', 'po'), ag('Q', 'qa'), ag('W1', 'web'), ag('W2', 'web'), ag('W3', 'web'), ag('W4', 'web'), ag('W5', 'web'), ag('W6', 'web')];
-  const tasks = [tk('t1', 'java'), tk('q1', 'qa', 'todo', { dependsOn: ['t1'] }), tk('w', 'web', 'todo', { assignedAgentId: 'W1' }), ...['W2', 'W3', 'W4', 'W5', 'W6'].map((w) => tk('p' + w, 'web', 'todo', { preferAgentId: w }))];
+  const team = [ag('PO', 'po'), ag('Q', 'qa'), ag('W1', 'web'), ag('W2', 'web'), ag('W3', 'web'), ag('W4', 'web'), ag('W5', 'web'), ag('W6', 'web'), ag('W7', 'web'), ag('W8', 'web')];
+  const tasks = [tk('t1', 'java'), tk('q1', 'qa', 'todo', { dependsOn: ['t1'] }), tk('w', 'web', 'todo', { assignedAgentId: 'W1' }), ...['W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8'].map((w) => tk('p' + w, 'web', 'todo', { preferAgentId: w }))];
   const a = plan({ team, tasks, roles, engineOk: both, idleSince: Object.fromEntries(team.map((x) => [x.id, now - 60 * 60_000])), now });
   assert.deepEqual(a, []);
 });

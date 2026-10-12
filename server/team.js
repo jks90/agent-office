@@ -357,7 +357,7 @@ export function hire({ projectId = null, name, role, engine, model }) {
   const p = projectId ? findOr404(s.projects, projectId, 'Proyecto') : null;
   if (!roleOf(role)) throw fail(400, 'Rol desconocido');
   if (!name?.trim()) throw fail(400, 'El agente necesita un nombre');
-  if (p && p.team.length >= 8) throw fail(400, 'La oficina tiene 8 mesas: no caben más agentes en este proyecto');
+  if (p && p.team.length >= coord.MAX_DESKS) throw fail(400, `La oficina tiene ${coord.MAX_DESKS} mesas: no caben más agentes en este proyecto`);
   const agent = newAgent({ name: name.trim(), role, engine: ENGINE_IDS.includes(engine) ? engine : 'auto', model: model || '' });
   s.agents.push(agent);
   if (p) p.team.push(agent.id);
@@ -369,7 +369,7 @@ export function hire({ projectId = null, name, role, engine, model }) {
 export function setTeam(projectId, { add = [], remove = [] }) {
   const s = get();
   const p = findOr404(s.projects, projectId, 'Proyecto');
-  for (const id of add) { findOr404(s.agents, id, 'Agente'); if (!p.team.includes(id)) { if (p.team.length >= 8) throw fail(400, 'La oficina tiene 8 mesas'); p.team.push(id); } }
+  for (const id of add) { findOr404(s.agents, id, 'Agente'); if (!p.team.includes(id)) { if (p.team.length >= coord.MAX_DESKS) throw fail(400, `La oficina tiene ${coord.MAX_DESKS} mesas`); p.team.push(id); } }
   p.team = p.team.filter((id) => !remove.includes(id));
   changed();
   tick();
