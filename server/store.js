@@ -31,7 +31,7 @@ function load() {
     // Proyectos antiguos de un solo repo → lista de repos.
     for (const p of s.projects) if (!Array.isArray(p.repos)) p.repos = p.repoPath ? [{ key: 'main', path: p.repoPath, baseBranch: p.baseBranch, roles: [] }] : [];
     // Los procesos no sobreviven a un reinicio: lo que estaba en curso vuelve a la cola.
-    for (const t of s.tasks) if (t.status === 'doing') { t.status = 'todo'; t.agentId = null; }
+    for (const t of s.tasks) if (t.status === 'doing' && t.assignedAgentId !== 'human') { t.status = 'todo'; t.agentId = null; }
     for (const a of s.agents) { a.status = 'idle'; a.taskId = null; a.activity = ''; }
     // Tareas de Codex de antes de estimar su coste: tokens sin $ → coste ≈ con la tabla de precios (una vez; queda marcado).
     for (const t of s.tasks) {

@@ -21,11 +21,12 @@ export const canWork = (a, engineOk) => (a.engine === 'auto' ? ENGINES.some((e) 
 
 // snap: { team, bench, tasks (del proyecto), roles, engineOk:{claude,codex}, busy:Set(agentId), idleSince:{id: ms}, now, margin:{claude,codex} }
 export function plan(snap) {
-  const { team, bench = [], tasks, roles, engineOk, busy = new Set(), idleSince = {}, now = Date.now(), margin = {}, repos = [] } = snap;
-  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const { team, bench = [], tasks: allTasks, roles, engineOk, busy = new Set(), idleSince = {}, now = Date.now(), margin = {}, repos = [] } = snap;
+  const tasks = allTasks.filter((t) => t.assignedAgentId !== 'human'); // FT-189: las del humano no son trabajo de ningún agente
+  const byId = new Map(allTasks.map((t) => [t.id, t]));
   const depsDone = (t) => (t.dependsOn || []).every((d) => ['done', 'discarded'].includes(byId.get(d)?.status ?? 'done'));
-  const ready = tasks.filter((t) => t.status === 'todo' && t.kind !== 'plan' && t.assignedAgentId !== 'human' && depsDone(t)); // FT-187: las del humano no piden contratar a nadie
-  const pendingRoles = new Set(tasks.filter((t) => ['todo', 'backlog'].includes(t.status) && t.assignedAgentId !== 'human').map((t) => t.role));
+  const ready = tasks.filter((t) => t.status === 'todo' && t.kind !== 'plan' && depsDone(t));
+  const pendingRoles = new Set(tasks.filter((t) => ['todo', 'backlog'].includes(t.status)).map((t) => t.role));
   const readyFor = (role) => ready.filter((t) => t.role === role);
   const readyForAgent = (a) => ready.filter((t) => matches(a, t.role, roles));
   const ownsWork = (a) => tasks.some((t) => !['done', 'discarded'].includes(t.status) && (t.assignedAgentId === a.id || t.preferAgentId === a.id || (t.status === 'doing' && t.agentId === a.id)));
@@ -164,7 +165,7 @@ export function reviewPlan(snap) {
   const min = snap.reviewNudgeMin ?? nudgeMin({});
   const out = [];
   for (const t of tasks) {
-    if (t.status !== 'review' || t.reviewing || t.blockAlerted || t.kind === 'plan' || t.assignedAgentId === 'human') continue; // FT-187: sin alertas por tareas del propio usuario
+    if (t.status !== 'review' || t.assignedAgentId === 'human' || t.reviewing || t.blockAlerted || t.kind === 'plan') continue; // FT-190
     const blocks = blocksOf(tasks, t);
     const minutes = Math.floor((now - waitingSince(t)) / 60000);
     if (!blocks.length || minutes < min) continue;

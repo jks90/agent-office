@@ -787,6 +787,11 @@ En la planta, cada agente lleva siempre una burbuja compacta: icono + código de
 
 Ajustes → «Burbujas de estado» (`settings.officeBubbles`, `POST /api/settings`): `'todas'` (por defecto) o `'al pasar'`. Prueba: `node scripts/bubbles-e2e.mjs [captura.png]`.
 
+## 🙋 Tareas asignadas al humano (FT-189 · FT-187)
+**No son avisos (FT-190):** una tarea `human` en revisión no emite `ReviewPending`, `review-alert`/`review-now`, ni mensajes de Telegram, y no entra en el bloque «pendientes de revisión» del Guía.
+
+`assignedAgentId: "human"` (valor reservado, sin campo nuevo ni migración) marca una tarea que hace el usuario. Se admite en `POST /api/tasks`, `PATCH /api/tasks/:id` y `POST /api/tasks/:id/assign` sin buscar agente; `__auto` (o vacío) o un id de agente la reasigna y borra `human`. Ningún agente la coge: el planificador, `plannedAgentFor`/«sin agente para el rol», el coordinador (`plan`) y el reinicio del servidor (no la devuelve de «En curso» a «Por hacer») la ignoran. El usuario puede moverla a mano con `PATCH status` entre backlog/todo/doing/review/done/discarded. Prueba: `node scripts/human-task-e2e.mjs`.
+
 ## 🚀 Rol «release» con lista blanca estricta (FT-171)
 
 Rol de serie `release` (`kind: release`, en `server/roles.js`) que reutiliza el mecanismo de `claudeScope` (`server/engines/toolscope.js`): herramientas `Read, Glob, Grep, Bash`, sin Edit/Write ni MCP, y un `Bash` que **no hereda** las reglas generales (`RELEASE_RULES` en `server/engines/allowlist.js`). Solo se permite `scripts/release/<paso>.sh [argumentos simples]` (los scripts solo existen en flow-test; el rol se asigna a ese proyecto). Mínimo privilegio: los scripts hacen por dentro el `docker push juankanh/flow-app:*`, el `ssh` a producción y el `git push origin main|master` con destinos fijos; el agente **no** puede lanzar `ssh`, `docker` ni `git push` a mano.

@@ -175,6 +175,7 @@ const keyOf = (ev) => (ev.data?.reason === 'quota' ? `quota:${ev.data.engine}` :
 
 bus.on('activity', (ev) => {
   try {
+    if (ev.taskId && get().tasks.find((t) => t.id === ev.taskId)?.assignedAgentId === 'human') return; // FT-190: las tareas del humano no avisan
     const text = message(ev);
     if (!text || !config().enabled) return;
     const k = keyOf(ev), now = Date.now();
