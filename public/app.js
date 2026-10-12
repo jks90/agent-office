@@ -1106,7 +1106,7 @@ function showTab(tab) {
   const prev = activeTab;
   activeTab = tab;
   safeSet('ao:tab', tab);
-  document.querySelectorAll('.nav-item[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.nav-item[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === (tab === 'marketplace' ? 'agents' : tab))); // FT-219: Marketplace cuelga de Agentes
   document.querySelectorAll('.view').forEach((v) => { v.hidden = v.id !== 'view-' + tab; });
   if (tab === 'office') {
     requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
@@ -2534,6 +2534,8 @@ const actions = {
 Pasos, convenciones y ejemplos…</textarea>
     ${buttons('Crear')}`, async (f) => { const r = await api('POST', '/api/skills/new', f); toast(`Skill «${r.name}» creada en el catálogo`); renderSkills(true); }),
   sync: async () => { const r = await api('POST', '/api/sync'); toast(r.orphans.length || r.unlinked.length ? `⚠ ${[r.orphans.length ? `carpeta desaparecida: ${r.orphans.join(', ')}` : '', r.unlinked.length ? `sin vincular: ${r.unlinked.join(', ')}` : ''].filter(Boolean).join(' · ')} — re-vincúlalos en Ajustes` : 'Carpetas comprobadas: todos los proyectos tienen la suya'); },
+  'open-marketplace': () => showTab('marketplace'), // FT-219: antes era una entrada del menú lateral
+  'back-agents': () => showTab('agents'),
   'publish-team': () => projectId && mpPublish('team', projectId),
   'new-project': () => { dialog(`
     <h3>Nuevo proyecto</h3>
@@ -3839,6 +3841,7 @@ function renderMarketplace() {
   if (priv && mpKind === 'skill') mpKind = '';
   el.innerHTML = `<div class="skills-box mp-box">
     <div class="row mp-bar">
+      <button class="small ghost" data-action="back-agents" title="Volver a Agentes">← Agentes</button>
       ${tabs}
       <input id="mp-q" type="search" placeholder="Buscar…" value="${esc(mpQ)}" style="flex:1;min-width:140px" />
       <select id="mp-kind"><option value="">Todo</option>${Object.entries(MP_KIND).filter(([k]) => !priv || k !== 'skill').map(([k, v]) => `<option value="${k}" ${mpKind === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
