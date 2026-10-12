@@ -867,3 +867,7 @@ dialog.task-dlg textarea[name="description"] { min-height: 220px; resize: vertic
 .task-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 14px; } /* los 4 desplegables en una fila: más alto para la descripción */
 @media (max-width: 1050px) { .task-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 700px) { .task-grid { grid-template-columns: 1fr; } }
+
+/* 👁 Ver propuesta */
+#dialog pre.prop-view { max-height: 55vh; overflow: auto; background: var(--panel3); padding: 10px; border-radius: 6px; font-size: 12px; white-space: pre; }
+#dialog button:disabled { opacity: .45; cursor: not-allowed; }

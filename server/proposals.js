@@ -4,6 +4,7 @@
 //   · «SCRIPT NUEVO: scripts/x — qué hace» → un script reutilizable que el agente dejó en el repo. Al aprobar (ya fusionado
 //     en la rama base) entra en el catálogo y se asigna al rol del agente: la siguiente vez no se reinventa.
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import * as store from './store.js';
 
@@ -70,6 +71,38 @@ function appendNote(projectDir, skill, text, source) {
   const cur = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : `# Cómo se aplica la skill «${skill}» en este proyecto\n\nNotas que el agente recibe junto a la skill. Edítalas a mano cuando quieras.\n\n`;
   fs.writeFileSync(file, `${cur.replace(/\s*$/, /\n- /.test(cur) ? '\n' : '\n\n')}${text.split('\n').map((l) => `- ${l}`).join('\n')} (${source})\n`);
   return file;
+}
+
+// ── Ver antes de aceptar ────────────────────────────────────────────────────
+// El contenido real de lo que se aceptaría: el script (de la rama base o, si aún no se fusionó, de la rama de la tarea) o,
+// en una nota de negocio, el texto que se añade y lo que ya tiene el fichero de destino.
+const MAX_VIEW = 200_000;
+export function view(id, deps) {
+  const s = store.get();
+  const pr = list().find((x) => x.id === id) || (() => { throw fail(404, 'Propuesta no encontrada'); })();
+  const p = s.projects.find((x) => x.id === pr.projectId) || (() => { throw fail(404, 'El proyecto ya no existe'); })();
+  const task = (s.tasks || []).find((t) => t.id === pr.taskId);
+  const out = { ...pr, project: p.name, taskTitle: task?.title || null, taskStatus: task?.status || null };
+  if (pr.kind === 'business') {
+    const dir = deps.projectDir(p);
+    const file = dir ? path.join(notesDir(dir), `${pr.skill}.md`) : null;
+    out.target = file;
+    out.current = file && fs.existsSync(file) ? fs.readFileSync(file, 'utf8').slice(0, MAX_VIEW) : null;
+    return out;
+  }
+  const repo = deps.repoOf(p, pr.repoKey);
+  if (!repo) throw fail(400, 'El proyecto no tiene ese repo');
+  const abs = path.join(repo.path, pr.path);
+  if (fs.existsSync(abs)) return { ...out, content: fs.readFileSync(abs, 'utf8').slice(0, MAX_VIEW), from: repo.baseBranch || 'rama base', merged: true };
+  if (task?.branch) {
+    try {
+      const content = execFileSync('git', ['-C', repo.path, 'show', `${task.branch}:${pr.path}`], { encoding: 'utf8', maxBuffer: 4 * MAX_VIEW, stdio: ['ignore', 'pipe', 'ignore'] });
+      return { ...out, content: content.slice(0, MAX_VIEW), from: task.branch, merged: false };
+    } catch { /* aún sin commit en la rama: se mira en su carpeta de trabajo */ }
+    const inWt = deps.worktreeOf && [deps.worktreeOf(p, task, repo)].flat().map((d) => path.join(d, pr.path)).find((f) => fs.existsSync(f));
+    if (inWt) return { ...out, content: fs.readFileSync(inWt, 'utf8').slice(0, MAX_VIEW), from: `${task.branch} (sin commit)`, merged: false };
+  }
+  return { ...out, content: null, from: null, merged: false };
 }
 
 // ── Aprobar / descartar ─────────────────────────────────────────────────────

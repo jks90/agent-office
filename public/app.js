@@ -1502,16 +1502,34 @@ function renderToolProposals() {
     ${list.map((x) => `<div class="prop">
       <div class="prop-head">${x.kind === 'business' ? `🧩 <b>Cómo se aplica «${esc(x.skill)}»</b> en ${esc(pname(x.projectId))}` : `📜 <b>Script nuevo</b> <code>${esc(x.path)}</code> en ${esc(pname(x.projectId))}${x.repoKey ? ` · repo ${esc(x.repoKey)}` : ''}`} <span class="muted">· ${esc(x.code)} · ${esc(x.agentName)}</span></div>
       <div class="prop-body">${x.kind === 'business' ? x.text.split('\n').map((l) => `• ${esc(l)}`).join('<br>') : esc(x.description)}</div>
-      <div class="prop-acts"><button class="small" data-prop-accept="${x.id}">${x.kind === 'business' ? `✓ Añadir a _skills/${esc(x.skill)}.md` : `✓ Al catálogo${S.roles[x.role]?.source === 'catálogo' ? ` y al rol ${esc(S.roles[x.role].label || x.role)}` : ''}`}</button><button class="small ghost" data-prop-reject="${x.id}">Descartar</button></div>
+      <div class="prop-acts"><button class="small" data-prop-accept="${x.id}">${x.kind === 'business' ? `✓ Añadir a _skills/${esc(x.skill)}.md` : `✓ Al catálogo${S.roles[x.role]?.source === 'catálogo' ? ` y al rol ${esc(S.roles[x.role].label || x.role)}` : ''}`}</button><button class="small ghost" data-prop-view="${x.id}" title="Ver el contenido completo antes de decidir">👁 Ver</button><button class="small ghost" data-prop-reject="${x.id}">Descartar</button></div>
     </div>`).join('')}</div>` : '';
 }
 document.addEventListener('click', async (e) => {
   const a = e.target.closest?.('[data-prop-accept]'), r = e.target.closest?.('[data-prop-reject]');
   if (!a && !r) return;
+  if (e.target.closest('#dialog')) $('#dialog').close(); // desde «👁 Ver»
   try {
     if (a) { const res = await api('POST', `/api/proposals/${a.dataset.propAccept}/accept`); toast(res.file ? `Nota añadida: ${short(res.file)}` : `Script «${res.script}» en el catálogo${res.toRole ? ` y en el rol ${res.toRole}` : ''}`); renderTools(true); }
     else { await api('POST', `/api/proposals/${r.dataset.propReject}/reject`); toast('Propuesta descartada'); }
   } catch { /* el toast ya avisó */ }
+});
+// 👁 Ver una propuesta entera antes de aceptarla: el script tal cual (de la rama base o de la rama de la tarea) o la nota con
+// lo que ya tiene el fichero de destino.
+document.addEventListener('click', async (e) => {
+  const v = e.target.closest?.('[data-prop-view]');
+  if (!v) return;
+  let x;
+  try { x = await api('GET', `/api/proposals/${v.dataset.propView}`); } catch { return; }
+  const pre = (t) => `<pre class="prop-view">${esc(t)}</pre>`;
+  const head = x.kind === 'business' ? `🧩 Cómo se aplica «${esc(x.skill)}» en ${esc(x.project)}` : `📜 <code>${esc(x.path)}</code> · ${esc(x.project)}${x.repoKey ? ` · repo ${esc(x.repoKey)}` : ''}`;
+  const meta = `<p class="muted">${esc(x.code)} · ${esc(x.agentName)}${x.taskTitle ? ` · ${esc(x.taskTitle)}` : ''}${x.taskStatus ? ` (${esc(x.taskStatus)})` : ''}</p>`;
+  const body = x.kind === 'business'
+    ? `<h4>Se añadiría</h4>${pre(x.text.split('\n').map((l) => `- ${l}`).join('\n'))}<h4>${x.current ? 'Ya hay en' : 'Fichero nuevo:'} <code>${esc(x.target || '¿sin carpeta en el workspace?')}</code></h4>${x.current ? pre(x.current) : ''}`
+    : `<p>${esc(x.description || '')}</p>${x.content == null ? '<p class="muted">⚠ No encuentro el fichero ni en la rama base ni en la rama de la tarea.</p>' : `<h4>${x.merged ? `En ${esc(x.from)}` : `⚠ Aún no fusionado · ${esc(x.from)} — aceptar fallará hasta que se apruebe la tarea`} · ${x.content.split('\n').length} líneas</h4>${pre(x.content)}`}`;
+  const accept = x.kind === 'business' ? `✓ Añadir a _skills/${esc(x.skill)}.md` : `✓ Al catálogo${S.roles[x.role]?.source === 'catálogo' ? ` y al rol ${esc(S.roles[x.role].label || x.role)}` : ''}`;
+  dialog(`<h3>${head}</h3>${meta}${body}
+    <div class="row"><button type="button" class="ghost" data-prop-reject="${x.id}">Descartar</button><button value="cancel" class="ghost">Cerrar</button><button type="button" data-prop-accept="${x.id}"${x.kind === 'script' && !x.merged ? ' disabled' : ''}>${accept}</button></div>`, null, 'wide');
 });
 document.addEventListener('click', async (e) => {
   const d = e.target.closest?.('[data-tpl-del]');
