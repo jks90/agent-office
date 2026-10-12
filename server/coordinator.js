@@ -165,7 +165,7 @@ export function reviewPlan(snap) {
   const min = snap.reviewNudgeMin ?? nudgeMin({});
   const out = [];
   for (const t of tasks) {
-    if (t.status !== 'review' || t.reviewing || t.blockAlerted || t.kind === 'plan') continue;
+    if (t.status !== 'review' || t.assignedAgentId === 'human' || t.reviewing || t.blockAlerted || t.kind === 'plan') continue; // FT-190
     const blocks = blocksOf(tasks, t);
     const minutes = Math.floor((now - waitingSince(t)) / 60000);
     if (!blocks.length || minutes < min) continue;
