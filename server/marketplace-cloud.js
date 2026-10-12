@@ -6,7 +6,7 @@ import * as mp from './marketplace.js';
 
 const fail = (status, msg, extra = {}) => Object.assign(new Error(msg), { status, ...extra });
 const SCOPES = ['team', 'public'];
-const KINDS = ['role', 'skill', 'agent'];
+const KINDS = ['role', 'skill', 'agent', 'team'];
 const linkUrl = () => `${flowTestUrl()}/account-link`;
 const UNLINKED = 'Esta instalación no está vinculada a una cuenta de FlowTest: vincúlala en flow-test para usar el marketplace';
 // flow-test en Docker no ve a AgentOffice como localhost: hay que identificarse con el mismo token (FLOW_AGENTS_TOKEN)
@@ -35,7 +35,7 @@ const qs = (o) => { const p = new URLSearchParams(); for (const [k, v] of Object
 // Lista con lo ya instalado: `installedVersion` y `update` (hay una versión distinta a la instalada).
 export async function search({ scope = 'team', kind, q } = {}) {
   checkScope(scope);
-  if (kind && !KINDS.includes(kind)) throw fail(400, 'Tipo desconocido (role|skill|agent)');
+  if (kind && !KINDS.includes(kind)) throw fail(400, 'Tipo desconocido (role|skill|agent|team)');
   const list = await call('GET', qs({ scope, kind, q }));
   const reg = mp.installed();
   return (Array.isArray(list) ? list : []).map((i) => {
@@ -76,15 +76,15 @@ export async function publish(b = {}) {
   return { ...r, scope, name: pkg.name, version: pkg.version, pending: scope === 'public' };
 }
 
-async function fetchItem(id) {
-  const r = await call('GET', `/${encodeURIComponent(idOf(id))}`);
+async function fetchItem(id, { preview = false } = {}) {
+  const r = await call('GET', `/${encodeURIComponent(idOf(id))}${preview ? '?preview=1' : ''}`); // preview: ver no cuenta como descarga
   if (!r?.package) throw fail(502, 'La nube no devolvió el paquete');
   return r;
 }
 
 // Antes de instalar: ficheros, código, memoria, si ya existe (para los 🛡 y el selector de proyecto).
 export async function inspectItem(id) {
-  const { item, package: pkg } = await fetchItem(id);
+  const { item, package: pkg } = await fetchItem(id, { preview: true });
   const info = mp.inspect(pkg, { org: item.orgName });
   return { item, info, files: fileList(pkg), projects: store.get().projects.map((p) => ({ id: p.id, name: p.name })) };
 }
@@ -96,6 +96,19 @@ export async function install(id, b = {}) {
     overwrite: !!b.overwrite, confirmCode: !!b.confirmCode, projectId: b.projectId, agentName: b.agentName,
   });
   return { ...r, scope: item.scope, orgName: item.orgName };
+}
+
+// 👁 Detalle para la UI: ficheros con su texto (los de texto, ≤ 64 KB), y en un equipo sus miembros. No instala ni cuenta descarga.
+export async function detailItem(id) {
+  const { item, package: pkg } = await fetchItem(id, { preview: true });
+  const files = pkg.files.map((f) => {
+    const buf = Buffer.from(f.content, 'base64');
+    const text = !buf.subarray(0, 8192).includes(0) && buf.length <= 64 * 1024 ? buf.toString('utf8') : null;
+    return { path: f.path, size: buf.length, exec: !!f.exec, text };
+  });
+  let team = null;
+  if (pkg.kind === 'team') { try { team = JSON.parse(files.find((f) => f.path === 'team.json')?.text || 'null'); } catch { team = null; } }
+  return { item, files, team, meta: pkg.meta || {}, hasMemory: !!pkg.memory, info: mp.inspect(pkg, { org: item.orgName }) };
 }
 
 export async function remove(id) { return call('DELETE', `/${encodeURIComponent(idOf(id))}`); }

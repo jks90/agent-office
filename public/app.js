@@ -3834,8 +3834,8 @@ async function loadMarketplace() {
   box.innerHTML = j.length ? j.map((i) => `<div class="role-card mp-card" style="--c:var(--accent, #6aa9ff)">
     <b>${esc(i.name)}</b> <span class="muted">· v${esc(i.version)} · ${MP_KIND[i.kind] || esc(i.kind)}${i.hasMemory ? ' · <span title="Trae memoria del agente">🧠</span>' : ''}</span>
     <div class="desc">${esc(i.summary || '')}</div>
-    <div class="src">${esc(i.author?.name || i.author || '—')}${i.orgName ? ' · ' + esc(i.orgName) : ''} · ⬇ ${i.downloads || 0}${i.status && i.status !== 'approved' && i.status !== 'published' ? ` · <span class="warn">${i.status === 'pending' ? '⏳ pendiente de moderación' : esc(i.status)}</span>` : ''}</div>
-    <div class="acts"><button class="small" data-mp-install="${esc(i.id)}">${i.update ? `⟳ Actualizar (${esc(i.installedVersion)} → ${esc(i.version)})` : i.installedVersion ? `✓ Instalada ${esc(i.installedVersion)} · reinstalar` : '⬇ Instalar'}</button></div>
+    <div class="src">${i.mine ? '<b>tú</b>' : esc(i.author?.name || i.author || '—')}${i.orgName ? ' · ' + esc(i.orgName) : ''} · ⬇ ${i.downloads || 0}${i.status && i.status !== 'approved' && i.status !== 'published' ? ` · <span class="warn">${i.status === 'pending' ? '⏳ pendiente de moderación' : esc(i.status)}</span>` : ''}</div>
+    <div class="acts"><button class="small ghost" data-mp-view="${esc(i.id)}" title="Ver en detalle: qué trae, ficheros y contenido (no lo instala)">👁 Ver</button><button class="small" data-mp-install="${esc(i.id)}">${i.update ? `⟳ Actualizar (${esc(i.installedVersion)} → ${esc(i.version)})` : i.installedVersion ? `✓ Instalada ${esc(i.installedVersion)} · reinstalar` : '⬇ Instalar'}</button>${i.canDelete ? `<button class="small ghost danger" data-mp-del="${esc(i.id)}" data-mp-name="${esc(i.name)}" title="${i.mine ? 'Lo subiste tú: bórralo del marketplace' : 'Eres el dueño de la organización: puedes borrarlo'}">🗑 Borrar</button>` : ''}</div>
   </div>`).join('') : '<p class="empty">Nada por aquí todavía.</p>';
 }
 const mpFiles = (files) => `<ul class="mp-files">${files.slice(0, 60).map((f) => `<li><code>${esc(f.path)}</code> <span class="muted">${f.size} B${f.exec ? ' · ejecutable' : ''}</span></li>`).join('')}${files.length > 60 ? `<li class="muted">… y ${files.length - 60} más</li>` : ''}</ul>`;
@@ -3886,6 +3886,37 @@ async function mpPublish(kind, id) {
   prev();
 }
 
+// 👁 Ver en detalle un paquete del marketplace (sin instalarlo ni contar descarga): qué es, quién lo subió, qué trae y el texto de cada fichero.
+async function mpView(id) {
+  const { ok, j } = await mpApi('GET', `/api/marketplace/items/${encodeURIComponent(id)}/detail`);
+  if (!ok) { toast(j.unlinked ? `${j.error} (${j.linkUrl})` : j.error || 'No se pudo leer el paquete', 'error'); return; }
+  const { item, files, team, meta, hasMemory, info } = j;
+  const when = (d) => (d ? new Date(d).toLocaleDateString() : '—');
+  const label = (r) => S.roles[r]?.label || r;
+  const order = (f) => (f.path === 'team.json' || f.path === 'SKILL.md' ? 0 : /^roles\//.test(f.path) ? 1 : 2);
+  dialog(`<h3>👁 ${esc(item.name)} <span class="muted">· ${MP_KIND[item.kind] || esc(item.kind)} · v${esc(item.version)}</span></h3>
+    <p>${esc(item.summary || '')}</p>
+    <div class="mp-meta">
+      <span>👤 ${item.mine ? '<b>tú</b>' : esc(item.author?.name || item.author || '—')}${item.orgName ? ' · ' + esc(item.orgName) : ''}</span>
+      <span>${item.scope === 'team' ? '👥 tu team' : '🌍 público'}${item.status && !['published', 'approved'].includes(item.status) ? ` · ${esc(item.status)}` : ''}</span>
+      <span>⬇ ${item.downloads || 0} descargas</span><span>📅 ${when(item.updatedAt)}</span>
+      ${hasMemory ? '<span>🧠 con memoria</span>' : ''}${info?.hasCode ? '<span class="bad">🛡 trae código ejecutable</span>' : ''}
+    </div>
+    ${team ? `<h4>👥 Equipo (${team.members.length}${team.coordinator ? ' + coordinador' : ''})</h4><ul class="mp-team">${team.members.map((m) => `<li><b>${esc(m.name)}</b> <span class="muted">${esc(label(m.role))}${S.roles[m.role] ? '' : ' · rol nuevo (lo trae el paquete)'}</span>${(team.roleSkills?.[m.role] || []).length ? ` · 🧩 ${team.roleSkills[m.role].map(esc).join(', ')}` : ''}</li>`).join('')}</ul>
+      ${(team.mcps || []).length ? `<p class="muted">🔌 Usa MCP: ${team.mcps.map(esc).join(', ')} (tienes que tenerlos en tu config)</p>` : ''}${(team.scripts || []).length ? `<p class="muted">📜 Scripts que usaba: ${team.scripts.map(esc).join(', ')} (no viajan: son de sus repos)</p>` : ''}` : ''}
+    ${meta?.role ? `<p class="muted">Rol: ${esc(label(meta.role))}${meta.engine ? ` · motor ${esc(meta.engine)}` : ''}${meta.model ? ` · ${esc(meta.model)}` : ''}</p>` : ''}
+    <h4>📄 Ficheros (${files.length})</h4>
+    <div class="mp-files-detail">${[...files].sort((a, b) => order(a) - order(b) || a.path.localeCompare(b.path)).map((f, n) => `<details ${n === 0 && f.text ? 'open' : ''}><summary><code>${esc(f.path)}</code> <span class="muted">${f.size} B${f.exec ? ' · ejecutable' : ''}</span></summary>${f.text != null ? `<pre class="code">${esc(f.text)}</pre>` : '<p class="muted">(binario o demasiado grande para mostrarlo)</p>'}</details>`).join('')}</div>
+    <div class="row"><button class="ghost" value="cancel">Cerrar</button>${item.canDelete ? `<button type="button" class="ghost danger" data-mp-del="${esc(item.id)}" data-mp-name="${esc(item.name)}">🗑 Borrar</button>` : ''}<button type="button" data-mp-install="${esc(item.id)}">⬇ Instalar</button></div>`, null, 'wide');
+}
+async function mpDelete(id, name) {
+  if (!confirm(`¿Borrar «${name || id}» del marketplace? Desaparece para toda tu organización (quien ya lo instaló lo conserva).`)) return;
+  const { ok, j } = await mpApi('DELETE', `/api/marketplace/items/${encodeURIComponent(id)}`);
+  if (!ok) { toast(j.error || 'No se pudo borrar', 'error'); return; }
+  toast(`«${name || id}» borrado del marketplace`);
+  if ($('#dialog')?.open) $('#dialog').close();
+  if (activeTab === 'marketplace') loadMarketplace();
+}
 async function mpInstall(id) {
   const { ok, j } = await mpApi('GET', `/api/marketplace/items/${encodeURIComponent(id)}`);
   if (!ok) { toast(j.unlinked ? `${j.error} (${j.linkUrl})` : j.error || 'No se pudo leer el paquete', 'error'); return; }
@@ -3911,11 +3942,13 @@ async function mpInstall(id) {
 }
 
 document.addEventListener('click', (e) => {
-  const b = e.target.closest('[data-mp-tab],[data-mp-reload],[data-mp-install],[data-mp-pub]');
+  const b = e.target.closest('[data-mp-tab],[data-mp-reload],[data-mp-install],[data-mp-pub],[data-mp-view],[data-mp-del]');
   if (!b) return;
   if (b.dataset.mpTab) { mpTab = b.dataset.mpTab; safeSet('ao:mpTab', mpTab); renderMarketplace(); }
   else if (b.dataset.mpReload !== undefined) loadMarketplace();
   else if (b.dataset.mpInstall) mpInstall(b.dataset.mpInstall);
+  else if (b.dataset.mpView) mpView(b.dataset.mpView);
+  else if (b.dataset.mpDel) mpDelete(b.dataset.mpDel, b.dataset.mpName);
   else if (b.dataset.mpPub) { const [kind, ...id] = b.dataset.mpPub.split(':'); mpPublish(kind, id.join(':')); }
 });
 document.addEventListener('input', (e) => {

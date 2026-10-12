@@ -239,6 +239,7 @@ const routes = [
   ['GET', /^\/api\/marketplace\/status$/, () => mpCloud.status()],
   ['GET', /^\/api\/marketplace\/items$/, (_, __, q) => mpCloud.search(q)],
   ['GET', /^\/api\/marketplace\/items\/([\w.-]+)$/, ([id]) => mpCloud.inspectItem(id)],
+  ['GET', /^\/api\/marketplace\/items\/([\w.-]+)\/detail$/, ([id]) => mpCloud.detailItem(id)], // 👁 ver en detalle (no cuenta descarga)
   ['POST', /^\/api\/marketplace\/items\/([\w.-]+)\/install$/, async ([id], b) => { const r = await mpCloud.install(id, b); store.changed(); return r; }],
   ['DELETE', /^\/api\/marketplace\/items\/([\w.-]+)$/, ([id]) => mpCloud.remove(id)],
   ['POST', /^\/api\/marketplace\/preview$/, (_, b) => mpCloud.previewPublish(b)],
