@@ -490,6 +490,96 @@ export class Office3D {
     }
   }
 
+  // AO-7: decoración del EDIFICIO (modo building); carga templates una sola vez y reutiliza clones.
+  buildDecorBuilding() {
+    const decor = OFFICE_DECOR.building;
+    if (!decor) return;
+    if (!this.buildingDecorTemplates) {
+      this.buildingDecorTemplates = new Map();
+      if (!this.decorGeometry) { this.decorGeometry = { box: new THREE.BoxGeometry(1, 1, 1), cylinder: new THREE.CylinderGeometry(0.5, 0.5, 1, 12) }; }
+      if (!this.decorMaterials) { this.decorMaterials = new Map(); }
+    }
+    const material = (color) => {
+      if (!this.decorMaterials.has(color)) this.decorMaterials.set(color, new THREE.MeshStandardMaterial({ color, roughness: 0.85 }));
+      return this.decorMaterials.get(color);
+    };
+    const items = decor.items || [];
+    for (const item of items) {
+      let template = this.buildingDecorTemplates.get(item.id);
+      if (!template) {
+        template = new THREE.Group();
+        if (item.model) {
+          const source = this.furnCache.get(item.model);
+          if (source) {
+            const model = source.clone(true);
+            const bounds = new THREE.Box3().setFromObject(model), size = bounds.getSize(new THREE.Vector3());
+            const center = bounds.getCenter(new THREE.Vector3());
+            model.position.set(-center.x, -bounds.min.y, -center.z);
+            template.add(model);
+            template.scale.set(...item.size.map((n, i) => n / Math.max(0.001, size.getComponent(i))));
+            if (item.tint) model.traverse((m) => { if (m.isMesh) m.material = material(item.tint); });
+          }
+        } else if (item.recipe) {
+          for (const part of item.recipe) {
+            const mesh = new THREE.Mesh(this.decorGeometry[part.shape], material(part.color));
+            mesh.scale.set(...part.size); mesh.position.set(...part.position);
+            if (part.rotation) mesh.rotation.set(...part.rotation);
+            template.add(mesh);
+          }
+        }
+        template.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
+        this.buildingDecorTemplates.set(item.id, template);
+      }
+    }
+  }
+
+  // Coloca decoración en una planta del edificio (frames: floor/groundFloor).
+  placeDecorInFloor(floorGroup, floorIndex, isProjectGround) {
+    const decor = OFFICE_DECOR.building;
+    if (!decor || !this.buildingDecorTemplates) return;
+    const items = decor.items || [];
+    const placements = decor.placements || {};
+    const p = floorGroup.position;
+    let frames = ['floor'];
+    if (isProjectGround) frames.push('groundFloor');
+    for (const frame of frames) {
+      for (const loc of placements[frame] || []) {
+        const item = items.find((it) => it.id === loc.item);
+        if (!item) continue;
+        const template = this.buildingDecorTemplates.get(item.id);
+        if (!template) continue;
+        const placed = new THREE.Group(); placed.name = item.id; placed.userData.decorId = item.id;
+        placed.add(template.clone(true));
+        placed.position.set(loc.x, 0.19 + (loc.y || 0), loc.z);
+        placed.rotation.y = loc.rotation || 0;
+        floorGroup.add(placed);
+      }
+    }
+  }
+
+  // Coloca decoración en la estructura del edificio (frames: roof/exterior).
+  placeDecorInStructure(structureGroup, floorCount) {
+    const decor = OFFICE_DECOR.building;
+    if (!decor || !this.buildingDecorTemplates) return;
+    const items = decor.items || [];
+    const placements = decor.placements || {};
+    const roofY = floorCount * FLOOR_H + SLAB_H;
+    for (const frame of ['roof', 'exterior']) {
+      for (const loc of placements[frame] || []) {
+        const item = items.find((it) => it.id === loc.item);
+        if (!item) continue;
+        const template = this.buildingDecorTemplates.get(item.id);
+        if (!template) continue;
+        const placed = new THREE.Group(); placed.name = item.id; placed.userData.decorId = item.id;
+        placed.add(template.clone(true));
+        const baseY = (frame === 'roof') ? roofY : -0.01;
+        placed.position.set(loc.x, baseY + (loc.y || 0), loc.z);
+        placed.rotation.y = loc.rotation || 0;
+        structureGroup.add(placed);
+      }
+    }
+  }
+
   // FT-150: personajes de AMBIENTE (visita, mensajero, limpieza, reunión, mantenimiento). Decorativos: no son agentes, no cuentan en nada y
   // jamás mueven a un agente ni tocan sus burbujas. Reserva fija de 3 figuras con geometría y materiales compartidos; nada se reconstruye por fotograma.
   syncAmbient() {
@@ -980,6 +1070,7 @@ export class Office3D {
     this.floorsSig = sig;
     this.floors = floors;
     this.clearBuilding();
+    this.buildDecorBuilding(); // AO-7: inicializa templates de decoración del edificio
     floors.forEach((f, i) => this.buildFloorBlock(f, i));
     this.buildStructure(floors.length);
     this.metrics.lastRebuildMs = +(performance.now() - t0).toFixed(1);
@@ -1036,6 +1127,7 @@ export class Office3D {
     for (const [x, z] of [[-0.9, s.rz + 0.9], [-0.9, 1.0], [s.rx * 0.45, s.rz + 1.3]]) {
       const tr = box(0.14, 0.7, 0.14, 0x8b5a2b, x, 0.35, z); const crown = new THREE.Mesh(new THREE.SphereGeometry(0.55, 10, 8), new THREE.MeshStandardMaterial({ color: 0x4f9d5d, roughness: 0.9 })); crown.userData.ownGeo = true; crown.position.set(x, 1.0, z); grp.add(crown); void tr; this.bAnim.crowns.push(crown);
     }
+    this.placeDecorInStructure(grp, n); // AO-7: decoración de azotea y exterior (roof/exterior)
   }
 
   wallSeg() {
@@ -1205,6 +1297,7 @@ export class Office3D {
     // Pilar en la esquina abierta (frente-derecha): ayuda a leer el conjunto como UN edificio (v2)
     const pillarMat = new THREE.MeshStandardMaterial({ color: 0xd9dfe3, roughness: 0.85 });
     const pillar = own(new THREE.BoxGeometry(0.22, BWALL_H, 0.22), pillarMat); pillar.position.set(size.rx - 0.11, SLAB_H + BWALL_H / 2, size.rz - 0.11); g.add(pillar);
+    this.placeDecorInFloor(g, i, i === 0 && f.projectId); // AO-7: decoración de la planta (floor/groundFloor)
     this.building.add(g);
     this.floorGroups.push(g);
     // Etiqueta HTML de la planta (como las de los personajes), a la derecha del edificio.
