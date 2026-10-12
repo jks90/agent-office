@@ -30,7 +30,7 @@ const shotDir = path.join(ROOT, 'resumen');
 fs.mkdirSync(shotDir, { recursive: true });
 const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 'e2e', GIT_AUTHOR_EMAIL: 'e2e@local', GIT_COMMITTER_NAME: 'e2e', GIT_COMMITTER_EMAIL: 'e2e@local' } }).trim();
 const mkRepo = (name) => { const d = path.join(dataDir, 'repos', name); fs.mkdirSync(d, { recursive: true }); git(d, 'init', '-q', '-b', 'main'); fs.writeFileSync(path.join(d, 'README.md'), '# ' + name + '\n'); git(d, 'add', '-A'); git(d, 'commit', '-q', '-m', 'init'); return d; };
-const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env: { ...process.env, AO_HOST: '127.0.0.1', AO_PORT: String(port), AO_DATA_DIR: dataDir }, stdio: 'ignore' });
+const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env: { ...process.env, AO_HOST: '127.0.0.1', AO_PORT: String(port), AO_TEST_ALLOW_UNLINKED: '1', AO_DATA_DIR: dataDir }, stdio: 'ignore' });
 const base = `http://127.0.0.1:${port}`;
 const api = async (method, p, body) => { const r = await fetch(base + p, { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(`${method} ${p} → ${r.status} ${j.error || ''}`); return j; };
 let browser;

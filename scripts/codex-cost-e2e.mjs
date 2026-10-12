@@ -59,7 +59,7 @@ if (/Objetivo del equipo/.test(prompt)) {
 const port = await freePort();
 const base = `http://127.0.0.1:${port}`;
 fs.writeFileSync(path.join(dataDir, 'state.json'), JSON.stringify({ settings: { maxParallel: 1, workspaceHostDir: path.join(tmp, 'sin-workspace') } }));
-const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, stdio: 'ignore', env: { ...process.env, HOME: home, CODEX_HOME: codexHome, AO_PORT: String(port), AO_HOST: '127.0.0.1', AO_DATA_DIR: dataDir, AO_CODEX_BIN: fake, AO_RTK: 'off' } });
+const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, stdio: 'ignore', env: { ...process.env, HOME: home, CODEX_HOME: codexHome, AO_PORT: String(port), AO_HOST: '127.0.0.1', AO_TEST_ALLOW_UNLINKED: '1', AO_DATA_DIR: dataDir, AO_CODEX_BIN: fake, AO_RTK: 'off' } });
 const call = async (m, p, b) => { const r = await fetch(base + p, { method: m, headers: { 'content-type': 'application/json' }, body: b === undefined ? undefined : JSON.stringify(b) }); return r.json().catch(() => ({})); };
 const st = () => call('GET', '/api/state');
 const task = async (id) => (await st()).tasks.find((t) => t.id === id);
@@ -107,7 +107,7 @@ fs.writeFileSync(path.join(d2dir, 'state.json'), JSON.stringify({ settings: {}, 
   { id: 'a1', code: 'X-1', projectId: 'p', status: 'done', dependsOn: [], costUsd: null, usage: { input: 200000, output: 20000, cache: 6000000, total: 6220000, source: 'codex turn.completed' } },
   { id: 'a2', code: 'X-2', projectId: 'p', status: 'done', dependsOn: [], costUsd: 0.5, usage: { input: 1, output: 1, cache: 1, total: 3, source: 'claude result' } },
 ] }));
-const loaded = JSON.parse(execFileSync(process.execPath, ['-e', "import('./server/store.js').then((s) => console.log(JSON.stringify(s.get().tasks)))"], { cwd: ROOT, env: { ...process.env, AO_DATA_DIR: d2dir }, encoding: 'utf8' }).trim().split('\n').at(-1));
+const loaded = JSON.parse(execFileSync(process.execPath, ['-e', "import('./server/store.js').then((s) => console.log(JSON.stringify(s.get().tasks)))"], { cwd: ROOT, env: { ...process.env, AO_TEST_ALLOW_UNLINKED: '1', AO_DATA_DIR: d2dir }, encoding: 'utf8' }).trim().split('\n').at(-1));
 const old = loaded.find((t) => t.id === 'a1'), other = loaded.find((t) => t.id === 'a2');
 check('una tarea de Codex sin coste recibe el ≈ al cargar', Math.abs(old.costUsd - (200000 * 1.25 + 6000000 * 0.125 + 20000 * 10) / 1e6) < 1e-6 && old.costEstimated, JSON.stringify(old));
 check('las que ya tenían coste no cambian', other.costUsd === 0.5 && !other.costEstimated);

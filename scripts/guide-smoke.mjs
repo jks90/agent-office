@@ -140,7 +140,7 @@ async function runProvider(name, { stubPort, mock }) {
   const port = 7600 + Math.floor(Math.random() * 300);
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-guide-smoke-'));
   const base = `http://127.0.0.1:${port}`;
-  const env = { ...process.env, AO_PORT: String(port), AO_DATA_DIR: dataDir };
+  const env = { ...process.env, AO_PORT: String(port), AO_TEST_ALLOW_UNLINKED: '1', AO_DATA_DIR: dataDir };
   if (!real) {
     const m = `http://127.0.0.1:${mock.srv.address().port}`;
     Object.assign(env, { ANTHROPIC_BASE_URL: m, OPENAI_BASE_URL: `${m}/v1`, ANTHROPIC_API_KEY: 'sk-mock-anthropic', OPENAI_API_KEY: 'sk-mock-openai' });

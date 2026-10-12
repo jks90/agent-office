@@ -36,7 +36,7 @@ const chrome = [process.env.AO_CHROME, '/usr/bin/google-chrome', '/usr/bin/googl
   .find((c) => c && fs.existsSync(c));
 if (!chrome) { console.error('No encuentro Chrome/Chromium (pon AO_CHROME=/ruta/al/binario)'); process.exit(2); }
 
-const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env: { ...process.env, AO_PORT: String(port), AO_DATA_DIR: dataDir }, stdio: ['ignore', 'pipe', 'pipe'] });
+const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env: { ...process.env, AO_PORT: String(port), AO_TEST_ALLOW_UNLINKED: '1', AO_DATA_DIR: dataDir }, stdio: ['ignore', 'pipe', 'pipe'] });
 let serverLog = '';
 server.stdout.on('data', (d) => { serverLog += d; });
 server.stderr.on('data', (d) => { serverLog += d; });

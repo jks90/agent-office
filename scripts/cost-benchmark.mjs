@@ -190,6 +190,7 @@ const runVariant = async (variant) => {
     HOME: home,
     AO_PORT: String(port),
     AO_HOST: '127.0.0.1',
+    AO_TEST_ALLOW_UNLINKED: '1',
     AO_DATA_DIR: dataDir,
     CLAUDE_CONFIG_DIR: claudeDir,
   };

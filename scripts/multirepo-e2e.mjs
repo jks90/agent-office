@@ -78,7 +78,7 @@ const port = await freePort();
 const base = `http://127.0.0.1:${port}`;
 const server = spawn(process.execPath, ['server/index.js'], {
   cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'],
-  env: { ...process.env, ...GIT_ENV, HOME: homeDir, AO_PORT: String(port), AO_HOST: '127.0.0.1', AO_DATA_DIR: dataDir, AO_CLAUDE_BIN: fakeClaude },
+  env: { ...process.env, ...GIT_ENV, HOME: homeDir, AO_PORT: String(port), AO_HOST: '127.0.0.1', AO_TEST_ALLOW_UNLINKED: '1', AO_DATA_DIR: dataDir, AO_CLAUDE_BIN: fakeClaude },
 });
 let serverLog = '';
 server.stdout.on('data', (d) => { serverLog += d; });

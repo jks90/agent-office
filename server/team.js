@@ -268,12 +268,14 @@ export async function suggestRepos(folder) {
 
 export async function createProject({ name, repoPath, repos, engine = 'demo', folder, createFolder = false, coordinator = true }) {
   if (!name?.trim()) throw fail(400, 'El proyecto necesita un nombre');
-  const f = checkFolderName(folder);
+  // Solo para los e2e (arrancan su servidor con un flow-test falso sin /workspace): altas sin carpeta. Nadie la pone en producción.
+  const unlinked = !String(folder ?? '').trim() && process.env.AO_TEST_ALLOW_UNLINKED === '1';
+  const f = unlinked ? null : checkFolderName(folder);
   const list = await resolveRepos({ repos, repoPath });
-  const flows = await ensureFolder(f, createFolder);
+  const flows = unlinked ? null : await ensureFolder(f, createFolder);
   if (!ENGINE_IDS.includes(engine)) engine = 'auto';
   const s = get();
-  checkFolderName(f); // otra alta pudo coger la carpeta mientras se esperaba a flow-test
+  if (f) checkFolderName(f); // otra alta pudo coger la carpeta mientras se esperaba a flow-test
   const project = { id: newId(), name: name.trim(), folder: f, flows, orphan: false, repos: list, repoPath: list[0]?.path || null, baseBranch: list[0]?.baseBranch || null, running: false, team: [], coordinator: 'auto', createdAt: Date.now() };
   s.projects.push(project);
   if (!s.agents.length) DEFAULT_TEAM.forEach((m) => { const a = newAgent({ ...m, engine }); s.agents.push(a); project.team.push(a.id); });

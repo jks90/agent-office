@@ -21,7 +21,7 @@ const port = await freePort();
 const base = `http://127.0.0.1:${port}`;
 let server;
 const start = async () => {
-  server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env: { ...process.env, AO_HOST: '127.0.0.1', AO_PORT: String(port), AO_DATA_DIR: dataDir, AO_TOKEN: token }, stdio: 'ignore' });
+  server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env: { ...process.env, AO_HOST: '127.0.0.1', AO_PORT: String(port), AO_TEST_ALLOW_UNLINKED: '1', AO_DATA_DIR: dataDir, AO_TOKEN: token }, stdio: 'ignore' });
   for (let i = 0; i < 80; i++) { try { if ((await fetch(base + '/api/state', { headers: { authorization: `Bearer ${token}` } })).status < 500) return; } catch { /* aún no */ } await sleep(100); }
   throw new Error('el servidor temporal no arrancó');
 };

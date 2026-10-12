@@ -57,7 +57,7 @@ async function mkAO(tag, port, ftPort) {
   const data = path.join(tmp, 'ao-' + tag); const cat = path.join(tmp, 'cat-' + tag);
   fs.mkdirSync(data, { recursive: true }); fs.mkdirSync(path.join(cat, 'roles'), { recursive: true }); fs.mkdirSync(path.join(cat, 'skills'), { recursive: true });
   fs.writeFileSync(path.join(data, 'state.json'), JSON.stringify({ settings: { catalogDir: cat, workspaceHostDir: path.join(tmp, 'ws-' + tag), flowTestUrl: `http://127.0.0.1:${ftPort}`, maxParallel: 1 } }));
-  const p = spawnP(process.execPath, ['server/index.js'], { cwd: ROOT, env: { ...process.env, AO_PORT: String(port), AO_DATA_DIR: data, FLOW_AGENTS_TOKEN: 'qa-ao' } });
+  const p = spawnP(process.execPath, ['server/index.js'], { cwd: ROOT, env: { ...process.env, AO_PORT: String(port), AO_TEST_ALLOW_UNLINKED: '1', AO_DATA_DIR: data, FLOW_AGENTS_TOKEN: 'qa-ao' } });
   const base = `http://127.0.0.1:${port}`; await waitUp(base + '/api/state', p);
   const api = async (m, u, b) => { const r = await fetch(base + u, { method: m, headers: { 'content-type': 'application/json', 'x-ao-token': 'qa-ao' }, body: b ? JSON.stringify(b) : undefined }); return { s: r.status, j: await r.json().catch(() => ({})) }; };
   return { api, cat, base, port, p };

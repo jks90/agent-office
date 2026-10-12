@@ -52,17 +52,18 @@ const stubPort = await freePort();
 const stub = http.createServer((req, res) => { if (req.url === '/access') return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ mode: 'licensed', plan: 'e2e' })); if (req.url === '/workspace/flows') return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ dir: '/ws', files: [], dirs: ['uno', 'dos', 'tres'] })); res.writeHead(404).end('{}'); }).listen(stubPort, '127.0.0.1');
 fs.writeFileSync(path.join(dataDir, 'state.json'), JSON.stringify({ settings: { workspaceHostDir: path.join(tmp, 'ws'), flowTestUrl: `http://127.0.0.1:${stubPort}` } }));
 const port = await freePort(), base = `http://127.0.0.1:${port}`;
-const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, stdio: 'ignore', env: { ...process.env, HOME: path.join(tmp, 'home'), AO_PORT: String(port), AO_HOST: '127.0.0.1', AO_DATA_DIR: dataDir, AO_RTK: 'off', AO_SUPERVISOR_MS: '300' } });
+const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, stdio: 'ignore', env: { ...process.env, HOME: path.join(tmp, 'home'), AO_PORT: String(port), AO_HOST: '127.0.0.1', AO_TEST_ALLOW_UNLINKED: '1', AO_DATA_DIR: dataDir, AO_RTK: 'off', AO_SUPERVISOR_MS: '300' } });
 process.on('exit', () => { try { server.kill('SIGTERM'); stub.close(); fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* nada */ } });
 const call = async (m, p, b) => { const r = await fetch(base + p, { method: m, headers: { 'content-type': 'application/json' }, body: b === undefined ? undefined : JSON.stringify(b) }); return r.json().catch(() => ({})); };
 const task = async (id) => (await call('GET', '/api/state')).tasks.find((t) => t.id === id);
 const until = async (fn, ms = 15000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(250); } return null; };
 try {
   for (let i = 0; i < 50; i++) { try { if ((await fetch(base + '/api/state')).ok) break; } catch { /* aún no */ } await sleep(100); }
-  // FT-127: el escaneo del workspace (3 carpetas) crea proyectos pero ningún Coordi; createProject, exactamente 1
-  const scanned = await until(async () => { const s = await call('GET', '/api/state'); return ['uno', 'dos', 'tres'].every((f) => s.projects.some((x) => x.folder === f)) ? s : null; });
+  // Proyectos manuales: comprobar las carpetas (3 en el workspace) NO crea proyectos ni Coordi; createProject, exactamente 1
+  const synced = await call('POST', '/api/sync');
   const nCoord = (s) => s.agents.filter((a) => a.role === 'coordinador').length;
-  check('FT-127: tras el escaneo de 3 carpetas hay 0 coordinadores', !!scanned && nCoord(scanned) === 0, String(scanned && nCoord(scanned)));
+  const after = await call('GET', '/api/state');
+  check('comprobar carpetas (uno, dos, tres) no crea proyectos ni coordinadores', ['uno', 'dos', 'tres'].every((f) => synced.folders?.includes(f)) && after.projects.length === 0 && nCoord(after) === 0, JSON.stringify({ folders: synced.folders, projects: after.projects.length, coord: nCoord(after) }));
   const p = await call('POST', '/api/projects', { name: 'sup', engine: 'demo' });
   check('FT-127: createProject → exactamente 1 coordinador', nCoord(await call('GET', '/api/state')) === 1);
   await call('PATCH', `/api/projects/${p.id}`, { coordinator: '' });

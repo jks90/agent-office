@@ -24,7 +24,7 @@ let failed = 0;
 const results = [];
 const check = (name, ok, detail = '') => { if (!ok) failed++; results.push({ name, ok: !!ok, detail: ok ? '' : String(detail) }); console.log(`  ${ok ? '✓' : '✗'} ${name}${!ok && detail ? ` — ${detail}` : ''}`); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env: { ...process.env, AO_HOST: '127.0.0.1', AO_PORT: String(port), AO_DATA_DIR: dataDir }, stdio: 'ignore' });
+const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env: { ...process.env, AO_HOST: '127.0.0.1', AO_PORT: String(port), AO_TEST_ALLOW_UNLINKED: '1', AO_DATA_DIR: dataDir }, stdio: 'ignore' });
 const stop = () => { try { server.kill('SIGTERM'); } catch { /* noop */ } try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch { /* noop */ } };
 process.on('exit', stop);
 const base = `http://127.0.0.1:${port}`;
