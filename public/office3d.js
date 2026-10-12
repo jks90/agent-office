@@ -1038,8 +1038,8 @@ export class Office3D {
         const ts = this.allTasks.filter((t) => t.projectId === p.id);
         const visual = team.map((a) => toVisualState(a, ts, this.questions));
         return {
-          projectId: p.id, name: p.name || '', agents: team.length, team,
-          miniAgents: visual.slice(0, 12),
+          projectId: p.id, name: p.name || '', agents: team.length,
+          miniAgents: visual.slice(0, 12).map(({ activity, ...v }) => v), // sin la actividad: cambia a cada SSE y reconstruía el edificio
           working: visual.filter((a) => a.status === 'working').length,
           queued: ts.filter((t) => t.status === 'todo').length,
           review: ts.filter((t) => t.status === 'review').length,
@@ -1145,6 +1145,22 @@ export class Office3D {
     qa: [[7.05, 1.2], [8.2, 1.2]],
     review: [6.95, 2.55], board: [5.15, 2.0], meeting: [3.55, 3.05], sofa: [8.45, 3.35], wait: [[4.6, 2.75], [5.2, 2.75], [5.8, 2.75]],
   };
+  // Sitios de descanso de una planta del edificio (coordenadas de la planta): sofá, mesa redonda, mesita del café y charla.
+  static restSpotsBuilding() {
+    const B = Office3D.BLDG, [sx, sz] = B.sofa, [mx, mz] = B.meeting, face = (x, z, tx, tz) => Math.atan2(tx - x, tz - z);
+    return [
+      { id: 'sofa-0', x: sx - 0.55, z: sz + 0.05, ry: Math.PI, sit: true, gesture: null },
+      { id: 'mesa-0', x: mx, z: mz + 0.7, ry: face(mx, mz + 0.7, mx, mz), sit: true, gesture: null },
+      { id: 'cafe-0', x: sx - 0.85, z: sz - 0.7, ry: Math.PI / 2, sit: false, gesture: 'interact-right' },
+      { id: 'charla-0', x: 6.35, z: 3.3, ry: Math.PI / 2, sit: false, gesture: 'emote-yes' },
+      { id: 'sofa-1', x: sx, z: sz + 0.05, ry: Math.PI, sit: true, gesture: null },
+      { id: 'mesa-1', x: mx - 0.7, z: mz, ry: face(mx - 0.7, mz, mx, mz), sit: true, gesture: null },
+      { id: 'cafe-1', x: sx + 0.85, z: sz - 0.7, ry: -Math.PI / 2, sit: false, gesture: 'interact-left' },
+      { id: 'charla-1', x: 6.95, z: 3.3, ry: -Math.PI / 2, sit: false, gesture: 'emote-yes' },
+      { id: 'sofa-2', x: sx + 0.55, z: sz + 0.05, ry: Math.PI, sit: true, gesture: null },
+      { id: 'mesa-2', x: mx + 0.7, z: mz, ry: face(mx + 0.7, mz, mx, mz), sit: true, gesture: null },
+    ];
+  }
   placeIn(g, model, x, z, opts = {}) {
     const o = this.place(model, x, z, opts, g);
     if (o) { o.position.y += SLAB_H; o.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; } }); }
@@ -1238,7 +1254,10 @@ export class Office3D {
       if (a.status === 'working' || a.status === 'failed') { const p = desks[d++ % desks.length]; x = p[0]; z = p[1] + 0.5; sit = a.status === 'working'; }
       else if (a.status === 'reviewing') { x = B.review[0]; z = B.review[1] + 0.5; sit = true; }
       else if (a.status === 'waiting' || a.status === 'blocked') { const p = B.wait[w++ % B.wait.length]; x = p[0]; z = p[1] + 0.35; }
-      else { x = B.sofa[0] - 0.55 + (idle % 3) * 0.55; z = B.sofa[1] + 0.05; ry = Math.PI; sit = idle < 3; idle++; }
+      else { // libre: cada uno a un sitio de descanso distinto (antes 3 huecos junto al sofá y el 4.º caía encima del 1.º)
+        const R = Office3D.restSpotsBuilding(), sp = R[idle % R.length], extra = Math.floor(idle / R.length) * 0.3;
+        x = sp.x + extra; z = sp.z; ry = sp.ry; sit = sp.sit && !extra; idle++;
+      }
       this.addMiniChar(g, a, x, z, ry, own, sit);
       g.userData.agentMarks.push({ id: a.id, name: a.name, status: a.status, role: a.role, x, y: SLAB_H + 0.55, z });
     });
@@ -1691,16 +1710,17 @@ export class Office3D {
   // vacía…), hacen allí su gesto y vuelven. Coordenadas locales de la planta (Office3D.BLDG).
   miniWalk(a, v, dt, now) {
     if (v.status !== 'idle' || !a.fuel || !a.model) { a.moving = false; return; }
-    const B = Office3D.BLDG, m = a.model;
-    const SPOTS = [ // FT-148: solo descanso/recreo (el sofá y la zona de charla), nunca kanban/revisión/mesas de trabajo
-      { id: 'charla', x: B.sofa[0] - 0.8, z: B.sofa[1] + 0.2, face: Math.PI, gesture: 'emote-yes' },
-      { id: 'cafe', x: B.sofa[0] - 0.8, z: B.sofa[1] - 0.5, face: Math.PI, gesture: 'interact-right' },
-    ];
+    const m = a.model;
     const W = a.walk;
     if (!W) {
       if (now < a.nextWalk) return;
-      const s = SPOTS[Math.floor(Math.random() * SPOTS.length)];
-      a.walk = { to: s, phase: 'go', until: 0 }; a.wander = null; a.sitSpot = false;
+      // FT-148: solo descanso (sofá, mesa redonda, café, charla) y a un sitio que no ocupe nadie de su planta
+      const near = (p, q) => Math.hypot(p.x - q.x, p.z - q.z) < 0.35;
+      const taken = this.miniActors.filter((o) => o !== a && o.model?.parent === m.parent).map((o) => (o.walk ? o.walk.to : { x: o.model.position.x, z: o.model.position.z }));
+      const free = Office3D.restSpotsBuilding().filter((sp) => !near(sp, a.home) && !taken.some((q) => near(sp, q)));
+      if (!free.length) { a.nextWalk = now + 6 + Math.random() * 8; return; }
+      const sp = free[Math.floor(Math.random() * free.length)];
+      a.walk = { to: { ...sp, face: sp.ry }, phase: 'go', until: 0 }; a.wander = null; a.sitSpot = false;
       m.position.y = a.standY;
       return;
     }
@@ -1709,10 +1729,11 @@ export class Office3D {
       const dx = tgt.x - m.position.x, dz = tgt.z - m.position.z, d = Math.hypot(dx, dz), step = dt * 1.1;
       a.moving = true;
       m.rotation.y = Math.atan2(dx, dz);
+      if (W.phase === 'back' && a.sitSpot) { a.sitSpot = false; m.position.y = a.standY; } // se levanta antes de volver
       if (d > step) { m.position.x += (dx / d) * step; m.position.z += (dz / d) * step; }
       else {
         m.position.x = tgt.x; m.position.z = tgt.z; a.moving = false;
-        if (W.phase === 'go') { W.phase = 'stay'; W.until = now + 4 + Math.random() * 5; m.rotation.y = W.to.face; a.wander = { id: W.to.id, gesture: W.to.gesture }; a.key = 'wander:' + W.to.id; a.nextGesture = now + 0.3; }
+        if (W.phase === 'go') { W.phase = 'stay'; W.until = now + 6 + Math.random() * 8; m.rotation.y = W.to.face; a.wander = { id: W.to.id, gesture: W.to.gesture }; a.key = 'wander:' + W.to.id; a.nextGesture = now + 0.3; if (W.to.sit) { a.sitSpot = true; m.position.y = a.home.sit ? a.home.y : a.standY + 0.05; } }
         else { a.walk = null; a.wander = null; a.sitSpot = a.home.sit; m.position.y = a.home.y; m.rotation.y = a.home.ry; a.nextWalk = now + 8 + Math.random() * 14; }
       }
     } else if (now > W.until) { W.phase = 'back'; a.wander = null; a.key = null; }
