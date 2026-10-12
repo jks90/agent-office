@@ -102,7 +102,7 @@ function connectEvents() {
   es.addEventListener('state', (e) => {
     const was = new Set(S.tasks.filter((t) => t.status === 'review').map((t) => t.id)), hadState = S.tasks.length > 0;
     S = JSON.parse(e.data);
-    if (hadState) for (const t of S.tasks) if (t.status === 'review' && !was.has(t.id)) toast(`${S.agents.find((a) => a.id === t.agentId)?.name || 'Un agente'} terminó ${t.code || '#' + t.id}: ${t.reviewing ? 'se está revisando sola' : 'revísala'}`, 'review'); // FT-56
+    if (hadState) for (const t of S.tasks) if (t.status === 'review' && !was.has(t.id) && t.assignedAgentId !== 'human') // FT-187: lo que tú mismo mueves no es un aviso toast(`${S.agents.find((a) => a.id === t.agentId)?.name || 'Un agente'} terminó ${t.code || '#' + t.id}: ${t.reviewing ? 'se está revisando sola' : 'revísala'}`, 'review'); // FT-56
     if (!S.projects.some((p) => p.id === projectId)) projectId = S.projects[0]?.id ?? null;
     // FT-131: una excepción en render() (p. ej. WebGL o un panel dentro del iframe de flow-test) no puede dejar sin 🛡 ni barra de preguntas
     try { render(); } catch (err) { console.error('render()', err); }
@@ -255,7 +255,7 @@ function floorCountersFor(p) {
     team: team.length,
     working: team.filter((a) => a.status === 'working').length,
     queued: ts.filter((t) => t.status === 'todo').length,
-    review: ts.filter((t) => t.status === 'review').length,
+    review: ts.filter((t) => t.status === 'review' && t.assignedAgentId !== 'human').length, // FT-187
     failed: ts.filter((t) => t.status === 'failed').length,
     running: !!p.running,
   };
@@ -1142,7 +1142,7 @@ function render() {
   const working = team().filter((a) => a.status === 'working');
   const paused = team().filter((a) => a.status === 'paused').length;
   $('#tab-tasks-count').textContent = ts.filter((t) => ['todo', 'doing', 'review'].includes(t.status)).length || '';
-  const nRev = ts.filter((t) => t.status === 'review').length, allRev = S.tasks.filter((t) => t.status === 'review'); // FT-56
+  const nRev = ts.filter((t) => t.status === 'review' && !isMine(t)).length, allRev = S.tasks.filter((t) => t.status === 'review' && !isMine(t)); // FT-56 · FT-187: las tuyas no son aviso
   $('#tab-tasks-review').textContent = nRev ? `✋${nRev}` : '';
   // El chip cuenta las revisiones del proyecto ACTIVO; si este no tiene y otros sí, lo dice explícitamente («en otros proyectos»).
   // 🔔 de la barra: los avisos de «Para ti» (lo que te espera a ti, de todos los proyectos visibles); clic → esa vista
@@ -1151,7 +1151,7 @@ function render() {
   rc.textContent = `🔔 ${inbox.length}`;
   rc.title = `Para ti: ${Object.entries(inbox.reduce((m, i) => ((m[i.kind] = (m[i.kind] || 0) + 1), m), {})).map(([k, n]) => `${n} ${INBOX_KIND[k][1].toLowerCase()}`).join(' · ')}`;
   $('#tab-agents-count').textContent = team().length || '';
-  $('#tab-summary').innerHTML = `${ts.filter((t) => t.status === 'doing').length} en curso<br>${ts.filter((t) => t.status === 'review').length} por revisar<br>${working.length}/${team().length} agentes trabajando${paused ? ` · ${paused} en pausa` : ''}`;
+  $('#tab-summary').innerHTML = `${ts.filter((t) => t.status === 'doing').length} en curso<br>${ts.filter((t) => t.status === 'review' && !isMine(t)).length} por revisar<br>${working.length}/${team().length} agentes trabajando${paused ? ` · ${paused} en pausa` : ''}`;
   renderOfficeFoot();
   renderOfficeList();
   const b = p?.board;
@@ -1579,6 +1579,11 @@ async function moveTask(id, status) {
   const t = S.tasks.find((x) => x.id === id);
   if (!t) return;
   if (t.status === status) return;
+  if (isMine(t)) { // FT-187: la tuya se mueve libremente entre columnas (menos «En curso» y «Fallida», que son del agente)
+    if (['doing', 'failed'].includes(status)) return toast('Esa columna es de los agentes: una tarea tuya va a Por hacer, Revisión o Hecho', 'error');
+    try { await api('PATCH', `/api/tasks/${id}`, { status }); toast(`${tcode(t)} → ${COL_NAME[status]}`); } catch { /* api() ya mostró el aviso */ }
+    return;
+  }
   if (!MOVABLE.includes(t.status)) return toast(`${tcode(t)} ${t.status === 'doing' ? 'está en curso: para al agente antes de moverla' : 'está en «' + (COL_NAME[t.status] || t.status) + '»: usa Aprobar / Devolver en la tarjeta'}`, 'error');
   if (!['backlog', 'todo', 'discarded'].includes(status)) return toast(`No se puede mover a «${COL_NAME[status]}» a mano: esa columna la gestiona el agente al ejecutar la tarea`, 'error');
   try { await api('PATCH', `/api/tasks/${id}`, { status }); toast(`${tcode(t)} → ${COL_NAME[status]}`); } catch { /* api() ya mostró el aviso */ }
@@ -1693,6 +1698,16 @@ const updateBtn = (t) => t.status === 'review' && t.branch && t.behind ? `<butto
 // servidor calcula con la misma regla que el planificador) o aviso ámbar si nadie del equipo tiene el rol. El chip abre el
 // cajón del agente (motor, modelo, registro) o, sin agente, «Contratar agente» con el rol ya elegido; el desplegable reasigna.
 const UNSTARTED = ['backlog', 'todo', 'failed'];
+// FT-187 · tareas asignadas al usuario humano (assignedAgentId = 'human'): ningún agente las coge y las mueves tú a mano.
+const isMine = (t) => t?.assignedAgentId === 'human';
+const MINE_BADGE = '<span class="mine-badge" title="Asignada a ti: ningún agente la coge; muévela tú a Revisión / Hecha">👤 asignada a ti</span>';
+function mineActs(t) { // botones de movimiento manual (el resto de acciones: editar, borrar… son las de siempre)
+  const b = (to, text, cls = 'ghost') => `<button class="small ${cls}" data-mv="${t.id}" data-to="${to}">${text}</button>`;
+  if (t.status === 'todo') return [b('review', '→ Revisión'), b('done', '✓ Hecha', 'ok')];
+  if (t.status === 'review') return [b('done', '✓ Hecha', 'ok'), b('todo', '↩ Por hacer')];
+  if (t.status === 'done') return [b('todo', '↩ Reabrir')];
+  return [];
+}
 const REVIEW_LABEL = { manual: 'Manual: la revisas tú', 'auto-qa': 'Automática: un agente QA revisa, aprueba y fusiona (o la devuelve)', auto: 'Automática: se aprueba si pasan las verificaciones que declara la tarea' };
 const engineTag = (a) => `${a.engine}${a.engine === 'auto' && a.activeEngine ? '→' + a.activeEngine : ''}${a.model ? '/' + a.model : ''}`;
 const assignable = (t) => team().filter((a) => a.role === t.role || (S.roles[a.role]?.handles || []).includes(t.role));
@@ -1702,12 +1717,13 @@ function whoRow(t) {
   const planned = !fixed && byId(t.plannedAgentId);
   const a = fixed || planned;
   const open = UNSTARTED.includes(t.status);
-  const chip = a
+  const mine = isMine(t);
+  const chip = mine ? MINE_BADGE : a
     ? `<button type="button" class="who-chip${planned ? ' planned' : ''}" data-agent="${a.id}" title="${planned ? `Previsto: ${esc(a.name)} es el primer agente del equipo libre con ese rol (cambia con «Asignar a…»). ` : ''}Abrir a ${esc(a.name)} para configurarlo (motor, modelo) o ver su registro">👤 ${planned ? '<i>previsto:</i> ' : ''}${esc(a.name)} · <span class="eng-tag">${esc(engineTag(a))}</span></button>`
     : open ? `<button type="button" class="who-chip warn" data-hire-role="${esc(t.role)}" title="${esc(t.plannedReason || 'nadie del equipo tiene ese rol')}. Clic: contratar un agente con ese rol">⚠️ sin agente para este rol</button>` : '';
   if (!chip) return '';
-  const opts = open ? assignable(t) : [];
-  const pick = opts.length || t.assignedAgentId ? `<select class="who-pick" data-assign="${t.id}" title="Asignar a… fija quién hará la tarea (sin pasar por la regla del rol)"><option value="">Asignar a…</option>${opts.map((x) => `<option value="${x.id}">${esc(x.name)} · ${esc(engineTag(x))}</option>`).join('')}${t.assignedAgentId ? '<option value="__auto">(automático: por rol)</option>' : ''}</select>` : '';
+  const opts = open ? (mine ? team() : assignable(t)) : [];
+  const pick = opts.length || t.assignedAgentId || open ? `<select class="who-pick" data-assign="${t.id}" title="Asignar a… fija quién hará la tarea (sin pasar por la regla del rol)"><option value="">Asignar a…</option>${open && !mine ? '<option value="__human">👤 Yo (humano)</option>' : ''}${opts.map((x) => `<option value="${x.id}">${esc(x.name)} · ${esc(engineTag(x))}</option>`).join('')}${t.assignedAgentId ? '<option value="__auto">(automático: por rol)</option>' : ''}</select>` : '';
   return `<div class="who">${chip}${pick}</div>`;
 }
 // El modal «Ver la tarea» no se repinta por SSE: solo se refresca su fila de agente al llegar un estado nuevo.
@@ -1754,7 +1770,7 @@ function compactCard(t) {
   else if (t.budgetHit && t.status === 'review') ind.push('<span class="ind warn" title="Cortada por el tope de gasto: revisa y decide">⚠</span>');
   if (t.status === 'review' && t.behind) ind.push(`<span class="ind" title="Desfasada ${t.behind} commit${t.behind === 1 ? '' : 's'} respecto a ${esc(baseOf(t))}">⇣${t.behind}</span>`);
   if (t.quotaPaused || t.quotaBlocked) ind.push(`<span class="ind warn" title="${esc(t.activity || '⏸ sin cuota')}${t.quotaPaused?.resetsAt > Date.now() ? ` (en ${esc(fmtLeft(t.quotaPaused.resetsAt))})` : ''}">⏸</span>`);
-  if (t.status === 'review') ind.push(`<span class="ind warn" title="${t.reviewing ? 'Revisión automática en curso' : `Esperando tu revisión${t.reviewSince ? ' desde hace ' + waitTxt(t.reviewSince) : ''}`}${(t.blocks || []).length ? ' · bloquea: ' + t.blocks.map((b) => b.code).join(', ') : ''}">✋${t.reviewSince ? waitMin(t.reviewSince) + '′' : ''}</span>`); // FT-56 en compacto
+  if (t.status === 'review' && !isMine(t)) ind.push(`<span class="ind warn" title="${t.reviewing ? 'Revisión automática en curso' : `Esperando tu revisión${t.reviewSince ? ' desde hace ' + waitTxt(t.reviewSince) : ''}`}${(t.blocks || []).length ? ' · bloquea: ' + t.blocks.map((b) => b.code).join(', ') : ''}">✋${t.reviewSince ? waitMin(t.reviewSince) + '′' : ''}</span>`); // FT-56 en compacto
   if (!['review', 'done'].includes(t.status) && t.waitingOn?.length) ind.push(`<span class="ind" title="Espera a ${esc(t.waitingOn.map((w) => w.code + ' (' + (TSTATUS[w.status] || w.status) + ')').join(', '))}">⏳</span>`);
   if (depsOpen.length && !t.waitingOn?.length) ind.push(`<span class="ind" title="Depende de ${esc(depsOpen.map(tcode).join(', '))}">⏳</span>`);
   if (t.costUsd) ind.push(`<span class="ind" title="Coste de la tarea: ${t.costEstimated ? '≈ ' : ''}${t.costUsd.toFixed(3)} $${t.costEstimated ? ' (estimado: Codex no informa el coste)' : ''}">💲${t.costEstimated ? '≈' : ''}${t.costUsd.toFixed(2)}</span>`);
@@ -1768,21 +1784,22 @@ function compactCard(t) {
   if (t.status === 'discarded') main.push(btn('park', '↩ Recuperar', 'ghost', 'Volver al Backlog'));
   if (t.status === 'failed') main.push(btn('reject', '▶ Reintentar', ''));
   if (t.status === 'todo' && t.quotaPaused) main.push(btn('resume-now', '▶ Reanudar ya', ''));
-  if (t.status === 'review') {
+  if (isMine(t)) main.push(...mineActs(t)); // FT-187: sin Aprobar/Devolver de agente
+  else if (t.status === 'review') {
     main.push(btn('approve', '✓ Aprobar', 'ok'), btn('reject', '↩ Devolver'), btn('diff', 'Ver cambios'));
     if (updateBtn(t)) more.push(updateBtn(t));
   }
   if (t.status !== 'doing') more.push(btn('edit', '✎ Editar'));
   if (['todo', 'failed'].includes(t.status)) more.push(btn('park', '← Backlog'));
-  if (['review', 'done'].includes(t.status)) more.push(btn('nomove', '⇄ Mover a…'));
+  if (['review', 'done'].includes(t.status) && !isMine(t)) more.push(btn('nomove', '⇄ Mover a…'));
   if (['done', 'discarded'].includes(t.status)) more.push(t.archived ? btn('unarchive', '📦 Desarchivar') : btn('archive', '🗄 Archivar'));
   if (['todo', 'failed', 'done'].includes(t.status)) more.push(btn('del', 'Borrar', 'danger'));
   more.push(btn('open', '🔍 Ver la tarea'));
   const bar = `<div class="bar">${main.join('')}<button class="small ghost" data-more title="Más acciones" aria-label="Más acciones">⋯</button><div class="more-menu">${more.join('')}</div></div>`;
-  const who = a ? `👤 ${planned ? 'previsto: ' : ''}${esc(a.name)} · ${esc(engineTag(a))}` : UNSTARTED.includes(t.status) ? '⚠ sin agente para este rol' : '';
+  const who = isMine(t) ? MINE_BADGE : a ? `👤 ${planned ? 'previsto: ' : ''}${esc(a.name)} · ${esc(engineTag(a))}` : UNSTARTED.includes(t.status) ? '⚠ sin agente para este rol' : '';
   const live = t.status === 'doing' && fixed ? `● ${esc(fixed.activity)}` : '';
   const epic = t.splitInto ? epicStrip(t) : '';
-  return `<div class="card compact ${t.status}${conflict ? ' conflict' : ''}${t.archived ? ' archived' : ''}" tabindex="0" data-task="${t.id}" draggable="${MOVABLE.includes(t.status)}" style="--c:${role?.color}">
+  return `<div class="card compact ${t.status}${conflict ? ' conflict' : ''}${t.archived ? ' archived' : ''}" tabindex="0" data-task="${t.id}" draggable="${isMine(t) ? t.status !== 'doing' : MOVABLE.includes(t.status)}" style="--c:${role?.color}">
     <div class="card-head"><span class="chip" style="--c:${role?.color}" title="${esc(label)}">${esc(label.length > 5 ? label.slice(0, 4) + '.' : label)}</span><span class="task-id" title="Código de la tarea (rama ao/${t.code || t.id})">${esc(tcode(t))}</span>${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? `<span class="repo-chip" title="Repo">📁 ${esc(t.repo || '?')}</span>` : ''}<span class="inds">${ind.join('')}</span></div>
     <div class="t" title="${esc(t.title)}">${t.splitInto ? '🧩 ' : ''}${esc(t.title)}</div>
     ${epic || `<div class="who-line${live ? ' live' : ''}">${live || who}</div>`}
@@ -1821,6 +1838,7 @@ function inboxAll() {
   for (const t of S.tasks) {
     const p = vis.get(t.projectId);
     if (!p) continue;
+    if (isMine(t)) continue; // FT-187: una tarea que te pones tú no es un aviso (ni review, ni manual, ni cuota)
     if (t.status === 'review' && !t.reviewing && (policyFor(p) === 'manual' || t.reviewNote)) items.push({ kind: t.stuck || t.budgetHit ? 'cut' : 'review', p, t, sort: 1, imported: !!t.source && !t.agentId });
     else if (t.status === 'failed') items.push({ kind: 'failed', p, t, sort: 2 });
     else if (['backlog', 'todo'].includes(t.status) && isManualTask(t)) items.push({ kind: 'manual', p, t, sort: 3 });
@@ -1900,7 +1918,7 @@ function epicStrip(t) {
   return `<div class="epic-strip" title="La hacen sus partes; esta se cierra sola cuando estén todas hechas. No la pases a «Por hacer»: un agente la haría entera otra vez.">${head}${list}</div>`;
 }
 function reviewStrip(t) {
-  if (t.status === 'review') {
+  if (t.status === 'review' && !isMine(t)) {
     const blocks = (t.blocks || []).length ? `<div class="rw-blocks">bloquea: ${t.blocks.map(taskLink).join(', ')}</div>` : '';
     const head = t.reviewing ? `🔎 Revisión automática en curso (${t.reviewing === 'auto' ? 'tests' : 'QA'})…${reviewLiveHtml(t)}` : `✋ Esperando tu revisión desde hace <span class="rw-t" data-since="${t.reviewSince}">${waitTxt(t.reviewSince)}</span>`;
     const again = t.reviewNote && !t.reviewing && /falló|veredicto válido/.test(t.reviewNote) ? ` <button class="small ghost" data-review-again="${t.id}" title="Relanzar la revisión automática (falló por un problema técnico)">🔎 Revisar otra vez</button>` : '';
@@ -1946,7 +1964,8 @@ function card(t) {
     return `<span title="${esc(dt?.title)}">${dt?.status === 'done' ? '✓' : '⏳'}${esc(dt ? tcode(dt) : '#' + d)}</span>`;
   }).join(' ');
   const acts = [];
-  if (t.status === 'review') {
+  if (isMine(t)) acts.push(...mineActs(t)); // FT-187
+  else if (t.status === 'review') {
     acts.push(`<button class="small ghost" data-diff="${t.id}">Ver diff</button>`);
     if (updateBtn(t)) acts.push(updateBtn(t));
     acts.push(`<button class="small ok" data-approve="${t.id}">✓ Aprobar${t.branch ? ' y fusionar' : ''}</button>`);
@@ -1959,10 +1978,10 @@ function card(t) {
   if (t.status === 'failed') acts.push(`<button class="small ghost" data-park="${t.id}" title="Devolver al Backlog">← Backlog</button>`);
   if (['backlog', 'todo', 'failed'].includes(t.status)) acts.push(`<button class="small ghost" data-discard="${t.id}" title="No se va a hacer: pasa a Descartada (se puede recuperar)">✕ Descartar</button>`);
   if (t.status === 'discarded') acts.push(`<button class="small ghost" data-park="${t.id}" title="Volver al Backlog">↩ Recuperar</button>`);
-  if (['review', 'done'].includes(t.status)) acts.push(`<button class="small ghost" data-nomove="${t.id}" title="Mover a otra columna">⇄ Mover a…</button>`);
+  if (['review', 'done'].includes(t.status) && !isMine(t)) acts.push(`<button class="small ghost" data-nomove="${t.id}" title="Mover a otra columna">⇄ Mover a…</button>`);
   if (['done', 'discarded'].includes(t.status)) acts.push(t.archived ? `<button class="small ghost" data-unarchive="${t.id}" title="Volver a mostrarla en su columna">📦 Desarchivar</button>` : `<button class="small ghost" data-archive="${t.id}" title="Ocultarla del tablero sin borrarla (se encuentra con el filtro o «Ver archivadas»)">🗄 Archivar</button>`);
   if (['todo', 'failed', 'done'].includes(t.status)) acts.push(`<button class="small danger" data-del="${t.id}">Borrar</button>`);
-  return `<div class="card ${t.status}${t.archived ? ' archived' : ''}" data-task="${t.id}" draggable="${['backlog', 'todo', 'failed', 'discarded'].includes(t.status)}" style="--c:${S.roles[t.role]?.color}">
+  return `<div class="card ${t.status}${t.archived ? ' archived' : ''}" data-task="${t.id}" draggable="${isMine(t) ? t.status !== 'doing' : ['backlog', 'todo', 'failed', 'discarded'].includes(t.status)}" style="--c:${S.roles[t.role]?.color}">
     <div class="card-head">${roleChip(t.role)} <span class="task-id" title="Código de la tarea (rama ao/${t.code || t.id}; cítalo en commits y docs)">${esc(tcode(t))}</span>${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? ` <span class="repo-chip">📁 ${esc(t.repo || '?')}</span>` : ''}${t.source?.flow ? ` <span title="Importada del tablero «${esc(t.source.flow)}» · columna ${esc(t.source.column)}">🗂</span>` : ''}${(t.feedbackImages?.length || t.files?.length) ? ` <span title="${esc([...(t.feedbackImages || []), ...(t.files || [])].map((f) => f.split('/').pop()).join(', '))}">📎${(t.feedbackImages?.length || 0) + (t.files?.length || 0)}</span>` : ''}${t.source?.url ? ` <a class="ext" href="${esc(t.source.url)}" target="_blank" rel="noopener" title="${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} · ${esc(t.source.id)}${t.source.remoteStatus ? ' · fuera: ' + esc(t.source.remoteStatus) : ''}">🔗 ${esc(t.source.id)}</a>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}</div>
     <div class="t">${esc(t.title)}</div>
     ${whoRow(t)}
@@ -2342,6 +2361,7 @@ Pasos, convenciones y ejemplos…</textarea>
       return;
     }
     if (!f.title?.trim()) { toast('Pon un título o usa «Redactar con IA»', 'error'); throw new Error('sin título'); }
+    if (f.role === '__human') return api('POST', '/api/tasks', { ...f, role: '', assignedAgentId: 'human', projectId, attachments: pendingAttachments }); // FT-187
     return api('POST', '/api/tasks', { ...f, projectId, attachments: pendingAttachments });
   }); },
   settings: () => dialog(`
@@ -2717,14 +2737,14 @@ function renderSummary() {
   // Carpetas del workspace sin equipo ni tareas: plegadas en una línea (se despliegan con un clic)
   const idle = rows.filter((r) => !r.ts.length && !r.team.length && !r.p.running);
   const shown = sumShowEmpty ? rows : rows.filter((r) => !idle.includes(r));
-  const n = (st) => all.filter((t) => t.status === st).length;
+  const n = (st) => all.filter((t) => t.status === st && !(st === 'review' && isMine(t))).length; // FT-187: «por revisar» no cuenta las tuyas
   const working = agents.filter((a) => a.status === 'working').length, paused = agents.filter((a) => a.status === 'paused').length;
   const kpi = (v, l, cls = '') => `<div class="kpi ${cls}"><b>${v}</b><span>${l}</span></div>`;
   el.innerHTML = sumTabs() + `
     <div class="summary-kpis">
       ${kpi(S.projects.filter((p) => p.running).length + '/' + S.projects.length, 'proyectos en marcha', 'on')}
       ${kpi(`${working}${paused ? ' +' + paused + '⏸' : ''}/${agents.length}`, 'agentes trabajando', working ? 'on' : '')}
-      ${kpi(n('doing'), 'tareas en curso')}<div class="kpi ${n('review') ? 'warn' : ''}"${n('review') ? ` title="${esc(all.filter((t) => t.status === 'review').map((t) => `${t.code || t.id}: desde hace ${waitTxt(t.reviewSince)}`).join('\n'))}"` : ''}><b>${n('review')}</b><span>por revisar</span></div>${kpi(n('todo'), 'por hacer')}${kpi(n('backlog'), 'en backlog')}
+      ${kpi(n('doing'), 'tareas en curso')}<div class="kpi ${n('review') ? 'warn' : ''}"${n('review') ? ` title="${esc(all.filter((t) => t.status === 'review' && !isMine(t)).map((t) => `${t.code || t.id}: desde hace ${waitTxt(t.reviewSince)}`).join('\n'))}"` : ''}><b>${n('review')}</b><span>por revisar</span></div>${kpi(n('todo'), 'por hacer')}${kpi(n('backlog'), 'en backlog')}
       ${n('failed') ? `<button class="kpi bad kpi-btn" data-sum-failed="all" title="Ver por qué fallaron"><b>${n('failed')}</b><span>fallidas · ver por qué</span></button>` : kpi(0, 'fallidas')}${kpi(qs.length, 'preguntas pendientes', qs.length ? 'warn' : '')}
       ${kpi((all.reduce((s, t) => s + (t.costUsd || 0), 0)).toFixed(2) + ' $', 'coste acumulado')}
     </div>
@@ -2735,7 +2755,7 @@ function renderSummary() {
         <tr data-sum-project="${p.id}" class="${p.id === projectId ? 'sel' : ''}">
           <td><b>${esc(p.name)}</b>${p.folder && p.folder !== p.name ? ` <span class="muted">(${esc(p.folder)})</span>` : ''} <span class="muted">${esc(p.prefixDefault || '')}</span>${open ? ` <span title="preguntas pendientes">❓${open}</span>` : ''}</td>
           <td><button class="small ${p.running ? 'on' : 'ghost'}" data-sum-run="${p.id}" title="${p.running ? 'Parar el equipo' : 'Poner a trabajar'}">${p.running ? '🟢 En marcha' : '⏸ Parado'}</button></td>
-          ${SUM_COLS.map(([st]) => { const c = ts.filter((t) => t.status === st).length; if (st === 'review' && c) { const old = Math.min(...ts.filter((t) => t.status === 'review').map((t) => t.reviewSince)); return `<td class="num st-review" title="Esperando revisión desde hace ${waitTxt(old)}">${c}</td>`; } return st === 'failed' && c ? `<td class="num st-failed"><button class="linklike" data-sum-failed="${p.id}" title="Ver por qué fallaron">${c}</button></td>` : `<td class="num ${c ? 'st-' + st : 'zero'}">${c || '·'}</td>`; }).join('')}
+          ${SUM_COLS.map(([st]) => { const c = ts.filter((t) => t.status === st && !(st === 'review' && isMine(t))).length; if (st === 'review' && c) { const old = Math.min(...ts.filter((t) => t.status === 'review' && !isMine(t)).map((t) => t.reviewSince)); return `<td class="num st-review" title="Esperando revisión desde hace ${waitTxt(old)}">${c}</td>`; } return st === 'failed' && c ? `<td class="num st-failed"><button class="linklike" data-sum-failed="${p.id}" title="Ver por qué fallaron">${c}</button></td>` : `<td class="num ${c ? 'st-' + st : 'zero'}">${c || '·'}</td>`; }).join('')}
           <td>${teamCell(p, team)}</td>
           <td>${busyCell(busy)}</td>
           <td>${free.length ? `<span title="${esc(free.map((a) => a.name).join(', '))}">${free.length} libre${free.length === 1 ? '' : 's'}</span>` : '<span class="muted">—</span>'}</td>
@@ -2747,7 +2767,7 @@ function renderSummary() {
     ${scoresHtml()}
     <p class="muted" style="margin:8px 2px">Clic en una fila: abre sus tareas. Los datos llegan por SSE: la tabla se actualiza sola.</p>`;
   refreshSumModal();
-  const sc = $('#tab-summary-count'); if (sc) sc.textContent = (all.filter((t) => t.status === 'review' && S.projects.find((p) => p.id === t.projectId)?.running).length + qs.length) || ''; // solo lo que pide acción: revisiones de proyectos en marcha + preguntas
+  const sc = $('#tab-summary-count'); if (sc) sc.textContent = (all.filter((t) => t.status === 'review' && !isMine(t) && S.projects.find((p) => p.id === t.projectId)?.running).length + qs.length) || ''; // solo lo que pide acción: revisiones de proyectos en marcha + preguntas
 }
 document.addEventListener('click', async (e) => {
   if (e.target.matches?.('[data-cost-variant]')) return;
@@ -2994,7 +3014,8 @@ function whoOptions() {
   const planner = team().find((a) => S.roles[a.role]?.kind === 'planner');
   const byRole = new Map();
   for (const a of team()) { if (S.roles[a.role]?.kind === 'planner') continue; byRole.set(a.role, [...(byRole.get(a.role) || []), a.name]); }
-  return (planner ? `<option value="__po">🗂 Que lo decida ${esc(planner.name)} (PO): él elige a quién y crea la tarea</option>` : '') +
+  return '<option value="__human">👤 Yo (humano): ningún agente la coge</option>' + // FT-187
+    (planner ? `<option value="__po">🗂 Que lo decida ${esc(planner.name)} (PO): él elige a quién y crea la tarea</option>` : '') +
     [...byRole].map(([role, names]) => `<option value="${role}">${esc(names.join(' / '))} — ${esc(S.roles[role]?.label || role)}</option>`).join('') +
     (!planner && !byRole.size ? '<option value="back">(sin plantilla: rol Backend)</option>' : '');
 }
@@ -3109,7 +3130,8 @@ function openTask(id) {
   if (t.status === 'todo') acts.push(`<button class="small ghost" data-park="${t.id}">← Backlog</button>`);
   if (['backlog', 'todo', 'failed'].includes(t.status)) acts.push(`<button class="small ghost" data-discard="${t.id}">✕ Descartar</button>`);
   if (t.status === 'discarded') acts.push(`<button class="small ghost" data-park="${t.id}">↩ Recuperar</button>`);
-  if (t.status === 'review') acts.push(`<button class="small ghost" data-diff="${t.id}">Ver cambios</button>${updateBtn(t)}<button class="small ok" data-approve="${t.id}">✓ Aprobar${t.branch ? ' y fusionar' : ''}</button><button class="small ghost" data-reject="${t.id}">↩ Devolver</button>`);
+  if (isMine(t)) acts.push(...mineActs(t)); // FT-187
+  else if (t.status === 'review') acts.push(`<button class="small ghost" data-diff="${t.id}">Ver cambios</button>${updateBtn(t)}<button class="small ok" data-approve="${t.id}">✓ Aprobar${t.branch ? ' y fusionar' : ''}</button><button class="small ghost" data-reject="${t.id}">↩ Devolver</button>`);
   if (t.status === 'failed') acts.push(`<button class="small" data-reject="${t.id}">↻ Reintentar</button>`);
   dialog(`
     <div class="task-head">${roleChip(t.role)} <b>${esc(tcode(t))}</b>${repoKey ? ` <span>📁 ${esc(repoKey)}</span>` : ''} <span class="st">${STATUS[t.status] || t.status}</span>${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}${t.costUsd ? ` <span>≈ ${t.costUsd.toFixed(2)} $</span>` : ''}${t.source?.url ? ` <a href="${esc(t.source.url)}" target="_blank" rel="noopener" style="color:#93c5fd">🔗 ${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} ${esc(t.source.id)}</a>` : ''}<div class="spacer"></div><span>${new Date(t.createdAt).toLocaleString()}</span></div>
@@ -3152,12 +3174,16 @@ function editTask(id) {
     </div>
     <label>Depende de (Ctrl+clic para varias)</label>
     <select name="dependsOn" multiple size="${Math.min(6, Math.max(2, others.length))}">${others.map((o) => `<option value="${o.id}" ${t.dependsOn.includes(o.id) ? 'selected' : ''}>${o.status === 'done' ? '✓' : '⏳'} ${esc(tcode(o))} · ${esc(o.title.slice(0, 70))}</option>`).join('')}</select>
-    ${['backlog', 'todo', 'failed'].includes(t.status) ? `<label>Estado</label><select name="status"><option value="backlog" ${t.status === 'backlog' ? 'selected' : ''}>Backlog</option><option value="todo" ${t.status !== 'backlog' ? 'selected' : ''}>Por hacer</option></select>` : ''}
+    ${UNSTARTED.includes(t.status) || isMine(t) ? `<label>Asignada a</label><select name="assignedAgentId">${isMine(t) ? '<option value="human" selected>👤 Yo (humano)</option><option value="">Un agente (por rol)</option>' : '<option value="__keep" selected>Agente (como está)</option><option value="human">👤 Yo (humano)</option>'}</select>` : ''}
+    ${isMine(t) ? `<label>Estado</label><select name="status">${['backlog', 'todo', 'review', 'done', 'discarded'].map((s) => `<option value="${s}" ${t.status === s ? 'selected' : ''}>${COL_NAME[s] || s}</option>`).join('')}</select>` : ['backlog', 'todo', 'failed'].includes(t.status) ? `<label>Estado</label><select name="status"><option value="backlog" ${t.status === 'backlog' ? 'selected' : ''}>Backlog</option><option value="todo" ${t.status !== 'backlog' ? 'selected' : ''}>Por hacer</option></select>` : ''}
     ${t.source?.kind && t.source.kind !== 'flow' ? '<p class="muted">Título y descripción se actualizan también en el tablero online.</p>' : ''}
     ${buttons('Guardar')}`, async (f) => {
     const form = $('#dialog form');
     const dependsOn = [...form.querySelector('[name=dependsOn]').selectedOptions].map((o) => o.value);
-    await api('PATCH', `/api/tasks/${id}`, { ...f, dependsOn });
+    const body = { ...f, dependsOn };
+    if (body.assignedAgentId === '__keep') delete body.assignedAgentId; // FT-187
+    // pasar de «Yo» a un agente y mover de columna a la vez: primero se reasigna (el servidor lo hace antes), luego el estado
+    await api('PATCH', `/api/tasks/${id}`, body);
     toast('Tarea actualizada');
   });
 }
@@ -3207,6 +3233,7 @@ document.addEventListener('click', async (e) => {
   }
   if (d.open) return openTask(d.open);
   if (d.ready) return api('PATCH', `/api/tasks/${d.ready}`, { status: 'todo' });
+  if (d.mv) return moveTask(d.mv, d.to); // FT-187: mover a mano una tarea asignada a ti
   if (d.edit) return editTask(d.edit);
   if (d.aiDraft !== undefined) {
     const form = $('#dialog form');
@@ -3299,7 +3326,7 @@ document.addEventListener('change', async (e) => {
   if (!sel || !sel.value) return;
   const v = sel.value, t = S.tasks.find((x) => x.id === sel.dataset.assign), a = S.agents.find((x) => x.id === v);
   sel.value = '';
-  try { await api('POST', `/api/tasks/${sel.dataset.assign}/assign`, { agentId: v === '__auto' ? null : v }); toast(a ? `${tcode(t)} → la hará ${a.name}` : `${tcode(t)}: el agente vuelve a elegirse por rol`); } catch { /* api() ya avisó */ }
+  try { await api('POST', `/api/tasks/${sel.dataset.assign}/assign`, { agentId: v === '__auto' ? null : v === '__human' ? 'human' : v }); toast(v === '__human' ? `${tcode(t)} → asignada a ti` : a ? `${tcode(t)} → la hará ${a.name}` : `${tcode(t)}: el agente vuelve a elegirse por rol`); } catch { /* api() ya avisó */ }
 });
 $('#project').onchange = (e) => { projectId = e.target.value; safeSet('ao:project', projectId); closeDrawer(); };
 // Campo del objetivo compacto: una línea que crece con el texto; Enter encarga, Shift+Enter salta de línea.

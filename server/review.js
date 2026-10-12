@@ -89,7 +89,7 @@ export function reviewPrompt(t, base, checks) {
 
 // Mensaje del «pendientes de revisión» que se añade al prompt del Guía.
 export function pendingBlock(tasks, now, minMin) {
-  const lines = tasks.filter((t) => t.status === 'review' && (now - waitingSince(t)) / 60000 >= minMin)
+  const lines = tasks.filter((t) => t.status === 'review' && t.assignedAgentId !== 'human' && (now - waitingSince(t)) / 60000 >= minMin)
     .map((t) => `- ${t.code || t.id} «${t.title}» espera revisión desde hace ${Math.max(0, Math.round((now - waitingSince(t)) / 60000))} min${blocksOf(tasks, t).length ? `; bloquea: ${blocksOf(tasks, t).map((b) => b.code).join(', ')}` : ''}`);
   return lines.length ? `<pendientes_de_revision>\n${lines.join('\n')}\n(Menciónalo al usuario en tu próxima respuesta y ofrécele aprobar o devolver.)\n</pendientes_de_revision>` : '';
 }
