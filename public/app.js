@@ -378,7 +378,7 @@ function guideMount(el, panel) {
     <div class="g-list" tabindex="0" title="↑/↓ cambian de chat · Supr borra · Ctrl+N nuevo"><div class="g-lhead"><button class="small" data-g="new" title="Nuevo chat (Ctrl+N)">＋<span class="g-lbl"> Nuevo chat</span></button><button class="ghost small g-fold" data-g="fold"></button></div><div class="g-chats"></div><button class="ghost small g-delall" data-g="delall">Borrar todos…</button></div>
     <div class="g-grip" title="Arrastra para ensanchar · doble clic = ancho por defecto"></div>
     <div class="g-main">
-      <div class="g-head"><b class="g-title">🧭 Guía</b><button class="ghost small g-ear" data-g="ear" hidden></button><span class="g-pickbar"><select class="g-pick" title="Chats"></select><button class="ghost small" data-g="new">＋</button><button class="ghost small g-pdel" data-g="delcur" title="Borrar este chat">🗑</button></span>${panel ? '<button class="ghost small" data-g="close" title="Cerrar (Ctrl+G)">✕</button>' : ''}</div>
+      <div class="g-head"><b class="g-title">🧭 Guía</b><button class="ghost small g-ear" data-g="ear" hidden></button><span class="g-pickbar"><select class="g-pick" title="Chats"></select><button class="ghost small" data-g="new">＋</button><button class="ghost small g-pdel" data-g="delcur" title="Borrar este chat">🗑</button></span>${panel ? '<button class="ghost small" data-g="open" title="Abrir la pantalla Guía">⤢</button><button class="ghost small" data-g="close" title="Cerrar (Ctrl+G)">✕</button>' : ''}</div>
       <div class="g-msgs"></div>
       <div class="g-voice" hidden><span class="g-vtxt"></span><i class="g-vlevel"></i></div>
       <div class="g-attach" hidden></div>
@@ -411,6 +411,7 @@ function guideMount(el, panel) {
     else if (b.dataset.g === 'clip') el.querySelector('.g-file').click(); // FT-90
     else if (b.dataset.g === 'unattach') { const [a] = G.pending.splice(Number(b.dataset.i), 1); if (a?.thumb) URL.revokeObjectURL(a.thumb); guideRender(); }
     else if (b.dataset.g === 'close') guideToggle(false);
+    else if (b.dataset.g === 'open') { showTab('guide'); guideToggle(false); } // FT-204: misma conversación (G.chatId no se toca)
     else if (b.dataset.g === 'ear') wakeSet(false);
     else if (b.dataset.g === 'play') ttsSpeak(G.messages[b.dataset.i]?.text, Number(b.dataset.i));
     else if (b.dataset.gchat) guideOpen(b.dataset.gchat).then(() => el.querySelector('.g-chat.sel')?.focus()); // el pintado rehace la lista: se devuelve el foco para el teclado (FT-51)
@@ -584,7 +585,7 @@ async function guideShow() {
   requestAnimationFrame(() => $('#view-guide textarea')?.focus());
 }
 function guideToggle(open = !G.panelOpen) {
-  if (activeTab === 'guide') { $('#view-guide textarea')?.focus(); return; }
+  if (activeTab === 'guide' && open) { $('#view-guide textarea')?.focus(); return; } // FT-204: cerrar el cajón sí se permite desde la vista Guía
   G.panelOpen = open;
   if (!open) ttsStop();
   const p = $('#guide-panel');
@@ -1100,7 +1101,7 @@ $('#view-browser').addEventListener('click', (e) => {
   else if (t.dataset.brhand) brCall('control', { mode: 'user' });
 });
 const VIEW_PARAM = new URLSearchParams(location.search).get('view'); // ?view=guide (botón «Guía» de flow-test, FT-3)
-let activeTab = ['office', 'tasks', 'agents', 'tools', 'guide', 'browser', 'marketplace'].includes(VIEW_PARAM) ? VIEW_PARAM : safeGet('ao:tab') || 'office';
+let activeTab = ['office', 'tasks', 'agents', 'tools', 'guide', 'browser', 'marketplace'].includes(VIEW_PARAM) ? VIEW_PARAM : (safeGet('ao:tab') === 'guide' ? 'office' : safeGet('ao:tab')) || 'office'; // FT-204: Guía ya no está en el menú; una pestaña guardada «guide» vuelve a la oficina
 function showTab(tab) {
   const prev = activeTab;
   activeTab = tab;
@@ -1116,6 +1117,7 @@ function showTab(tab) {
   if (tab === 'marketplace') setTimeout(renderMarketplace); // FT-142 (diferido: su estado se declara al final)
   if (tab === 'inbox') setTimeout(renderInbox); // al arrancar con «Para ti» guardada, su código aún no está definido: después de cargar
   if (tab === 'browser') brShow(); else brHide();
+  if (tab === 'guide' && G.panelOpen) guideToggle(false); // FT-204: el cajón no convive con la vista Guía
   if (tab === 'guide') guideShow(); else guideRender();
   publishContext();
 }
