@@ -316,7 +316,50 @@ function gotoRole(id) {
   }, 80);
 }
 document.addEventListener('click', (e) => { const h = e.target.closest('.role-group-head'); if (!h) return; const g = h.parentElement; g.classList.toggle('collapsed'); collapsed['roles:' + g.dataset.roleGroup] = g.classList.contains('collapsed'); safeSet('ao:collapsed', JSON.stringify(collapsed)); });
-document.addEventListener('click', (e) => { const b = e.target.closest('[data-goto-role]'); if (b) { e.stopPropagation(); gotoRole(b.dataset.gotoRole); } });
+// Clic en el rol de un agente → ficha completa del rol (no salta al marketplace; desde la ficha se puede ir al catálogo).
+document.addEventListener('click', (e) => { const b = e.target.closest('[data-goto-role]'); if (b) { e.stopPropagation(); roleView(b.dataset.gotoRole); } });
+const ROLE_SOURCE = (r) => (!r.custom ? 'de serie' : r.source === 'catálogo' ? 'catálogo central' : r.source || 'fichero');
+async function roleView(id) {
+  const r = S.roles[id];
+  if (!r) return toast(`El rol «${id}» no existe aquí`, 'error');
+  if (!skillsData) { try { skillsData = await api('GET', '/api/skills'); } catch { /* sin descripciones de skills */ } }
+  if (!toolsData) { try { await loadTools(); } catch { /* sin descripciones de MCP/scripts */ } }
+  const desc = (list, name) => (list || []).find((x) => x.name === name)?.description || '';
+  const items = (names, list, icon) => names.length ? `<ul class="rv-list">${names.map((n) => `<li>${icon} <b>${esc(n)}</b>${desc(list, n) ? ` <span class="muted">— ${esc(desc(list, n))}</span>` : ''}</li>`).join('')}</ul>` : '<p class="muted">Ninguna.</p>';
+  const agents = S.agents.filter((a) => a.role === id);
+  const where = (a) => S.projects.find((p) => (p.team || []).includes(a.id))?.name || 'banquillo';
+  const editable = r.custom && r.source === 'catálogo';
+  dialog(`<div class="rv">
+    <h3>${roleChip(id)} <span class="muted" style="font-size:13px">· ${esc(id)}</span></h3>
+    <div class="mp-meta">
+      <span>🎭 ${esc(ROLE_KIND[r.kind] || r.kind || 'desarrolla')}</span>
+      <span>📁 ${esc(ROLE_SOURCE(r))}</span>
+      ${r.model ? `<span>🧠 modelo ${esc(r.model)}</span>` : ''}${r.minModel ? `<span>⬆ mínimo ${esc(r.minModel)}</span>` : ''}
+      ${(r.handles || []).length ? `<span>🤝 atiende también: ${r.handles.map(esc).join(', ')}</span>` : ''}
+    </div>
+    ${r.description ? `<p>${esc(r.description)}</p>` : ''}
+    <h4>👥 Agentes con este rol (${agents.length})</h4>
+    ${agents.length ? `<div class="rv-agents">${agents.map((a) => `<button type="button" class="tool-chip" data-agent="${a.id}" title="Abrir su registro">${esc(a.name)} <span class="muted">· ${esc(where(a))}</span></button>`).join('')}</div>` : '<p class="muted">Ninguno en este AgentOffice.</p>'}
+    <h4>🧰 Herramientas</h4>
+    <div class="rv-tools">
+      <div><b>🧩 Skills</b>${items(r.skills || [], skillsData?.catalog, '🧩')}</div>
+      <div><b>🔌 MCP</b>${items(r.mcps || [], toolsData?.mcp?.catalog, '🔌')}</div>
+      <div><b>📜 Scripts</b>${items(r.scripts || [], toolsData?.scripts?.catalog, '📜')}</div>
+      <div><b>🔧 Herramientas permitidas</b>${r.tools?.length ? `<p class="rv-tools-allowed">${r.tools.map((t) => `<code>${esc(t)}</code>`).join(' ')}</p>` : '<p class="muted">Las de su tipo (por defecto).</p>'}</div>
+    </div>
+    <h4>📝 Prompt de sistema</h4>
+    <pre class="code rv-prompt">${esc(r.system || '')}</pre>
+    ${r.file ? `<p class="muted" style="font-size:12px">Fichero: <code>${esc(short(r.file))}</code></p>` : ''}
+  </div>
+  <div class="row"><button class="ghost" value="cancel">Cerrar</button><button type="button" class="ghost" data-rv-catalog="${esc(id)}">🛒 Ver en el catálogo</button>${editable ? `<button type="button" data-rv-edit="${esc(id)}">✎ Editar</button>` : `<button type="button" class="ghost" data-rv-dup="${esc(id)}" title="${r.custom ? 'Este rol vive en un repo: haz una copia en el catálogo para cambiarlo' : 'Los roles de serie no se editan: duplícalo para tener tu versión'}">⧉ Duplicar para editar</button>`}</div>`, null, 'wide');
+}
+document.addEventListener('click', (e) => { if (e.target.closest?.('.rv [data-agent]')) $('#dialog')?.close(); }, true); // ficha del rol → registro del agente: cerrar la ficha antes
+document.addEventListener('click', (e) => {
+  const c = e.target.closest?.('[data-rv-catalog]'), ed = e.target.closest?.('[data-rv-edit]'), du = e.target.closest?.('[data-rv-dup]');
+  if (!c && !ed && !du) return;
+  $('#dialog')?.close();
+  if (c) gotoRole(c.dataset.rvCatalog); else if (ed) editRole(ed.dataset.rvEdit); else editRole(du.dataset.rvDup, true);
+});
 const roleChip = (role) => `<span class="chip" style="--c:${S.roles[role]?.color}">${esc(S.roles[role]?.label || role)}</span>`;
 
 // ── Guía 🧭 (FT-6) ──────────────────────────────────────────────────────────
