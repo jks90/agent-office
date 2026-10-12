@@ -861,3 +861,9 @@ dialog.rlog pre { max-height: 55vh; white-space: pre-wrap; word-break: break-wor
 .ai-preview { border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line)); background: rgba(252,211,77,.07); border-radius: var(--r-md); padding: 8px 12px; margin: 0 0 8px; font-size: 13px; line-height: 1.45; }
 .ai-preview-acts { display: flex; gap: 6px; margin-top: 6px; }
 dialog .ai-filled { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
+/* «Nueva tarea» grande: desplegables en 2 columnas y descripción que crece (ver la propuesta de la IA sin scroll) */
+dialog.task-dlg { width: min(1100px, 94vw); max-height: 94vh; }
+dialog.task-dlg textarea[name="description"] { min-height: 220px; resize: vertical; }
+.task-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 14px; } /* los 4 desplegables en una fila: más alto para la descripción */
+@media (max-width: 1050px) { .task-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 700px) { .task-grid { grid-template-columns: 1fr; } }
