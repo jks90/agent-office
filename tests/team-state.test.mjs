@@ -12,7 +12,7 @@ const team = await import('../server/team.js');
 const review = await import('../server/review.js');
 const { get } = store;
 
-const project = await team.createProject({ name: 'Unit Team', engine: 'demo' });
+const project = await team.createProject({ name: 'Unit Team', engine: 'demo', folder: team.ROOT }); // la raíz: sin red (no pregunta a flow-test)
 const mk = (title, extra = {}) => team.createTask({ projectId: project.id, title, role: 'back', ...extra });
 const status = (id) => get().tasks.find((t) => t.id === id)?.status;
 const rejects = async (fn, code) => { try { await fn(); } catch (e) { assert.equal(e.status, code, e.message); return; } assert.fail('debía fallar'); };

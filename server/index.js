@@ -71,8 +71,9 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
 checkSuite().then((s) => console.log(s.ok ? `🧪 flow-test en ${s.url} · ${s.mode}${s.plan ? ' · ' + s.plan : ''}${s.org ? ' · ' + s.org : ''}` : `⛔ ${s.reason}`)).catch(() => {});
 setInterval(() => checkSuite().then(() => store.changed()).catch(() => {}), 5 * 60 * 1000).unref();
 
-// Proyectos = carpetas del workspace de flow-test (al arrancar, cada 5 min y con POST /api/sync).
-const sync = () => team.syncWorkspace().then((r) => { if (r.created) console.log(`📁 ${r.created} proyecto(s) nuevo(s) desde flow-test: ${r.folders.join(', ')}`); }).catch((e) => console.log(`📁 sin sincronizar: ${e.message}`));
+// Cada proyecto se vincula a mano a una carpeta del workspace de flow-test; aquí solo se comprueba que siga existiendo
+// (al arrancar, cada 5 min y con POST /api/sync): nº de flows y ⚠ huérfano. Ya no se crean proyectos por carpeta.
+const sync = () => team.checkFolders().then((r) => { if (r.orphans.length) console.log(`📁 carpeta desaparecida: ${r.orphans.join(', ')} (re-vincular en Ajustes)`); }).catch((e) => console.log(`📁 sin comprobar carpetas: ${e.message}`));
 checkSuite().then(sync);
 quota.setOnChange(() => store.changed()); // FT-45: cuota de las suscripciones → snapshot SSE
 quota.startPolling();
@@ -213,7 +214,9 @@ const routes = [
   ['GET', /^\/api\/projects\/(\w+)\/tasks$/, ([id]) => { const s = store.get(); return s.tasks.filter((t) => t.projectId === id).map((t) => ({ id: t.id, code: t.code, status: t.status, kind: t.kind, role: t.role, repo: t.repo, agent: s.agents.find((a) => a.id === t.agentId)?.name || null, title: t.title, dependsOn: t.dependsOn, costUsd: t.costUsd, summary: (t.summary || '').slice(0, 300), updatedAt: t.updatedAt })); }],
   ['POST', /^\/api\/projects\/(\w+)\/import-flow$/, ([id], b) => team.importFlow(id, b.path)],
   ['GET', /^\/api\/flows$/, () => team.listFlows()],
-  ['POST', /^\/api\/sync$/, () => team.syncWorkspace()],
+  ['POST', /^\/api\/sync$/, () => team.checkFolders()],
+  ['GET', /^\/api\/workspace\/folders$/, () => team.workspaceFolders()],
+  ['GET', /^\/api\/workspace\/repos$/, (_, __, q) => team.suggestRepos(q.folder)],
   // Catálogo central de skills y roles
   ['GET', /^\/api\/skills$/, () => ({ catalogDir: skills.catalogDir(), catalog: skills.listCatalog(), inventory: skills.inventory() })],
   ['POST', /^\/api\/skills\/centralize$/, (_, b) => skills.centralize(b.dir, b.name)],
