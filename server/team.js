@@ -443,7 +443,7 @@ export function messageAgent(id, { text, constraint = false, origin = 'user' } =
 }
 
 // ── Tareas ─────────────────────────────────────────────────────────────────
-export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null, context = null, skills = [], priority = 0, sizeChecked = false, minModel = '', checks = [], reviewRequired = false, autoApprove = false, fromPlan = null }) {
+export function createTask({ assignedAgentId = null, projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null, context = null, skills = [], priority = 0, sizeChecked = false, minModel = '', checks = [], reviewRequired = false, autoApprove = false, fromPlan = null }) {
   // attachments (subidos): imágenes → images (las ve el agente), el resto → files (se citan en el prompt)
   for (const a of attachments) { if (/\.(png|jpe?g|webp)$/i.test(a.path)) images = [...images, a.path]; else files = [...files, a.path]; }
   const s = get();
@@ -462,6 +462,12 @@ export function createTask({ projectId, title, description = '', role, repo = nu
   if (fromPlan) task.fromPlan = fromPlan; // parte de una épica (la creó ese plan)
   if (reviewRequired) task.reviewRequired = true; // FT-56: nunca se aprueba sola
   else if (autoApprove) task.autoApprove = true; // programada rutinaria: se aprueba sola al terminar
+  if (assignedAgentId === HUMAN) task.assignedAgentId = HUMAN; // FT-189
+  else if (assignedAgentId && assignedAgentId !== '__auto') {
+    const a = findOr404(s.agents, assignedAgentId, 'Agente');
+    if (!(p.team || []).includes(a.id)) throw fail(400, `${a.name} no está fichado en el proyecto de la tarea`);
+    task.assignedAgentId = a.id;
+  }
   if (cleanMinModel(minModel)) task.minModel = cleanMinModel(minModel); // FT-60: esta tarea no empieza por el peldaño barato
   if (sizeChecked) task.sizeChecked = true; // FT-63: ya troceada por el PO, no se vuelve a evaluar
   codes.assignCode(s.tasks, p, task);
@@ -491,7 +497,17 @@ export function updateTask(id, patch) {
   const s = get();
   const t = findOr404(s.tasks, id, 'Tarea');
   const p = projectOf(t);
-  if (t.status === 'doing') throw fail(409, 'Para al agente antes de editar la tarea');
+  const human = t.assignedAgentId === HUMAN || patch.assignedAgentId === HUMAN;
+  if (t.status === 'doing' && !(human && !t.agentId)) throw fail(409, 'Para al agente antes de editar la tarea');
+  if (patch.assignedAgentId !== undefined) { // FT-189: «human» sin buscar agente; «__auto»/id de agente reasigna (borra «human»)
+    if (patch.assignedAgentId === HUMAN) t.assignedAgentId = HUMAN;
+    else if (!patch.assignedAgentId || patch.assignedAgentId === '__auto') delete t.assignedAgentId;
+    else {
+      const a = findOr404(s.agents, patch.assignedAgentId, 'Agente');
+      if (!(p?.team || []).includes(a.id)) throw fail(400, `${a.name} no está fichado en el proyecto de la tarea`);
+      t.assignedAgentId = a.id;
+    }
+  }
   const before = `${t.title}\n${t.description}`;
   if (patch.title?.trim()) t.title = patch.title.trim();
   if (typeof patch.description === 'string') t.description = patch.description.trim();
@@ -501,7 +517,12 @@ export function updateTask(id, patch) {
     if (patch.repo && !(p.repos || []).some((r) => r.key === patch.repo)) throw fail(400, `El proyecto no tiene el repo «${patch.repo}»`);
     t.repo = patch.repo || null;
   }
-  if (patch.status && patch.status !== t.status) {
+  if (patch.status && patch.status !== t.status && t.assignedAgentId === HUMAN) { // FT-189: el usuario la mueve a mano por todas las columnas
+    if (!['backlog', 'todo', 'doing', 'review', 'done', 'discarded'].includes(patch.status)) throw fail(400, 'Columna desconocida');
+    t.status = patch.status; t.error = null;
+    if (patch.status === 'review') t.reviewAt = Date.now();
+    reflect(t);
+  } else if (patch.status && patch.status !== t.status) {
     // FT-27: antes un cambio no permitido se ignoraba en silencio; ahora avisa con el motivo.
     if (!['backlog', 'todo', 'discarded'].includes(patch.status)) throw fail(409, 'A esa columna no se mueve a mano: «En curso» la ocupa el agente, y «Revisión»/«Hecho» se alcanzan al terminar (Aprobar / Devolver en la tarjeta)');
     if (!['backlog', 'todo', 'failed', 'discarded'].includes(t.status)) throw fail(409, 'Solo se mueven entre Backlog, Por hacer y Descartada las tareas que no han empezado; esta ya está en curso, en revisión o hecha');
@@ -532,12 +553,17 @@ export function archiveTasks({ ids = null, projectId = null, status = null, arch
   return { changed: n };
 }
 
+// FT-189 · Valor reservado de `assignedAgentId`: la tarea es del usuario; ningún agente la coge, arranca ni reanuda.
+export const HUMAN = 'human';
 // Fija qué agente hará la tarea (FT-4); null = vuelve a elegirse por rol. Solo antes de empezar.
 export function assignTask(id, agentId) {
   const s = get();
   const t = findOr404(s.tasks, id, 'Tarea');
-  if (!['backlog', 'todo', 'failed'].includes(t.status)) throw fail(409, 'Solo se puede asignar una tarea que no ha empezado');
-  if (agentId) {
+  if (agentId === '__auto') agentId = null; // FT-189
+  const human = t.assignedAgentId === HUMAN || agentId === HUMAN;
+  if (!['backlog', 'todo', 'failed'].includes(t.status) && !(human && !t.agentId)) throw fail(409, 'Solo se puede asignar una tarea que no ha empezado');
+  if (agentId === HUMAN) t.assignedAgentId = HUMAN; // FT-189: reservado, sin buscar agente
+  else if (agentId) {
     const a = findOr404(s.agents, agentId, 'Agente');
     if (!(projectOf(t)?.team || []).includes(a.id)) throw fail(400, `${a.name} no está fichado en el proyecto de la tarea`);
     t.assignedAgentId = a.id;
@@ -559,7 +585,7 @@ export function planGoal(projectId, goal, { attachments = [], title = '' } = {})
 export async function deleteTask(id) {
   const s = get();
   const t = findOr404(s.tasks, id, 'Tarea');
-  if (t.status === 'doing') throw fail(409, 'Para al agente antes de borrar la tarea');
+  if (t.status === 'doing' && t.assignedAgentId !== HUMAN) throw fail(409, 'Para al agente antes de borrar la tarea');
   const p = projectOf(t);
   for (const x of taskRepos(p, t)) await git.cleanup(p, x.repo, t, x.dir); // FT-44: todos los worktrees/ramas de la tarea
   s.tasks = s.tasks.filter((x) => x.id !== id);
@@ -1012,6 +1038,7 @@ export async function listFlows() {
 // cargado (evita releer los .md por tarea) y `isBusy` cómo saber si un agente está ocupado (el planificador mira sus jobs).
 export function plannedAgentFor(project, task, agents, { roles = allRoles(), isBusy = (a) => a.status !== 'idle' } = {}) {
   const ids = new Set(project?.team || []);
+  if (task.assignedAgentId === HUMAN) return null; // FT-189: asignada al humano, ningún agente la coge
   const fits = (a) => task.assignedAgentId ? a.id === task.assignedAgentId : (a.role === task.role || (roles[a.role]?.handles || []).includes(task.role));
   const candidates = (agents || []).filter((a) => ids.has(a.id) && fits(a));
   return candidates.find((a) => !isBusy(a)) || candidates[0] || null;
@@ -1021,6 +1048,7 @@ export function withPlannedAgents(s) {
   const roles = allRoles();
   return s.tasks.map((t) => {
     if (!['backlog', 'todo', 'failed'].includes(t.status)) return t;
+    if (t.assignedAgentId === HUMAN) return { ...t, plannedAgentId: null, plannedReason: null }; // FT-189: no es «sin agente»
     const p = s.projects.find((x) => x.id === t.projectId);
     const a = plannedAgentFor(p, t, s.agents, { roles });
     const assigned = t.assignedAgentId && s.agents.find((x) => x.id === t.assignedAgentId);
@@ -1070,7 +1098,7 @@ export function tick() {
     const team = teamOf(p);
     let slots = (s.settings.maxParallel || 4) - team.filter((a) => jobs.has(a.id)).length;
     if (!(p.repos || []).length && team.some((a) => jobs.has(a.id))) slots = 0; // sin repo: una tarea a la vez sobre la misma carpeta
-    const todoAll = s.tasks.filter((t) => t.projectId === p.id && t.status === 'todo');
+    const todoAll = s.tasks.filter((t) => t.projectId === p.id && t.status === 'todo' && t.assignedAgentId !== HUMAN); // FT-189
     // Entradas calientes: lo que corre ahora (motor del agente si no es `auto`) y lo terminado hace <5 min
     const hot = new Set();
     const activeRepos = new Set(); // repos con alguna tarea corriendo (o lanzada en este tick)
@@ -1601,6 +1629,7 @@ function economyBlock(codeIndexOn) {
 }
 
 async function runTask(p, agent, t) {
+  if (t.assignedAgentId === HUMAN) return; // FT-189: red de seguridad
   const s = get();
   jobs.set(agent.id, { stop() {}, taskId: t.id, engine: agent.engine === 'auto' ? null : agent.engine }); // ocupado DESDE YA (antes de cualquier await), o el mismo tick le daría dos tareas
   Object.assign(t, { status: 'doing', agentId: agent.id, error: null, attempts: t.attempts + 1, startedAt: Date.now(), updatedAt: Date.now(), agentName: agent.name }); // FT-152: el nombre sobrevive al agente retirado
