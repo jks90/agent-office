@@ -182,10 +182,9 @@ export function realDeps(team, store, telegram, questions) {
     version: () => JSON.parse(fs.readFileSync(path.join(dir(), 'package.json'), 'utf8')).version,
     createTask: (o) => {
       const { onMain, onMainDirs, releaseVersion, releaseOf, autoApprove, ...rest } = o;
-      const t = team.createTask({ projectId: project()?.id, ...rest });
-      Object.assign(t, { onMain, onMainDirs, releaseVersion, releaseOf, autoApprove }); // campos de release (createTask no los conoce)
-      store.changed();
-      return t;
+      // Los campos de release van en `extra`: createTask los pone ANTES de arrancar la tarea (si se añaden después, el agente ya
+      // ha empezado sin ellos: «Documentar» acababa en un worktree en vez de sobre main)
+      return team.createTask({ projectId: project()?.id, ...rest, extra: { onMain, onMainDirs, releaseVersion, releaseOf, autoApprove } });
     },
     updateTask: (id, patch) => { const t = store.get().tasks.find((x) => x.id === id); if (t) { Object.assign(t, patch); store.changed(); } },
     ask: (text, id) => questions.choose({ question: text, context: `release:${id}`, options: ['✅ Publicar', '❌ Ahora no'], timeoutMs: ASK_STALE_MS - 3600e3 })

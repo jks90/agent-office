@@ -285,7 +285,7 @@ const routes = [
   ['POST', /^\/api\/questions\/(\w+)\/answer$/, ([id], b) => questions.answer(id, b.answer)],
   ['POST', /^\/api\/projects\/(\w+)\/run$/, gated(([id], b) => team.setRunning(id, b.running))],
   ['POST', /^\/api\/projects\/(\w+)\/goal$/, gated(([id], b) => team.planGoal(id, b.goal, { attachments: b.attachments, title: b.title }))],
-  ['POST', /^\/api\/tasks$/, gated((_, b) => team.createTask(b))],
+  ['POST', /^\/api\/tasks$/, gated((_, b) => { const { extra, ...body } = b || {}; return team.createTask(body); })], // `extra` es solo interno (release)
   // FT-75 · memoria de los agentes: GET/PUT /api/memory/:projectId[?agent=<id>] {text}
   ['GET', /^\/api\/memory\/(\w+)$/, ([pid], _, q) => ({ text: memory.read(pid, q.agent || null), max: memory.MAX_CHARS })],
   ['PUT', /^\/api\/memory\/(\w+)$/, ([pid], b, q) => ({ text: memory.write(pid, q.agent || null, b.text) })],

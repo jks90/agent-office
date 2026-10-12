@@ -472,7 +472,7 @@ export function messageAgent(id, { text, constraint = false, origin = 'user' } =
 }
 
 // ── Tareas ─────────────────────────────────────────────────────────────────
-export function createTask({ assignedAgentId = null, projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null, context = null, skills = [], priority = 0, sizeChecked = false, minModel = '', checks = [], reviewRequired = false, autoApprove = false, fromPlan = null }) {
+export function createTask({ assignedAgentId = null, projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null, context = null, skills = [], priority = 0, sizeChecked = false, minModel = '', checks = [], reviewRequired = false, autoApprove = false, fromPlan = null, extra = null }) {
   // attachments (subidos): imágenes → images (las ve el agente), el resto → files (se citan en el prompt)
   for (const a of attachments) { if (/\.(png|jpe?g|webp)$/i.test(a.path)) images = [...images, a.path]; else files = [...files, a.path]; }
   const s = get();
@@ -499,6 +499,8 @@ export function createTask({ assignedAgentId = null, projectId, title, descripti
   }
   if (cleanMinModel(minModel)) task.minModel = cleanMinModel(minModel); // FT-60: esta tarea no empieza por el peldaño barato
   if (sizeChecked) task.sizeChecked = true; // FT-63: ya troceada por el PO, no se vuelve a evaluar
+  // 🚀 Campos de quien la crea (p. ej. el disparador de release: onMain, releaseVersion…) ANTES de tick(): la tarea puede arrancar ya
+  if (extra && typeof extra === 'object') for (const [k, v] of Object.entries(extra)) if (v !== undefined && !(k in task)) task[k] = v;
   codes.assignCode(s.tasks, p, task);
   task.feedbackImages = copyImages(task, images);
   s.tasks.push(task);
