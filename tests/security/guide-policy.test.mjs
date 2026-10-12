@@ -15,7 +15,7 @@ const tools = await import('../../server/guide/tools.js');
 const pending = () => questions.list().filter((q) => q.kind === 'confirm');
 const reply = (txt) => questions.answer(pending()[0].id, txt);
 const T = (policy, extra = {}) => ({ name: 'x.y', policy, description: 'd', ...extra });
-const reset = () => { delete store.get().settings.guidePolicy; };
+const reset = () => { delete store.get().settings.guidePolicy; delete store.get().settings.guideAlwaysAllow; };
 
 test('modeOf: read/navigate auto, irreversible siempre confirm, execute/write según Ajustes', () => {
   reset();
@@ -34,7 +34,7 @@ test('modeOf: read/navigate auto, irreversible siempre confirm, execute/write se
 test('setPolicy ignora valores inválidos y claves ajenas', () => {
   reset();
   const p = gp.setPolicy({ execute: 'nunca', write: 7, irreversible: 'auto', guideInputFallback: 'sí' });
-  assert.deepEqual(p, { execute: 'auto', write: 'confirm', guideInputFallback: false });
+  assert.deepEqual(p, { execute: 'auto', write: 'confirm', guideInputFallback: false, always: [] });
   assert.equal(gp.setPolicy({ guideInputFallback: true }).guideInputFallback, true);
   store.get().settings.guidePolicy = { execute: 'rarísimo' };
   assert.equal(gp.getPolicy().execute, 'auto');
@@ -105,3 +105,30 @@ test('isDestructive: controles de enviar/pagar/borrar piden confirmación; los n
 });
 
 test.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+test('gate: «Sí, siempre» deja de preguntar por esa tool (write) y se puede quitar', async () => {
+  reset();
+  const tool = T('write', { name: 'task.create' });
+  const first = gp.gate(tool, {});
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(pending()[0].options, ['Sí', 'Sí, siempre', 'No']);
+  reply('Sí, siempre');
+  assert.deepEqual(await first, { mode: 'confirm', confirmed: true });
+  assert.deepEqual(await gp.gate(tool, {}), { mode: 'always', confirmed: null });
+  assert.equal(pending().length, 0);
+  gp.setPolicy({ always: [] });
+  const again = gp.gate(tool, {});
+  await new Promise((r) => setTimeout(r, 10));
+  reply('No');
+  assert.deepEqual(await again, { mode: 'confirm', confirmed: false });
+});
+
+test('gate: una irreversible no ofrece «Sí, siempre» ni lo respeta aunque esté en la lista', async () => {
+  reset();
+  store.get().settings.guideAlwaysAllow = ['x.borrar'];
+  const p = gp.gate(T('irreversible', { name: 'x.borrar' }), {});
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(pending()[0].options, ['Sí', 'No']);
+  reply('No');
+  assert.deepEqual(await p, { mode: 'confirm', confirmed: false });
+});
