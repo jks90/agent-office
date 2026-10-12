@@ -29,6 +29,7 @@ const server = spawn(process.execPath, ['server/index.js'], { cwd: ROOT, env: { 
 let browser;
 process.on('exit', () => { try { server.kill('SIGTERM'); stub.close(); fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* nada */ } });
 const call = async (m, p, b) => { const r = await fetch(base + p, { method: m, headers: { 'content-type': 'application/json' }, body: b === undefined ? undefined : JSON.stringify(b) }); return r.json(); };
+const task = async (id) => (await call('GET', '/api/state')).tasks.find((t) => t.id === id);
 
 try {
   for (let i = 0; i < 80; i++) { try { await fetch(base + '/api/state'); break; } catch { await sleep(100); } }
@@ -104,6 +105,22 @@ try {
   else await page.evaluate(async (i, a) => { await fetch(`/api/tasks/${i}/assign`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agentId: a }) }); }, normal.id, ag.id);
   await page.waitForFunction((i) => !document.querySelector(`.card[data-task="${i}"] .human-badge`), { timeout: 8000 }, normal.id);
   check('la insignia desaparece', !(await badge(normal.id)));
+  // FT-194 · modal «Ver la tarea»: «Asignar a…» con «👤 Yo (humano)» y vuelta a un agente
+  console.log('Modal: Asignar a… (FT-194)');
+  await page.evaluate((i) => document.querySelector(`.card[data-task="${i}"]`).click(), normal.id);
+  await page.waitForSelector('#dialog[open] select[data-assign]', { timeout: 8000 });
+  const optVals = await page.evaluate(() => [...document.querySelectorAll('#dialog select[data-assign] option')].map((o) => o.value));
+  check('el modal ofrece «human»', optVals.includes('human'), optVals.join(','));
+  const setSel = (v) => page.evaluate((x) => { const s = document.querySelector('#dialog select[data-assign]'); s.value = x; s.dispatchEvent(new Event('change', { bubbles: true })); }, v);
+  const agentChip = await page.evaluate(() => { const c = document.querySelector('#dialog .who-chip:not(.human)'); return c ? getComputedStyle(c).backgroundColor + '|' + getComputedStyle(c).color : null; });
+  await setSel('human');
+  await page.waitForSelector('#dialog .who-chip.human', { timeout: 8000 });
+  const humanChip = await page.evaluate(() => { const c = document.querySelector('#dialog .who-chip.human'); return getComputedStyle(c).backgroundColor + '|' + getComputedStyle(c).color; });
+  check('modal: insignia «asignada a ti» tras elegir human', (await task(normal.id)).assignedAgentId === 'human');
+  check('insignia humana con estilo distinto al del agente', !!agentChip && agentChip !== humanChip, `${agentChip} vs ${humanChip}`);
+  await setSel(ag.id);
+  await page.waitForFunction(() => !document.querySelector('#dialog .who-chip.human'), { timeout: 8000 });
+  check('modal: reasignada a un agente, sin insignia humana', (await task(normal.id)).assignedAgentId === ag.id);
   check('sin errores de consola', errors.length === 0, errors.join(' | ').slice(0, 300));
 } catch (e) {
   failed++; console.error('✗ ' + (e.stack || e.message));
