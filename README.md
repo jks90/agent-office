@@ -788,6 +788,7 @@ En la planta, cada agente lleva siempre una burbuja compacta: icono + código de
 Ajustes → «Burbujas de estado» (`settings.officeBubbles`, `POST /api/settings`): `'todas'` (por defecto) o `'al pasar'`. Prueba: `node scripts/bubbles-e2e.mjs [captura.png]`.
 
 ## 🙋 Tareas asignadas al humano (FT-189)
+**No son avisos (FT-190):** una tarea `human` en revisión no emite `ReviewPending`, `review-alert`/`review-now`, ni mensajes de Telegram, y no entra en el bloque «pendientes de revisión» del Guía.
 
 `assignedAgentId: "human"` (valor reservado, sin campo nuevo ni migración) marca una tarea que hace el usuario. Se admite en `POST /api/tasks`, `PATCH /api/tasks/:id` y `POST /api/tasks/:id/assign` sin buscar agente; `__auto` (o vacío) o un id de agente la reasigna y borra `human`. Ningún agente la coge: el planificador, `plannedAgentFor`/«sin agente para el rol», el coordinador (`plan`) y el reinicio del servidor (no la devuelve de «En curso» a «Por hacer») la ignoran. El usuario puede moverla a mano con `PATCH status` entre backlog/todo/doing/review/done/discarded. Prueba: `node scripts/human-task-e2e.mjs`.
 

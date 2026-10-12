@@ -800,7 +800,7 @@ export function reviewPending(p) {
 export function reviewNudge(now = Date.now()) {
   const s = get(), min = review.nudgeMin(s.settings);
   let any = false;
-  for (const t of s.tasks.filter((x) => x.status === 'review' && !x.nudged && !x.reviewing)) {
+  for (const t of s.tasks.filter((x) => x.status === 'review' && x.assignedAgentId !== 'human' && !x.nudged && !x.reviewing)) { // FT-190: lo del humano no es un aviso
     const minutes = Math.floor((now - review.waitingSince(t)) / 60000);
     if (minutes < min) continue;
     t.nudged = true; any = true;
