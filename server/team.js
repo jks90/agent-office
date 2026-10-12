@@ -443,7 +443,7 @@ export function messageAgent(id, { text, constraint = false, origin = 'user' } =
 }
 
 // ── Tareas ─────────────────────────────────────────────────────────────────
-export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null, context = null, skills = [], priority = 0, sizeChecked = false, minModel = '', checks = [], reviewRequired = false, autoApprove = false }) {
+export function createTask({ projectId, title, description = '', role, repo = null, dependsOn = [], kind = 'work', goal = null, images = [], files = [], attachments = [], status = 'todo', source = null, context = null, skills = [], priority = 0, sizeChecked = false, minModel = '', checks = [], reviewRequired = false, autoApprove = false, fromPlan = null }) {
   // attachments (subidos): imágenes → images (las ve el agente), el resto → files (se citan en el prompt)
   for (const a of attachments) { if (/\.(png|jpe?g|webp)$/i.test(a.path)) images = [...images, a.path]; else files = [...files, a.path]; }
   const s = get();
@@ -459,6 +459,7 @@ export function createTask({ projectId, title, description = '', role, repo = nu
     constraints: [], priority: Math.max(0, Math.min(100, Number(priority) || 0)), context: cleanContext(context), skills: (Array.isArray(skills) ? skills : []).map(String).slice(0, 10), costUsd: null, attempts: 0, createdAt: Date.now(), updatedAt: Date.now(),
   };
   if (Array.isArray(checks) && checks.length) task.checks = checks.map((c) => String(c).trim()).filter(Boolean).slice(0, 6); // FT-56: verificaciones que declara la tarea
+  if (fromPlan) task.fromPlan = fromPlan; // parte de una épica (la creó ese plan)
   if (reviewRequired) task.reviewRequired = true; // FT-56: nunca se aprueba sola
   else if (autoApprove) task.autoApprove = true; // programada rutinaria: se aprueba sola al terminar
   if (cleanMinModel(minModel)) task.minModel = cleanMinModel(minModel); // FT-60: esta tarea no empieza por el peldaño barato
@@ -1034,7 +1035,33 @@ const recentRuns = new Map(); // `${proyecto}|${repo}|${rol}|${motor}` → insta
 const warmKey = (p, t, engine) => `${p.id}|${repoOfTask(p, t)?.key || ''}|${t.role}|${engine}`;
 const affinityOn = () => get().settings.cacheAffinity !== false;
 
+// Épicas: una tarea grande que se mandó al PO para trocear (splitInto = su plan) conoce sus partes (epicParts) y pasa a Hecho
+// cuando todas están Hechas o Descartadas. Para planes anteriores sin planChildren, sus partes son las que creó el PO al terminar.
+export function syncEpics() {
+  const s = get();
+  let dirty = false;
+  for (const t of s.tasks.filter((x) => x.splitInto && ['backlog', 'todo', 'failed'].includes(x.status))) {
+    const plan = s.tasks.find((x) => x.id === t.splitInto);
+    if (!plan || plan.status !== 'done') continue;
+    if (!plan.planChildren) {
+      const from = plan.startedAt || plan.createdAt, to = (plan.updatedAt || from) + 3000;
+      plan.planChildren = s.tasks.filter((x) => x.projectId === plan.projectId && x.id !== t.id && x.kind !== 'plan' && x.createdAt >= from && x.createdAt <= to).map((x) => x.id);
+      dirty = true;
+    }
+    if (JSON.stringify(t.epicParts) !== JSON.stringify(plan.planChildren)) { t.epicParts = plan.planChildren; dirty = true; }
+    const parts = plan.planChildren.map((id) => s.tasks.find((x) => x.id === id)).filter(Boolean);
+    if (parts.length && parts.every((x) => ['done', 'discarded'].includes(x.status))) {
+      const codes = parts.map((x) => x.code || x.id).join(', ');
+      Object.assign(t, { status: 'done', epicDone: Date.now(), summary: t.summary || `🧩 Épica hecha por partes (${plan.code || plan.id}): ${codes}.`, error: null });
+      log(null, `🧩 ${t.code || t.id} (épica) pasa a Hecho: terminadas sus ${parts.length} partes (${codes})`);
+      reflect(t); dirty = true;
+    }
+  }
+  if (dirty) changed();
+}
+
 export function tick() {
+  try { syncEpics(); } catch (e) { log(null, `⚠ épicas: ${e.message}`); }
   const s = get();
   if (!suiteOk()) return; // sin flow-test vigente, el equipo no arranca nada
   const roles = allRoles();
@@ -1816,8 +1843,9 @@ async function runTask(p, agent, t) {
         const r = roles.includes(item.role) ? item.role : (roles[0] || 'back');
         const deps = (item.dependsOn || []).map((i) => ids[i]).filter(Boolean);
         const rk = (p.repos || []).some((x) => x.key === item.repo) ? item.repo : null;
-        ids.push(createTask({ projectId: p.id, title: item.title, description: item.description, role: r, repo: rk, dependsOn: deps, sizeChecked: true }).id);
+        ids.push(createTask({ projectId: p.id, title: item.title, description: item.description, role: r, repo: rk, dependsOn: deps, sizeChecked: true, fromPlan: t.id }).id);
       }
+      t.planChildren = ids; // épica: la tarea grande original (splitInto = este plan) se cierra sola cuando estén todas (syncEpics)
       t.summary = `${ids.length} tareas creadas para el equipo.`;
       t.status = 'done';
       events.emit('AgentCompleted', ev, { status: 'done', summary: t.summary, costUsd: t.costUsd });
