@@ -305,6 +305,7 @@ const routes = [
   ['POST', /^\/api\/tasks\/([\w-]+)\/update-from-base$/, ([id]) => team.updateFromBase(id)], // FT-19
   ['POST', /^\/api\/tasks\/([\w-]+)\/assign$/, ([id], b) => team.assignTask(id, b.agentId || null)], // FT-50: «Asignar a…» desde la tarjeta (agentId vacío = volver a elegir por rol)
   ['POST', /^\/api\/tasks\/([\w-]+)\/reject$/, gated(([id], b) => team.reject(id, b.feedback, b.images, b.attachments, null, { rating: b.rating, reasons: b.reasons }))],
+  ['POST', /^\/api\/tasks\/([\w-]+)\/discard$/, ([id], b) => team.discardTask(id, b.reason)], // ✕ Rechazar: a Descartada tirando sus cambios
   ['GET', /^\/api\/tasks\/([\w-]+)\/diff$/, async ([id]) => ({ diff: await team.taskDiff(id) })],
   ['POST', /^\/api\/agents$/, (_, b) => team.hire(b)],
   ['PATCH', /^\/api\/projects\/(\w+)\/team$/, ([id], b) => team.setTeam(id, b)],

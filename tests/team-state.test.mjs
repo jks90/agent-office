@@ -161,3 +161,19 @@ test('waitsForNotice: detecta promesas de avisar en segundo plano', () => {
   assert.ok(team.waitsForNotice('will notify me'));
   assert.ok(!team.waitsForNotice('Terminado, todo verificado.'));
 });
+
+test('✕ Rechazar (discardTask): de Revisión a Descartada con el motivo, desbloquea a sus dependientes; solo review/failed', async () => {
+  const a = mk('Propuesta que no quiero');
+  const b = mk('Depende de la propuesta', { dependsOn: [a.id] });
+  await rejects(() => team.discardTask(a.id, 'x'), 409); // en «Por hacer» se descarta a mano, no se «rechaza»
+  toReview(a);
+  const r = await team.discardTask(a.id, 'Ya no aplica');
+  assert.deepEqual(r, { ok: true, status: 'discarded' });
+  assert.equal(status(a.id), 'discarded');
+  const t = get().tasks.find((x) => x.id === a.id);
+  assert.equal(t.discardReason, 'Ya no aplica');
+  assert.equal(t.reviewLog.at(-1).verdict, 'discarded');
+  assert.equal(t.reviewAt, undefined);
+  assert.ok(team.RESOLVED.has(status(a.id)), 'cuenta como resuelta: su dependiente ya puede arrancar');
+  assert.equal(status(b.id), 'todo');
+});

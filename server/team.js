@@ -691,6 +691,28 @@ export async function reject(id, feedback = '', images = [], attachments = [], b
   tick();
 }
 
+// ✕ Rechazar: «no, y no la rehagas». De Revisión (o Fallida) a Descartada con el motivo en su historial; sus cambios se tiran
+// (rama ao/<código> y worktree de cada repo). En proyectos sin repo lo que escribió en la carpeta se queda (no hay rama que borrar).
+// Lo que dependía de ella se desbloquea: una descartada cuenta como resuelta. «↩ Recuperar» la devuelve al Backlog y empieza de cero.
+export async function discardTask(id, reason = '') {
+  const s = get();
+  const t = findOr404(s.tasks, id, 'Tarea');
+  if (!['review', 'failed'].includes(t.status)) throw fail(409, 'Solo se rechazan tareas en revisión o fallidas (las demás se mueven a «Descartada» a mano)');
+  const p = projectOf(t);
+  const why = String(reason || '').trim().slice(0, 1000);
+  for (const x of taskRepos(p, t)) { try { await git.cleanup(p, x.repo, t, x.dir); } catch { /* ya no estaba: da igual */ } }
+  reviewNote(t, 'human', 'discarded', why);
+  events.emit('TaskReviewed', events.ctxOf(t), { decision: 'discarded', feedback: why.slice(0, 500) });
+  if (why) t.discardReason = why;
+  for (const e of Object.values(t.repos || {})) e.diffStat = '';
+  delete t.reviewNote; delete t.reviewing; delete t.autoApproved; delete t.reviewAt; delete t.nudged; delete t.budgetHit;
+  Object.assign(t, { status: 'discarded', agentId: null, branch: null, diffStat: '', error: null, behind: 0, conflicts: [], mergeKey: null, discardedAt: Date.now(), updatedAt: Date.now() });
+  changed();
+  reflect(t, why ? `✕ Rechazada en AgentOffice: ${why}` : '✕ Rechazada en AgentOffice');
+  tick();
+  return { ok: true, status: t.status };
+}
+
 // ── Revisión visible y automática (FT-56) ──────────────────────────────────
 // Historial de la tarea: qué se decidió, quién y por qué (las 20 últimas entradas).
 function reviewNote(t, by, verdict, text) {

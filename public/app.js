@@ -1977,12 +1977,14 @@ function compactCard(t) {
   if (t.status === 'todo' && t.quotaPaused) main.push(btn('resume-now', '▶ Reanudar ya', ''));
   if (t.status === 'review') {
     main.push(btn('approve', '✓ Aprobar', 'ok'), btn('reject', '↩ Devolver'), btn('diff', 'Ver cambios'));
+    more.push(btn('reject-final', '✕ Rechazar', 'danger', 'No la quiero y que no la rehaga nadie: pasa a Descartada y se tiran sus cambios'));
     if (updateBtn(t)) more.push(updateBtn(t));
   }
   if (t.status !== 'doing') more.push(btn('edit', '✎ Editar'));
   if (['todo', 'failed'].includes(t.status)) more.push(btn('park', '← Backlog'));
   if (['review', 'done'].includes(t.status)) more.push(btn('nomove', '⇄ Mover a…'));
   if (['done', 'discarded'].includes(t.status)) more.push(t.archived ? btn('unarchive', '📦 Desarchivar') : btn('archive', '🗄 Archivar'));
+  if (t.status === 'failed') more.push(btn('reject-final', '✕ Rechazar', 'danger', 'No la quiero y que no la rehaga nadie: pasa a Descartada y se tiran sus cambios'));
   if (['todo', 'failed', 'done'].includes(t.status)) more.push(btn('del', 'Borrar', 'danger'));
   more.push(btn('open', '🔍 Ver la tarea'));
   const bar = `<div class="bar">${main.join('')}<button class="small ghost" data-more title="Más acciones" aria-label="Más acciones">⋯</button><div class="more-menu">${more.join('')}</div></div>`;
@@ -2166,6 +2168,7 @@ function card(t) {
   if (t.status === 'failed') acts.push(`<button class="small ghost" data-park="${t.id}" title="Devolver al Backlog">← Backlog</button>`);
   if (['backlog', 'todo', 'failed'].includes(t.status)) acts.push(`<button class="small ghost" data-discard="${t.id}" title="No se va a hacer: pasa a Descartada (se puede recuperar)">✕ Descartar</button>`);
   if (t.status === 'discarded') acts.push(`<button class="small ghost" data-park="${t.id}" title="Volver al Backlog">↩ Recuperar</button>`);
+  if (t.status === 'review') acts.push(`<button class="small ghost danger" data-reject-final="${t.id}" title="No la quiero y que no la rehaga nadie: pasa a Descartada y se tiran sus cambios (↩ Devolver es para que la corrija)">✕ Rechazar</button>`);
   if (['review', 'done'].includes(t.status)) acts.push(`<button class="small ghost" data-nomove="${t.id}" title="Mover a otra columna">⇄ Mover a…</button>`);
   if (['done', 'discarded'].includes(t.status)) acts.push(t.archived ? `<button class="small ghost" data-unarchive="${t.id}" title="Volver a mostrarla en su columna">📦 Desarchivar</button>` : `<button class="small ghost" data-archive="${t.id}" title="Ocultarla del tablero sin borrarla (se encuentra con el filtro o «Ver archivadas»)">🗄 Archivar</button>`);
   if (['todo', 'failed', 'done'].includes(t.status)) acts.push(`<button class="small danger" data-del="${t.id}">Borrar</button>`);
@@ -3576,6 +3579,14 @@ document.addEventListener('click', async (e) => {
   if (d.reviewLog) return openReviewLog(d.reviewLog);
   if (d.park) return api('PATCH', `/api/tasks/${d.park}`, { status: 'backlog' });
   if (d.discard) return api('PATCH', `/api/tasks/${d.discard}`, { status: 'discarded' });
+  if (d.rejectFinal) { // ✕ Rechazar: «no, y no la rehagas» (Devolver = que la corrija)
+    const t = S.tasks.find((x) => x.id === d.rejectFinal);
+    const branches = Object.values(t.repos || {}).map((r) => r.branch).filter(Boolean);
+    return dialog(`<h3>✕ Rechazar ${esc(tcode(t))}</h3><p class="muted">${esc(t.title)}</p>
+      <p>Pasa a <b>Descartada</b> y nadie la rehace (si solo quieres que la corrija, usa <b>↩ Devolver</b>).${branches.length || t.branch ? ` Se tiran sus cambios: rama <code>${esc(branches[0] || t.branch)}</code>${branches.length > 1 ? ` y ${branches.length - 1} más` : ''} y su copia de trabajo; nada llega a tu rama.` : ' Este proyecto no tiene repo: lo que escribió en la carpeta se queda donde está.'}</p>
+      <label>Motivo (opcional; queda en su historial)</label><textarea name="reason" rows="3" autofocus placeholder="Ya no aplica, la idea no convence…"></textarea>
+      ${buttons('✕ Rechazar')}`, (f) => api('POST', `/api/tasks/${t.id}/discard`, { reason: f.reason }).then(() => { $('#task-modal')?.close?.(); toast(`${tcode(t)} rechazada → Descartada`); }));
+  }
   if (d.del) { if (confirm('¿Borrar la tarea?')) api('DELETE', `/api/tasks/${d.del}`); return; }
   if (d.reject) {
     pendingAttachments = [];
