@@ -71,7 +71,7 @@ const kindOf = (id, meta) => {
   if (['planner', 'dev', 'qa', 'docs', 'supervisor'].includes(meta.kind)) return meta.kind;
   if (/doc/i.test(id)) return 'docs';
   if (/orquest|planner|^po$|product|manager/i.test(id)) return 'planner';
-  if (/qa|test|automation/i.test(id)) return 'qa';
+  if (/(^|[^a-z])(qa|tests?|tester|testing|automation)([^a-z]|$)/i.test(id)) return 'qa'; // palabra suelta: «node-flowtest» no es QA
   return 'dev';
 };
 const labelOf = (id) => id.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());

@@ -5,7 +5,7 @@ export const VISUAL_STATUSES = ['working', 'waiting', 'reviewing', 'blocked', 'f
 export const ZONES = ['development', 'qa', 'docs', 'review', 'meeting', 'idle', 'board'];
 
 const ROLE_ZONE = [
-  [/qa|test|quality/i, 'qa'],
+  [/(^|[^a-z])(qa|tests?|tester|testing|quality)([^a-z]|$)/i, 'qa'], // palabra suelta: «react-flowtest» no es QA
   [/doc|writer|content/i, 'docs'],
   [/review|merge/i, 'review'],
   [/manager|lead|guide|pm|po|product/i, 'meeting'],
@@ -166,7 +166,7 @@ function isBlocked(agent, task, allTasks) {
 
 function normalizeRole(role = '') {
   const r = String(role || '').toLowerCase();
-  if (/qa|test|quality/.test(r)) return 'qa';
+  if (/(^|[^a-z])(qa|tests?|tester|testing|quality)([^a-z]|$)/.test(r)) return 'qa';
   if (/doc|writer|content/.test(r)) return 'docs';
   if (/review|merge/.test(r)) return 'reviewer';
   if (/manager|lead|guide|pm|po|product/.test(r)) return 'manager';

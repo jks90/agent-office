@@ -280,7 +280,7 @@ export function importPackage(pkg, opts = {}) {
     return { kind: 'skill', name: pkg.name, version: pkg.version, target, hasCode: info.hasCode };
   }
 
-  // agente: rol (si falta) + agente en el banquillo + memoria en el proyecto elegido
+  // agente: rol (si falta) + agente fichado en el proyecto elegido (o al banquillo) + memoria en ese proyecto
   const roleId = pkg.meta?.role;
   if (!roleId) throw fail(400, 'El paquete de agente no indica su rol');
   if (pkg.memory && !opts.projectId) throw fail(400, 'Elige el proyecto donde guardar la memoria del agente', { needsConfirm: 'project' });
@@ -290,11 +290,14 @@ export function importPackage(pkg, opts = {}) {
     if (!pkg.files.length) throw fail(400, `El rol «${roleId}» no existe aquí y el paquete no lo trae`);
     roleTargetPath = installRole({ ...pkg, name: slug(roleId) }, opts.org, false);
   }
-  const agent = team.hire({ projectId: null, name: opts.agentName || pkg.meta.agentName || pkg.name, role: roleId, engine: pkg.meta.engine, model: pkg.meta.model });
+  // Se ficha en el proyecto elegido si tiene mesa libre (tope 8); si no, al banquillo (Agentes) para ficharlo a mano.
+  const proj = opts.projectId ? store.get().projects.find((p) => p.id === opts.projectId) : null;
+  const seat = proj && proj.team.length < 8 ? proj.id : null;
+  const agent = team.hire({ projectId: seat, name: opts.agentName || pkg.meta.agentName || pkg.name, role: roleId, engine: pkg.meta.engine, model: pkg.meta.model });
   if (pkg.memory) {
     if (pkg.memory.agent) memory.write(opts.projectId, agent.id, expandText(pkg.memory.agent));
     if (pkg.memory.project && (!memory.read(opts.projectId, null) || opts.overwrite)) memory.write(opts.projectId, null, expandText(pkg.memory.project));
   }
   record(`agent:${agent.id}`, { ...base, name: pkg.name, agentId: agent.id, role: roleId });
-  return { kind: 'agent', name: pkg.name, version: pkg.version, agent, roleInstalled: roleTargetPath, memoryProject: pkg.memory ? opts.projectId : null };
+  return { kind: 'agent', name: pkg.name, version: pkg.version, agent, roleInstalled: roleTargetPath, memoryProject: pkg.memory ? opts.projectId : null, teamProject: seat, teamFull: !!proj && !seat };
 }

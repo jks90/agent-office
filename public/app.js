@@ -3512,11 +3512,12 @@ async function mpInstall(id) {
     ${info.secrets?.length ? `<p class="bad">⛔ Posibles secretos: ${info.secrets.map((s) => esc(s.kind + ' en ' + s.where)).join('; ')}</p>` : ''}
     ${info.hasCode ? '<label><input type="checkbox" name="confirmCode" required /> 🛡 Confirmo que he revisado el código y quiero instalarlo</label>' : ''}
     ${info.exists ? `<label><input type="checkbox" name="overwrite" ${info.installedVersion ? 'checked' : ''} /> Ya existe${info.installedVersion ? ` (v${esc(info.installedVersion)})` : ''}: sobrescribir</label>` : ''}
-    ${item.kind === 'agent' ? `<label>Proyecto donde guardar la memoria del agente</label><select name="projectId" ${info.hasMemory ? 'required' : ''}><option value="">${info.hasMemory ? 'Elige…' : 'Ninguno'}</option>${projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select>` : ''}
+    ${item.kind === 'agent' ? `<label>Proyecto donde ficharlo${info.hasMemory ? ' (y guardar su memoria)' : ''}</label><select name="projectId" ${info.hasMemory ? 'required' : ''}><option value="">${info.hasMemory ? 'Elige…' : 'Ninguno: al banquillo'}</option>${projects.map((p) => { const full = (S.projects.find((x) => x.id === p.id)?.team || []).length >= 8; return `<option value="${esc(p.id)}" ${p.id === projectId ? 'selected' : ''}>${esc(p.name)}${full ? ' (8 mesas ocupadas: irá al banquillo)' : ''}</option>`; }).join('')}</select>` : ''}
     ${buttons(info.installedVersion && info.installedVersion !== item.version ? '⟳ Actualizar' : '⬇ Instalar')}`, async (f) => {
     const r = await mpApi('POST', `/api/marketplace/items/${encodeURIComponent(id)}/install`, { confirmCode: !!f.confirmCode, overwrite: !!f.overwrite, projectId: f.projectId || undefined });
     if (!r.ok) { toast(r.j.error || 'No se pudo instalar', 'error'); throw new Error(r.j.error); }
-    toast(`«${item.name}» v${item.version} instalado${r.j.target ? ' en ' + short(r.j.target) : ''}`);
+    const pname = (id) => S.projects.find((p) => p.id === id)?.name || id;
+    toast(`«${item.name}» v${item.version} instalado${r.j.target ? ' en ' + short(r.j.target) : ''}${item.kind !== 'agent' ? '' : r.j.teamProject ? ` y fichado en ${pname(r.j.teamProject)}` : ` · está en el banquillo (Agentes)${r.j.teamFull ? ': ese proyecto ya tiene 8 mesas' : ''}`}`);
     if (item.kind === 'skill') renderSkills(true);
     if (activeTab === 'marketplace') loadMarketplace();
   }, 'wide');
