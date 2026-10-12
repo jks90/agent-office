@@ -2405,49 +2405,83 @@ Pasos, convenciones y ejemplos…</textarea>
   }); },
   settings: () => dialog(`
     <h3>Ajustes</h3>
-    <div class="section-title">🧠 Motores de IA — las inteligencias que llevan la empresa</div>
+    <div class="section-title" data-group="Empresa" title="Las inteligencias que llevan la empresa">🧠 Motores de IA</div>
     <div id="engines" class="engines"><p class="muted">Comprobando cuentas…</p></div>
     <div id="local-ai" class="engines"></div>
-    <div class="section-title">🧪 Suite</div>
+    <div class="section-title" data-group="Empresa" title="La suite: su MCP se usa para el QA y su workspace para los proyectos">🔌 Conexión con flow-test</div>
     <label>URL de flow-test (la suite; su MCP se usa para el QA)</label><input name="flowTestUrl" value="${esc(S.settings.flowTestUrl)}" placeholder="http://localhost:9998" />
     <label>Carpeta del workspace de flow-test en esta máquina (para sugerir los repos de cada proyecto por sus enlaces y para los proyectos sin repo)</label><input name="workspaceHostDir" value="${esc(S.settings.workspaceHostDir || '')}" placeholder="~/JksDocs/workspace" />
+    <div class="section-title" data-group="Empresa">👥 Equipo y capacidad</div>
     <label>Agentes trabajando a la vez (máx.)</label><input name="maxParallel" type="number" min="1" max="8" value="${S.settings.maxParallel}" />
+    <div class="grid2"><div><label>Esfuerzo de los agentes (más = más tokens)</label><select name="agentEffort">${['low', 'medium', 'high'].map((v) => `<option value="${v}" ${(S.settings.agentEffort || 'medium') === v ? 'selected' : ''}>${({ low: 'bajo', medium: 'medio (recomendado)', high: 'alto' })[v]}</option>`).join('')}</select></div></div>
+    <div class="section-title" data-group="Empresa" title="FT-57 · FT-60 · FT-64 · FT-76 · FT-45">💰 Costes y modelos</div>
     <div class="grid2"><div><label>Tope de gasto por tarea (US$, por intento; al pasarlo se corta)</label><input name="maxTaskUsd" type="number" min="0.5" max="50" step="0.5" value="${S.settings.maxTaskUsd || 3}" /></div>
-    <div><label>Esfuerzo de los agentes (más = más tokens)</label><select name="agentEffort">${['low', 'medium', 'high'].map((v) => `<option value="${v}" ${(S.settings.agentEffort || 'medium') === v ? 'selected' : ''}>${({ low: 'bajo', medium: 'medio (recomendado)', high: 'alto' })[v]}</option>`).join('')}</select></div></div>
+    <div><label title="FT-57 · Codex: se corta al llegar a estos tokens (0 = el equivalente al tope en US$)">Tope en tokens por intento (solo Codex; 0 = el equivalente al de US$)</label><input name="maxTaskTokens" type="number" min="0" step="100000" value="${S.settings.maxTaskTokens || 0}" /></div></div>
     <div class="grid2"><div><label>Escalera de modelos · Claude (de barato a caro, separados por coma; FT-60)</label><input name="ladder_claude" value="${esc((S.modelLadders?.claude || []).join(', '))}" placeholder="haiku, sonnet" /></div>
     <div><label>Escalera de modelos · Codex (el mini sale de models_cache.json)</label><input name="ladder_codex" value="${esc((S.modelLadders?.codex || []).join(', '))}" placeholder="gpt-5.5" /></div></div>
     <p class="muted">Cada tarea empieza en el primer peldaño y sube uno al devolverla desde revisión o si el agente falla (máx. 2 veces). Un modelo fijado en el agente o el rol no entra en la cascada.</p>
     <label>Objetivo de costes (FT-76): coste por tarea aprobada ≤ X % del interactivo</label><input name="costTargetPct" type="number" min="10" max="500" step="5" value="${S.settings.costTargetPct || 100}" />
-    <label>Navegador del agente (FT-114 · FT-118)</label>
-    <select name="browserMode">${[['dedicated', 'Chromium dedicado (perfil propio de AgentOffice)'], ['extension', 'Mi navegador (extensión de extension/)']].map(([v, t]) => `<option value="${v}" ${(S.browser?.mode || 'dedicated') === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
-    ${browserExtBlock()}
     <label><input type="checkbox" name="cacheAffinity" ${S.settings.cacheAffinity !== false ? 'checked' : ''} /> Agrupar tareas del mismo repo y rol seguidas para aprovechar la caché del prompt (FT-64)</label>
+    <label><input type="checkbox" name="quotaGuard" ${S.settings.quotaGuard !== false ? 'checked' : ''} /> Guardarraíl de cuota: no arrancar tareas con un motor cuya sesión de 5 h esté al ${97} % o más (FT-45)</label>
+    <div class="section-title" data-group="Empresa">✅ Revisión</div>
+    <label>Revisión por defecto de la empresa (proyectos con «Igual que la empresa»)</label>
+    <select name="reviewPolicyAll">${['manual', 'auto-qa', 'auto'].map((v) => `<option value="${v}" ${(S.settings.reviewPolicy || 'manual') === v ? 'selected' : ''}>${esc(REVIEW_LABEL[v])}</option>`).join('')}</select>
+    <p class="muted" style="margin:2px 0 8px">Nunca se aprueban solas las tareas con «revisión obligatoria», las cortadas por tope o atasco, las que tocan ficheros sensibles ni las que el revisor devolvió dos veces: esas te esperan a ti.</p>
+    <div class="section-title" data-group="Empresa" title="FT-62">🧯 Atascos</div>
     <label><input type="checkbox" name="stuckGuard" ${S.settings.stuckGuard !== false ? 'checked' : ''} /> Detectar agentes atascados: aviso y, si sigue, parar y pasar a Revisión (FT-62)</label>
     <div class="grid2"><div><label>Mismo comando/lectura (veces)</label><input name="stuckRepeat" type="number" min="2" max="20" value="${S.settings.stuckRepeat || 3}" /></div>
     <div><label>Errores de herramienta seguidos</label><input name="stuckErrors" type="number" min="2" max="30" value="${S.settings.stuckErrors || 4}" /></div>
     <div><label>Pasos sin editar (tareas de código)</label><input name="stuckNoEdit" type="number" min="5" max="200" value="${S.settings.stuckNoEdit || 25}" /></div>
     <div><label>Tokens por turno sin cambios en el worktree</label><input name="stuckTokens" type="number" min="5000" step="5000" value="${S.settings.stuckTokens || 80000}" /></div></div>
-    <label title="FT-57 · Codex: se corta al llegar a estos tokens (0 = el equivalente al tope en US$)">Tope en tokens por intento (solo Codex; 0 = el equivalente al de US$)</label><input name="maxTaskTokens" type="number" min="0" step="100000" value="${S.settings.maxTaskTokens || 0}" />
-    <label title="Reglas de «construir lo mínimo» en la parte estable del prompt (FT-86). Se etiqueta cada intento en 💸 Costes para comparar con/sin.">Ponytail (prueba, FT-86): roles que construyen lo mínimo</label>
-    <div class="pt-roles">${Object.entries(S.roles).filter(([, r]) => r.kind !== 'planner').map(([id, r]) => `<label><input type="checkbox" name="pt_${esc(id)}" ${S.settings.ponytailRoles?.[id] ? 'checked' : ''} /> ${esc(r.label || id)}</label>`).join(' ')}</div>
+    <div class="section-title" data-group="Empresa" title="FT-75">📚 Memoria y contexto</div>
     <label><input type="checkbox" name="agentMemory" ${S.settings.agentMemory !== false ? 'checked' : ''} /> Memoria de los agentes: lecciones de tareas anteriores en el prompt (FT-75; ≈1 500 tokens máx. por agente y por proyecto)</label>
     <label><input type="checkbox" name="claudeMemory" ${S.settings.claudeMemory !== false ? 'checked' : ''} /> Memoria de Claude Code del repo: el índice (MEMORY.md) va en el prompt de los agentes y pueden leer cada memoria (se ve y edita en Agentes ▸ 🧠 Memoria del proyecto)</label>
     <label title="Codebase-Memory MCP (tree-sitter, local): el agente localiza funciones/clases con una consulta en vez de leer ficheros"><input type="checkbox" name="codeIndex" ${S.settings.codeIndex === true ? 'checked' : ''} ${S.codeIndexInstalled ? '' : 'disabled'} /> Índice de código por símbolos para Claude y Codex (FT-58)${S.codeIndexInstalled ? '' : ' — no instalado: ejecuta scripts/setup-code-index.sh'}</label>
-    <label><input type="checkbox" name="quotaGuard" ${S.settings.quotaGuard !== false ? 'checked' : ''} /> Guardarraíl de cuota: no arrancar tareas con un motor cuya sesión de 5 h esté al ${97} % o más (FT-45)</label>
-    <div class="section-title">🧭 Guía (FT-6)</div>
+    <div class="section-title" data-group="Empresa" title="FT-123 · FT-125 · FT-150">🎨 Oficina 3D</div>
+    <label><input type="checkbox" name="officePanels" ${S.settings.officePanels !== false ? 'checked' : ''} /> 🗂 Paneles de información en los márgenes de la planta 3D (FT-125)</label>
+    <label><input type="checkbox" name="officeAmbient" ${S.settings.officeAmbient !== false ? 'checked' : ''} /> 🚶 Personajes de ambiente en la planta (visitas, reuniones, limpieza; solo decorativos, FT-150)</label>
+    <label>🫧 Burbujas de estado en la oficina 3D (FT-123)</label>
+    <select name="officeBubbles">${[['todas', 'Todas visibles (icono + tarea + estado)'], ['al pasar', 'Solo al pasar el ratón / seleccionar']].map(([v, l]) => `<option value="${v}" ${(S.settings.officeBubbles || 'todas') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    <div class="section-title" data-group="Empresa" title="FT-86">🧪 Experimentos</div>
+    <label title="Reglas de «construir lo mínimo» en la parte estable del prompt (FT-86). Se etiqueta cada intento en 💸 Costes para comparar con/sin.">Ponytail (prueba, FT-86): roles que construyen lo mínimo</label>
+    <div class="pt-roles">${Object.entries(S.roles).filter(([, r]) => r.kind !== 'planner').map(([id, r]) => `<label><input type="checkbox" name="pt_${esc(id)}" ${S.settings.ponytailRoles?.[id] ? 'checked' : ''} /> ${esc(r.label || id)}</label>`).join(' ')}</div>
+    <div class="section-title" data-group="Proyecto «${esc(project()?.name)}»">📁 Proyecto</div>
+    <label>Carpeta de flow-test del proyecto «${esc(project()?.name)}» (obligatoria; cámbiala si la renombraste o moviste)</label>
+    ${folderPick(false)}
+    <label>Repositorios del proyecto «${esc(project()?.name)}» (uno por línea: <code>clave = ruta @ roles</code>)</label>
+    <textarea name="repos" rows="3">${esc((project()?.repos || []).map((r) => `${r.key} = ${r.path}${r.roles?.length ? ' @ ' + r.roles.join(',') : ''}`).join('\n'))}</textarea>
+    <label>Prefijo de los códigos de tarea del proyecto «${esc(project()?.name)}» (p. ej. <code>GL</code> → GL-1, GL-2…; las tareas ya numeradas no cambian)</label><input name="prefix" value="${esc(project()?.prefix || "")}" placeholder="${esc(project()?.prefixDefault || "")}" maxlength="5" style="text-transform:uppercase;width:120px" />
+    <label>Revisión de las tareas de «${esc(project()?.name)}» (con revisión automática, lo que una tarea desbloquea no espera a que tú la mires)</label>
+    <select name="reviewPolicy">${[['', `Igual que la empresa (${REVIEW_LABEL[S.settings.reviewPolicy || 'manual']})`], ['manual', REVIEW_LABEL.manual], ['auto-qa', REVIEW_LABEL['auto-qa']], ['auto', REVIEW_LABEL.auto]].map(([v, l]) => `<option value="${v}" ${(project()?.reviewPolicy || '') === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+    <label>🧑‍✈️ Coordinador del equipo de «${esc(project()?.name)}» (reglas fijas, sin IA: refuerza el rol que tiene trabajo listo y nadie libre, cambia a motor automático a quien se queda sin cuota y manda al banquillo a quien lleva rato sin nada que hacer)</label>
+    <select name="coordinator">${[['', 'Apagado'], ['suggest', 'Solo sugerir (en 🔔 Para ti, con «Aplicar»)'], ['auto', 'Automático (lo hace solo y lo apunta en 🔔 Para ti)']].map(([v, l]) => `<option value="${v}" ${(project()?.coordinator || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="supervisorApproves" ${project()?.supervisorApproves ? 'checked' : ''}><span>🧑‍⚖️ Delegar en el Coordinador / Supervisor de «${esc(project()?.name)}» (FT-122): aprueba las tareas en revisión (también las de revisión obligatoria) si sus verificaciones pasan con la rama al día (y, con diffs de más de 30 líneas, un revisor barato lo confirma), y quita dependencias que sobran solo si la bloqueante falló. Sin marcar solo deja «✅ listo para aprobar» y avisa.</span></label>
+    ${(project()?.team || []).some((id) => S.agents.find((a) => a.id === id)?.role === 'coordinador') ? '' : `<div><button type="button" class="small" data-add-supervisor>🧑‍⚖️ Añadir coordinador</button></div>`}
+    ${S.tasks.filter((t) => t.projectId === projectId && t.depProposal).map((t) => `<p class="muted" style="margin:2px 0">🧑‍⚖️ ${esc(t.depProposal.why)} <button type="button" class="small" data-dep-proposal="${t.id}:1">Quitar</button> <button type="button" class="small" data-dep-proposal="${t.id}:0">Mantener</button></p>`).join('')}
+    <label>Importar un tablero de flow-test (notas = tarjetas; las columnas «En revisión»/«Hecho» conservan su estado, el resto entra en Backlog)</label>
+    <div style="display:flex;gap:8px"><select name="importFlow" id="import-flow"><option value="">— elegir flow —</option></select><button type="button" class="small" data-import-flow>Importar</button></div>
+    <hr style="border-color:var(--line);margin:16px 0" />
+    <button type="button" class="danger small" data-delete-project>Borrar el proyecto «${esc(project()?.name)}»</button>
+    <div class="section-title" data-group="Proyecto «${esc(project()?.name)}»">🔗 Tablero online</div>
+    <div id="board-cfg" class="board-cfg"><p class="muted">Cargando…</p></div>
+    <div class="section-title" data-group="Proyecto «${esc(project()?.name)}»">👁 Proyectos visibles</div>
+    <p class="muted" style="margin:0 0 6px">Desmarca los proyectos que no quieres ver en el selector, el Resumen y el edificio. Ocultar no los para ni borra nada: un proyecto oculto en marcha sigue trabajando.</p>
+    <div class="vis-projects">${[...S.projects].sort((a, b) => a.name.localeCompare(b.name)).map((x) => `<label class="vis-row"><input type="checkbox" name="vis_${x.id}" ${isHidden(x) ? '' : 'checked'} /> ${x.folder ? '📁' : '⚠'} ${esc(x.name)} <span class="muted">${!x.folder ? 'sin vincular' : x.orphan ? 'carpeta desaparecida' : `${x.flows ?? 0} flows`}${(x.team || []).length ? ` · ${x.team.length} agentes` : ''}${x.running ? ' · ▶ en marcha' : ''}</span></label>`).join('')}</div>
+    <div class="row" style="justify-content:flex-start;gap:6px;margin:4px 0 10px"><button type="button" class="small ghost" data-vis-all="1">Mostrar todos</button><button type="button" class="small ghost" data-vis-all="0">Ocultar los vacíos</button></div>
+    <div class="section-title" data-group="Guía y voz" title="FT-6 · FT-8">🧭 Guía</div>
     <label>Proveedor del Guía (el LLM con el que conversa; los cuatro flujos funcionan igual con cualquiera) (FT-8)</label>
     <select name="guideProvider">${(S.guideProviders || []).map((p) => `<option value="${esc(p.id)}" ${(S.settings.guideProvider || 'claude-cli') === p.id ? 'selected' : ''}>${esc(p.label)}${p.ready ? '' : p.id === 'local-api' ? ' — sin configurar' : ' — sin clave API'}</option>`).join('')}</select>
     <label>Modelo con Claude Code (CLI)</label>${modelSelect('guideModel', 'claude', S.settings.guideModel || '')}
     ${(S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => `<label>Modelo con ${esc(p.label)}</label><input name="gm_${esc(p.id)}" value="${esc(S.settings.guideModels?.[p.id] || '')}" placeholder="${esc(p.defaultModel)}" />`).join('')}
     <p class="muted">Las APIs usan la clave guardada en «Motores de IA» (Claude → Anthropic, Codex → OpenAI) o ANTHROPIC_API_KEY / OPENAI_API_KEY; URL base con ANTHROPIC_BASE_URL / OPENAI_BASE_URL. El coste por turno sale en el chat cuando el proveedor lo da.</p>
-    <div class="section-title">🎤 Voz (FT-9)</div>
+    <div class="section-title" data-group="Guía y voz" title="FT-9">🎤 Voz</div>
     <label>Transcripción (STT) <span id="stt-info" class="muted"></span></label>
     <select name="sttProvider"><option value="local-cmd" ${S.settings.sttProvider !== 'openai' ? 'selected' : ''}>Local · faster-whisper / AO_STT_CMD</option><option value="openai" ${S.settings.sttProvider === 'openai' ? 'selected' : ''}>OpenAI · /v1/audio/transcriptions</option></select>
     <label>Idioma hablado</label>
     <select name="sttLang">${[['es', 'Español'], ['en', 'English'], ['ca', 'Català'], ['fr', 'Français'], ['de', 'Deutsch'], ['pt', 'Português'], ['it', 'Italiano'], ['auto', 'Detectar']].map(([k, n]) => `<option value="${k}" ${(S.settings.sttLang || 'es') === k ? 'selected' : ''}>${n}</option>`).join('')}</select>
     <label><input type="checkbox" name="voiceReview" ${voicePref.review() ? 'checked' : ''} /> Revisar antes de enviar (el texto dictado queda en la caja)</label>
     <label><input type="checkbox" name="voiceTts" ${voicePref.tts() ? 'checked' : ''} /> Leer en voz alta las respuestas cortas del Guía (solo en este navegador)</label>
-    <div class="section-title">🔊 Voz del Guía (FT-52)</div>
+    <div class="section-title" data-group="Guía y voz" title="FT-52">🔊 Voz del Guía</div>
     <label>Proveedor de voz <span id="tts-info" class="muted"></span></label>
     <select name="ttsProvider">${[['piper', 'Local · piper (sin nube, recomendado)'], ['openai', 'OpenAI · /v1/audio/speech (nube)'], ['browser', 'Navegador · speechSynthesis (respaldo)']].map(([k, n]) => `<option value="${k}" ${(S.settings.ttsProvider || 'piper') === k ? 'selected' : ''}>${n}</option>`).join('')}</select>
     <label>Voz</label>
@@ -2456,7 +2490,7 @@ Pasos, convenciones y ejemplos…</textarea>
     <label><input type="checkbox" name="voiceWake" ${voicePref.wake() ? 'checked' : ''} /> Escucha continua (di «oye guía») <span id="wake-info" class="muted"></span></label>
     <p class="muted">Apagada de serie. Con ella activa el micrófono queda abierto y se analiza en este navegador; solo los segmentos con voz van al STT local (nunca a OpenAI) para detectar «oye guía», con un indicador 👂 siempre visible (FT-36).</p>
     <div style="display:flex;gap:8px;align-items:center"><button type="button" class="small" data-voice-test>🎤 Probar micrófono</button><span id="voice-test" class="muted"></span></div>
-    <div class="section-title">🛡 Guide Agent — qué puede hacer sin preguntarte (FT-4)</div>
+    <div class="section-title" data-group="Seguridad" title="FT-4 · sin preguntarte">🛡 Qué puede hacer el Guía</div>
     <label>Acciones que ponen a trabajar o pausan al equipo (ejecutar)</label>
     <select name="guideExecute"><option value="auto" ${S.guidePolicy?.execute === 'auto' ? 'selected' : ''}>Automático</option><option value="confirm" ${S.guidePolicy?.execute === 'confirm' ? 'selected' : ''}>Pedir confirmación</option></select>
     <label>Acciones que crean o editan datos (escribir)</label>
@@ -2466,43 +2500,15 @@ Pasos, convenciones y ejemplos…</textarea>
     ${(S.guidePolicy?.always || []).length ? checkList('guideAlways', S.guidePolicy.always.map((n) => ({ value: n, label: n })), S.guidePolicy.always, '', 'cols') : '<p class="muted">Ninguna. En una confirmación del Guide, «Sí, siempre» deja de preguntar por esa acción.</p>'}
     <label><input type="checkbox" name="guideInputFallback" ${S.guidePolicy?.guideInputFallback ? 'checked' : ''} /> Permitir ratón y teclado (último recurso)</label>
     <p class="muted">Entrada «ciega» del Guide cuando ni la API interna, ni ui.find/ui.act ni application.open bastan. Apagado de serie; las teclas destructivas siempre piden confirmación (FT-30, FT-32).${S.guidePolicy?.input && !S.guidePolicy.input.ok ? ` <span class="bad">Faltan herramientas: ${esc(S.guidePolicy.input.missing.join(', ') || 'xdotool (X11) / ydotool (Wayland)')}. Instálalas para que funcione.</span>` : ''}</p>
-    <div class="section-title">🌐 Navegador del agente — dominios (FT-116)</div>
+    <div class="section-title" data-group="Seguridad" title="FT-114 · FT-116 · FT-118">🌐 Navegador del agente</div>
+    <label>Navegador del agente (FT-114 · FT-118)</label>
+    <select name="browserMode">${[['dedicated', 'Chromium dedicado (perfil propio de AgentOffice)'], ['extension', 'Mi navegador (extensión de extension/)']].map(([v, t]) => `<option value="${v}" ${(S.browser?.mode || 'dedicated') === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
+    ${browserExtBlock()}
     <label>Dominio sin regla</label>
     <select name="browserDefault">${[['ask', 'Preguntar la 1.ª vez por dominio y sesión'], ['allow', 'Permitir'], ['block', 'Bloquear']].map(([v, l]) => `<option value="${v}" ${(S.settings.browserPolicy?.default || 'ask') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
     <label>Reglas por dominio (una por línea: <code>dominio allow|block|ask</code>)</label>
     <textarea name="browserDomains" rows="4" placeholder="example.com allow&#10;banco.es block&#10;localhost allow">${esc(Object.entries(S.settings.browserPolicy?.domains || {}).map(([d, m]) => `${d} ${m}`).join('\n'))}</textarea>
     <p class="muted">file://, chrome:// y similares se bloquean siempre; localhost y la red local, salvo que los permitas aquí de forma explícita. Enviar, pagar, borrar, <code>evaluate</code> y formularios con contraseña/tarjeta siempre piden confirmación. El texto de las páginas se trata como datos no confiables.</p>
-    <hr style="border-color:var(--line);margin:16px 0" />
-    <div class="section-title">🔗 Tablero online del proyecto «${esc(project()?.name)}»</div>
-    <div id="board-cfg" class="board-cfg"><p class="muted">Cargando…</p></div>
-    <div class="section-title">👁 Proyectos visibles</div>
-    <p class="muted" style="margin:0 0 6px">Desmarca los proyectos que no quieres ver en el selector, el Resumen y el edificio. Ocultar no los para ni borra nada: un proyecto oculto en marcha sigue trabajando.</p>
-    <div class="vis-projects">${[...S.projects].sort((a, b) => a.name.localeCompare(b.name)).map((x) => `<label class="vis-row"><input type="checkbox" name="vis_${x.id}" ${isHidden(x) ? '' : 'checked'} /> ${x.folder ? '📁' : '⚠'} ${esc(x.name)} <span class="muted">${!x.folder ? 'sin vincular' : x.orphan ? 'carpeta desaparecida' : `${x.flows ?? 0} flows`}${(x.team || []).length ? ` · ${x.team.length} agentes` : ''}${x.running ? ' · ▶ en marcha' : ''}</span></label>`).join('')}</div>
-    <div class="row" style="justify-content:flex-start;gap:6px;margin:4px 0 10px"><button type="button" class="small ghost" data-vis-all="1">Mostrar todos</button><button type="button" class="small ghost" data-vis-all="0">Ocultar los vacíos</button></div>
-    <div class="section-title">📁 Proyecto</div>
-    <label>Prefijo de los códigos de tarea del proyecto «${esc(project()?.name)}» (p. ej. <code>GL</code> → GL-1, GL-2…; las tareas ya numeradas no cambian)</label><input name="prefix" value="${esc(project()?.prefix || "")}" placeholder="${esc(project()?.prefixDefault || "")}" maxlength="5" style="text-transform:uppercase;width:120px" />
-    <label>Revisión de las tareas de «${esc(project()?.name)}» (con revisión automática, lo que una tarea desbloquea no espera a que tú la mires)</label>
-    <select name="reviewPolicy">${[['', `Igual que la empresa (${REVIEW_LABEL[S.settings.reviewPolicy || 'manual']})`], ['manual', REVIEW_LABEL.manual], ['auto-qa', REVIEW_LABEL['auto-qa']], ['auto', REVIEW_LABEL.auto]].map(([v, l]) => `<option value="${v}" ${(project()?.reviewPolicy || '') === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
-    <label>🧑‍✈️ Coordinador del equipo de «${esc(project()?.name)}» (reglas fijas, sin IA: refuerza el rol que tiene trabajo listo y nadie libre, cambia a motor automático a quien se queda sin cuota y manda al banquillo a quien lleva rato sin nada que hacer)</label>
-    <select name="coordinator">${[['', 'Apagado'], ['suggest', 'Solo sugerir (en 🔔 Para ti, con «Aplicar»)'], ['auto', 'Automático (lo hace solo y lo apunta en 🔔 Para ti)']].map(([v, l]) => `<option value="${v}" ${(project()?.coordinator || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
-    <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="supervisorApproves" ${project()?.supervisorApproves ? 'checked' : ''}><span>🧑‍⚖️ Delegar en el Coordinador / Supervisor de «${esc(project()?.name)}» (FT-122): aprueba las tareas en revisión (también las de revisión obligatoria) si sus verificaciones pasan con la rama al día (y, con diffs de más de 30 líneas, un revisor barato lo confirma), y quita dependencias que sobran solo si la bloqueante falló. Sin marcar solo deja «✅ listo para aprobar» y avisa.</span></label>
-    ${(project()?.team || []).some((id) => S.agents.find((a) => a.id === id)?.role === 'coordinador') ? '' : `<div><button type="button" class="small" data-add-supervisor>🧑‍⚖️ Añadir coordinador</button></div>`}
-    ${S.tasks.filter((t) => t.projectId === projectId && t.depProposal).map((t) => `<p class="muted" style="margin:2px 0">🧑‍⚖️ ${esc(t.depProposal.why)} <button type="button" class="small" data-dep-proposal="${t.id}:1">Quitar</button> <button type="button" class="small" data-dep-proposal="${t.id}:0">Mantener</button></p>`).join('')}
-    <label><input type="checkbox" name="officePanels" ${S.settings.officePanels !== false ? 'checked' : ''} /> 🗂 Paneles de información en los márgenes de la planta 3D (FT-125)</label>
-    <label><input type="checkbox" name="officeAmbient" ${S.settings.officeAmbient !== false ? 'checked' : ''} /> 🚶 Personajes de ambiente en la planta (visitas, reuniones, limpieza; solo decorativos, FT-150)</label>
-    <label>🫧 Burbujas de estado en la oficina 3D (FT-123)</label>
-    <select name="officeBubbles">${[['todas', 'Todas visibles (icono + tarea + estado)'], ['al pasar', 'Solo al pasar el ratón / seleccionar']].map(([v, l]) => `<option value="${v}" ${(S.settings.officeBubbles || 'todas') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
-    <label>Revisión por defecto de la empresa (proyectos con «Igual que la empresa»)</label>
-    <select name="reviewPolicyAll">${['manual', 'auto-qa', 'auto'].map((v) => `<option value="${v}" ${(S.settings.reviewPolicy || 'manual') === v ? 'selected' : ''}>${esc(REVIEW_LABEL[v])}</option>`).join('')}</select>
-    <p class="muted" style="margin:2px 0 8px">Nunca se aprueban solas las tareas con «revisión obligatoria», las cortadas por tope o atasco, las que tocan ficheros sensibles ni las que el revisor devolvió dos veces: esas te esperan a ti.</p>
-    <label>Carpeta de flow-test del proyecto «${esc(project()?.name)}» (obligatoria; cámbiala si la renombraste o moviste)</label>
-    ${folderPick(false)}
-    <label>Repositorios del proyecto «${esc(project()?.name)}» (uno por línea: <code>clave = ruta @ roles</code>)</label>
-    <textarea name="repos" rows="3">${esc((project()?.repos || []).map((r) => `${r.key} = ${r.path}${r.roles?.length ? ' @ ' + r.roles.join(',') : ''}`).join('\n'))}</textarea>
-    <label>Importar un tablero de flow-test (notas = tarjetas; las columnas «En revisión»/«Hecho» conservan su estado, el resto entra en Backlog)</label>
-    <div style="display:flex;gap:8px"><select name="importFlow" id="import-flow"><option value="">— elegir flow —</option></select><button type="button" class="small" data-import-flow>Importar</button></div>
-    <hr style="border-color:var(--line);margin:16px 0" />
-    <button type="button" class="danger small" data-delete-project>Borrar el proyecto «${esc(project()?.name)}»</button>
     ${buttons()}`, async (f) => {
     safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0'); (SETTINGS_EMBED ? safeSet('ao:voice-wake', f.voiceWake ? '1' : '0') : wakeSet(!!f.voiceWake)); // en el panel de flow-test no se abre el micro: el iframe principal lo recoge por el evento `storage`
     refreshSttLocal();
@@ -3462,24 +3468,67 @@ const postParent = (msg) => { try { window.parent.postMessage(msg, location.orig
 function openSettingsEmbed() {
   document.body.classList.add('settings-embed');
   document.querySelector('[data-action="settings"]').click(); // abre el diálogo y lanza los refrescos de motores/tablero/STT de siempre
-  const form = $('#dialog form');
+  const dlg = $('#dialog'), form = $('#dialog form');
   const secs = [];
-  let cur = null;
+  let cur = null, bar = null;
   for (const el of [...form.children]) {
     if (el.matches('h3')) { el.remove(); continue; }
-    if (el.matches('.row')) break; // Guardar/Cancelar quedan fuera de las secciones
-    if (el.matches('.section-title')) { cur = document.createElement('section'); cur.className = 'set-sec'; cur.dataset.sec = String(secs.length); secs.push(el.textContent.trim()); el.before(cur); }
+    // Solo la fila final (Cancelar/Guardar) cierra las secciones: otras `.row` (p. ej. «Mostrar todos») son contenido.
+    if (el.matches('.row') && el.querySelector('[value="cancel"]')) { bar = el; break; }
+    if (el.matches('.section-title')) { cur = document.createElement('section'); cur.className = 'set-sec'; cur.dataset.sec = String(secs.length); secs.push({ title: el.textContent.trim(), group: el.dataset.group || '', hint: el.title || '' }); el.before(cur); }
     if (cur) cur.append(el);
   }
-  const show = (i) => document.querySelectorAll('.set-sec').forEach((x) => { x.hidden = x.dataset.sec !== String(i); });
+  const show = (i) => { document.querySelectorAll('.set-sec').forEach((x) => { x.hidden = x.dataset.sec !== String(i); }); dlg.scrollTop = 0; };
   show(0);
+  // Barra fija de guardar: «● N cambios sin guardar · Descartar · Guardar». Cuenta solo lo que tocas tú (los campos que se
+  // rellenan solos al cargar no cuentan): el valor de antes se apunta al primer foco del campo.
+  bar.classList.add('set-savebar');
+  bar.insertAdjacentHTML('afterbegin', '<span class="set-dirty muted">Sin cambios</span><button type="button" class="ghost small" data-set-discard hidden>Descartar</button>');
+  const IGNORE = new Set(['importFlow']);
+  const keyOf = (el) => `${el.name}\u0000${el.type === 'checkbox' || el.type === 'radio' ? el.value : ''}`;
+  const valOf = (el) => (el.type === 'checkbox' || el.type === 'radio' ? el.checked : el.value);
+  const before = new Map(); // key → { el, v }
+  const fieldOf = (t) => t?.name && !IGNORE.has(t.name) && t.form === form ? t : null;
+  form.addEventListener('focusin', (e) => { const el = fieldOf(e.target); if (el && !before.has(keyOf(el))) before.set(keyOf(el), { el, v: valOf(el) }); });
+  form.addEventListener('pointerdown', (e) => { const el = fieldOf(e.target.closest('label')?.querySelector('input') || e.target); if (el && !before.has(keyOf(el))) before.set(keyOf(el), { el, v: valOf(el) }); }, true);
+  const dirty = () => [...before.values()].filter(({ el, v }) => el.isConnected && valOf(el) !== v);
+  const refresh = () => {
+    const d = dirty();
+    bar.classList.toggle('is-dirty', d.length > 0);
+    bar.querySelector('.set-dirty').textContent = d.length ? `● ${d.length} cambio${d.length === 1 ? '' : 's'} sin guardar` : 'Sin cambios';
+    bar.querySelector('[data-set-discard]').hidden = !d.length;
+    postParent({ type: 'agentoffice:settingsDirty', count: d.length, sections: [...new Set(d.map(({ el }) => Number(el.closest('.set-sec')?.dataset.sec)).filter((n) => !Number.isNaN(n)))] });
+  };
+  form.addEventListener('input', refresh);
+  form.addEventListener('change', refresh);
+  bar.querySelector('[data-set-discard]').addEventListener('click', () => { for (const { el, v } of dirty()) { if (typeof v === 'boolean') el.checked = v; else el.value = v; el.dispatchEvent(new Event('change', { bubbles: true })); } refresh(); });
+  // Guardar sin cerrar el panel: el submit de siempre cierra el diálogo al acabar bien; aquí ese cierre marca «guardado».
+  const submit = form.onsubmit;
+  form.onsubmit = async (e) => {
+    if (e.submitter?.value === 'cancel') return;
+    e.preventDefault();
+    const close = dlg.close; let saved = false;
+    dlg.close = () => { saved = true; };
+    try { await submit.call(form, e); } finally { dlg.close = close; }
+    if (saved) { for (const [k, x] of before) before.set(k, { el: x.el, v: valOf(x.el) }); refresh(); toast('✓ Ajustes guardados'); }
+  };
+  // Un campo inválido en otra sección (oculta) bloquearía «Guardar» sin aviso: se salta a su sección para que el navegador lo marque.
+  form.addEventListener('invalid', (e) => {
+    const sec = e.target.closest('.set-sec');
+    if (!sec?.hidden) return;
+    show(Number(sec.dataset.sec));
+    postParent({ type: 'agentoffice:settingsSelect', id: Number(sec.dataset.sec) });
+    setTimeout(() => e.target.reportValidity(), 0);
+  }, true);
+  // Esc dentro del panel: si hay cambios, pregunta antes de cerrar.
+  dlg.addEventListener('cancel', (e) => { if (dirty().length && !confirm(`Hay ${dirty().length} cambio(s) sin guardar. ¿Cerrar y descartarlos?`)) e.preventDefault(); });
   window.addEventListener('message', (e) => {
     if (e.origin !== location.origin || e.source !== window.parent || e.data?.type !== 'flowtest:settingsSection') return;
     show(Number(e.data.id) || 0);
   });
   document.addEventListener('keydown', (e) => { if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); postParent({ type: 'agentoffice:settingsNav', dir: e.key === 'ArrowUp' ? -1 : 1 }); } });
-  $('#dialog').addEventListener('close', () => postParent({ type: 'agentoffice:settingsClosed' }));
-  postParent({ type: 'agentoffice:settingsSections', sections: secs.map((title, id) => ({ id, title })) });
+  dlg.addEventListener('close', () => postParent({ type: 'agentoffice:settingsClosed' }));
+  postParent({ type: 'agentoffice:settingsSections', sections: secs.map((x, id) => ({ id, ...x })) });
 }
 // Dentro de flow-test el botón «Ajustes» abre el panel de flow-test, no el diálogo de aquí — SOLO si ese flow-test lo
 // anuncia en su contexto (`features: ['settingsPanel']`, 5.19.3+); con uno más antiguo el diálogo propio sigue funcionando.

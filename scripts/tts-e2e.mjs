@@ -153,7 +153,7 @@ else {
     check('«Probar voz» reproduce una frase de muestra con la voz elegida', await waitFn(page, () => window.__ev.filter((e) => e === 'play').length >= 3) && reqs.length === before + 1 && reqs.at(-1).voice === 'es_ES-mls_9972-low' && /Hola/.test(reqs.at(-1).text), JSON.stringify(reqs.at(-1)));
     await page.click('[data-tts-test]');
     await page.screenshot({ path: path.join(tmp, 'ajustes.png') });
-    await page.$eval('dialog form .row button:not(.ghost)', (b) => b.click());
+    await page.$eval('dialog form > .row:last-child button:not(.ghost)', (b) => b.click()); // la fila final (Guardar), no otras .row con botones
     await waitFn(page, async () => (await (await fetch('/api/guide/tts')).json()).voice === 'es_ES-mls_9972-low');
     check('al guardar, la voz elegida queda en los ajustes', (await fetch(base + '/api/guide/tts').then((r) => r.json())).voice === 'es_ES-mls_9972-low');
     check('sin errores de consola', errors.length === 0, errors.join(' | '));

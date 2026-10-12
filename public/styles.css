@@ -338,6 +338,11 @@ dialog::backdrop { background: rgba(0,0,0,.55); }
 dialog h3 { margin: 0 0 var(--s-3); font-size: 20px; }
 dialog label { display: block; margin: var(--s-3) 0 var(--s-1); font-size: 12px; color: var(--muted); }
 dialog input, dialog select, dialog textarea { width: 100%; }
+dialog input[type="checkbox"], dialog input[type="radio"] { width: auto; flex: none; accent-color: var(--accent); }
+dialog label:has(> input[type="checkbox"]), dialog label:has(> input[type="radio"]) { color: var(--text); font-size: 13px; cursor: pointer; }
+dialog label > input[type="checkbox"], dialog label > input[type="radio"] { margin: 0 8px 0 0; vertical-align: -2px; }
+/* La fila final (Cancelar/Guardar) queda fija abajo en los diálogos largos */
+dialog > form > .row:last-child { position: sticky; bottom: calc(-1 * var(--s-5)); z-index: 2; background: var(--panel); margin-bottom: calc(-1 * var(--s-5)); padding: 12px 0 var(--s-5); border-top: 1px solid var(--line-soft); }
 dialog .row { display: flex; justify-content: flex-end; gap: var(--s-2); margin-top: var(--s-4); }
 .model-other { margin-top: 6px; }
 .model-pick { display: block; min-width: 0; }
@@ -558,9 +563,18 @@ table.summary button.small.on { background: color-mix(in srgb, var(--ok) 20%, tr
 body.settings-embed > *:not(dialog):not(#toasts) { display: none !important; }
 body.settings-embed dialog { position: fixed; inset: 0; margin: 0; width: 100%; max-width: none; height: 100%; max-height: none; border: 0; border-radius: 0; overflow: auto; box-shadow: none; }
 body.settings-embed dialog::backdrop { background: transparent; }
-body.settings-embed dialog .row .ghost { display: none; }
+body.settings-embed dialog .row .ghost[value="cancel"] { display: none; }
+body.settings-embed dialog { padding: 0 28px; }
+body.settings-embed dialog > form { min-height: 100%; display: flex; flex-direction: column; } /* la barra de guardar, siempre al pie aunque la sección sea corta */
+body.settings-embed .set-sec { padding: 22px 0 8px; max-width: 860px; }
+body.settings-embed .set-sec > .section-title:first-child { display: none; }
+/* Barra de guardar fija abajo, siempre visible */
+body.settings-embed dialog > form > .row.set-savebar { position: sticky; bottom: 0; z-index: 2; display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin: auto -28px 0; padding: 12px 28px; background: rgba(15,18,32,.96); border-top: 1px solid var(--line); backdrop-filter: blur(6px); }
+.set-savebar .set-dirty { margin-right: auto; font-size: 13px; }
+.set-savebar.is-dirty .set-dirty { color: #fcd34d; font-weight: 600; }
+.set-savebar:not(.is-dirty) button:not([type="button"]) { opacity: .55; }
 body.settings-embed .set-sec[hidden] { display: none; }
-body.settings-embed .set-sec > .section-title:first-child { display: none; } /* el título ya sale en el menú lateral */
+/* (el título de cada sección ya sale en el menú lateral) */
 
 /* FT-45 · cuota de las suscripciones */
 .quota-chip { font-size: 12px; padding: 7px 10px; white-space: nowrap; } .quota-chip.warn { color: #fbbf24; border-color: #fbbf2466; } .quota-chip.bad { color: #f87171; border-color: #f8717166; }
