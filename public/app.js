@@ -1764,7 +1764,7 @@ function compactCard(t) {
   if ((t.feedbackImages?.length || 0) + (t.files?.length || 0)) ind.push(`<span class="ind" title="Adjuntos">📎</span>`);
   const btn = (attr, text, cls = 'ghost', title = '') => `<button class="small ${cls}" data-${attr}="${t.id}"${title ? ` title="${esc(title)}"` : ''}>${text}</button>`;
   const main = [], more = [];
-  if (t.status === 'backlog') main.push(btn('ready', '→ Por hacer', ''));
+  if (t.status === 'backlog' && !t.splitInto) main.push(btn('ready', '→ Por hacer', '')); // una épica la hacen sus partes
   if (t.status === 'discarded') main.push(btn('park', '↩ Recuperar', 'ghost', 'Volver al Backlog'));
   if (t.status === 'failed') main.push(btn('reject', '▶ Reintentar', ''));
   if (t.status === 'todo' && t.quotaPaused) main.push(btn('resume-now', '▶ Reanudar ya', ''));
@@ -1781,10 +1781,11 @@ function compactCard(t) {
   const bar = `<div class="bar">${main.join('')}<button class="small ghost" data-more title="Más acciones" aria-label="Más acciones">⋯</button><div class="more-menu">${more.join('')}</div></div>`;
   const who = a ? `👤 ${planned ? 'previsto: ' : ''}${esc(a.name)} · ${esc(engineTag(a))}` : UNSTARTED.includes(t.status) ? '⚠ sin agente para este rol' : '';
   const live = t.status === 'doing' && fixed ? `● ${esc(fixed.activity)}` : '';
+  const epic = t.splitInto ? epicStrip(t) : '';
   return `<div class="card compact ${t.status}${conflict ? ' conflict' : ''}${t.archived ? ' archived' : ''}" tabindex="0" data-task="${t.id}" draggable="${MOVABLE.includes(t.status)}" style="--c:${role?.color}">
     <div class="card-head"><span class="chip" style="--c:${role?.color}" title="${esc(label)}">${esc(label.length > 5 ? label.slice(0, 4) + '.' : label)}</span><span class="task-id" title="Código de la tarea (rama ao/${t.code || t.id})">${esc(tcode(t))}</span>${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? `<span class="repo-chip" title="Repo">📁 ${esc(t.repo || '?')}</span>` : ''}<span class="inds">${ind.join('')}</span></div>
-    <div class="t" title="${esc(t.title)}">${esc(t.title)}</div>
-    <div class="who-line${live ? ' live' : ''}">${live || who}</div>
+    <div class="t" title="${esc(t.title)}">${t.splitInto ? '🧩 ' : ''}${esc(t.title)}</div>
+    ${epic || `<div class="who-line${live ? ' live' : ''}">${live || who}</div>`}
     ${bar}
   </div>`;
 }
@@ -1888,6 +1889,16 @@ const TSTATUS = { backlog: 'en backlog', todo: 'por hacer', doing: 'en curso', r
 const waitMin = (since) => Math.max(0, Math.floor((Date.now() - since) / 60000));
 const waitTxt = (since) => { const m = waitMin(since); return m < 1 ? 'un momento' : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`; };
 const taskLink = (x) => `<button class="linklike" data-open="${x.id}">${esc(x.code)}</button>`;
+// 🧩 Épica: tarea grande troceada por el PO (splitInto → plan; epicParts = sus partes). Se cierra sola al terminar todas.
+function epicStrip(t) {
+  if (!t.splitInto) return '';
+  const plan = S.tasks.find((x) => x.id === t.splitInto);
+  const parts = (t.epicParts || plan?.planChildren || []).map((id) => S.tasks.find((x) => x.id === id)).filter(Boolean);
+  const done = parts.filter((x) => ['done', 'discarded'].includes(x.status)).length;
+  const head = `🧩 Épica${plan ? ` · troceada por ${taskLink({ id: plan.id, code: plan.code || plan.id })}` : ''}${parts.length ? ` · <b>${done}/${parts.length}</b> partes hechas` : plan && plan.status !== 'done' ? ' · el PO la está troceando' : ''}`;
+  const list = parts.length ? `<div class="epic-parts">${parts.map((x) => `<span class="${['done', 'discarded'].includes(x.status) ? 'ok' : ''}">${['done', 'discarded'].includes(x.status) ? '✓' : '⏳'} ${taskLink(x)}</span>`).join(' ')}</div>` : '';
+  return `<div class="epic-strip" title="La hacen sus partes; esta se cierra sola cuando estén todas hechas. No la pases a «Por hacer»: un agente la haría entera otra vez.">${head}${list}</div>`;
+}
 function reviewStrip(t) {
   if (t.status === 'review') {
     const blocks = (t.blocks || []).length ? `<div class="rw-blocks">bloquea: ${t.blocks.map(taskLink).join(', ')}</div>` : '';
@@ -1943,7 +1954,7 @@ function card(t) {
   }
   if (t.status === 'failed') acts.push(`<button class="small" data-reject="${t.id}">↻ Reintentar</button>`);
   if (t.status !== 'doing') acts.unshift(`<button class="small ghost" data-edit="${t.id}" title="Editar título, descripción, rol, repo y dependencias">✎</button>`);
-  if (t.status === 'backlog') acts.push(`<button class="small" data-ready="${t.id}">→ Por hacer</button>`);
+  if (t.status === 'backlog' && !t.splitInto) acts.push(`<button class="small" data-ready="${t.id}">→ Por hacer</button>`); // una épica la hacen sus partes
   if (t.status === 'todo') acts.push(`<button class="small ghost" data-park="${t.id}">← Backlog</button>`);
   if (t.status === 'failed') acts.push(`<button class="small ghost" data-park="${t.id}" title="Devolver al Backlog">← Backlog</button>`);
   if (['backlog', 'todo', 'failed'].includes(t.status)) acts.push(`<button class="small ghost" data-discard="${t.id}" title="No se va a hacer: pasa a Descartada (se puede recuperar)">✕ Descartar</button>`);
@@ -1962,7 +1973,7 @@ function card(t) {
     ${t.status === 'todo' && t.quotaBlocked && t.activity ? `<div class="quota-hold">${esc(t.activity)}</div>` : ''}
     ${['todo', 'backlog'].includes(t.status) && S.costEstimates?.[t.role] != null ? `<div class="meta"><span class="cost-est" title="Estimación: mediana del coste de las últimas tareas hechas por el rol ${esc(t.role)}. Tope por intento: ${S.settings.maxTaskUsd || 3} $">≈ ${S.costEstimates[t.role].toFixed(2)} $</span></div>` : ''}
     ${t.quotaPaused && t.status === 'todo' ? `<div class="quota-hold">${esc(t.activity || '⏸ sin cuota')}${t.quotaPaused.resetsAt > Date.now() ? ` (en ${fmtLeft(t.quotaPaused.resetsAt)})` : ''} <button class="small ghost" data-resume-now="${t.id}" title="Ignorar la espera y relanzarla en el siguiente reparto">▶ Reanudar ya</button></div>` : ''}
-    ${reviewStrip(t)}
+    ${epicStrip(t)}${reviewStrip(t)}
     ${t.stuck && t.status === 'review' ? `<div class="quota-hold">⚠️ atascado: ${esc(t.stuck)}</div>` : ''}
     ${t.budgetHit && t.status === 'review' ? '<div class="quota-hold">⚠️ cortada por el tope de gasto: revisa y decide</div>' : ''}
     ${t.summary && t.status !== 'doing' ? `<div class="sum">${esc(t.summary)}</div>` : ''}
@@ -3094,7 +3105,7 @@ function openTask(id) {
   const acts = [];
   if (t.status === 'doing' && agent) acts.push(controls(agent));
   if (t.status !== 'doing') acts.push(`<button class="small ghost" data-edit="${t.id}">✎ Editar</button>`);
-  if (t.status === 'backlog') acts.push(`<button class="small" data-ready="${t.id}">→ Por hacer</button>`);
+  if (t.status === 'backlog' && !t.splitInto) acts.push(`<button class="small" data-ready="${t.id}">→ Por hacer</button>`); // una épica la hacen sus partes
   if (t.status === 'todo') acts.push(`<button class="small ghost" data-park="${t.id}">← Backlog</button>`);
   if (['backlog', 'todo', 'failed'].includes(t.status)) acts.push(`<button class="small ghost" data-discard="${t.id}">✕ Descartar</button>`);
   if (t.status === 'discarded') acts.push(`<button class="small ghost" data-park="${t.id}">↩ Recuperar</button>`);
@@ -3104,6 +3115,7 @@ function openTask(id) {
     <div class="task-head">${roleChip(t.role)} <b>${esc(tcode(t))}</b>${repoKey ? ` <span>📁 ${esc(repoKey)}</span>` : ''} <span class="st">${STATUS[t.status] || t.status}</span>${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}${t.costUsd ? ` <span>≈ ${t.costUsd.toFixed(2)} $</span>` : ''}${t.source?.url ? ` <a href="${esc(t.source.url)}" target="_blank" rel="noopener" style="color:#93c5fd">🔗 ${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} ${esc(t.source.id)}</a>` : ''}<div class="spacer"></div><span>${new Date(t.createdAt).toLocaleString()}</span></div>
     <div class="task-title" tabindex="-1" autofocus>${esc(t.title)}</div>
     <div class="task-who">${whoRow(t)}</div>
+    ${t.splitInto ? `<div class="task-sec">${epicStrip(t)}</div>` : ''}
     ${t.context ? `<div class="task-born">${bornFrom(t)}</div>` : ''}
     <div class="task-sec"><h4>${t.kind === 'plan' ? 'Encargo al PO' : 'Qué va a hacer'}</h4><div class="md">${md(t.description)}</div></div>
     ${att.length ? `<div class="task-sec"><h4>Adjuntos</h4><div class="task-attach">${att.map(attachHtml).join('')}</div></div>` : ''}
