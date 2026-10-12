@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // FT-187 · tareas asignadas al usuario humano (assignedAgentId = 'human'): ningún agente las coge, las mueves tú a mano
 // (review/done sin rechazo) y no cuentan como aviso (🔔, «por revisar», ReviewPending, pendientes del Guía, alertas del coordinador).
-// Una tarea de agente sigue funcionando igual. Servidor temporal + Chrome headless (la parte de interfaz se salta sin Chrome).
+// Una tarea de agente sigue funcionando igual. Servidor temporal (la interfaz la cubre human-ui-e2e).
 //   node scripts/human-task-ui-e2e.mjs
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -10,10 +10,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import puppeteer from 'puppeteer-core';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const chrome = [process.env.AO_CHROME, '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium', '/usr/bin/chromium-browser', '/snap/bin/chromium'].find((c) => c && fs.existsSync(c));
 let failed = 0;
 const check = (name, ok, detail = '') => { if (!ok) failed++; console.log(`  ${ok ? '✓' : '✗'} ${name}${!ok && detail ? ` — ${detail}` : ''}`); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -34,7 +32,7 @@ const raw = async (m, p, b) => { const r = await fetch(base + p, { method: m, he
 const call = async (...a) => (await raw(...a)).j;
 const task = async (id) => (await call('GET', '/api/state')).tasks.find((t) => t.id === id);
 
-let browser;
+
 try {
   for (let i = 0; i < 60; i++) { try { await fetch(base + '/api/state'); break; } catch { await sleep(100); } }
   const P = await call('POST', '/api/projects', { name: 'Humano', engine: 'demo' });
@@ -113,38 +111,5 @@ try {
   const alerts = coord.reviewPlan({ tasks, reviewPolicy: 'manual', now: Date.now(), reviewNudgeMin: 0 });
   check('el coordinador no alerta de bloqueo por una tarea del humano', !alerts.some((x) => String(x.taskId || x.code || x.why).includes('X-1') || x.taskId === 'h'), JSON.stringify(alerts).slice(0, 200));
 
-  // ── interfaz ──
-  if (!chrome) console.log('  · sin Chrome: me salto la parte de interfaz');
-  else {
-    await mk({ title: 'Mía en revisión', assignedAgentId: 'human', status: 'review' });
-    browser = await puppeteer.launch({ executablePath: chrome, headless: 'new', args: ['--no-sandbox', '--disable-gpu'] });
-    const page = await browser.newPage();
-    const errors = [];
-    page.on('pageerror', (e) => errors.push(e.message));
-    await page.setViewport({ width: 1600, height: 900 });
-    await page.goto(base + '/#tasks', { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => window.S !== undefined || document.querySelector('#project'), { timeout: 15000 });
-    await page.select('#project', P.id);
-    await page.waitForSelector('#board .col[data-col="review"] .card', { timeout: 15000 });
-    const ui = await page.evaluate(() => {
-      const rev = [...document.querySelectorAll('#board .col[data-col="review"] .card')];
-      const mineCard = rev.find((c) => c.textContent.includes('Mía en revisión'));
-      return {
-        badge: !!mineCard?.querySelector('.mine-badge'),
-        approve: !!mineCard?.querySelector('[data-approve],[data-reject]'),
-        done: !!mineCard?.querySelector('[data-mv][data-to="done"]'),
-        chipHidden: document.querySelector('#review-chip')?.hidden !== false,
-        tabReview: document.querySelector('#tab-tasks-review')?.textContent.trim() || '',
-        draggable: mineCard?.getAttribute('draggable'),
-      };
-    });
-    check('tarjeta: insignia «asignada a ti»', ui.badge, JSON.stringify(ui));
-    check('tarjeta: «✓ Hecha» manual y sin Aprobar/Devolver de agente', ui.done && !ui.approve, JSON.stringify(ui));
-    check('la tarjeta se puede arrastrar entre columnas', ui.draggable === 'true', String(ui.draggable));
-    check('🔔 oculta y sin «✋N» en la pestaña Tareas (no es aviso)', ui.chipHidden && ui.tabReview === '', JSON.stringify(ui));
-    await page.evaluate(() => document.querySelector('#board .col[data-col="review"] [data-mv][data-to="done"]')?.click());
-    await page.waitForFunction(() => document.querySelector('#board .col[data-col="done"] .mine-badge'), { timeout: 8000 }).then(() => check('botón «✓ Hecha» la mueve a Hecho', true), () => check('botón «✓ Hecha» la mueve a Hecho', false));
-    check('sin errores de página', errors.length === 0, errors.join(' | '));
-  }
 } catch (e) { console.error('ERROR', e); failed++; }
-finally { await browser?.close(); stop(); console.log(failed ? `✗ ${failed} fallos` : '✓ todo OK'); process.exit(failed ? 1 : 0); }
+finally { stop(); console.log(failed ? `✗ ${failed} fallos` : '✓ todo OK'); process.exit(failed ? 1 : 0); }

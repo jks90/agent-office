@@ -787,12 +787,14 @@ En la planta, cada agente lleva siempre una burbuja compacta: icono + código de
 
 Ajustes → «Burbujas de estado» (`settings.officeBubbles`, `POST /api/settings`): `'todas'` (por defecto) o `'al pasar'`. Prueba: `node scripts/bubbles-e2e.mjs [captura.png]`.
 
-## 🙋 Tareas asignadas al humano (FT-189 · FT-187)
+## 🙋 Tareas asignadas al humano (FT-189)
+**UI (FT-191):** «👤 Yo (humano)» en «Quién la hace» al crear y editar una tarea y en «Asignar a…» del modal; insignia morada «👤 asignada a ti» (sin «sin agente para el rol»); se arrastran a cualquier columna, incluidas Revisión y Hecho; botón «👤 Mías» en el tablero para filtrarlas; no cuentan en el contador de «Para ti», la 🔔, el resumen de «por revisar» ni el toast de revisión (misma regla que el servidor). Prueba: `node scripts/human-ui-e2e.mjs`.
+
 **No son avisos (FT-190):** una tarea `human` en revisión no emite `ReviewPending`, `review-alert`/`review-now`, ni mensajes de Telegram, y no entra en el bloque «pendientes de revisión» del Guía.
 
 `assignedAgentId: "human"` (valor reservado, sin campo nuevo ni migración) marca una tarea que hace el usuario. Se admite en `POST /api/tasks`, `PATCH /api/tasks/:id` y `POST /api/tasks/:id/assign` sin buscar agente; `__auto` (o vacío) o un id de agente la reasigna y borra `human`. Ningún agente la coge: el planificador, `plannedAgentFor`/«sin agente para el rol», el coordinador (`plan`) y el reinicio del servidor (no la devuelve de «En curso» a «Por hacer») la ignoran. El usuario puede moverla a mano con `PATCH status` entre backlog/todo/doing/review/done/discarded. Prueba: `node scripts/human-task-e2e.mjs`.
 
-**Interfaz (FT-187):** «👤 Yo (humano)» en Nueva tarea, en el selector «Asignar a…» de la tarjeta y en Editar (donde también se reasigna a un agente «por rol»); insignia `👤 asignada a ti` (tarjetas y listado); botones `→ Revisión`, `✓ Hecha`, `↩ Por hacer/Reabrir` y arrastre entre columnas (salvo «En curso»/«Fallida»). Las tuyas no cuentan en 🔔, «✋N», «por revisar», KPI/resumen ni en el toast de nueva revisión. Prueba: `node scripts/human-task-ui-e2e.mjs` (API + Chrome).
+**Resumen y cómo crearla (FT-192):** asignar una tarea a «👤 Yo (humano)» (`human`) significa que la haces tú: ningún agente la coge (tampoco tras reiniciar el servidor), la mueves a mano a Revisión o Hecho (arrastrando o con `PATCH status`) y no cuenta como aviso (ni contador, ni lista de «Para ti», ni 🔔, ni Telegram, ni pendientes de revisión del Guía). Por API se crea con `POST /api/tasks` y `{"projectId":"<id>","title":"…","assignedAgentId":"human"}`; se pasa al humano o se devuelve al reparto por rol con `PATCH /api/tasks/:id` y `{"assignedAgentId":"human"}` o `{"assignedAgentId":"__auto"}`.
 
 ## 🚀 Rol «release» con lista blanca estricta (FT-171)
 
