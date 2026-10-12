@@ -356,7 +356,7 @@ export default {
       "floorSize": [9.2, 3.9],
       "slabHeight": 0.14,
       "floorHeight": 3.49,
-      "frames": {"floor": "parent=floorGroups[i]; surfaceY=0.19", "groundFloor": "parent=floorGroups[0], only first project, never guide; surfaceY=0.19", "roof": "parent=structure; surfaceY=floorCount*3.49+0.14", "exterior": "parent=structure; surfaceY=-0.01"},
+      "frames": {"floor": "parent=floorGroups[i]; surfaceY=0.19 (top of inner floor slab; placeIn() bases at SLAB_H=0.14, so add +0.05 for decor)", "groundFloor": "parent=floorGroups[0], only first project, never guide; surfaceY=0.19", "roof": "parent=structure; surfaceY=floorCount*3.49+0.14", "exterior": "parent=structure; surfaceY=-0.01"},
       "normalization": "New GLB: center X/Z, base Y=0, normalize to size, then apply scale, rotation and placement. Recipes: centered local parts; cylinder size is diameter/height/diameter; optional rotation=[rx,ry,rz]. Existing: preserve native geometry, transform and support; size is indicative only."
     },
     "selection": {
