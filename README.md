@@ -863,6 +863,11 @@ Pestaña propia en la barra lateral (antes estaban al final de Agentes), con sub
 - Fix: editar un rol sin haber abierto antes la lista de skills le quitaba sus skills al guardar.
 - Pruebas: `tests/toolkit.test.mjs`, `scripts/tools-catalog-e2e.mjs`.
 
+**El equipo mejora solo, con tu visto bueno** (`server/proposals.js`): al final de cada tarea el agente puede añadir
+- «**NEGOCIO** `<skill>`:» + 1–2 viñetas → cómo se aplica esa skill genérica en ESTE proyecto. Al aprobarla se añade a `<carpeta del proyecto>/_skills/<skill>.md` (se ve y edita en flow-test) y desde entonces va en el prompt junto a la skill («En este proyecto: …», ≤1 500 caracteres).
+- «**SCRIPT NUEVO**: scripts/x — qué hace» → un script reutilizable que dejó en el repo. Al aprobarlo (cuando ya está en la rama base; antes, 409 «apruébalo cuando se fusione») entra en el catálogo y se asigna a su rol.
+Las propuestas salen arriba en 🧰 Herramientas (📥, con contador en la barra lateral): `POST /api/proposals/:id/accept|reject`. Pruebas: `tests/proposals.test.mjs`.
+
 ### Plantilla como organigrama
 
 Agentes ▸ Plantilla del proyecto se pinta como un organigrama (`renderTeam` en `public/app.js`, estilos `.org*`): **👤 Tú** (tareas por revisar y asignadas a ti) → **Coordinador** (`kind: supervisor`) → **PO** (`planner`) y **Release** (`release`) → **una columna por rol** (dev, luego QA, luego docs y el resto) colgando del primer PO; sin PO cuelgan del nivel de encima y sin Coordi el PO cuelga de ti. Tarjetas compactas (avatar, nombre, estado y tarea en curso); un clic despliega la tarjeta completa de siempre (Registro, Editar, Publicar, Banquillo) y ▴ la pliega. Si no cabe, scroll horizontal dentro de la plantilla. Prueba: `node scripts/org-chart-e2e.mjs`.

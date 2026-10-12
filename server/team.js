@@ -34,7 +34,8 @@ import * as compact from './compact.js';
 import * as stuck from './stuck.js';
 import * as review from './review.js'; // FT-56
 import * as toolcat from './toolcatalog.js';
-import * as toolkit from './toolkit.js'; // 🧰 skills + MCP + scripts del agente: prompt «úsalas primero» y rastreo de uso
+import * as toolkit from './toolkit.js';
+import * as proposals from './proposals.js'; // 🧰 notas de negocio por skill y scripts nuevos que proponen los agentes // 🧰 skills + MCP + scripts del agente: prompt «úsalas primero» y rastreo de uso
 import * as coord from './coordinator.js';
 import * as sup from './supervisor.js'; // FT-122
 import * as ladder from './model-ladder.js';
@@ -1607,6 +1608,7 @@ function buildPrompt(p, agent, t, kit = null) {
     economyBlock(t.codeIndexOn),
     ...(ponytail.enabled(get().settings, agent, t.role) ? [ponytail.BLOCK] : []), // FT-86: solo con la opción activa (apagada = prompt idéntico)
     get().settings.agentMemory !== false ? memory.PROMPT_ASK : '',
+    t.kind !== 'plan' ? proposals.PROMPT_ASK : '', // 🧰 notas de negocio y scripts nuevos (los apruebas en Herramientas)
     'Al acabar, responde con un resumen breve: qué cambiaste y cómo lo probaste.',
     '',
     '════════ TAREA (lo anterior es común a todas las tareas) ════════',
@@ -1742,6 +1744,7 @@ async function runTask(p, agent, t) {
     let res;
     for (let seg = 0; ; seg++) {
     const kit = toolkit.kitOf(agent, role, { nativeNames: nativeSkills }); // 🧰 lo que lleva en este intento
+    kit.business = proposals.notesOf(projectDir(p), kit.skills.map((x) => x.name)); // «cómo se aplica aquí» (<carpeta>/_skills/<skill>.md)
     const kitUse = toolkit.tracker(kit);
     if (kit.skills.some((x) => !x.native)) log(agent.id, `🧩 Skills por ruta: ${kit.skills.filter((x) => !x.native).map((x) => x.name).join(', ')}`);
     const prompt = buildPrompt(p, agent, t, kit) + (engineId === 'codex' && t.kind !== 'plan' && role.kind !== 'docs' ? CODEX_VISION : '');
@@ -1893,6 +1896,11 @@ async function runTask(p, agent, t) {
       const h = memory.harvest(p.id, agent.id, t.summary, t.code || t.id);
       t.summary = h.summary;
       if (h.added) log(agent.id, `🧠 ${h.added} lección(es) a la memoria`);
+    }
+    if (t.kind !== 'plan') { // 🧰 «NEGOCIO <skill>:» y «SCRIPT NUEVO:» → propuestas para aprobar en Herramientas
+      const pr = proposals.harvest({ project: p, task: t, agent, summary: t.summary, skillNames: toolkit.skillsOf(agent, role).map((x) => x.name), repoKey: repo?.key || null });
+      t.summary = pr.summary;
+      if (pr.added.length) log(agent.id, `📥 ${pr.added.length} propuesta(s) para 🧰 Herramientas`);
     }
 
     if (t.kind === 'plan') {

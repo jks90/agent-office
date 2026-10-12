@@ -1136,6 +1136,7 @@ function render() {
   if (cmemPid !== projectId && !$('#view-agents').hidden) renderClaudeMemory();
   renderRoles();
   renderBoard();
+  renderToolProposals(); // 🧰 propuestas de los agentes (y el contador de la barra lateral)
   renderSummary();
   renderInbox();
   renderBrowser();
@@ -1439,12 +1440,35 @@ document.addEventListener('click', (e) => {
   const [kind, name, roleId] = b.dataset.roleToolDel.split(':');
   if (confirm(`¿Quitar «${name}» del rol ${S.roles[roleId]?.label || roleId}? Sus agentes dejarán de tenerla.`)) setRoleTool(kind, name, roleId, false).catch(() => {});
 });
+// 🧰 Propuestas de los agentes: «NEGOCIO <skill>» (nota de cómo se aplica en el proyecto) y «SCRIPT NUEVO» (al catálogo y al rol).
+function renderToolProposals() {
+  const list = S.proposals || [];
+  const badge = $('#tab-tools-warn');
+  if (badge) badge.textContent = (list.length + (toolsUsage?.warnings?.length || 0)) || '';
+  const box = $('#tools-proposals');
+  if (!box) return;
+  const pname = (id) => S.projects.find((p) => p.id === id)?.name || '¿?';
+  box.innerHTML = list.length ? `<div class="tools-props"><b>📥 ${list.length} propuesta${list.length === 1 ? '' : 's'} de los agentes</b> <span class="muted">— lo que aprendieron o se fabricaron; tú decides si se queda</span>
+    ${list.map((x) => `<div class="prop">
+      <div class="prop-head">${x.kind === 'business' ? `🧩 <b>Cómo se aplica «${esc(x.skill)}»</b> en ${esc(pname(x.projectId))}` : `📜 <b>Script nuevo</b> <code>${esc(x.path)}</code> en ${esc(pname(x.projectId))}${x.repoKey ? ` · repo ${esc(x.repoKey)}` : ''}`} <span class="muted">· ${esc(x.code)} · ${esc(x.agentName)}</span></div>
+      <div class="prop-body">${x.kind === 'business' ? x.text.split('\n').map((l) => `• ${esc(l)}`).join('<br>') : esc(x.description)}</div>
+      <div class="prop-acts"><button class="small" data-prop-accept="${x.id}">${x.kind === 'business' ? `✓ Añadir a _skills/${esc(x.skill)}.md` : `✓ Al catálogo${S.roles[x.role]?.source === 'catálogo' ? ` y al rol ${esc(S.roles[x.role].label || x.role)}` : ''}`}</button><button class="small ghost" data-prop-reject="${x.id}">Descartar</button></div>
+    </div>`).join('')}</div>` : '';
+}
+document.addEventListener('click', async (e) => {
+  const a = e.target.closest?.('[data-prop-accept]'), r = e.target.closest?.('[data-prop-reject]');
+  if (!a && !r) return;
+  try {
+    if (a) { const res = await api('POST', `/api/proposals/${a.dataset.propAccept}/accept`); toast(res.file ? `Nota añadida: ${short(res.file)}` : `Script «${res.script}» en el catálogo${res.toRole ? ` y en el rol ${res.toRole}` : ''}`); renderTools(true); }
+    else { await api('POST', `/api/proposals/${r.dataset.propReject}/reject`); toast('Propuesta descartada'); }
+  } catch { /* el toast ya avisó */ }
+});
 // 🧰 Pestaña Herramientas: subpestañas (Skills · MCP · Scripts), avisos y cifras de uso.
 const TOOL_KIND_LABEL = { skills: 'skill', mcps: 'MCP', scripts: 'script', rol: 'rol' };
 async function renderToolsView(reload = false) {
   try { toolsUsage = await api('GET', '/api/tools/usage'); } catch { toolsUsage = null; }
   const w = toolsUsage?.warnings || [];
-  const badge = $('#tab-tools-warn'); if (badge) badge.textContent = w.length ? String(w.length) : '';
+  renderToolProposals();
   const box = $('#tools-warnings');
   if (box) box.innerHTML = w.length ? `<div class="tools-warn"><b>⚠ ${w.length} cosa${w.length === 1 ? '' : 's'} que no le llega${w.length === 1 ? '' : 'n'} a nadie</b><ul>${w.map((x) => `<li>${esc(x.owner)} · ${esc(TOOL_KIND_LABEL[x.kind] || x.kind)} <b>${esc(x.name)}</b>: ${esc(x.why)}</li>`).join('')}</ul></div>` : '';
   const tab = safeGet('ao:toolsTab') || 'skills';

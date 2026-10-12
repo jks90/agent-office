@@ -832,3 +832,7 @@ dialog.rlog pre { max-height: 55vh; white-space: pre-wrap; word-break: break-wor
 .tool-card .tc-users .tool-assign { width: auto; min-width: 150px; padding: 3px 8px; font-size: 12px; }
 .tool-card .tc-foot { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 .tool-card .tc-where { font-size: 11px; }
+.tools-props { border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); background: rgba(252,211,77,.05); border-radius: var(--r-lg); padding: 10px 14px; margin: 0 0 12px; font-size: 13px; }
+.tools-props .prop { border-top: 1px solid var(--line-soft); padding: 8px 0 4px; margin-top: 8px; }
+.tools-props .prop-body { color: var(--muted); margin: 4px 0 6px; line-height: 1.45; }
+.tools-props .prop-acts { display: flex; gap: 6px; }

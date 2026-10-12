@@ -24,6 +24,7 @@ import { draftTask } from './ai-draft.js';
 import crypto2 from 'node:crypto';
 import { saveRole, deleteRole, setRoleTools } from './roles.js';
 import * as toolkit from './toolkit.js'; // 🧰 uso de herramientas y avisos
+import * as proposals from './proposals.js';
 import { ladders, normalizeLadder } from './model-ladder.js'; // FT-60
 import * as activity from './events.js';
 import * as browserPanel from './browser/panel.js'; // FT-117
@@ -245,6 +246,8 @@ const routes = [
   ['DELETE', /^\/api\/tools\/scripts\/([\w.-]+)$/, ([n]) => toolcat.removeScript(n)],
   ['DELETE', /^\/api\/skills\/([\w-]+)$/, ([name]) => skills.uncentralize(name)],
   ['GET', /^\/api\/tools\/usage$/, () => { const st = store.get(); return { usage: toolkit.usage(st.tasks), warnings: toolkit.warnings({ roles: allRoles(), agents: st.agents }) }; }], // 🧰
+  ['POST', /^\/api\/proposals\/(\w+)\/accept$/, ([id]) => proposals.accept(id, { projectDir: team.projectDir, repoOf: (p, key) => (p.repos || []).find((r) => r.key === key) || (p.repos || [])[0] || null, addScript: toolcat.addScript, roleOf: (id2) => allRoles()[id2], setRoleTools })], // 🧰
+  ['POST', /^\/api\/proposals\/(\w+)\/reject$/, ([id]) => proposals.reject(id)], // 🧰
   ['POST', /^\/api\/roles\/([\w-]+)\/tools$/, ([id], b) => { const r = setRoleTools(id, b.kind, b.names); store.changed(); return r; }], // 🧰
   ['POST', /^\/api\/roles$/, (_, b) => { const r = saveRole(b); store.changed(); return r; }],
   ['DELETE', /^\/api\/roles\/([\w-]+)$/, ([id]) => { deleteRole(id); store.changed(); }],

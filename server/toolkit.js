@@ -31,7 +31,8 @@ export const kitDirs = (kit, cwd) => uniq([...kit.skills.filter((s) => !s.native
   .filter((d) => !(cwd && d.startsWith(cwd + path.sep)));
 
 // Bloque del prompt (parte ESTABLE: mismo texto para el mismo agente → aprovecha la caché).
-export function promptBlock(kit, { business = {} } = {}) {
+export function promptBlock(kit) {
+  const business = kit.business || {}; // notas «cómo se aplica aquí» por skill (proposals.notesOf)
   if (!kit.skills.length && !kit.mcps.length && !kit.scripts.length) return '';
   const out = ['', '## 🧰 Tus herramientas — úsalas PRIMERO',
     'Antes de improvisar comandos, leer código a ciegas o escribir algo desde cero, mira si una de estas herramientas lo hace: son más baratas, ya están probadas y son lo que el equipo espera que uses. Si una encaja, úsala; si no encaja ninguna, sigue como siempre.'];
@@ -40,7 +41,7 @@ export function promptBlock(kit, { business = {} } = {}) {
     for (const s of kit.skills) {
       const how = s.native ? `herramienta Skill «${s.name}»` : `lee \`${path.join(s.dir, 'SKILL.md')}\` y síguela`;
       out.push(`- **${s.name}** — ${s.description || 'sin descripción'} → ${how}`);
-      if (business[s.name]) out.push(`  - En este proyecto: ${business[s.name]}`);
+      if (business[s.name]) out.push(`  En este proyecto:\n${business[s.name].split('\n').map((l) => `    ${l}`).join('\n')}`);
     }
   }
   if (kit.mcps.length) {
