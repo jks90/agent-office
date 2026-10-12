@@ -239,6 +239,10 @@ async function ensureFolder(f, create) {
   const counts = folderCounts(await readWorkspace());
   if (counts.has(f)) return counts.get(f);
   if (!create) throw fail(400, `No existe la carpeta «${f}» en el workspace de flow-test`);
+  // Con el workspace en este disco se crea aquí, con el usuario de AgentOffice: flow-test en Docker la crearía como root y los
+  // agentes de un proyecto sin repo (que trabajan en la carpeta) no podrían escribir. Si no se ve el disco, se le pide a flow-test.
+  const hostDir = expand(get().settings.workspaceHostDir);
+  if (hostDir && fs.existsSync(hostDir)) { fs.mkdirSync(path.join(hostDir, f), { recursive: true }); return 0; }
   let r;
   try { r = await fetch(`${flowTestUrl()}/workspace/folder`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: f }), signal: AbortSignal.timeout(8000) }); } catch (e) { throw fail(502, `flow-test no responde: ${e.message}`); }
   if (!r.ok && r.status !== 409) throw fail(502, `flow-test no creó la carpeta «${f}»: ${(await r.json().catch(() => ({}))).error || 'HTTP ' + r.status}`);

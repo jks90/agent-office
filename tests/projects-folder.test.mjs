@@ -72,10 +72,16 @@ test('una carpeta = un proyecto (también la raíz)', async () => {
   assert.equal(team.projectDir(r), hub); // sin repo, los agentes trabajan en la raíz del workspace
 });
 
-test('createFolder la crea en flow-test', async () => {
+test('createFolder: en el disco del workspace si se ve (con el usuario de AO); si no, se la pide a flow-test', async () => {
   const p = await team.createProject({ name: 'Nueva', folder: 'nueva', createFolder: true, coordinator: false });
-  assert.deepEqual(created, ['nueva']);
+  assert.ok(fs.statSync(path.join(hub, 'nueva')).isDirectory());
+  assert.equal(fs.statSync(path.join(hub, 'nueva')).uid, process.getuid());
+  assert.deepEqual(created, []);
   assert.equal(p.flows, 0);
+  ws.dirs.push('nueva'); // flow-test la vería en su montaje
+  get().settings.workspaceHostDir = path.join(hub, 'no-montado');
+  try { await team.createProject({ name: 'Remota', folder: 'remota', createFolder: true, coordinator: false }); } finally { get().settings.workspaceHostDir = hub; }
+  assert.deepEqual(created, ['remota']);
 });
 
 test('re-vincular: solo a carpetas libres; nunca quitar la carpeta', async () => {
@@ -85,6 +91,7 @@ test('re-vincular: solo a carpetas libres; nunca quitar la carpeta', async () =>
   await team.updateProject(p.id, { folder: 'nueva' }); // la suya: sin cambios
   await team.updateProject(p.id, { folder: 'otra', createFolder: true });
   assert.equal(p.folder, 'otra');
+  ws.dirs.push('otra'); // creada en el disco del workspace: flow-test la ve por su montaje
 });
 
 test('checkFolders no crea proyectos: marca huérfanos y refresca flows', async () => {
