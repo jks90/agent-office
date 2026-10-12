@@ -852,6 +852,10 @@ Desde FT-122 todo proyecto (también los descubiertos en el workspace) lleva a C
 
 **FT-163:** `computeFloors()` (`public/office3d.js`) usaba otro criterio que `teamProjects()` y dibujaba una planta para proyectos que solo tenían a Coordi (p. ej. «Vacío»). Ahora aplica el mismo: una planta exige al menos un agente que no sea `supervisor`. `scripts/building-e2e.mjs` vuelve a estar en verde (Beta también se vacía de Coordi de serie en el fixture y la navegación admite 120 s con la máquina cargada).
 
+### Plantilla como organigrama
+
+Agentes ▸ Plantilla del proyecto se pinta como un organigrama (`renderTeam` en `public/app.js`, estilos `.org*`): **👤 Tú** (tareas por revisar y asignadas a ti) → **Coordinador** (`kind: supervisor`) → **PO** (`planner`) y **Release** (`release`) → **una columna por rol** (dev, luego QA, luego docs y el resto) colgando del primer PO; sin PO cuelgan del nivel de encima y sin Coordi el PO cuelga de ti. Tarjetas compactas (avatar, nombre, estado y tarea en curso); un clic despliega la tarjeta completa de siempre (Registro, Editar, Publicar, Banquillo) y ▴ la pliega. Si no cabe, scroll horizontal dentro de la plantilla. Prueba: `node scripts/org-chart-e2e.mjs`.
+
 ### Proyectos manuales con carpeta de flow-test
 
 Los proyectos **ya no se crean solos** por cada carpeta de `flows/`: se dan de alta a mano (＋ junto al desplegable, `POST /api/projects` o la tool del Guía `project.create`) y cada uno se vincula **obligatoriamente** a una carpeta de primer nivel del workspace de flow-test, o a la raíz (`folder: "default"`, los flows sueltos). **Una carpeta = un proyecto** (409 si ya es de otro).

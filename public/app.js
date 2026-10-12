@@ -1166,22 +1166,24 @@ function render() {
   publishContext();
 }
 
-function renderTeam() {
-  const ts = tasks();
-  $('#team-summary').textContent = `${team().length} agentes · ${team().filter((a) => a.status === 'working').length} trabajando`;
-  $('#team').innerHTML = team().map((a) => {
-    const task = ts.find((t) => t.id === a.taskId);
-    const done = ts.filter((t) => t.agentId === a.id && ['done', 'review'].includes(t.status)).length;
-    const cost = ts.filter((t) => t.agentId === a.id).reduce((n, t) => n + (t.costUsd || 0), 0);
-    const r = S.roles[a.role];
-    return `
-    <div class="member ${a.id === drawerAgent ? 'sel' : ''}" style="--c:${r?.color || '#999'}">
+// Plantilla como organigrama: 👤 Tú → Coordinador (supervisor) → PO y Release → columnas por rol (dev, QA, docs…).
+// Tarjetas compactas (avatar, nombre, estado y tarea en curso); un clic despliega la tarjeta completa de siempre.
+const orgOpen = new Set();
+const ORG_KIND_ORDER = { dev: 0, qa: 1, docs: 2 };
+function memberCard(a, ts) {
+  const task = ts.find((t) => t.id === a.taskId);
+  const done = ts.filter((t) => t.agentId === a.id && ['done', 'review'].includes(t.status)).length;
+  const cost = ts.filter((t) => t.agentId === a.id).reduce((n, t) => n + (t.costUsd || 0), 0);
+  const r = S.roles[a.role];
+  return `
+    <div class="member org-card open ${a.id === drawerAgent ? 'sel' : ''}" style="--c:${r?.color || '#999'}">
       <div class="top" data-agent="${a.id}">
         <span class="avatar">${esc(a.name).charAt(0).toUpperCase()}</span>
         <div class="member-main"><b>${esc(a.name)}</b><div class="act">${busy(a) ? esc(a.activity) : 'En la zona de descanso ☕'}</div></div>
         <span class="eng">${esc(a.engine)}${a.engine === 'auto' && a.activeEngine ? ' → ' + esc(a.activeEngine) : ''}${a.model ? ' · ' + esc(a.model) : ''}</span>
+        <button type="button" class="org-fold" data-org-toggle="${a.id}" title="Plegar" aria-label="Plegar la tarjeta de ${esc(a.name)}">▴</button>
       </div>
-      <div class="member-foot"><button type="button" class="chip-link" data-goto-role="${esc(a.role)}" title="Ver el rol ${esc(r?.label || a.role)}">${roleChip(a.role)}</button><span class="state ${a.status}"><span class="dot ${a.status}"></span>${a.status === 'paused' ? 'En pausa' : a.status === 'working' ? 'Trabajando' : 'Descansando'}</span></div>
+      <div class="member-foot"><button type="button" class="chip-link" data-goto-role="${esc(a.role)}" title="Ver el rol ${esc(r?.label || a.role)}">${roleChip(a.role)}</button><span class="state ${a.status}"><span class="dot ${a.status}"></span>${stateLabel(a)}</span></div>
       ${task ? `<div class="task">▶ ${esc(tcode(task))} ${esc(task.title)}</div>` : ''}
       <div class="meta"><span>${done} entregadas</span>${cost ? `<span>≈ ${cost.toFixed(2)} $</span>` : ''}${r?.custom ? `<span title="${esc(r.description || '')}">rol de fichero · ${esc(r.source)}</span>` : ''}</div>
       ${projectsOf(a.id).length ? `<div class="meta"><span>también en: ${projectsOf(a.id).map(esc).join(', ')}</span></div>` : ''}
@@ -1193,9 +1195,51 @@ function renderTeam() {
         <button class="small ghost" data-bench="${a.id}" title="Sale de la plantilla de este proyecto; sigue en la empresa">↓ Al banquillo</button>
       </div>
     </div>`;
-  }).join('') || '<p class="empty">Sin plantilla. Ficha agentes del banquillo o contrata a alguien nuevo.</p>';
+}
+const stateLabel = (a) => a.status === 'paused' ? 'En pausa' : a.status === 'working' ? 'Trabajando' : 'Descansando';
+function orgCard(a, ts, { showRole = true } = {}) {
+  if (orgOpen.has(a.id)) return memberCard(a, ts);
+  const task = ts.find((t) => t.id === a.taskId);
+  const r = S.roles[a.role];
+  return `<button type="button" class="member org-card ${a.id === drawerAgent ? 'sel' : ''}" style="--c:${r?.color || '#999'}" data-org-toggle="${a.id}" title="${esc(a.name)} · ${esc(r?.label || a.role)} — clic para ver el detalle">
+      <span class="avatar">${esc(a.name).charAt(0).toUpperCase()}</span>
+      <span class="org-main"><b>${esc(a.name)}</b>${showRole ? `<span class="org-role">${esc(r?.label || a.role)}</span>` : ''}${task ? `<span class="org-task">▶ ${esc(tcode(task))}</span>` : ''}</span>
+      <span class="dot ${a.status}" title="${stateLabel(a)}"></span>
+    </button>`;
+}
+function renderTeam() {
+  const ts = tasks();
+  const members = team();
+  $('#team-summary').textContent = `${members.length} agentes · ${members.filter((a) => a.status === 'working').length} trabajando`;
+  if (!members.length) { $('#team').innerHTML = '<p class="empty">Sin plantilla. Ficha agentes del banquillo o contrata a alguien nuevo.</p>'; renderBench(); return; }
+  const kind = (a) => S.roles[a.role]?.kind || 'dev';
+  const byName = (x, y) => x.name.localeCompare(y.name);
+  const sups = members.filter((a) => kind(a) === 'supervisor').sort(byName);
+  const pos = members.filter((a) => kind(a) === 'planner').sort(byName);
+  const rels = members.filter((a) => kind(a) === 'release').sort(byName);
+  const rest = members.filter((a) => !['supervisor', 'planner', 'release'].includes(kind(a)));
+  // Columnas por rol: dev, luego QA, luego docs (y lo demás); dentro, por nombre.
+  const cols = [...new Set(rest.map((a) => a.role))].sort((x, y) => ((ORG_KIND_ORDER[S.roles[x]?.kind] ?? 3) - (ORG_KIND_ORDER[S.roles[y]?.kind] ?? 3)) || String(S.roles[x]?.label || x).localeCompare(String(S.roles[y]?.label || y)));
+  const li = (inner, kids = []) => `<li>${inner}${kids.length ? `<ul>${kids.join('')}</ul>` : ''}</li>`;
+  const colNodes = cols.map((role) => { const list = rest.filter((a) => a.role === role).sort(byName); const r = S.roles[role]; return li(`<div class="org-col" style="--c:${r?.color || '#999'}"><div class="org-col-head"><button type="button" class="chip-link" data-goto-role="${esc(role)}" title="Ver el rol">${roleChip(role)}</button><span class="muted">${list.length}</span></div>${list.map((a) => orgCard(a, ts, { showRole: false })).join('')}</div>`); });
+  // El nivel de dev/QA cuelga del primer PO; sin PO, del nivel de encima.
+  const lvl2 = [...pos.map((a, i) => li(orgCard(a, ts), i === 0 ? colNodes : [])), ...rels.map((a) => li(orgCard(a, ts)))];
+  const under2 = pos.length ? lvl2 : [...lvl2, ...colNodes];
+  const lvl1 = sups.length ? sups.map((a, i) => li(orgCard(a, ts), i === 0 ? under2 : [])) : under2;
+  const pending = ts.filter((t) => t.status === 'review' && !isHuman(t)).length;
+  const mine = ts.filter((t) => isHuman(t) && !['done', 'discarded'].includes(t.status)).length;
+  const me = `<div class="org-me" title="Tú apruebas las revisiones y haces las tareas asignadas a ti"><span>👤 Tú</span><span class="muted">${pending} por revisar · ${mine} asignada${mine === 1 ? '' : 's'} a ti</span></div>`;
+  $('#team').innerHTML = `<div class="org"><ul>${li(me, lvl1)}</ul></div>`;
   renderBench();
 }
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-org-toggle]');
+  if (!b || e.target.closest('[data-goto-role]')) return;
+  e.stopPropagation();
+  const id = b.dataset.orgToggle;
+  orgOpen.has(id) ? orgOpen.delete(id) : orgOpen.add(id);
+  renderTeam();
+});
 
 // Banquillo agrupado: primero los disponibles; luego uno plegable por proyecto donde ya están fichados (el primero si son
 // varios). Dentro, por rol y nombre. Por defecto solo se abre «Disponibles» (lo elegido se recuerda, como en los roles).
