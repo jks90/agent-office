@@ -539,7 +539,6 @@ export class Office3D {
     if (!decor || !this.buildingDecorTemplates) return;
     const items = decor.items || [];
     const placements = decor.placements || {};
-    const p = floorGroup.position;
     let frames = ['floor'];
     if (isProjectGround) frames.push('groundFloor');
     for (const frame of frames) {
