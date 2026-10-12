@@ -857,3 +857,7 @@ dialog.rlog pre { max-height: 55vh; white-space: pre-wrap; word-break: break-wor
 .rv-list { margin: 4px 0; padding-left: 4px; list-style: none; line-height: 1.55; }
 .rv-tools-allowed code { font-size: 11px; margin: 0 2px 2px 0; display: inline-block; }
 .rv-prompt { max-height: 420px; overflow: auto; white-space: pre-wrap; font-size: 12.5px; }
+/* ✨ Propuesta de la IA en «Nueva tarea» */
+.ai-preview { border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line)); background: rgba(252,211,77,.07); border-radius: var(--r-md); padding: 8px 12px; margin: 0 0 8px; font-size: 13px; line-height: 1.45; }
+.ai-preview-acts { display: flex; gap: 6px; margin-top: 6px; }
+dialog .ai-filled { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }

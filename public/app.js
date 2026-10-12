@@ -2549,7 +2549,7 @@ Pasos, convenciones y ejemplos…</textarea>
     ${(project()?.repos || []).length > 1 ? `<label>Repositorio</label><select name="repo"><option value="">(el que diga el rol)</option>${project().repos.map((r) => `<option value="${r.key}">${esc(r.key)} — ${esc(r.path)}</option>`).join('')}</select>` : ''}
     <label>Quién la hace</label><select name="assignedAgentId"><option value="">(automático: por rol)</option><option value="human">👤 Yo (humano)</option></select>
     <label>Estado inicial</label><select name="status"><option value="todo">Por hacer (el equipo la coge en cuanto pueda)</option><option value="backlog">Backlog (esperar)</option></select>
-    <div class="row"><button type="button" class="ghost" data-ai-draft title="Pasa tu texto y los adjuntos por la IA (Claude), que redacta título, descripción con criterios de «hecho cuando», rol y repo, y crea la tarea en Backlog para que la revises">✨ Redactar con IA y crear</button><div class="spacer"></div><button class="ghost" value="cancel">Cancelar</button><button>Crear</button></div>`, async (f) => {
+    <div class="row"><button type="button" class="ghost" data-ai-draft title="Pasa tu texto y los adjuntos por la IA (Claude), que propone título, descripción con criterios de «hecho cuando», rol y repo. Rellena el formulario para que lo revises: no crea nada hasta que pulses Crear">✨ Redactar con IA</button><div class="spacer"></div><button class="ghost" value="cancel">Cancelar</button><button>Crear</button></div>`, async (f) => {
     if (f.role === '__po') {
       const goal = [f.title, f.description].filter((x) => x?.trim()).join('\n\n');
       if (!goal.trim()) { toast('Cuenta qué quieres que se haga', 'error'); throw new Error('vacío'); }
@@ -3510,17 +3510,33 @@ document.addEventListener('click', async (e) => {
   if (d.open) return openTask(d.open);
   if (d.ready) return api('PATCH', `/api/tasks/${d.ready}`, { status: 'todo' });
   if (d.edit) return editTask(d.edit);
-  if (d.aiDraft !== undefined) {
+  if (d.aiDraft !== undefined) { // ✨ propuesta de la IA en el MISMO formulario: la revisas/editas y la creas tú (o vuelves a tu texto)
     const form = $('#dialog form');
-    const text = [form.title?.value, form.description?.value].filter((x) => x?.trim()).join('\n\n');
+    const orig = form.dataset.aiOrig ? JSON.parse(form.dataset.aiOrig) : { title: form.title?.value || '', description: form.description?.value || '', role: form.role?.value || '', repo: form.repo?.value || '' };
+    const text = [orig.title, orig.description].filter((x) => x?.trim()).join('\n\n');
     if (!text.trim() && !pendingAttachments.length) return toast('Cuenta qué quieres que se haga (o adjunta algo)', 'error');
-    el.disabled = true; el.textContent = '✨ Redactando…';
+    const btns = [...form.querySelectorAll('[data-ai-draft]')];
+    btns.forEach((b) => { b.disabled = true; b.dataset.label ||= b.textContent; b.textContent = '✨ Redactando…'; });
     try {
       const draft = await api('POST', '/api/tasks/draft', { projectId, text, attachments: pendingAttachments });
-      const t = await api('POST', '/api/tasks', { projectId, title: draft.title, description: draft.description, role: draft.role, repo: draft.repo, status: 'backlog', attachments: pendingAttachments });
-      $('#dialog').close();
-      toast(`Tarea ${tcode(t)} creada en Backlog por la IA (${draft.role}${draft.repo ? ' · ' + draft.repo : ''})${draft.costUsd ? ` · ≈ ${draft.costUsd.toFixed(2)} $` : ''}`);
-    } catch { el.disabled = false; el.textContent = '✨ Redactar con IA y crear'; }
+      form.dataset.aiOrig = JSON.stringify(orig); // para «Volver a mi texto» y «Redactar otra vez» (siempre desde TU texto)
+      const set = (name, v) => { const el2 = form[name]; if (!el2 || v == null) return; if (el2.tagName === 'SELECT' && ![...el2.options].some((o) => o.value === v)) return; el2.value = v; el2.classList.add('ai-filled'); };
+      set('title', draft.title); set('description', draft.description); set('role', draft.role); set('repo', draft.repo || '');
+      form.querySelector('.ai-preview')?.remove();
+      form.querySelector('h3').insertAdjacentHTML('afterend', `<div class="ai-preview">✨ <b>Propuesta de la IA</b> <span class="muted">(${esc(S.roles[draft.role]?.label || draft.role)}${draft.repo ? ' · ' + esc(draft.repo) : ''}${draft.costUsd ? ` · ≈ ${draft.costUsd.toFixed(2)} $` : ''})</span> — revísala y edítala; se crea al pulsar <b>Crear</b>.<div class="ai-preview-acts"><button type="button" class="small ghost" data-ai-undo>↩ Volver a mi texto</button><button type="button" class="small ghost" data-ai-draft>↻ Redactar otra vez</button></div></div>`);
+      form.title?.focus();
+    } catch { /* el toast ya avisó */ }
+    form.querySelectorAll('[data-ai-draft]').forEach((b) => { b.disabled = false; b.textContent = b.closest('.ai-preview') ? '↻ Redactar otra vez' : (b.dataset.label || '✨ Redactar con IA'); });
+    return;
+  }
+  if (d.aiUndo !== undefined) { // descartar la propuesta: vuelve lo que habías escrito
+    const form = $('#dialog form');
+    const orig = form.dataset.aiOrig ? JSON.parse(form.dataset.aiOrig) : null;
+    if (orig) for (const [k, v] of Object.entries(orig)) if (form[k]) form[k].value = v;
+    form.querySelectorAll('.ai-filled').forEach((x) => x.classList.remove('ai-filled'));
+    form.querySelector('.ai-preview')?.remove();
+    delete form.dataset.aiOrig;
+    toast('Propuesta descartada: vuelves a tu texto');
     return;
   }
   if (d.repoEdit !== undefined) return editRepo(d.repoEdit);
