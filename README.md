@@ -977,11 +977,15 @@ Reglas puras en `server/coordinator.js` (`pickByScore`, `scorePlan`) sobre `scor
 - Nunca toca al PO, al coordinador, a quien está trabajando ni a quien tiene tareas suyas.
 - Prueba: `node scripts/coordinator-scores-e2e.mjs` (notas sintéticas por regla).
 
-## 🚀 Disparo automático «Publicar X.Y.Z» (FT-174)
-`server/release-trigger.js` (sin IA) revisa cada minuto —si hay Telegram y un flow-test localizable (`settings.flowTestDir` o un repo `flow-test*`)— si hay algo publicable:
-- **Épica completa**: todas sus tareas (mismo prefijo de título «FT-E: …» o mismo `epic`) en Hecho/Descartada, con al menos una Hecha.
-- **Bug aprobado**: tarea en Hecho con título «Bug»/«Fix»/«Regresión», con 📮 o de origen `report`.
-- Versión: `package.json` de flow-test; **minor** si hay épica, **patch** si solo bugs. Crea la tarea «Publicar X.Y.Z» (rol `release`, en Backlog) y pregunta por Telegram (FT-170): «🚀 ¿Publico la X.Y.Z? · qué · cambios · ✅/❌». Si coinciden varias cosas, **una sola pregunta** agrupada.
-- ✅ → `bash scripts/release/run-all.sh X.Y.Z` en flow-test con `RELEASE_NOTIFY_CMD="node bin/ao-telegram.mjs"` (avisa a Telegram) y la tarea pasa a Hecho. ❌, timeout (12 h) o sin Telegram → no publica; lo propuesto queda **acumulado** (`data/release-trigger.json`) y entra en la siguiente pregunta, reutilizando la tarea de Backlog.
-- **Mutex persistente** en ese fichero: nunca dos preguntas ni dos publicaciones a la vez; un segundo ✅ con una ejecución en curso no lanza otra.
-- Pruebas: `node --test tests/release-trigger.test.mjs` (Telegram y run-all simulados; ninguna publica de verdad).ipts/marketplace-ui-e2e.mjs [captura.png]` (UI con Chrome; usa catálogo temporal).
+## 🚀 Perfil de release: publicar flow-test solo (FT-174)
+`server/release-trigger.js` (sin IA) revisa cada minuto, si hay un flow-test localizable (`settings.flowTestDir` o un repo `flow-test*`), lo publicable **de las tareas que tocan flow-test** (las de solo agent-office u otros repos no cuentan):
+- **Épica completa**: todas sus partes (`epicParts`, o el prefijo «FT-E: …») en Hecho/Descartada, con al menos una Hecha. **Bug aprobado**: «Bug»/«Fix»/«Regresión», 📮 o de origen `report`.
+- La 1.ª vez fija un **punto de partida**: lo ya hecho cuenta como publicado.
+- Versión: `package.json` de flow-test, **minor** con épica y **patch** con solo bugs. Pregunta en **🔔 Para ti** (y por Telegram si está activo): «🚀 ¿Publico flow-test X.Y.Z? (qué): …», con un timeout de 12 h. Si coinciden varias cosas, hace **una sola pregunta**.
+- ✅ crea dos tareas en el proyecto:
+  - **«Documentar X.Y.Z»**: para un agente `kind: docs` con la skill `prod` (en el catálogo, `release-docs-flowtest`). Trabaja **sobre main**, sin rama (`onMain`), con acceso a `settings.releaseDocsDirs` (por defecto `~/dev/flow-test-public` y `~/JksDocs`). AO hace commit solo de los ficheros que cambió y la aprueba sola.
+  - **«Publicar X.Y.Z»**: depende de la anterior y va al agente de rol `release`. No la ejecuta el LLM: AO lanza `bash scripts/release/run-all.sh X.Y.Z` en flow-test (`--dry-run` si `settings.releaseDryRun`) y la marca Hecha o Fallida con la cola del log.
+- Si falta el agente de Release o el de docs, avisa («ficha un agente de Release») y no encarga nada. ❌ o timeout tampoco publican: lo propuesto queda **acumulado** en `data/release-trigger.json` para la siguiente pregunta.
+- **Mutex persistente** en ese fichero: nunca hay dos preguntas ni dos publicaciones a la vez. Si «Publicar» falla, se libera y se vuelve a proponer. `settings.releaseAuto: false` lo apaga.
+- **AgentOffice se publica solo**: al aprobar una tarea con rama en el propio repo de AO, `publishSelf` (`server/selfupdate.js`) hace `git push` (salvo con `settings.aoAutoPublish: false`) y reinicia cuando no hay nadie trabajando. serverman se actualiza con su comprobación de versión.
+- Pruebas: `node --test tests/release-trigger.test.mjs`. Pregunta, agentes y tareas van simulados, así que ninguna prueba publica de verdad.ipts/marketplace-ui-e2e.mjs [captura.png]` (UI con Chrome; usa catálogo temporal).

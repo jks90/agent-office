@@ -25,6 +25,7 @@ import crypto2 from 'node:crypto';
 import { saveRole, deleteRole, setRoleTools } from './roles.js';
 import * as toolkit from './toolkit.js'; // 🧰 uso de herramientas y avisos
 import * as proposals from './proposals.js';
+import * as git from './git.js';
 import { ladders, normalizeLadder } from './model-ladder.js'; // FT-60
 import * as activity from './events.js';
 import * as browserPanel from './browser/panel.js'; // FT-117
@@ -91,7 +92,7 @@ setInterval(sweepUploads, 3600e3).unref();
 // Tableros online con autoSync: cada 5 min.
 // FT-174 · cada minuto: ¿épica completa o bug aprobado? → pregunta «¿Publico la X.Y.Z?» por Telegram (solo con flow-test localizable)
 let releasing = false;
-setInterval(() => { if (releasing || !telegram.config().enabled || !releaseTrigger.flowTestDir(store.get())) return; releasing = true; releaseTrigger.check(releaseTrigger.realDeps(team, store, telegram)).catch((e) => console.warn('[release-trigger]', e.message)).finally(() => { releasing = false; }); }, 60_000).unref();
+setInterval(() => { if (releasing || store.get().settings.releaseAuto === false || !releaseTrigger.flowTestDir(store.get())) return; releasing = true; releaseTrigger.check(releaseTrigger.realDeps(team, store, telegram, questions)).then((r) => { if (r && !['none', 'busy'].includes(r.action)) console.log(`🚀 release: ${r.action}${r.version ? ' ' + r.version : ''}`); }).catch((e) => console.warn('[release-trigger]', e.message)).finally(() => { releasing = false; }); }, 60_000).unref(); // 🚀 sin Telegram también (pregunta en 🔔)
 setInterval(() => { for (const p of store.get().projects) if (p.board?.autoSync) team.syncBoard(p.id).catch(() => {}); }, 5 * 60 * 1000).unref();
 
 // Documentos de oficina → texto plano al lado (los agentes solo leen texto): .docx/.odt por su XML, .pdf con pdftotext si existe.
@@ -255,6 +256,7 @@ const routes = [
   ['DELETE', /^\/api\/skills\/([\w-]+)$/, ([name]) => skills.uncentralize(name)],
   ['GET', /^\/api\/tools\/usage$/, () => { const st = store.get(); return { usage: toolkit.usage(st.tasks), warnings: toolkit.warnings({ roles: allRoles(), agents: st.agents }) }; }], // 🧰
   ['POST', /^\/api\/proposals\/(\w+)\/accept$/, ([id]) => proposals.accept(id, { projectDir: team.projectDir, repoOf: (p, key) => (p.repos || []).find((r) => r.key === key) || (p.repos || [])[0] || null, addScript: toolcat.addScript, roleOf: (id2) => allRoles()[id2], setRoleTools })], // 🧰
+  ['GET', /^\/api\/proposals\/(\w+)$/, ([id]) => proposals.view(id, { projectDir: team.projectDir, worktreeOf: (p, t, r) => [git.worktreeDir(p, t), git.extraWorktreeDir(p, t, r)], repoOf: (p, key) => (p.repos || []).find((r) => r.key === key) || (p.repos || [])[0] || null })], // 🧰 ver antes de aceptar
   ['POST', /^\/api\/proposals\/(\w+)\/reject$/, ([id]) => proposals.reject(id)], // 🧰
   ['POST', /^\/api\/roles\/([\w-]+)\/tools$/, ([id], b) => { const r = setRoleTools(id, b.kind, b.names); store.changed(); return r; }], // 🧰
   ['POST', /^\/api\/roles$/, (_, b) => { const r = saveRole(b); store.changed(); return r; }],

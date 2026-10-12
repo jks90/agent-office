@@ -80,7 +80,7 @@ export function confirm({ question, context = '' }) {
 
 // FT-116 · Como confirm, pero con las opciones que se pidan (p. ej. «Listo» / «Cancelar» en el handoff del navegador).
 // Resuelve con el texto elegido, o null si la pregunta se cancela o caduca.
-export function choose({ question, context = '', options = ['Sí', 'No'] }) {
+export function choose({ question, context = '', options = ['Sí', 'No'], timeoutMs = null }) {
   // FT-128 · dedupe: si ya hay una confirmación idéntica pendiente (p. ej. el modelo reintenta tras un fallo), se espera a la misma
   const text = String(question).trim().slice(0, 500);
   const dup = [...pending.values()].find((p) => p.kind === 'confirm' && p.question === text && p.context === String(context || '').trim().slice(0, 4000));
@@ -95,7 +95,7 @@ export function choose({ question, context = '', options = ['Sí', 'No'] }) {
   store.changed();
   return new Promise((resolve, reject) => {
     // Sin respuesta en el tope: la pregunta se retira de 🔔 y la tool falla con un error claro (no cuenta como «No»)
-    const timer = setTimeout(() => { if (pending.has(q.id)) settle(q, undefined, true); }, confirmTimeoutMs());
+    const timer = setTimeout(() => { if (pending.has(q.id)) settle(q, undefined, true); }, timeoutMs || confirmTimeoutMs()); // 🚀 la de publicar dura 12 h
     timer.unref?.();
     q.waiters.push((r) => { clearTimeout(timer); if (r.status === 'timeout') reject(timeoutError()); else resolve(r.status === 'answered' ? r.answer : null); });
   });

@@ -54,6 +54,28 @@ export async function check({ apply = true } = {}) {
   return state;
 }
 
+// 🚀 Publicar lo de AgentOffice sin preguntar: al aprobarse una tarea que se fusiona en ESTE repo (la máquina donde se fusiona,
+// katana), push a GitHub y reinicio en cuanto no haya nadie trabajando ni revisando (las demás instalaciones —serverman— lo
+// cogen solas de GitHub en ≤ 15 min con check()). settings.aoAutoPublish === false lo apaga.
+let restartWanted = null;
+export async function publishSelf(reason = '') {
+  if (get().settings.aoAutoPublish === false) return { skipped: 'aoAutoPublish apagado' };
+  const branch = await git('rev-parse', '--abbrev-ref', 'HEAD');
+  let upstream;
+  try { upstream = await git('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'); } catch { return { skipped: 'la rama no sigue a ninguna remota' }; }
+  const [remote, rbranch] = [upstream.split('/')[0], upstream.split('/').slice(1).join('/')];
+  try { await git('push', '--quiet', remote, `${branch}:${rbranch}`); } catch (e) { console.log(`⚠ No pude subir AgentOffice a ${upstream}: ${String(e.stderr || e.message).trim().slice(0, 200)}`); return { pushed: false }; }
+  console.log(`⬆ AgentOffice subido a ${upstream}${reason ? ` (${reason})` : ''}; reinicio cuando nadie trabaje`);
+  restartWanted = { reason, at: Date.now() };
+  return { pushed: true };
+}
+setInterval(() => {
+  if (!restartWanted || !idle()) return;
+  if (!RESTARTABLE) { state.restartPending = true; restartWanted = null; console.log('⚠ AgentOffice actualizado: reinícialo (nadie me relanzaría)'); return; }
+  console.log(`↻ Reinicio para cargar lo fusionado (${restartWanted.reason || 'AgentOffice'})`);
+  setTimeout(() => process.exit(RESTART_CODE), 500);
+}, 30_000).unref();
+
 if (ENABLED) {
   setTimeout(() => { check().catch(() => {}); }, 60e3).unref(); // primera comprobación al minuto de arrancar
   setInterval(() => { check().catch(() => {}); }, EVERY_MS).unref();
