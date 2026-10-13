@@ -1,7 +1,7 @@
 // Git: un worktree + rama ao/<tarea> por tarea, en el repo del proyecto que le toque, para que los agentes no se pisen.
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { DATA_DIR } from './store.js';
 
@@ -47,14 +47,23 @@ export async function createWorktree(project, repo, task, dir = worktreeDir(proj
 }
 
 // node_modules no está en git: el worktree lo enlaza al del repo para que los scripts del proyecto funcionen.
-function linkNodeModules(repoPath, dir) {
+export function linkNodeModules(repoPath, dir) {
   const src = path.join(repoPath, 'node_modules');
   const dest = path.join(dir, 'node_modules');
   if (fs.existsSync(src) && !fs.existsSync(dest)) { try { fs.symlinkSync(src, dest, 'dir'); } catch { /* sin enlace: el agente hará npm install */ } }
+  // Un `.gitignore` con «node_modules/» (con barra) NO cubre un enlace: sin esto, el enlace se commitea y, al fusionar, sustituye
+  // la carpeta node_modules real del repo por un enlace a sí misma (pasó en flow-accounts con FT-197). Se excluye en el repo.
+  try {
+    const common = execFileSync('git', ['-C', dir, 'rev-parse', '--git-common-dir'], { encoding: 'utf8' }).trim();
+    const ex = path.join(path.resolve(dir, common), 'info', 'exclude');
+    const cur = fs.existsSync(ex) ? fs.readFileSync(ex, 'utf8') : '';
+    if (!/^\/?node_modules$/m.test(cur)) { fs.mkdirSync(path.dirname(ex), { recursive: true }); fs.appendFileSync(ex, `${cur && !cur.endsWith('\n') ? '\n' : ''}/node_modules\n`); }
+  } catch { /* sin git: nada que excluir */ }
 }
 
 export async function commitAll(dir, message, author) {
   await git(dir, 'add', '-A');
+  try { if (fs.lstatSync(path.join(dir, 'node_modules')).isSymbolicLink()) await git(dir, 'reset', '-q', '--', 'node_modules'); } catch { /* sin node_modules */ } // el enlace del worktree nunca va al commit
   if (!(await git(dir, 'status', '--porcelain'))) return false;
   const files = (await git(dir, 'diff', '--cached', '--name-only')).split('\n').filter(Boolean); // FT-1: ficheros del commit
   await exec('git', ['-C', dir, '-c', `user.name=${author}`, '-c', 'user.email=agent-office@local', 'commit', '-m', message]);
