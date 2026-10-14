@@ -162,7 +162,8 @@ function connectEvents() {
 connectEvents();
 document.addEventListener('visibilitychange', () => {
   clearTimeout(evHiddenT);
-  if (document.hidden) evHiddenT = setTimeout(() => { if (evES) { evES.close(); evES = null; } }, 15000);
+  if (!document.hidden) safeSet('ao:remote-owner', CLIENT_ID); // 🎛 el mando habla con la última pestaña que viste
+  if (document.hidden && !S.remoteMic) evHiddenT = setTimeout(() => { if (evES) { evES.close(); evES = null; } }, 15000); // con el mando se queda escuchando
   else if (!evES) connectEvents(); // al volver llegan `state` y `logs` completos
 });
 
@@ -629,8 +630,12 @@ document.addEventListener('keydown', (e) => { if (e.ctrlKey && !e.shiftKey && !e
 // Embebido en flow-test, el padre reenvía la tecla por postMessage (`flowtest:voice`) cuando el foco no está en el iframe.
 // 🎛 Mando del micro (POST /api/remote/mic, pantalla ESP32): pulsa el 🎤 del Guía (sin corte por silencio, hasta el stop) o
 // abre «Nueva tarea» del proyecto y dicta el título o la descripción (`field`). Solo la pestaña visible; el micro ya tiene que estar permitido.
+// Responde la pestaña visible o, si no hay ninguna, la última que se vio (aunque esté detrás o minimizada).
+const remoteOwner = () => !document.hidden || safeGet('ao:remote-owner') === CLIENT_ID;
+setTimeout(() => { if (!document.hidden) safeSet('ao:remote-owner', CLIENT_ID); }); // CLIENT_ID se declara más abajo
+window.addEventListener('focus', () => safeSet('ao:remote-owner', CLIENT_ID));
 function remoteMic(c) {
-  if (document.hidden) return;
+  if (!remoteOwner()) return;
   if (c.target === 'guide') {
     if (!c.on) return voiceHotkey(false);
     goProject(c.projectId);
@@ -653,7 +658,7 @@ function remoteMic(c) {
 // Desplegables de «Nueva tarea» elegidos en el mando (role, repo, assignedAgentId, status): solo si la opción existe.
 function remoteFields(c) {
   const dlg = $('#dialog');
-  if (document.hidden || !dlg.open || c.projectId !== projectId || dlg.querySelector('h3')?.textContent !== 'Nueva tarea') return;
+  if (!remoteOwner() || !dlg.open || c.projectId !== projectId || dlg.querySelector('h3')?.textContent !== 'Nueva tarea') return;
   for (const [k, v] of Object.entries(c.fields || {})) {
     const sel = dlg.querySelector(`select[name=${k}]`);
     if (sel && [...sel.options].some((o) => o.value === v)) { sel.value = v; sel.dispatchEvent(new Event('change', { bubbles: true })); }
@@ -754,6 +759,7 @@ async function voiceRecord(onLevel, opts = {}) {
   const chunks = [];
   rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
   const ac = new AudioContext(), an = ac.createAnalyser();
+  if (ac.state === 'suspended') ac.resume().catch(() => {}); // pedido por el mando (sin clic): sin esto el VAD no oye nada
   an.fftSize = 1024;
   ac.createMediaStreamSource(stream).connect(an);
   const buf = new Float32Array(an.fftSize);

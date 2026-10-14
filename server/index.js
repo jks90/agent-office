@@ -140,7 +140,7 @@ const inputStatus = () => {
   return inputCache.v;
 };
 // FT-50: cada tarea sin empezar lleva `plannedAgentId`/`plannedReason` (calculados en cada snapshot, no persistidos).
-const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, repos: (p.repos || []).map((r) => ({ ...r, live: team.repoLiveOf(r.path) })), prefixDefault: prefixOf(p) })), tasks: review.decorate(team.withPlannedAgents(st)), modelLadders: ladders(st.settings), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), costEstimates: team.costEstimates(), rtk: claudeEngine.rtkAvailable(), codeIndexInstalled: codeindex.available(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot(), browser: browserInfo() }; };
+const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, repos: (p.repos || []).map((r) => ({ ...r, live: team.repoLiveOf(r.path) })), prefixDefault: prefixOf(p) })), tasks: review.decorate(team.withPlannedAgents(st)), modelLadders: ladders(st.settings), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), costEstimates: team.costEstimates(), rtk: claudeEngine.rtkAvailable(), codeIndexInstalled: codeindex.available(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot(), browser: browserInfo(), remoteMic: process.env.AO_REMOTE_MIC === 'on' }; };
 
 async function readBody(req) {
   const limit = req.url.startsWith('/api/upload') ? 40e6 : req.url.startsWith('/api/guide/stt') ? 12e6 : 1e6; // adjuntos y audio del Guide (FT-9) en base64
