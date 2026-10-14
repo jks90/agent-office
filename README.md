@@ -438,6 +438,17 @@ Fase B: la carpeta `extension/` es una extensión Manifest V3 (Chrome/Brave, car
 - Prueba: `node scripts/extension-e2e.mjs` (cliente WebSocket que simula la extensión, y servidor real para pair/Ajustes/snapshot).
 - Pendiente: las tools `browser.*` con política (A3) todavía no existen en esta rama; cuando lleguen usarán `getDriver()` y se aplicarán igual a ambos modos. La extensión real solo se ha comprobado con `node --check`: falta la prueba manual en Brave.
 
+## 🧭 Navegante web · Playwright MCP
+
+Rol **de serie** `navegante` («Navegante web», kind `docs`, `sonnet`): demos guiadas, consultas y extracción de datos en webs y reproducción de fallos, con informe en Markdown. Se contrata como cualquier agente; no hay que instalar nada.
+
+- **Capacidad `playwright`** (`server/engines/toolscope.js`): la lleva el rol `navegante`; otro rol la activa con `tools: …, playwright` en su frontmatter (nunca en modo plan). Solo motor Claude.
+- **Cómo se monta** (`server/browser/playwright-mcp.js`): `claude.js` añade un MCP stdio `playwright` = `npx -y @playwright/mcp@0.0.83` (versión **fijada** en `PW_MCP_VERSION`). No es dependencia del repo: llega a las instalaciones existentes con el `git pull` de la autoactualización. La primera vez npx lo descarga (hace falta red).
+- **Navegador**: el Chromium/Chrome/Brave del PC (`findBrowser` de `cdp.js`, `AO_BROWSER_PATH`), oculto salvo `AO_BROWSER_HEADLESS=0`, con perfil propio `data/browser/pw-profile` (el driver CDP bloquea el suyo). Capturas y snapshots sin nombre van a `data/browser/pw-output/<tarea>/`, que el agente puede leer (`--add-dir`).
+- **Seguridad**: estas tools **no** pasan por la política ni la auditoría de `browser.*` (FT-116) ni salen en el panel 🌐; los límites están en el prompt del rol (no compra, paga, borra ni envía datos reales sin petición expresa; pregunta para iniciar sesión).
+- **Env**: `AO_PLAYWRIGHT=off` (no se monta) · `AO_PLAYWRIGHT_MCP=<versión>`.
+- **Prueba**: `node --test tests/playwright-role.test.mjs`. Medido a mano: una consulta real (temperatura de AEMET) con `haiku` ≈ 3 turnos y 0,06 $.
+
 ## Estructura
 
 ```

@@ -11,6 +11,7 @@ import { RTK_RULES } from './allowlist.js';
 import { claudeScope } from './toolscope.js';
 import { claudeTracker } from '../usage.js';
 import { SERVER_NAME } from '../codeindex.js';
+import { playwrightMcp, pwOutputDir } from '../browser/playwright-mcp.js';
 
 // Subagente explorador (FT-65): solo lectura (Read/Grep/Glob + shell de lectura de la lista blanca), modelo barato.
 export const EXPLORER = {
@@ -55,6 +56,13 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kin
   if (scope.browser) { // FT-115: tools browser.* del Guía (solo ellas) por ao-mcp; la política y la auditoría viven en el servidor
     mcpServers['agentoffice-browser'] = { type: 'stdio', command: process.execPath, args: [path.join(ROOT, 'bin', 'ao-mcp.mjs')], env: { AO_URL: extraEnv.AO_URL || `http://127.0.0.1:${process.env.AO_PORT || 7420}`, AO_MCP_ONLY: 'browser', ...(extraEnv.AO_TASK ? { AO_CHAT_ID: `task:${extraEnv.AO_TASK}` } : {}) } };
     tools.push('mcp__agentoffice-browser');
+  }
+  const pw = scope.playwright ? playwrightMcp({ task: extraEnv.AO_TASK }) : null;
+  if (pw) { // Navegante: Playwright MCP por npx (versión fijada); su carpeta de salida (capturas, snapshots) se puede leer
+    mcpServers.playwright = pw; tools.push('mcp__playwright');
+    const out = pwOutputDir(extraEnv.AO_TASK);
+    fs.mkdirSync(out, { recursive: true });
+    args.push('--add-dir', out);
   }
   if (addDirs.length) args.push('--add-dir', ...addDirs); // FT-44: worktrees de los demás repos del proyecto
   if (codeIndex) { // FT-58: índice de código local (stdio); solo lectura de símbolos

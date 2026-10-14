@@ -27,22 +27,25 @@ const BY_KIND = {
 
 // FT-115 · capacidad «browser»: tools browser.* del Guía por ao-mcp (Chromium dedicado). Solo estos roles; otro rol la activa con `tools: …, browser`.
 export const BROWSER_ROLES = ['qa-suite', 'office-flowtest'];
+// Navegante · capacidad «playwright»: Playwright MCP (server/browser/playwright-mcp.js). Rol de serie «navegante»; otro rol la activa con `tools: …, playwright`.
+export const PLAYWRIGHT_ROLES = ['navegante'];
 
-// → { builtin (para --tools), allowed (para --allowedTools, sin MCP ni RTK), mcp, browser }
+// → { builtin (para --tools), allowed (para --allowedTools, sin MCP ni RTK), mcp, browser, playwright }
 // WebFetch/WebSearch/NotebookEdit/Task no están en ningún valor por defecto: ni se envían ni se permiten.
 export function claudeScope({ kind = 'dev', mode = 'work', roleTools = null, hasSkills = false, roleId = '' } = {}) {
   const k = mode === 'plan' ? 'planner' : (BY_KIND[kind] ? kind : 'dev');
   const base = BY_KIND[k];
   let builtin = [...base.builtin], bash = [...base.bash];
   const browser = mode !== 'plan' && (BROWSER_ROLES.includes(String(roleId)) || !!roleTools?.includes('browser'));
+  const playwright = mode !== 'plan' && (PLAYWRIGHT_ROLES.includes(String(roleId)) || !!roleTools?.includes('playwright'));
   if (roleTools?.length && mode !== 'plan') {
-    const names = roleTools.filter((t) => !t.startsWith('Bash(') && t !== 'browser');
+    const names = roleTools.filter((t) => !t.startsWith('Bash(') && t !== 'browser' && t !== 'playwright');
     if (names.length) builtin = names;
     bash = [...bash, ...roleTools.filter((t) => t.startsWith('Bash(')).map((t) => t.slice(5, -1))];
   }
   if (hasSkills && mode !== 'plan' && !builtin.includes('Skill')) builtin.push('Skill'); // las skills del rol se enlazan en el worktree (linkSkillsInto)
   const allowed = [...builtin.filter((t) => t !== 'Bash'), ...(builtin.includes('Bash') ? bash.map((r) => `Bash(${r})`) : [])];
-  return { builtin, allowed: [...new Set(allowed)], mcp: base.mcp && mode !== 'plan', browser };
+  return { builtin, allowed: [...new Set(allowed)], mcp: base.mcp && mode !== 'plan', browser, playwright };
 }
 
 // Codex no tiene lista de herramientas por nombre: se apagan por -c las opcionales (web_search no la usa ningún rol;

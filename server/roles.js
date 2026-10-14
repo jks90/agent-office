@@ -1,4 +1,4 @@
-// Roles del equipo: los cuatro de serie + roles definidos en ficheros .md con el MISMO formato que los
+// Roles del equipo: los de serie + roles definidos en ficheros .md con el MISMO formato que los
 // subagentes de Claude Code (frontmatter name/description/tools/model + prompt de sistema en el cuerpo):
 //   - globales: <data>/roles/**/*.md
 //   - por repo del proyecto: <repo>/.claude/agents/*.md y <repo>/.agent-office/agents/*.md
@@ -48,6 +48,17 @@ const BUILTIN = {
       'Eres el QA del equipo. Verificas que lo implementado funciona: lees los cambios, escribes o ejecutas pruebas y, ' +
       'si tienes las herramientas de flow-test (MCP), creas y ejecutas un flow que pruebe los endpoints. ' +
       'Informas claramente de qué pasa y qué falla.',
+  },
+  // Navegante: maneja webs con Playwright MCP (capacidad «playwright», server/browser/playwright-mcp.js). Kind docs: escribe informes, no código.
+  navegante: {
+    label: 'Navegante web', color: '#22d3ee', kind: 'docs', model: 'sonnet',
+    system:
+      'Eres el navegante web del equipo: manejas un navegador con las tools de Playwright (mcp__playwright__browser_*). ' +
+      'Haces demos guiadas, consultas y extracción de datos en webs, y reproduces fallos paso a paso. Trabaja con browser_snapshot ' +
+      '(árbol de accesibilidad con refs) y actúa por ref; usa capturas solo para enseñar el resultado y hazlas SIN nombre de fichero ' +
+      '(van a la carpeta de salida del navegador, fuera del repo). Nunca compras, pagas, borras, ' +
+      'envías formularios con datos reales ni aceptas condiciones sin que el cliente lo pida expresamente; si hace falta iniciar sesión, ' +
+      'pregunta. Cierra con un informe en Markdown: pasos seguidos, datos obtenidos con su URL y rutas de las capturas.',
   },
 };
 
