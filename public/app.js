@@ -1083,14 +1083,33 @@ if (EMBEDDED) {
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#dialog').open && !drawerAgent) close(); });
 }
 
+// 🌿 Ramas: base de las tareas (main, develop…), dónde está el usuario (checkout principal) y en qué ramas trabajan los agentes
+function repoBranchHtml(r) {
+  const lv = r.live, off = lv && lv.branch !== r.baseBranch;
+  const agents = S.tasks.filter((t) => t.projectId === projectId && t.status === 'doing' && (t.repo === r.key || (!t.repo && r === project()?.repos?.[0]) || t.repos?.[r.key])).map((t) => t.repos?.[r.key]?.branch || t.branch).filter(Boolean);
+  return `<button type="button" class="repo-branch${off ? ' off' : ''}" data-repo-base="${esc(r.key)}">📁 ${esc(r.key)} · base <b>${esc(r.baseBranch)}</b>${lv ? ` · tú ${off ? '⚠ ' : ''}<b>${esc(lv.branch)}</b>${lv.dirty ? ` ✎${lv.dirty}` : ''}` : ''}${agents.length ? ` · 🤖 ${agents.map(esc).join(', ')}` : ''}</button>`;
+}
+async function openRepoBase(key) {
+  const r = (project()?.repos || []).find((x) => x.key === key);
+  if (!r) return;
+  const info = await api('GET', `/api/projects/${projectId}/repos/${encodeURIComponent(key)}/branches`);
+  dialog(`<h3>🌿 Ramas de «${esc(key)}»</h3>
+    <p class="muted">Las tareas salen SIEMPRE de la base y se fusionan en ella. Tú puedes estar en otra rama en el checkout principal: los agentes trabajan en sus propias ramas <code>ao/…</code> y no se mezcla.</p>
+    <p>Tú ahora: <b>${esc(info.live?.branch || '?')}</b>${info.live?.dirty ? ` · ${info.live.dirty} fichero(s) sin confirmar` : ''}</p>
+    <label>Base de las tareas NUEVAS (las empezadas siguen con la suya)</label>
+    <select name="branch">${info.branches.map((b) => `<option ${b === info.base ? 'selected' : ''}>${esc(b)}</option>`).join('')}</select>
+    <div class="row"><button class="ghost" value="cancel">Cerrar</button><button>Guardar base</button></div>`,
+  async (f) => { if (f.branch !== info.base) { await api('POST', `/api/projects/${projectId}/repos/${encodeURIComponent(key)}/base`, { branch: f.branch }); toast(`Base de ${key}: ${f.branch}`); } });
+}
+document.addEventListener('click', (e) => { const b = e.target.closest?.('[data-repo-base]'); if (b) openRepoBase(b.dataset.repoBase); });
 function render() {
   if (project() && isHidden(project()) && visibleProjects().length) { projectId = visibleProjects().find((x) => x.folder !== 'default')?.id || visibleProjects()[0].id; safeSet('ao:project', projectId); } // el abierto se ocultó: al primero visible
   const p = project();
   const sorted = visibleProjects().sort((a, b) => (a.folder === 'default' ? -1 : b.folder === 'default' ? 1 : (a.folder || '~').localeCompare(b.folder || '~')));
   $('#project').innerHTML = sorted.map((x) => `<option value="${x.id}" ${x.id === projectId ? 'selected' : ''}>${x.folder ? '📁 ' : '• '}${esc(x.name)}${x.folder && x.folder !== x.name ? ` (${esc(x.folder)})` : ''}${x.flows != null ? ` · ${x.flows} flows` : ''}${x.orphan ? ' ⚠ carpeta desaparecida' : ''}${!x.folder ? ' ⚠ sin vincular' : ''}</option>`).join('');
   const repos = p?.repos || [];
-  $('#repo').textContent = p ? (repos.length ? `📁 ${repos.map((r) => `${r.key} (${r.baseBranch})`).join(' · ')}` : 'sin repositorio · solo motor demo') : '';
-  $('#repo').title = repos.map((r) => `${r.key}: ${r.path}`).join('\n');
+  $('#repo').innerHTML = p ? (repos.length ? repos.map(repoBranchHtml).join(' · ') : 'sin repositorio · solo motor demo') : '';
+  $('#repo').title = repos.map((r) => `${r.key}: ${r.path}\nbase de las tareas: ${r.baseBranch}${r.live ? `\ntú (checkout principal): ${r.live.branch}${r.live.dirty ? ` · ${r.live.dirty} fichero(s) sin confirmar` : ''}` : ''}`).join('\n\n') + '\n\nClic: cambiar la base de las tareas nuevas';
   const run = $('#run');
   run.textContent = p?.running ? '⏸ Parar el equipo' : '▶ Poner a trabajar';
   run.classList.toggle('on', !!p?.running);
@@ -1946,7 +1965,7 @@ function compactCard(t) {
   const live = t.status === 'doing' && fixed ? `● ${esc(fixed.activity)}` : '';
   const epic = t.splitInto ? epicStrip(t) : '';
   return `<div class="card compact ${t.status}${conflict ? ' conflict' : ''}${t.archived ? ' archived' : ''}" tabindex="0" data-task="${t.id}" draggable="${MOVABLE.includes(t.status) || isHuman(t)}" style="--c:${role?.color}">
-    <div class="card-head"><span class="chip" style="--c:${role?.color}" title="${esc(label)}">${esc(label.length > 5 ? label.slice(0, 4) + '.' : label)}</span><span class="task-id" title="Código de la tarea (rama ao/${t.code || t.id})">${esc(tcode(t))}</span>${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? `<span class="repo-chip" title="Repo">📁 ${esc(t.repo || '?')}</span>` : ''}<span class="inds">${ind.join('')}</span></div>
+    <div class="card-head"><span class="chip" style="--c:${role?.color}" title="${esc(label)}">${esc(label.length > 5 ? label.slice(0, 4) + '.' : label)}</span><span class="task-id" title="Código de la tarea (rama ao/${t.code || t.id})">${esc(tcode(t))}</span>${t.branch && ['doing', 'review', 'failed'].includes(t.status) ? ` <span class="branch-chip" title="Rama de la tarea: sale de ${esc(baseOf(t))} y se fusiona en ${esc(baseOf(t))}">🌿 ${esc(t.branch)} ← ${esc(baseOf(t))}</span>` : ''}${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? `<span class="repo-chip" title="Repo">📁 ${esc(t.repo || '?')}</span>` : ''}<span class="inds">${ind.join('')}</span></div>
     <div class="t" title="${esc(t.title)}">${t.splitInto ? '🧩 ' : ''}${esc(t.title)}</div>
     ${epic || `<div class="who-line${live ? ' live' : ''}">${live || who}</div>`}
     ${bar}
@@ -2128,7 +2147,7 @@ function card(t) {
   if (['done', 'discarded'].includes(t.status)) acts.push(t.archived ? `<button class="small ghost" data-unarchive="${t.id}" title="Volver a mostrarla en su columna">📦 Desarchivar</button>` : `<button class="small ghost" data-archive="${t.id}" title="Ocultarla del tablero sin borrarla (se encuentra con el filtro o «Ver archivadas»)">🗄 Archivar</button>`);
   if (['todo', 'failed', 'done'].includes(t.status)) acts.push(`<button class="small danger" data-del="${t.id}">Borrar</button>`);
   return `<div class="card ${t.status}${t.archived ? ' archived' : ''}" data-task="${t.id}" draggable="${['backlog', 'todo', 'failed', 'discarded'].includes(t.status)}" style="--c:${S.roles[t.role]?.color}">
-    <div class="card-head">${roleChip(t.role)} <span class="task-id" title="Código de la tarea (rama ao/${t.code || t.id}; cítalo en commits y docs)">${esc(tcode(t))}</span>${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? ` <span class="repo-chip">📁 ${esc(t.repo || '?')}</span>` : ''}${t.source?.flow ? ` <span title="Importada del tablero «${esc(t.source.flow)}» · columna ${esc(t.source.column)}">🗂</span>` : ''}${(t.feedbackImages?.length || t.files?.length) ? ` <span title="${esc([...(t.feedbackImages || []), ...(t.files || [])].map((f) => f.split('/').pop()).join(', '))}">📎${(t.feedbackImages?.length || 0) + (t.files?.length || 0)}</span>` : ''}${t.source?.url ? ` <a class="ext" href="${esc(t.source.url)}" target="_blank" rel="noopener" title="${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} · ${esc(t.source.id)}${t.source.remoteStatus ? ' · fuera: ' + esc(t.source.remoteStatus) : ''}">🔗 ${esc(t.source.id)}</a>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}</div>
+    <div class="card-head">${roleChip(t.role)} <span class="task-id" title="Código de la tarea (rama ao/${t.code || t.id}; cítalo en commits y docs)">${esc(tcode(t))}</span>${t.branch && ['doing', 'review', 'failed'].includes(t.status) ? ` <span class="branch-chip" title="Rama de la tarea: sale de ${esc(baseOf(t))} y se fusiona en ${esc(baseOf(t))}">🌿 ${esc(t.branch)} ← ${esc(baseOf(t))}</span>` : ''}${(project()?.repos || []).length > 1 && (t.repo || t.branch) ? ` <span class="repo-chip">📁 ${esc(t.repo || '?')}</span>` : ''}${t.source?.flow ? ` <span title="Importada del tablero «${esc(t.source.flow)}» · columna ${esc(t.source.column)}">🗂</span>` : ''}${(t.feedbackImages?.length || t.files?.length) ? ` <span title="${esc([...(t.feedbackImages || []), ...(t.files || [])].map((f) => f.split('/').pop()).join(', '))}">📎${(t.feedbackImages?.length || 0) + (t.files?.length || 0)}</span>` : ''}${t.source?.url ? ` <a class="ext" href="${esc(t.source.url)}" target="_blank" rel="noopener" title="${esc(BOARD_LABELS[t.source.kind] || t.source.kind)} · ${esc(t.source.id)}${t.source.remoteStatus ? ' · fuera: ' + esc(t.source.remoteStatus) : ''}">🔗 ${esc(t.source.id)}</a>` : ''}${t.kind === 'plan' ? ' <span>🗂 plan</span>' : ''}${t.attempts > 1 ? ` <span>intento ${t.attempts}</span>` : ''}</div>
     <div class="t">${esc(t.title)}</div>
     ${whoRow(t)}
     ${t.context ? `<div class="meta">${bornFrom(t)}</div>` : ''}

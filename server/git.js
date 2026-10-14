@@ -18,6 +18,17 @@ export async function repoInfo(dir) {
   return { path: top, baseBranch: branch };
 }
 
+// 🌿 Estado en vivo del checkout principal de un repo: en qué rama está (la del usuario) y cuántos ficheros tiene sin confirmar.
+export async function repoLive(repoPath) {
+  const branch = await git(repoPath, 'rev-parse', '--abbrev-ref', 'HEAD');
+  const st = await git(repoPath, 'status', '--porcelain', '--untracked-files=no');
+  return { branch, dirty: st ? st.split('\n').length : 0 };
+}
+// Ramas locales que pueden ser base (sin las ao/* de las tareas).
+export async function localBranches(repoPath) {
+  return (await git(repoPath, 'for-each-ref', '--format=%(refname:short)', 'refs/heads')).split('\n').filter((b) => b && !b.startsWith('ao/'));
+}
+
 // `repo` = { key, path, baseBranch } (uno de project.repos).
 // Tareas anteriores a los códigos: su worktree/rama llevan el id y se siguen usando tal cual.
 export const worktreeDir = (project, task) => { const legacy = path.join(DATA_DIR, 'worktrees', project.id, task.id); return (task.code && !fs.existsSync(legacy)) ? path.join(DATA_DIR, 'worktrees', project.id, task.code) : legacy; };

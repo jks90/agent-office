@@ -118,7 +118,7 @@ const inputStatus = () => {
   return inputCache.v;
 };
 // FT-50: cada tarea sin empezar lleva `plannedAgentId`/`plannedReason` (calculados en cada snapshot, no persistidos).
-const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), tasks: review.decorate(team.withPlannedAgents(st)), modelLadders: ladders(st.settings), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), costEstimates: team.costEstimates(), rtk: claudeEngine.rtkAvailable(), codeIndexInstalled: codeindex.available(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot(), browser: browserInfo() }; };
+const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, repos: (p.repos || []).map((r) => ({ ...r, live: team.repoLiveOf(r.path) })), prefixDefault: prefixOf(p) })), tasks: review.decorate(team.withPlannedAgents(st)), modelLadders: ladders(st.settings), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), costEstimates: team.costEstimates(), rtk: claudeEngine.rtkAvailable(), codeIndexInstalled: codeindex.available(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot(), browser: browserInfo() }; };
 
 async function readBody(req) {
   const limit = req.url.startsWith('/api/upload') ? 40e6 : req.url.startsWith('/api/guide/stt') ? 12e6 : 1e6; // adjuntos y audio del Guide (FT-9) en base64
@@ -267,6 +267,9 @@ const routes = [
   ['POST', /^\/api\/tasks\/archive$/, (_, b) => team.archiveTasks(b)], // archivar/desarchivar Hechas y Descartadas (no se borran)
   ['PATCH', /^\/api\/tasks\/([\w-]+)$/, ([id], b) => team.updateTask(id, b)],
   // ⇄ Entre proyectos: tareas sin empezar (mover), programadas y agentes (mover o copiar)
+  // 🌿 Ramas de un repo del proyecto: base de las tareas, rama en vivo del checkout y cambiar la base (solo tareas nuevas)
+  ['GET', /^\/api\/projects\/(\w+)\/repos\/([\w.-]+)\/branches$/, ([id, key]) => team.repoBranches(id, key)],
+  ['POST', /^\/api\/projects\/(\w+)\/repos\/([\w.-]+)\/base$/, ([id, key], b) => team.setBaseBranch(id, key, b.branch)],
   ['POST', /^\/api\/tasks\/([\w-]+)\/move$/, ([id], b) => team.moveTask(id, b.projectId)],
   ['POST', /^\/api\/projects\/(\w+)\/schedules\/(\w+)\/(move|copy)$/, ([id, sid, op], b) => team.moveSchedule(id, sid, b.projectId, { copy: op === 'copy' })],
   ['POST', /^\/api\/agents\/(\w+)\/(move|copy)$/, ([id, op], b) => team.moveAgent(id, b.from || null, b.projectId, { copy: op === 'copy', name: b.name })],

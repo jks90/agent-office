@@ -241,6 +241,16 @@ Si el proyecto tiene varios repos, cada tarea real (motores claude/codex) recibe
 - **Guardarraíl**: se guarda el `git status --porcelain` de cada checkout principal al empezar y al terminar; si hay líneas nuevas, la tarea lleva `outsideWrites: [{ repo, path, files }]`, la tarjeta un chip «⚠ escribió fuera de su worktree» y el modal el detalle (también en `agent.getArtifacts`). Es solo un aviso para el humano: no se fusiona ni se revierte nada. Con tareas simultáneas en el mismo repo puede haber falsos avisos.
 - e2e: `node scripts/multirepo-e2e.mjs` (2 repos git temporales, `claude` falso).
 
+## 🌿 Ramas: la base de las tareas y la tuya, a la vista
+
+Las tareas salen **siempre** de la rama base configurada de cada repo (`main`, `develop`…) en su propia rama `ao/<código>`, y se fusionan en ella. Tú puedes trabajar en otra rama en el checkout principal sin que se mezcle, y ahora se ve:
+
+- **Cabecera del proyecto:** `📁 app · base main · tú develop ✎3 · 🤖 ao/FT-12`. Muestra la base, la rama del checkout principal con los ficheros sin confirmar (refresco cada 15 s) y las ramas de los agentes que están trabajando. En ámbar con ⚠ cuando tu rama no es la base.
+- **Clic en la cabecera:** diálogo «🌿 Ramas» para cambiar la base de las tareas **nuevas** (solo ramas locales, sin `ao/*`; las tareas empezadas siguen con la suya). `GET /api/projects/:id/repos/:key/branches` · `POST …/base {branch}`.
+- **Tarjetas** en curso, revisión o fallidas: `🌿 ao/FT-12 ← main`.
+- **Agentes:** el prompt dice de qué base sale su rama y adónde se fusiona (`baseLine`). Si estás en otra rama, lleva el aviso «el checkout principal está en X, que NO es tu base: no copies de ahí». El PO ve la base y tu rama al planificar. Al crear el worktree, el registro del agente lo apunta (`🌿 app: tú estás en «develop»; FT-12 sale de «main»`).
+- Prueba: `node --test tests/branch-info.test.mjs`.
+
 ## Fusión sin conflictos a mano (FT-19)
 
 Las tareas nacen de la rama base en su worktree; si varias tocan los mismos ficheros, al aprobar la fusión chocaba y había que resolverla a mano. Ahora lo gestiona el plugin:

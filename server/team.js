@@ -1670,15 +1670,56 @@ const clientBlock = (t) => [
   (t.pendingMessages || []).length ? `\nIndicaciones que el cliente añadió mientras trabajabas (aplícalas):\n${t.pendingMessages.map((m) => `- ${m.text}`).join('\n')}` : '',
 ].join('');
 
+// 🌿 Rama en vivo de cada repo (checkout principal = donde trabaja el usuario). Las tareas SIEMPRE salen de la base configurada
+// (main, develop…); esto solo sirve para que se vea —en la UI y en el prompt— que el usuario está en otra rama.
+const repoLive = new Map(); // ruta del repo → { branch, dirty, at }
+export const repoLiveOf = (repoPath) => repoLive.get(repoPath) || null;
+async function refreshRepoLive() {
+  let diff = false;
+  for (const r of new Map(get().projects.flatMap((p) => p.repos || []).map((r) => [r.path, r])).values()) {
+    try {
+      const x = await git.repoLive(r.path), prev = repoLive.get(r.path);
+      if (!prev || prev.branch !== x.branch || prev.dirty !== x.dirty) diff = true;
+      repoLive.set(r.path, { ...x, at: Date.now() });
+    } catch { if (repoLive.delete(r.path)) diff = true; }
+  }
+  if (diff) changed();
+}
+setTimeout(() => refreshRepoLive().catch(() => {}), 500).unref?.();
+setInterval(() => refreshRepoLive().catch(() => {}), 15_000).unref();
+const repoOf = (projectId, key) => { const p = findOr404(get().projects, projectId, 'Proyecto'); const r = (p.repos || []).find((x) => x.key === key); if (!r) throw fail(404, `El proyecto no tiene el repo «${key}»`); return { p, r }; };
+export async function repoBranches(projectId, key) { const { r } = repoOf(projectId, key); return { base: r.baseBranch, live: repoLiveOf(r.path), branches: await git.localBranches(r.path) }; }
+// Cambiar la base de un repo (a mano): las tareas NUEVAS saldrán de ella y se fusionarán en ella; las empezadas siguen con la suya.
+export async function setBaseBranch(projectId, key, branch) {
+  const { p, r } = repoOf(projectId, key);
+  const b = String(branch || '').trim();
+  if (!b || b.startsWith('ao/')) throw fail(400, 'Rama base no válida');
+  try { await git.git(r.path, 'rev-parse', '--verify', `refs/heads/${b}`); } catch { throw fail(404, `No existe la rama local «${b}» en ${r.key}`); }
+  const prev = r.baseBranch;
+  r.baseBranch = b;
+  if ((p.repos || [])[0] === r) p.baseBranch = b;
+  log(null, `🌿 ${p.name} · ${r.key}: la base de las tareas nuevas pasa de «${prev}» a «${b}»`);
+  changed();
+  return r;
+}
+// Línea del prompt: de dónde sale y adónde vuelve la rama del agente, y aviso si el usuario está en otra rama.
+export function baseLine(repo, branch, label = '') {
+  const lv = repoLiveOf(repo.path);
+  const own = `${label}tu rama ${branch} sale de «${repo.baseBranch}» y se fusionará en «${repo.baseBranch}».`;
+  return lv && lv.branch !== repo.baseBranch
+    ? `${own} OJO: el usuario tiene ahora el checkout principal (${repo.path}) en la rama «${lv.branch}», que NO es tu base: lo que veas allí no es la base; no copies de ahí ni lo tomes como referencia.`
+    : own;
+}
+
 // FT-44: rutas de trabajo del agente. Una copia aislada (git worktree, rama ao/<código>) por CADA repo del proyecto; escribir en
 // los checkouts principales se prohíbe (no tienen rama ni revisión y AgentOffice puede servirlos en caliente).
 function worktreesBlock(p, t) {
   if (!t.branch && !repoOfTask(p, t)) return ''; // proyecto sin repo: lo explica la parte estable del prompt
   const xs = taskRepos(p, t);
-  if (xs.length < 2) return `Trabajas en una copia aislada del repo (git worktree) en la rama ${t.branch}. No cambies de rama ni hagas push.`;
+  if (xs.length < 2) { const r = xs[0]?.repo || repoOfTask(p, t); return `Trabajas en una copia aislada del repo (git worktree) en la rama ${t.branch}. No cambies de rama ni hagas push.${r ? ' ' + baseLine(r, t.branch) : ''}`; }
   return [
     `Trabajas en copias aisladas (git worktree) de los repos del proyecto, todas en la rama ${t.branch}. No cambies de rama ni hagas push.`,
-    ...xs.map((x) => `- «${x.key}»${x.main ? ' (tu directorio de trabajo)' : ''}: escribe SOLO en ${x.dir} (checkout principal: ${x.repo.path}, solo para consultar).`),
+    ...xs.map((x) => `- «${x.key}»${x.main ? ' (tu directorio de trabajo)' : ''}: escribe SOLO en ${x.dir} (checkout principal: ${x.repo.path}, solo para consultar). ${baseLine(x.repo, x.branch || t.branch)}`),
     'PROHIBIDO escribir en los checkouts principales: lo escrito fuera de estos worktrees no se revisa, no se confirma ni se fusiona. Si el trabajo toca otro repo, hazlo en SU worktree de arriba.',
   ].join('\n');
 }
@@ -1694,7 +1735,7 @@ function buildPrompt(p, agent, t, kit = null) {
       `Objetivo del equipo: ${t.goal}`,
       clientBlock(t),
       '',
-      repos.length ? `Repositorios del proyecto (estás en ${repos[0].path}): ${repos.map((r) => `«${r.key}» = ${r.path} (rama ${r.baseBranch})`).join(' · ')}. Arriba tienes su briefing (estructura, ficheros y documentación): parte de él y lee del código solo lo que necesites para decidir, agrupando las lecturas en pocas órdenes (cada paso reenvía todo el contexto).` : 'No hay repositorio: planifica solo a partir del objetivo.',
+      repos.length ? `Repositorios del proyecto (estás en ${repos[0].path}): ${repos.map((r) => `«${r.key}» = ${r.path} (base de las tareas: «${r.baseBranch}»${repoLiveOf(r.path) && repoLiveOf(r.path).branch !== r.baseBranch ? `; el usuario está ahora en «${repoLiveOf(r.path).branch}»` : ''})`).join(' · ')}. Arriba tienes su briefing (estructura, ficheros y documentación): parte de él y lee del código solo lo que necesites para decidir, agrupando las lecturas en pocas órdenes (cada paso reenvía todo el contexto).` : 'No hay repositorio: planifica solo a partir del objetivo.',
       `Divide el objetivo en tareas pequeñas para estos roles: ${roles.join(', ')}.`,
       'Cada tarea debe poder hacerla un agente solo, en una rama aparte, y ser verificable.',
       'Las tareas de QA van al final y dependen de lo que verifican.',
@@ -1890,6 +1931,7 @@ async function runTask(p, agent, t) {
       t.repo = repo.key;
       const wt = await git.createWorktree(p, repo, t);
       cwd = wt.path;
+      try { const lv = await git.repoLive(repo.path); repoLive.set(repo.path, { ...lv, at: Date.now() }); if (lv.branch !== repo.baseBranch) log(agent.id, `🌿 ${repo.key}: tú estás en «${lv.branch}»; ${t.code || t.id} trabaja en ${wt.branch}, que sale de la base «${repo.baseBranch}» (no se mezclan)`); } catch { /* repo sin leer */ }
       t.branch = wt.branch;
       t.reused = !!wt.reused;
       t.baseConflict = null;
