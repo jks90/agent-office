@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentOffice · agente</title>
+<!-- 🫧 Burbuja del agente (ver server/browser/overlay.js): la carga la ventana Electron de overlay/main.cjs.
+     Abierta en una pestaña normal también funciona (sin ajustar el tamaño de la ventana). -->
+<style>
+  :root {
+    --bg: #1d2230; --bg-2: #262c3d; --text: #eef1f7; --muted: #a3abc0; --border: #3a4258;
+    --accent: #6ea8ff; --ok: #3fbf7f; --warn: #f2b84b; --shadow: rgba(0, 0, 0, .45);
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #ffffff; --bg-2: #f2f4f9; --text: #1b2030; --muted: #5d6680; --border: #d6dbe7; --accent: #2f6fe0; --shadow: rgba(20, 30, 60, .25); }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: transparent; font: 13px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--text); overflow: hidden; }
+  #root { display: inline-flex; flex-direction: column; gap: 8px; padding: 10px; width: 320px; }
+  .card { background: var(--bg); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 8px 24px var(--shadow); overflow: hidden; }
+  .agent { display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 12px; -webkit-app-region: drag; cursor: grab; }
+  .avatar { flex: none; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 16px; color: #fff; position: relative; }
+  .avatar::after { content: ""; position: absolute; right: -1px; bottom: -1px; width: 11px; height: 11px; border-radius: 50%; background: var(--ok); border: 2px solid var(--bg); animation: pulse 1.6s ease-in-out infinite; }
+  .asking .avatar::after { background: var(--warn); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .who { min-width: 0; flex: 1; }
+  .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .name small { color: var(--muted); font-weight: 400; }
+  .doing { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .x { -webkit-app-region: no-drag; flex: none; align-self: flex-start; border: 0; background: transparent; color: var(--muted); font-size: 15px; line-height: 1; padding: 2px 4px; border-radius: 6px; cursor: pointer; }
+  .x:hover { background: var(--bg-2); color: var(--text); }
+  .q { border-top: 1px solid var(--border); padding: 10px 12px 12px; background: var(--bg-2); }
+  .q-text { font-weight: 600; margin: 0 0 6px; white-space: pre-wrap; }
+  .q-ctx { color: var(--muted); font-size: 12px; margin: 0 0 8px; white-space: pre-wrap; max-height: 90px; overflow: auto; }
+  .opts { display: flex; flex-direction: column; gap: 6px; }
+  button.opt, button.go, button.send { font: inherit; text-align: left; padding: 7px 10px; border-radius: 9px; border: 1px solid var(--border); background: var(--bg); color: var(--text); cursor: pointer; }
+  button.opt:hover, button.send:hover { border-color: var(--accent); }
+  button.go { background: var(--accent); border-color: transparent; color: #fff; font-weight: 600; text-align: center; margin-bottom: 6px; }
+  .free { display: flex; gap: 6px; margin-top: 6px; }
+  .free input { flex: 1; min-width: 0; font: inherit; padding: 7px 9px; border-radius: 9px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+  .free input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button.send { text-align: center; }
+  button:disabled { opacity: .5; cursor: default; }
+  .err { color: #ff7a7a; font-size: 12px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="overlay.js"></script>
+</body>
+</html>
