@@ -2,7 +2,7 @@
 // Linux X11 con xdotool; macOS con osascript. Wayland/Windows: no se puede (el usuario lo verá por el aviso y Telegram).
 import { execFileSync } from 'node:child_process';
 
-const CLASSES = ['brave-browser', 'Brave-browser', 'google-chrome', 'Google-chrome', 'chromium', 'Chromium'];
+const CLASSES = ['brave', 'brave-browser', 'Brave-browser', 'google-chrome', 'Google-chrome', 'chromium', 'Chromium'];
 
 export function focusExternalBrowser() {
   try {
