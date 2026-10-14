@@ -15,6 +15,7 @@ import * as ponytail from './ponytail.js'; // FT-86
 import * as scores from './scores.js'; // FT-152
 import * as uploads from './uploads.js'; // FT-95
 import { allRoles } from './roles.js';
+import { teamView } from './remote-team.js'; // ES-16
 import { checkSuite, suiteInfo } from './suite.js';
 import * as auth from './engines/auth.js';
 import * as localServer from './engines/local-server.js';
@@ -85,7 +86,8 @@ function remoteProject(projectId) {
   if (!p || hidden.has(p.id)) throw fail(404, 'Proyecto no encontrado');
   return st;
 }
-const remoteAgentName = (st, t) => { const id = t.agentId || t.assignedAgentId; return id === 'human' ? 'humano' : st.agents.find((a) => a.id === id)?.name || null; };
+const remoteTeam = (projectId) => { const st = remoteProject(projectId); return teamView(st, st.projects.find((x) => x.id === projectId), allRoles()); }; // ES-16
+const remoteAgentName =(st, t) => { const id = t.agentId || t.assignedAgentId; return id === 'human' ? 'humano' : st.agents.find((a) => a.id === id)?.name || null; };
 function remoteTaskList(projectId, q) {
   const st = remoteProject(projectId);
   if (q.status && !REMOTE_STATUSES.includes(q.status)) throw fail(400, `status debe ser: ${REMOTE_STATUSES.join(', ')}`);
@@ -230,6 +232,7 @@ const routes = [
   ['GET', /^\/api\/remote\/projects$/, () => { remoteGate(); const hidden = new Set(store.get().settings?.hiddenProjects || []); return { projects: store.get().projects.filter((p) => !hidden.has(p.id)).map((p) => ({ id: p.id, name: p.name })), tabs: store.bus.listenerCount('ui') }; }],
   ['GET', /^\/api\/remote\/tasks\/(\w+)$/, ([id], _, q) => { remoteGate(); return remoteTaskList(id, q); }], // ES-4
   ['GET', /^\/api\/remote\/tasks\/(\w+)\/([\w-]+)$/, ([id, tid]) => { remoteGate(); return remoteTaskDetail(id, tid); }], // ES-4
+  ['GET', /^\/api\/remote\/team\/(\w+)$/, ([id]) => { remoteGate(); return remoteTeam(id); }], // ES-16
   ['GET', /^\/api\/remote\/task-options\/(\w+)$/, ([id]) => { remoteGate(); return remoteTaskOptions(id); }],
   // Cambiar un desplegable desde el mando: se aplica a la «Nueva tarea» abierta de ese proyecto (si no hay, no pasa nada)
   ['POST', /^\/api\/remote\/task-fields$/, (_, b) => {
