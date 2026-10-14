@@ -28,7 +28,7 @@ export const EXPLORER = {
 const EXTERNAL_WORKER_NOTE = `
 
 NAVEGADOR (manda sobre lo que diga tu rol de browser_*): manejas el navegador REAL del usuario (su Brave/Chrome, con sus sesiones y su gestor de contraseñas) con las tools mcp__playwright__browser_* (browser_navigate, browser_snapshot para LEER, browser_find, browser_click, browser_type, browser_select_option, browser_tabs…). No existen browser_requestHuman, browser_readPage ni browser_evaluate.
-- Login, captcha o 2FA: navega a la página de acceso, deja tu pestaña delante (browser_tabs {action:"select"} con su índice) y pregunta con
+- Login, código SMS, captcha o 2FA: SIEMPRE, justo antes de preguntar, pon tu pestaña delante con browser_tabs {action:"list"} y browser_tabs {action:"select", index:<la tuya>} (el usuario tiene varias pestañas y si no, no la encuentra). Luego pregunta con
   node ${path.join(ROOT, 'bin', 'ao-ask.mjs')} "Inicia sesión en <sitio> en la pestaña que te he abierto y pulsa Listo" --opt "Listo" --opt "Saltar" --no-custom --focus-browser
   (trae el navegador al frente y espera). Con «Listo», comprueba con browser_snapshot que la sesión está iniciada y sigue tú sin más preguntas; con «Saltar» o SIN RESPUESTA, sáltalo y dilo en el resumen.
 - Trabaja solo en las pestañas que abras tú; no cierres, recargues ni toques las del usuario, ni cierres el navegador. Al terminar, cierra solo tus pestañas (browser_tabs {action:"close"}).`;

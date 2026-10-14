@@ -1859,7 +1859,9 @@ async function runTask(p, agent, t) {
     // si tras el aviso vuelve a saltar → se corta y va a Revisión. t.stuckWarned sobrevive al reencolado.
     const stuckLimits = { ...stuck.limits(s.settings, engineId), enabled: stuck.limits(s.settings).enabled && t.kind !== 'plan' };
     const probe = t.branch ? async () => `${await git.git(cwd, 'status', '--porcelain')}\n${await git.git(cwd, 'diff', '--stat')}` : null;
-    const newDetector = () => stuck.createDetector({ limits: stuckLimits, isCode: role.kind === 'dev', probe });
+    // Roles que trabajan en el navegador (capacidad browser/playwright: conciliar bancos, demos…) no editan ficheros: «sin editar» no es atasco
+    const browsing = ['browser', 'playwright'].some((c) => role.tools?.includes(c)) || ['navegante', 'qa-suite', 'office-flowtest'].includes(agent.role);
+    const newDetector = () => stuck.createDetector({ limits: stuckLimits, isCode: role.kind === 'dev' && !browsing, probe });
     let detector = newDetector();
     if (pickedModel.model) { // FT-60: historial de modelos de la tarea (la tarjeta enseña «haiku → sonnet»)
       (t.modelHistory ||= []).push({ model: pickedModel.model, engine: engineId, attempt: t.attempts, why: pickedModel.why, at: Date.now() });
