@@ -30,7 +30,7 @@ async function statusZ(dir) {
 // Ficheros con cambios sin commitear por repo: {dir: [ruta…]} (null si no se pudo leer).
 export async function dirtyMap(dirs) {
   const out = {};
-  for (const d of dirs) { try { out[d] = await statusZ(d); } catch { out[d] = null; } }
+  for (const d0 of dirs) { const d = path.resolve(d0); try { out[d] = await statusZ(d); } catch { out[d] = null; } } // FT-236: misma clave (path.resolve) para before y now
   return out;
 }
 
@@ -40,7 +40,7 @@ export async function dirtyMap(dirs) {
 export async function commitOnMain(t, agent) {
   const lines = [], commits = [];
   const before = t.onMainBefore || {};
-  const now = await dirtyMap(Object.keys(before));
+  const now = await dirtyMap(Object.keys(before)); // claves ya normalizadas (FT-236)
   for (const [d, was] of Object.entries(before)) {
     if (!was || !now[d]) continue;
     const mine = now[d].filter((f) => !was.includes(f));
