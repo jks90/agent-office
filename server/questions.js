@@ -20,7 +20,7 @@ const MAX_OPEN_CONFIRMS = 5;
 
 export const list = () => [...pending.values()].map(({ waiters, ...q }) => q);
 
-export function ask({ taskId, question, options = [], allowCustom = true, context = '' }) {
+export function ask({ taskId, question, options = [], allowCustom = true, context = '', browser = false }) {
   const s = store.get();
   const t = s.tasks.find((x) => x.id === taskId || x.code === String(taskId || '').toUpperCase());
   if (!t) throw fail(404, 'Tarea no encontrada');
@@ -32,6 +32,7 @@ export function ask({ taskId, question, options = [], allowCustom = true, contex
     id: store.newId(), taskId: t.id, taskCode: t.code, agentId: t.agentId, agentName: agent?.name || '?', projectId: t.projectId,
     question: String(question).trim().slice(0, 2000), options: options.map((o) => String(o).trim().slice(0, 300)).filter(Boolean).slice(0, 8),
     allowCustom: allowCustom !== false, context: String(context || '').trim().slice(0, 4000), createdAt: Date.now(), waiters: [],
+    ...(browser ? { browser: true } : {}), // el usuario tiene que hacer algo en SU navegador (login): la UI ofrece «🌐 Ir al navegador»
   };
   pending.set(q.id, q);
   if (agent) { agent.activity = `❓ Esperando tu respuesta: ${q.question.slice(0, 80)}`; }

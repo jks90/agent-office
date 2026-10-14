@@ -40,7 +40,7 @@ if (focusBrowser) { // el login lo hace el usuario en SU navegador: que lo tenga
   if (!f.ok) console.error(`(no he podido traer el navegador al frente: ${f.reason})`);
 }
 try {
-  const { id } = await call('POST', '/api/questions', { taskId, question, options: opts, allowCustom, context });
+  const { id } = await call('POST', '/api/questions', { taskId, question, options: opts, allowCustom, context, browser: focusBrowser });
   const deadline = Date.now() + timeoutMin * 60_000;
   while (Date.now() < deadline) {
     const r = await call('POST', `/api/questions/${id}/wait`, { ms: 50000 });

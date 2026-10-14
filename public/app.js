@@ -3083,10 +3083,12 @@ function openQuestion(id) {
     ${q.context ? `<div class="q-context">${md(q.context)}</div>` : ''}
     ${q.options.length ? `<div class="q-opts">${q.options.map((o) => `<button type="button" class="q-opt" data-answer="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}
     ${q.allowCustom ? `<label>${q.options.length ? 'U otra respuesta' : 'Tu respuesta'}</label><textarea name="answer" rows="3" placeholder="Escribe la respuesta para el agente…" ${q.options.length ? '' : 'autofocus'}></textarea>` : ''}
-    <div class="row"><button class="ghost" value="cancel">Más tarde</button>${q.allowCustom ? '<button>Responder</button>' : ''}</div>`,
+    <div class="row"><button class="ghost" value="cancel">Más tarde</button>${q.browser ? '<button type="button" class="ghost" data-focus-browser>🌐 Ir al navegador</button>' : ''}${q.allowCustom ? '<button>Responder</button>' : ''}</div>`,
     async (f) => { if (!f.answer?.trim()) throw new Error('vacía'); await api('POST', `/api/questions/${id}/answer`, { answer: f.answer }); qOpen = null; toast(`Respuesta enviada a ${q.agentName}`); }, 'question');
   publishContext();
   const dlg = $('#dialog');
+  const fb = dlg.querySelector('[data-focus-browser]'); // navegador externo: traer Brave/Chrome al frente para hacer el login
+  if (fb) fb.onclick = async () => { const r = await api('POST', '/api/browser/focus').catch(() => null); if (!r?.ok) toast('No he podido traer el navegador al frente: búscalo tú (pestaña abierta por el agente)'); };
   dlg.querySelectorAll('.q-opt').forEach((b) => { b.onclick = async () => { await api('POST', `/api/questions/${id}/answer`, { answer: b.dataset.answer }); qOpen = null; dlg.close(); toast(`Respuesta enviada a ${q.agentName}`); }; });
   dlg.addEventListener('close', () => { if (qOpen === id) { qSnoozed.add(id); qOpen = null; } }, { once: true });
 }

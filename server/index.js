@@ -290,6 +290,11 @@ const routes = [
   // Preguntas de los agentes al usuario (bin/ao-ask.mjs ↔ modal de la UI)
   ['GET', /^\/api\/questions$/, () => questions.list()],
   ['POST', /^\/api\/questions$/, (_, b) => questions.ask(b)],
+  // Navegador externo: traer al frente el navegador del usuario (botón «🌐 Ir al navegador» de las preguntas de login). Solo loopback.
+  ['POST', /^\/api\/browser\/focus$/, async (_, __, ___, req) => {
+    if (!isLoopback(req)) throw Object.assign(new Error('Solo desde este PC'), { status: 403 });
+    return (await import('./browser/focus.js')).focusExternalBrowser();
+  }],
   ['POST', /^\/api\/questions\/(\w+)\/wait$/, ([id], b) => questions.wait(id, Math.min(55_000, Number(b.ms) || 50_000))],
   ['POST', /^\/api\/questions\/(\w+)\/answer$/, ([id], b) => questions.answer(id, b.answer)],
   ['POST', /^\/api\/projects\/(\w+)\/run$/, gated(([id], b) => team.setRunning(id, b.running))],
