@@ -39,3 +39,10 @@ test('verifyPrompt: pide comprobar el resultado con sus herramientas y lleva el 
   assert.match(s, /Saldos banco vs Home/);
   assert.match(s, /"approve"/);
 });
+
+test('veredicto «human»: lo que falta solo lo puede hacer el usuario → se reconoce para no devolverla', () => {
+  const v = review.parseVerdict('tabla…\n{"approve": false, "human": true, "reasons": ["falta SMS de Unicaja"], "feedback": "autoriza los 90 días", "pending": []}');
+  assert.equal(v.approve, false); assert.equal(v.human, true);
+  assert.equal(review.parseVerdict('{"approve": false, "reasons": [], "feedback": "x"}').human, false);
+  assert.match(review.verifyPrompt({ code: 'X-1', title: 't', summary: 's' }), /"human": true/);
+});

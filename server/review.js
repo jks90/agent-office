@@ -60,7 +60,7 @@ export function parseVerdict(text) {
         const o = JSON.parse(s.slice(i, j + 1));
         if (o && typeof o.approve === 'boolean') return { approve: o.approve, reasons: (Array.isArray(o.reasons) ? o.reasons : []).map(String).slice(0, 10), feedback: String(o.feedback || '').slice(0, 3000),
           followups: (Array.isArray(o.followups) ? o.followups : []).map((f) => (typeof f === 'string' ? { title: f } : f)).filter((f) => f && String(f.title || '').trim()).map((f) => ({ title: String(f.title).trim().slice(0, 140), description: String(f.description || '').slice(0, 2000) })).slice(0, 5),
-          pending: (Array.isArray(o.pending) ? o.pending : []).map(String).slice(0, 8) };
+          pending: (Array.isArray(o.pending) ? o.pending : []).map(String).slice(0, 8), human: o.human === true }; // human: lo que falta solo lo puede hacer el usuario → no se devuelve
       } catch { /* sigue buscando el cierre */ }
     }
   }
@@ -93,9 +93,10 @@ export function verifyPrompt(t) {
     `Eres el revisor (un agente distinto del autor) de la tarea ${t.code || t.id}: ${t.title}. No hay código que revisar: comprueba con TUS herramientas que el resultado que dice el autor es cierto, como manda tu rol. No modifiques nada salvo que tu rol lo permita expresamente.`,
     '- APRUEBA (approve:true) solo si tu comprobación clave sale bien. Si no, DEVUELVE (approve:false) con "feedback": qué no cuadra, con cifras, y qué tiene que hacer el autor.',
     '- Si el resumen del autor no trae los datos que necesitas para comprobarlo, devuélvelo pidiéndolos.',
+    '- Si lo que falta SOLO lo puede resolver el usuario (un login, un código SMS/2FA, una autorización, algo que él saltó), NO lo devuelvas: otro intento del autor no lo arregla. Pon "approve": false y "human": true, y en "feedback" qué tiene que hacer el usuario.',
     `\nDescripción de la tarea:\n${t.description || '(sin descripción)'}`,
     `\nResumen del autor:\n${(t.summary || '').slice(0, 6000)}`,
-    '\nAl terminar, la ÚLTIMA línea de tu respuesta debe ser un único objeto JSON: {"approve": true|false, "reasons": ["…"], "feedback": "qué debe corregir el autor (vacío si apruebas)", "pending": []}',
+    '\nAl terminar, la ÚLTIMA línea de tu respuesta debe ser un único objeto JSON: {"approve": true|false, "human": true|false, "reasons": ["…"], "feedback": "qué debe corregir el autor o hacer el usuario (vacío si apruebas)", "pending": []}',
   ].join('\n');
 }
 

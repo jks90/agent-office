@@ -826,6 +826,7 @@ export async function autoReview(p, t) {
       const extra = [v.pending?.length ? `pendiente de comprobar fuera: ${v.pending.join('; ')}` : '', sug.length ? `sugerencias (no se han creado tareas): ${sug.join('; ')}` : ''].filter(Boolean).join(' · ');
       await approve(t.id, { by: 'auto-qa', verdict: { approve: true, text: [v.reasons.join('; ') || 'sin objeciones', extra].filter(Boolean).join(' · ') } });
     }
+    else if (v.human) return hold(`✋ necesita al usuario: ${(v.feedback || v.reasons.join('; ') || 'lo que falta solo lo puedes hacer tú').slice(0, 400)}`); // devolverla no lo arregla
     else await reject(t.id, v.feedback || v.reasons.join('\n') || 'El revisor automático pide cambios.', [], [], 'auto-qa');
   } catch (e) {
     if (e.quotaWait) { t.reviewWaitQuota = e.quotaWait; reviewNote(t, 'auto', 'skipped', `⏸ revisión en espera de cuota (${e.message})`); return; } // se reintenta sola
