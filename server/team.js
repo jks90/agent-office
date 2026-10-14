@@ -11,6 +11,7 @@ import * as questions from './questions.js';
 import * as events from './events.js';
 import { classifyReject, REASONS, forCoordinator } from './scores.js'; // FT-152 · FT-154
 import * as git from './git.js';
+import { dirtyMap, commitOnMain } from './onmain.js'; // FT-233
 import { allRoles, roleOf } from './roles.js';
 import { parseTasks } from './engines/describe.js';
 import { addUsage, codexCostUsd } from './usage.js';
@@ -1843,28 +1844,6 @@ function economyBlock(codeIndexOn) {
   ].join('\n');
 }
 
-// 🚀 Ficheros con cambios sin commitear por repo: {dir: [ruta…]} (para commitear después solo lo nuevo de la tarea).
-async function dirtyMap(dirs) {
-  const out = {};
-  for (const d of dirs) { try { out[d] = (await git.git(d, 'status', '--porcelain', '--untracked-files=all')).split('\n').filter(Boolean).map((l) => l.slice(3)); } catch { out[d] = null; } }
-  return out;
-}
-async function commitOnMain(t, agent) {
-  const lines = [];
-  const now = await dirtyMap(Object.keys(t.onMainBefore));
-  for (const [d, before] of Object.entries(t.onMainBefore)) {
-    if (!before || !now[d]) continue;
-    const mine = now[d].filter((f) => !before.includes(f) && !/^"?\.\.?\//.test(f));
-    if (!mine.length) continue;
-    try {
-      await git.git(d, 'add', '--', ...mine.map((f) => f.replace(/^"|"$/g, '').split(' -> ').pop()));
-      await git.git(d, '-c', `user.name=${agent.name} (AgentOffice)`, '-c', 'user.email=agentoffice@local', 'commit', '-q', '-m', `${t.code || t.id}: ${t.title}\n\nCo-Authored-By: AgentOffice <noreply@agentoffice.local>`);
-      lines.push(`📝 Commit en ${path.basename(d)}: ${mine.length} fichero(s)`);
-    } catch (e) { lines.push(`⚠ No pude commitear en ${path.basename(d)}: ${String(e.message).split('\n')[0]}`); }
-  }
-  return lines;
-}
-
 // 🚀 «Publicar X.Y.Z»: AgentOffice ejecuta scripts/release/run-all.sh en nombre del agente de Release (sin IA ni tope de
 // tiempo de un comando), con cada paso en su registro. Aprobado = publicado; si un paso falla, la tarea queda «Fallida» con su log.
 async function runReleasePipeline(p, agent, t, ev) {
@@ -2157,8 +2136,15 @@ async function runTask(p, agent, t) {
     if (!res.ok) { if (!res.stopped) agentError = true; throw new Error(res.error || 'El agente no terminó bien'); }
     t.summary = res.summary || '';
     if (t.onMain && t.onMainBefore) { // 🚀 commitea en cada repo SOLO lo que cambió el agente (no lo que ya estaba sin commitear)
-      for (const line of await commitOnMain(t, agent)) log(agent.id, line);
+      const co = await commitOnMain(t, agent); // FT-233: el resultado queda en la tarea (sobrevive a un reinicio)
+      for (const line of co.lines) log(agent.id, line);
+      t.commits = co.commits;
       delete t.onMainBefore;
+      const left = Object.entries(co.left);
+      if (t.releaseOf && left.length) { // red de seguridad: Publicar chocaría con el preflight «repo limpio»
+        const det = left.map(([r, f]) => `${r} (${f.slice(0, 3).join(', ')}${f.length > 3 ? '…' : ''})`).join('; ');
+        throw new Error(`FT-233: tras documentar quedan cambios sin commitear: ${det}. ${co.commits.filter((c) => !c.ok).map((c) => `${c.repo}: ${c.error}`).join('; ')}`.trim());
+      }
     }
     if (t.kind !== 'plan' && s.settings.agentMemory !== false) { // FT-75: el bloque «LECCIONES:» del resumen pasa a la memoria
       const h = memory.harvest(p.id, agent.id, t.summary, t.code || t.id);
