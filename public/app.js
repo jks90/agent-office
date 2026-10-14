@@ -627,7 +627,7 @@ document.addEventListener('keydown', (e) => { if (e.ctrlKey && !e.shiftKey && !e
 // Hablar desde cualquier sitio: mantener Ctrl+Espacio (abre el Guía si está cerrado); al soltar se envía como el 🎤.
 // Embebido en flow-test, el padre reenvía la tecla por postMessage (`flowtest:voice`) cuando el foco no está en el iframe.
 // 🎛 Mando del micro (POST /api/remote/mic, pantalla ESP32): pulsa el 🎤 del Guía (sin corte por silencio, hasta el stop) o
-// abre «Nueva tarea» del proyecto y dicta la descripción. Solo la pestaña visible; el micro ya tiene que estar permitido.
+// abre «Nueva tarea» del proyecto y dicta el título o la descripción (`field`). Solo la pestaña visible; el micro ya tiene que estar permitido.
 function remoteMic(c) {
   if (document.hidden) return;
   if (c.target === 'guide') {
@@ -644,7 +644,7 @@ function remoteMic(c) {
     goProject(c.projectId); showTab('tasks');
     actions['new-task']();
   }
-  const btn = dlg.querySelector('textarea[name=description]')?.closest('.mic-wrap')?.querySelector('[data-mic]');
+  const btn = dlg.querySelector(c.field === 'title' ? '[name=title]' : 'textarea[name=description]')?.closest('.mic-wrap')?.querySelector('[data-mic]');
   if (!btn) return toast('Este navegador no puede dictar: el mando no tiene micro que pulsar', 'error');
   if (dictation?.btn !== btn) btn.click();
 }

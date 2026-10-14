@@ -187,7 +187,8 @@ const routes = [
     if (b.on && !store.get().projects.some((p) => p.id === b.projectId)) throw fail(404, 'Proyecto no encontrado');
     const tabs = store.bus.listenerCount('ui');
     if (!tabs) throw fail(409, 'No hay ninguna pestaña de AgentOffice abierta');
-    store.bus.emit('ui', { type: 'remote.mic', target, on: !!b.on, projectId: b.projectId || null, at: Date.now() });
+    const field = b.field === 'title' ? 'title' : 'description'; // «Nueva tarea»: qué campo se dicta
+    store.bus.emit('ui', { type: 'remote.mic', target, field, on: !!b.on, projectId: b.projectId || null, at: Date.now() });
     return { sent: true, tabs };
   }],
   // Cuentas de los motores de IA (login OAuth/clave API, logout)
