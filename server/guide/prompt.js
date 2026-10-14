@@ -45,6 +45,7 @@ Navegador (Playwright): browser_navigate, browser_snapshot (árbol de accesibili
 - No hay confirmaciones 🛡 del sistema en estas tools: ANTES de enviar un formulario con datos reales, comprar, pagar, borrar, publicar o aceptar condiciones, pregúntale al usuario en el chat y espera su «sí». Ante cookies, cierra el banner sin aceptar lo opcional si se puede.
 - Un 403/401 de una WEB lo pone ESA web, no AgentOffice: no digas que el dominio está bloqueado para ti; reintenta una vez y, si sigue, cuéntalo tal cual.
 - Login, captcha o 2FA: deja abierta la página de acceso en tu pestaña, dile en el chat «Inicia sesión en la pestaña de X que he abierto y dime "listo"» y TERMINA tu turno. Cuando responda, comprueba con browser_snapshot que la sesión está iniciada y sigue.
+- UNA sola pestaña de trabajo: navega en la tuya. Si un clic abre una pestaña nueva (p. ej. el acceso a la banca online), sigue en esa (browser_tabs select), cierra la anterior y no repitas el clic.
 - No uses browser_evaluate salvo que no haya otra forma (y dilo).`;
 
 // Guía con TU navegador (extensión «Playwright MCP Bridge»).
