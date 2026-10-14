@@ -1086,7 +1086,10 @@ function renderBrowser() {
   $('#br-stage').classList.toggle('user', mine);
   const hs = b.handoffs || [];
   $('#br-side').innerHTML = `<h4>🤝 Peticiones del agente</h4>` + (hs.length
-    ? hs.map((h) => `<div class="br-handoff"><div>${esc(h.reason || 'El agente necesita que lo hagas tú')}</div><button class="small" data-brhand="${esc(h.id)}">Tomar el control</button></div>`).join('')
+    ? hs.map((h) => {
+      const q = (S.questions || []).find((x) => isHandoffQ(x) && x.question.includes(String(h.reason || '').slice(0, 120)));
+      return `<div class="br-handoff"><div>${esc(h.reason || 'El agente necesita que lo hagas tú')}</div>${mine ? '' : `<button class="small" data-brhand="${esc(h.id)}">Tomar el control</button>`}${q ? `<button class="small primary" data-hqa="${esc(q.id)}" data-answer="Listo">✅ Listo</button> <button class="small ghost" data-hqa="${esc(q.id)}" data-answer="Cancelar">Cancelar</button>` : ''}</div>`;
+    }).join('')
     : `<p class="muted">Sin peticiones. Cuando el agente necesite ayuda (login, captcha…) aparecerá aquí.</p>`)
     + (b.lastRequest ? `<h4>💸 Última petición (FT-132)</h4><p class="muted">${b.lastRequest.calls} acciones · ${b.lastRequest.costUsd != null ? '$' + Number(b.lastRequest.costUsd).toFixed(3) : 'coste n/d'}${b.lastRequest.usage ? ` · ${(b.lastRequest.usage.input || 0) + (b.lastRequest.usage.cacheRead || 0) + (b.lastRequest.usage.cacheWrite || 0)} tok entrada / ${b.lastRequest.usage.output || 0} salida` : ''} · ${Math.round(b.lastRequest.ms / 1000)} s${b.lastRequest.capped ? ` · ⚠ tope de $${b.lastRequest.maxUsd} alcanzado` : ''}</p>` : '');
 }
@@ -3052,6 +3055,9 @@ document.addEventListener('click', async (e) => {
 // opciones (o respuesta libre); si lo cierras sin contestar queda un aviso fijo arriba para volver a abrirlo.
 const qSnoozed = new Set();
 let qOpen = null;
+// 🤝 browser.requestHuman: no se abre como modal (taparía el navegador); se salta a 🌐 Navegador y se responde allí
+const isHandoffQ = (q) => String(q?.question || '').startsWith('🤝 El agente del navegador');
+const handoffSeen = new Set();
 function renderQuestions() {
   const qs = S.questions || [];
   const bar = $('#questions-bar');
@@ -3060,7 +3066,9 @@ function renderQuestions() {
     bar.hidden = !qs.length;
   }
   if (qOpen && !qs.some((q) => q.id === qOpen)) { qOpen = null; if ($('#dialog').open && $('#dialog').className === 'question') $('#dialog').close(); }
-  const next = qs.find((q) => !qSnoozed.has(q.id));
+  const hand = qs.find((q) => isHandoffQ(q) && !handoffSeen.has(q.id));
+  if (hand) { handoffSeen.add(hand.id); if (qOpen && $('#dialog').open) $('#dialog').close(); showTab('browser'); toast('🤝 El agente te pasa el control del navegador: hazlo y pulsa «Listo»'); }
+  const next = qs.find((q) => !qSnoozed.has(q.id) && !isHandoffQ(q));
   if (next && !qOpen && !$('#dialog').open) openQuestion(next.id);
 }
 function openQuestion(id) {
@@ -3082,7 +3090,14 @@ function openQuestion(id) {
   dlg.querySelectorAll('.q-opt').forEach((b) => { b.onclick = async () => { await api('POST', `/api/questions/${id}/answer`, { answer: b.dataset.answer }); qOpen = null; dlg.close(); toast(`Respuesta enviada a ${q.agentName}`); }; });
   dlg.addEventListener('close', () => { if (qOpen === id) { qSnoozed.add(id); qOpen = null; } }, { once: true });
 }
-document.addEventListener('click', (e) => { const b = e.target.closest('[data-q]'); if (b) { qSnoozed.delete(b.dataset.q); openQuestion(b.dataset.q); } });
+document.addEventListener('click', (e) => {
+  const h = e.target.closest('[data-hqa]'); // 🤝 «Listo»/«Cancelar» del panel 🌐
+  if (h) { api('POST', `/api/questions/${h.dataset.hqa}/answer`, { answer: h.dataset.answer }).then(() => toast(h.dataset.answer === 'Listo' ? 'El agente sigue' : 'Cancelado')).catch(() => {}); return; }
+  const b = e.target.closest('[data-q]');
+  if (!b) return;
+  if (isHandoffQ((S.questions || []).find((q) => q.id === b.dataset.q))) { showTab('browser'); return; }
+  qSnoozed.delete(b.dataset.q); openQuestion(b.dataset.q);
+});
 // Código legible de la tarea (GL-7); las muy antiguas sin código enseñan el id.
 const tcode = (t) => t?.code || ('#' + (t?.id || '?'));
 const ago = (ts) => { const m = Math.round((Date.now() - ts) / 60000); return m < 1 ? 'un momento' : m < 60 ? `${m} min` : `${Math.round(m / 60)} h`; };
