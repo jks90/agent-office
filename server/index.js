@@ -270,6 +270,12 @@ const routes = [
   // 🌿 Ramas de un repo del proyecto: base de las tareas, rama en vivo del checkout y cambiar la base (solo tareas nuevas)
   ['GET', /^\/api\/projects\/(\w+)\/repos\/([\w.-]+)\/branches$/, ([id, key]) => team.repoBranches(id, key)],
   ['POST', /^\/api\/projects\/(\w+)\/repos\/([\w.-]+)\/base$/, ([id, key], b) => team.setBaseBranch(id, key, b.branch)],
+  // 🚀 Publicación programada (bin/ao-release-check.mjs desde una ⏰ programada): publica flow-test y sube AgentOffice si hay cambios. Solo loopback.
+  ['POST', /^\/api\/release\/scheduled$/, async (_, __, ___, req) => {
+    if (!isLoopback(req)) throw Object.assign(new Error('Solo desde este PC'), { status: 403 });
+    if (!releaseTrigger.flowTestDir(store.get())) throw Object.assign(new Error('No encuentro el repo de flow-test (settings.flowTestDir)'), { status: 409 });
+    return releaseTrigger.scheduledRelease(releaseTrigger.realDeps(team, store, telegram, questions));
+  }],
   ['POST', /^\/api\/tasks\/([\w-]+)\/move$/, ([id], b) => team.moveTask(id, b.projectId)],
   ['POST', /^\/api\/projects\/(\w+)\/schedules\/(\w+)\/(move|copy)$/, ([id, sid, op], b) => team.moveSchedule(id, sid, b.projectId, { copy: op === 'copy' })],
   ['POST', /^\/api\/agents\/(\w+)\/(move|copy)$/, ([id, op], b) => team.moveAgent(id, b.from || null, b.projectId, { copy: op === 'copy', name: b.name })],
@@ -361,6 +367,7 @@ const routes = [
     if (b.maxParallel) st.maxParallel = Math.max(1, Math.min(8, Number(b.maxParallel) || 4));
     if (typeof b.guideModel === 'string') st.guideModel = b.guideModel.trim();
     if (guide.providerNames().includes(b.guideProvider)) st.guideProvider = b.guideProvider;
+    if (typeof b.releaseDryRun === 'boolean') st.releaseDryRun = b.releaseDryRun; // FT-175: false = «Publicar» publica de verdad (run-all sin --dry-run)
     if (b.guideBrowserMaxUsd !== undefined) st.guideBrowserMaxUsd = Math.max(0, Math.min(100, Number(b.guideBrowserMaxUsd) || 0)); // FT-132: tope de coste por petición del Guía con navegador (0 = sin tope)
     if (stt.providerNames().includes(b.sttProvider)) st.sttProvider = b.sttProvider; // FT-9
     if (tts.providerNames().includes(b.ttsProvider)) st.ttsProvider = b.ttsProvider; // FT-52

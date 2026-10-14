@@ -11,9 +11,13 @@
 //   · mutex persistente (data/release-trigger.json): nunca dos publicaciones (ni dos preguntas) a la vez.
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { DATA_DIR, ROOT } from './store.js';
 import { allRoles } from './roles.js';
+import { publishSelf } from './selfupdate.js';
+
+const gitRun = async (dir, ...args) => (await promisify(execFile)('git', ['-C', dir, ...args], { timeout: 60_000 })).stdout;
 
 const FILE = path.join(DATA_DIR, 'release-trigger.json');
 export const ASK_STALE_MS = 13 * 3600e3;  // la pregunta caduca a las 12 h (FT-170); 1 h de margen
@@ -126,6 +130,14 @@ export async function check(deps) {
     deps.notify?.(`🚀 ¿Publico flow-test ${version}? Contesta en AgentOffice ▸ 🔔 Para ti.\n${body}`);
     const ans = await deps.ask(question(version, items), id);
     if (ans !== 'yes') { release(id); return { action: ans === 'no' ? 'no' : 'timeout', version }; }
+    return dispatch(version, items, deps, id);
+  } catch (e) { release(id); throw e; }
+}
+
+/** Encarga «Documentar X.Y.Z» (docs, skill prod, sobre main) y «Publicar X.Y.Z» (Release: run-all.sh) con el lock ya cogido. */
+function dispatch(version, items, deps, id) {
+  try {
+    const body = items.map((i) => `- ${i.label}`).join('\n');
     const docsAgent = deps.agentFor('docs-release'), relAgent = deps.agentFor('release');
     if (!relAgent) { release(id); deps.notify?.('⚠ No hay ningún agente de Release en el equipo de flowtest: fíchalo (rol «Release») y lo vuelvo a proponer.'); return { action: 'no-agent', version }; }
     const doc = deps.createTask({ title: `Documentar ${version}`, role: docsAgent?.role || 'release-docs-flowtest', status: 'todo', assignedAgentId: docsAgent?.id,
@@ -136,6 +148,34 @@ export async function check(deps) {
     const s2 = load(); s2.lock = { id, phase: 'dispatched', at: Date.now(), version, items, docId: doc.id, publishId: pub.id }; save(s2);
     return { action: 'dispatched', version, docId: doc.id, publishId: pub.id };
   } catch (e) { release(id); throw e; }
+}
+
+// ── 🚀 Publicación programada (⏰ diaria, p. ej. 18:00): si hay cambios sin publicar, se publica TODO en bloque sin preguntar ──
+// flow-test: commits en main desde el último «chore(release): X.Y.Z» → minor si alguno es feat, patch si no → Documentar + Publicar.
+// AgentOffice: si su main va por delante de origin, git push (publishSelf). Sin cambios en ninguno → no hace nada.
+export async function pendingChanges(dir, gitRun) {
+  const last = (await gitRun(dir, 'log', '-1', '--format=%H %s', '--grep=^chore(release): ')).trim();
+  const [sha, ...subj] = last.split(' ');
+  const range = sha ? `${sha}..HEAD` : 'HEAD';
+  const lines = (await gitRun(dir, 'log', '--no-merges', '--format=%h %s', range)).split('\n').filter(Boolean);
+  return { since: sha ? subj.join(' ') : null, commits: lines, feat: lines.some((l) => /^\S+ feat(\(|:|!)/.test(l)) };
+}
+export async function scheduledRelease(deps) {
+  const out = { flowTest: null, agentOffice: null };
+  if (deps.aoAhead) {
+    const ahead = await deps.aoAhead();
+    out.agentOffice = ahead > 0 ? { ahead, ...(await deps.aoPublish(`publicación programada: ${ahead} commit(s)`)) } : { ahead: 0 };
+  }
+  const p = await deps.pending();
+  if (!p.commits.length) { out.flowTest = { action: 'none', since: p.since }; return out; }
+  const s0 = load();
+  if (s0.lock && fresh(s0.lock)) { out.flowTest = { action: 'busy', lock: s0.lock.phase }; return out; }
+  const version = bump(deps.version(), [{ kind: p.feat ? 'epic' : 'bug' }]), id = `release-${version}`;
+  if (!acquire(id, 'asking')) { out.flowTest = { action: 'busy' }; return out; }
+  const items = [{ key: `git:${version}`, kind: p.feat ? 'epic' : 'bug', label: `${p.commits.length} cambio(s) desde ${p.since || 'el inicio'}: ${p.commits.slice(0, 8).join(' · ')}${p.commits.length > 8 ? ' …' : ''}`, taskIds: [] }];
+  deps.notify?.(`🚀 Publicación programada: flow-test ${version} (${p.commits.length} cambio(s)). Encargo documentar y publicar.`);
+  out.flowTest = dispatch(version, items, deps, id);
+  return out;
 }
 
 /** ✅ recibido: lanza run-all UNA vez. Con una publicación en curso (o ya hecha) no lanza otra. */
@@ -194,5 +234,9 @@ export function realDeps(team, store, telegram, questions) {
     // release = un agente de tipo «release» del equipo; docs-release = uno con la skill «prod» (documentalista de releases)
     agentFor: (kind) => teamOf().find((a) => { const r = allRoles()[a.role]; return kind === 'release' ? r?.kind === 'release' : r?.kind === 'docs' && (r.skills || []).includes('prod'); }) || null,
     docsDirs: store.get().settings.releaseDocsDirs || ['~/dev/flow-test-public', '~/JksDocs'],
+    // 🚀 publicación programada
+    pending: () => pendingChanges(dir(), gitRun),
+    aoAhead: async () => { try { await gitRun(ROOT, 'fetch', '--quiet'); } catch { /* sin red: se compara con lo último conocido */ } try { return Number((await gitRun(ROOT, 'rev-list', '--count', '@{u}..HEAD')).trim()) || 0; } catch { return 0; } },
+    aoPublish: (reason) => publishSelf(reason),
   };
 }
