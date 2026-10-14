@@ -3280,7 +3280,7 @@ function identityHtml(a) {
       <span class="muted">ID</span><code title="Identificador global: el mismo en cualquier AgentOffice donde se comparta (y en sus clones)">${esc(id.uid.slice(3, 11))} · ${esc(id.fingerprint?.slice(0, 8) || '')}</code>
     </div>
   </div>
-  <div class="identity-seal">${id.sealedAt
+  <div class="identity-seal"><button type="button" class="small ghost" data-agent-edit="${esc(a.id)}" title="Cambiarle el nombre es un bautizo: sigue constando cómo nació">💧 Cambiar nombre</button> ${id.sealedAt
     ? `🔒 Sellada el ${when(id.sealedAt)}: ya está en el marketplace y su físico no cambia nunca.`
     : `<button type="button" class="small ghost" data-doll-edit="${esc(a.id)}">🎨 Personalizar físico</button> <span class="muted">Hasta que lo publiques en el marketplace; entonces queda fijo.</span>`}</div>
   ${bap ? `<details class="baptisms"><summary>💧 ${a.baptisms.length} bautizo${a.baptisms.length === 1 ? '' : 's'}</summary><ul>${bap}</ul></details>` : ''}`;
