@@ -1291,6 +1291,88 @@ export function runScheduleNow(projectId, sid) {
   if (sch.check) { runCheck(p, sch); return { checking: true }; }
   const r = fireSchedule(p, sch, { origin: 'lanzada a mano' }); tick(); return r;
 }
+// ── ⇄ Mover / copiar entre proyectos ───────────────────────────────────────────────────────────────────────────────────
+// Tareas: solo las que no han empezado (Backlog, Por hacer, Descartada): las demás tienen rama/worktree en los repos de su
+// proyecto. Código nuevo con el prefijo del destino; se sueltan dependencias, repo, asignación y enlace al tablero que no
+// existan allí. Programadas y agentes: mover o copiar.
+const otherProject = (fromId, toId) => {
+  const s = get();
+  const to = findOr404(s.projects, toId, 'Proyecto de destino');
+  if (fromId === to.id) throw fail(400, 'Ya está en ese proyecto');
+  return to;
+};
+export function moveTask(id, toProjectId) {
+  const s = get();
+  const t = findOr404(s.tasks, id, 'Tarea');
+  if (!['backlog', 'todo', 'discarded'].includes(t.status) || t.agentId || t.branch) throw fail(409, 'Solo se mueven tareas que no han empezado (Backlog, Por hacer o Descartada)');
+  const from = projectOf(t), to = otherProject(t.projectId, toProjectId);
+  const notes = [];
+  const oldCode = t.code;
+  if (t.repo && !(to.repos || []).some((r) => r.key === t.repo)) { notes.push(`repo «${t.repo}» (no está en ${to.name})`); t.repo = null; }
+  if (t.assignedAgentId && t.assignedAgentId !== HUMAN && !(to.team || []).includes(t.assignedAgentId)) { notes.push('asignación (el agente no está fichado allí)'); delete t.assignedAgentId; }
+  const deps = (t.dependsOn || []).filter((d) => s.tasks.find((x) => x.id === d)?.projectId === to.id);
+  if (deps.length !== (t.dependsOn || []).length) notes.push(`${(t.dependsOn || []).length - deps.length} dependencia(s)`);
+  t.dependsOn = deps;
+  for (const o of s.tasks) if (o !== t && o.projectId === t.projectId && o.dependsOn?.includes(t.id)) { o.dependsOn = o.dependsOn.filter((d) => d !== t.id); notes.push(`dependencia de ${o.code || o.id}`); }
+  if (t.source?.kind && from?.board?.kind === t.source.kind) { notes.push('enlace al tablero online'); delete t.source; }
+  if (t.fromPlan && s.tasks.find((x) => x.id === t.fromPlan)?.projectId !== to.id) delete t.fromPlan;
+  t.title = codes.stripCode(t.title, oldCode) || t.title;
+  t.projectId = to.id;
+  t.code = null;
+  codes.assignCode(s.tasks, to, t);
+  t.movedFrom = { projectId: from?.id || null, code: oldCode, at: Date.now() };
+  t.updatedAt = Date.now();
+  log(null, `⇄ ${oldCode || t.id} → ${to.name} como ${t.code}${notes.length ? ` (sin ${notes.join(', ')})` : ''}`);
+  changed(); tick();
+  return { task: t, dropped: notes };
+}
+
+export function moveSchedule(projectId, sid, toProjectId, { copy = false } = {}) {
+  const from = findOr404(get().projects, projectId, 'Proyecto');
+  const sch = (from.schedules || []).find((x) => x.id === sid);
+  if (!sch) throw fail(404, 'Programación no encontrada');
+  const to = otherProject(from.id, toProjectId);
+  to.schedules ||= [];
+  let out;
+  if (copy) { // copia desactivada (que no se lance dos veces) y sin el webhook (su token es la credencial de la original)
+    out = { ...structuredClone(sch), id: newId(), createdAt: Date.now(), enabled: false, lastRun: undefined, lastTaskId: undefined, lastCheck: undefined };
+    delete out.hookToken;
+    to.schedules.push(out);
+  } else {
+    from.schedules = from.schedules.filter((x) => x.id !== sid);
+    to.schedules.push(sch);
+    out = sch;
+  }
+  log(null, `⇄ Programada «${sch.title}» ${copy ? 'copiada' : 'movida'} a ${to.name}${copy ? ' (desactivada)' : ''}`);
+  changed();
+  return out;
+}
+
+export function moveAgent(id, fromProjectId, toProjectId, { copy = false, name = '' } = {}) {
+  const s = get();
+  const a = findOr404(s.agents, id, 'Agente');
+  const from = fromProjectId ? findOr404(s.projects, fromProjectId, 'Proyecto') : null;
+  const to = otherProject(from?.id, toProjectId);
+  if (!copy && (to.team || []).includes(a.id)) throw fail(409, `${a.name} ya está fichado en ${to.name}`);
+  if ((to.team || []).length >= coord.MAX_DESKS) throw fail(400, `${to.name} no tiene mesas libres (${coord.MAX_DESKS})`);
+  if (copy) { // agente nuevo con la misma configuración (rol, motor, modelo, MCP, skills, scripts…), sin su estado ni historial
+    const clone = { ...newAgent({ name: (name || `${a.name} (copia)`).trim(), role: a.role, engine: a.engine, model: a.model }) };
+    for (const k of ['ponytail', 'mcps', 'scripts', 'skills']) if (a[k] !== undefined) clone[k] = structuredClone(a[k]);
+    s.agents.push(clone);
+    to.team.push(clone.id);
+    log(clone.id, `⇄ Copia de ${a.name} fichada en ${to.name}`);
+    changed(); tick();
+    return clone;
+  }
+  if (a.status && a.status !== 'idle') throw fail(409, `${a.name} está trabajando: espera a que acabe o páralo`);
+  if (from) from.team = from.team.filter((x) => x !== a.id);
+  to.team.push(a.id);
+  for (const t of s.tasks) if (from && t.projectId === from.id && t.assignedAgentId === a.id && !['done', 'discarded'].includes(t.status) && !t.agentId) delete t.assignedAgentId; // sus tareas fijas de allí vuelven a la regla del rol
+  log(a.id, `⇄ ${a.name} pasa de ${from?.name || 'el banquillo'} a ${to.name}`);
+  changed(); tick();
+  return a;
+}
+
 // POST /api/hooks/<token> (sin x-ao-token: el token de la URL es la credencial). El cuerpo (p. ej. el aviso de un monitor de
 // flow-test con sus reglas y variables) va en la descripción de la tarea.
 export function fireHook(token, body) {

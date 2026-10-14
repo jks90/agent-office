@@ -1269,6 +1269,7 @@ function memberCard(a, ts) {
         <button class="small ghost" data-mp-pub="agent:${a.id}" title="Publicar en el marketplace de tu team, con memoria (FT-142)">⬆ Publicar</button>
         ${busy(a) ? `${controls(a)}<button class="small danger" data-stop="${a.id}">⏹ Parar</button>` : ''}
         <button class="small ghost" data-bench="${a.id}" title="Sale de la plantilla de este proyecto; sigue en la empresa">↓ Al banquillo</button>
+        ${S.projects.length > 1 ? `<button class="small ghost" data-agent-xmove="${a.id}" title="Pasa a otro proyecto (sale de este)">⇄ Proyecto…</button><button class="small ghost" data-agent-xcopy="${a.id}" title="Crea otro agente igual (rol, motor, modelo, MCP, skills, scripts) en otro proyecto">⧉ Copiar…</button>` : ''}
       </div>
     </div>`;
 }
@@ -1653,7 +1654,7 @@ async function openSchedules() {
         <div class="muted">${last(x)}</div>
         ${x.check ? `<div class="muted">🔎 comprobación: <code>${esc(x.check.slice(0, 90))}</code>${x.lastCheck ? ` · última: ${x.lastCheck.code === 0 ? '✓ sin novedad' : x.lastCheck.code === 2 ? '⚠ creó tarea' : `✗ error ${x.lastCheck.code}`} hace ${waitTxt(x.lastCheck.at)}` : ''}</div>` : ''}
         ${x.hookToken ? `<div class="sched-hook"><code>${esc(hookUrl(x))}</code> <button type="button" class="small ghost" data-copy="${esc(hookUrl(x))}">Copiar</button> <button type="button" class="small ghost" data-copy="${esc(hookUrl(x, true))}" title="Para el flow-test en Docker (notifyUrl de un monitor)">Copiar (Docker)</button></div>` : ''}</div>
-      <div class="sched-acts"><button type="button" class="small" data-sched-run="${x.id}">▶ Ahora</button><button type="button" class="small ghost" data-sched-toggle="${x.id}">${x.enabled ? '⏸ Pausar' : '▶ Activar'}</button><button type="button" class="small ghost" data-sched-edit="${x.id}">✎</button><button type="button" class="small danger" data-sched-del="${x.id}">✕</button></div>
+      <div class="sched-acts"><button type="button" class="small" data-sched-run="${x.id}">▶ Ahora</button><button type="button" class="small ghost" data-sched-toggle="${x.id}">${x.enabled ? '⏸ Pausar' : '▶ Activar'}</button><button type="button" class="small ghost" data-sched-edit="${x.id}">✎</button>${S.projects.length > 1 ? `<button type="button" class="small ghost" data-sched-xmove="${x.id}" title="Mover a otro proyecto">⇄</button><button type="button" class="small ghost" data-sched-xcopy="${x.id}" title="Copiar a otro proyecto (la copia queda pausada)">⧉</button>` : ''}<button type="button" class="small danger" data-sched-del="${x.id}">✕</button></div>
     </div>`).join('') || '<p class="empty">Ninguna todavía.</p>'}</div>
     <div class="row" style="justify-content:space-between"><button type="button" class="small" data-sched-edit="">＋ Nueva programada</button><button class="ghost" value="cancel">Cerrar</button></div>`, null, 'wide');
 }
@@ -2031,6 +2032,7 @@ function compactCard(t) {
   if (t.status !== 'doing') more.push(btn('edit', '✎ Editar'));
   if (['todo', 'failed'].includes(t.status)) more.push(btn('park', '← Backlog'));
   if (['review', 'done'].includes(t.status)) more.push(btn('nomove', '⇄ Mover a…'));
+  if (['backlog', 'todo', 'discarded'].includes(t.status) && !t.agentId && !t.branch && S.projects.length > 1) more.push(btn('xproj', '⇄ Proyecto…', 'ghost', 'Llevarla a otro proyecto (toma un código nuevo de allí)'));
   if (['done', 'discarded'].includes(t.status)) more.push(t.archived ? btn('unarchive', '📦 Desarchivar') : btn('archive', '🗄 Archivar'));
   if (t.status === 'failed') more.push(btn('reject-final', '✕ Rechazar', 'danger', 'No la quiero y que no la rehaga nadie: pasa a Descartada y se tiran sus cambios'));
   if (['todo', 'failed', 'done'].includes(t.status)) more.push(btn('del', 'Borrar', 'danger'));
@@ -2218,6 +2220,7 @@ function card(t) {
   if (t.status === 'discarded') acts.push(`<button class="small ghost" data-park="${t.id}" title="Volver al Backlog">↩ Recuperar</button>`);
   if (t.status === 'review') acts.push(`<button class="small ghost danger" data-reject-final="${t.id}" title="No la quiero y que no la rehaga nadie: pasa a Descartada y se tiran sus cambios (↩ Devolver es para que la corrija)">✕ Rechazar</button>`);
   if (['review', 'done'].includes(t.status)) acts.push(`<button class="small ghost" data-nomove="${t.id}" title="Mover a otra columna">⇄ Mover a…</button>`);
+  if (['backlog', 'todo', 'discarded'].includes(t.status) && !t.agentId && !t.branch && S.projects.length > 1) acts.push(`<button class="small ghost" data-xproj="${t.id}" title="Llevarla a otro proyecto (toma un código nuevo de allí)">⇄ Proyecto…</button>`);
   if (['done', 'discarded'].includes(t.status)) acts.push(t.archived ? `<button class="small ghost" data-unarchive="${t.id}" title="Volver a mostrarla en su columna">📦 Desarchivar</button>` : `<button class="small ghost" data-archive="${t.id}" title="Ocultarla del tablero sin borrarla (se encuentra con el filtro o «Ver archivadas»)">🗄 Archivar</button>`);
   if (['todo', 'failed', 'done'].includes(t.status)) acts.push(`<button class="small danger" data-del="${t.id}">Borrar</button>`);
   return `<div class="card ${t.status}${t.archived ? ' archived' : ''}" data-task="${t.id}" draggable="${['backlog', 'todo', 'failed', 'discarded'].includes(t.status)}" style="--c:${S.roles[t.role]?.color}">
@@ -2427,6 +2430,7 @@ function renderDrawer() {
       ${task ? `<button class="small" data-open="${task.id}">Abrir tarea</button>` : ''}
       <button class="small ghost" data-log-focus>Ver log</button>
       <button class="small ghost" data-agent-edit="${a.id}">Reasignar / editar</button>
+      ${S.projects.length > 1 && (project()?.team || []).includes(a.id) ? `<button class="small ghost" data-agent-xmove="${a.id}" title="Pasa a otro proyecto (sale de este)">⇄ Proyecto…</button>` : ''}${S.projects.length > 1 ? `<button class="small ghost" data-agent-xcopy="${a.id}" title="Crea otro agente igual en otro proyecto">⧉ Copiar…</button>` : ''}
       <button class="small ghost" data-mp-pub="agent:${a.id}" title="Publicar en el marketplace de tu team, con memoria (FT-142)">⬆ Publicar</button>
       <button class="danger small" data-stop="${a.id}">⏹ Parar</button>
     </div>
@@ -2493,6 +2497,12 @@ function browserExtBlock() {
     <button type="button" class="small" data-browser-pair>Generar código de emparejamiento</button>
     ${x.paired ? '<button type="button" class="small" data-browser-forget>Olvidar extensión</button>' : ''}
     <span id="bx-code" style="font-weight:600">${x.pairing ? `Código: ${esc(x.pairing.code)} (caduca en 5 min; un solo uso)` : ''}</span></p>`;
+}
+// ⇄ Elegir el proyecto de destino (todos menos el actual) y ejecutar `go(projectId, campos)`.
+function pickProject(title, extra, go) {
+  const opts = S.projects.filter((p) => p.id !== projectId).map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  dialog(`<h3>${title}</h3><label>Proyecto de destino</label><select name="to">${opts}</select>${extra || ''}
+    <div class="row"><button class="ghost" value="cancel">Cancelar</button><button>Aceptar</button></div>`, (f) => go(f.to, f));
 }
 function dialog(html, onSubmit, cls = '') {
   const dlg = $('#dialog');
@@ -3644,6 +3654,14 @@ document.addEventListener('click', async (e) => {
   if (d.cmemDel) { if (confirm(`¿Borrar la memoria «${d.cmemDel}»? (también su línea del índice)`)) api('DELETE', cmemUrl(d.cmemRepo, d.cmemDel)).then(() => { toast('Memoria borrada'); renderClaudeMemory(true); }); return; }
   if (d.agentEdit) return editAgent(d.agentEdit);
   if (d.nomove) return moveTask(d.nomove, 'backlog');
+  // ⇄ Entre proyectos
+  if (d.xproj) { const t = S.tasks.find((x) => x.id === d.xproj); return pickProject(`⇄ Llevar ${esc(tcode(t))} a otro proyecto`, '<p class="muted">Toma un código nuevo de allí. Se sueltan las dependencias, el repo y la asignación que no existan en el destino.</p>', (to) => api('POST', `/api/tasks/${d.xproj}/move`, { projectId: to }).then((r) => toast(`${tcode(t)} → ${r.task.code}${r.dropped.length ? ` (sin ${r.dropped.join(', ')})` : ''}`))); }
+  if (d.schedXmove || d.schedXcopy) { const copy = !!d.schedXcopy, sid = d.schedXmove || d.schedXcopy; return pickProject(copy ? '⧉ Copiar la programada a…' : '⇄ Mover la programada a…', copy ? '<p class="muted">La copia queda pausada (actívala allí) y sin webhook.</p>' : '', (to) => api('POST', `/api/projects/${projectId}/schedules/${sid}/${copy ? 'copy' : 'move'}`, { projectId: to }).then(() => { toast(copy ? 'Copiada (pausada)' : 'Movida'); setTimeout(openSchedules, 0); })); }
+  if (d.agentXmove || d.agentXcopy) {
+    const copy = !!d.agentXcopy, a = S.agents.find((x) => x.id === (d.agentXmove || d.agentXcopy));
+    return pickProject(copy ? `⧉ Copiar a ${esc(a.name)} a…` : `⇄ Llevar a ${esc(a.name)} a…`, copy ? `<label>Nombre de la copia</label><input name="name" value="${esc(a.name)} (copia)">` : '<p class="muted">Sale de este proyecto; sus tareas fijas de aquí vuelven a la regla del rol.</p>',
+      (to, f) => api('POST', `/api/agents/${a.id}/${copy ? 'copy' : 'move'}`, { from: projectId, projectId: to, name: f.name }).then((r) => toast(copy ? `${r.name} fichado en ${S.projects.find((p) => p.id === to)?.name}` : `${a.name} pasa a ${S.projects.find((p) => p.id === to)?.name}`)));
+  }
   if (d.archive) return api('POST', '/api/tasks/archive', { ids: [d.archive], archived: true }).then(() => toast('Archivada: búscala con el filtro o «🗄 Archivadas»'));
   if (d.unarchive) return api('POST', '/api/tasks/archive', { ids: [d.unarchive], archived: false }).then(() => toast('Vuelve a su columna'));
   if (d.archCol) { const n = tasks().filter((t) => t.status === d.archCol && !t.archived).length; if (!confirm(`¿Archivar las ${n} tareas de «${COL_NAME[d.archCol]}»? Se ocultan del tablero, no se borran (las verás con «🗄 Archivadas» o buscándolas).`)) return; return api('POST', '/api/tasks/archive', { projectId, status: d.archCol, archived: true }).then((r) => toast(`${r.changed} archivadas`)); }

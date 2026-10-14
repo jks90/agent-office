@@ -755,6 +755,13 @@ Tareas ▸ ⏰ Programadas (por proyecto, `project.schedules`): una plantilla de
 - Solo en proyectos en marcha (el webhook, siempre); sin acumular: si la tarea anterior de esa programada sigue pendiente, esa vuelta se salta.
 - API: `GET|POST /api/projects/:id/schedules`, `PATCH|DELETE …/schedules/:sid`, `POST …/schedules/:sid/run`. Pruebas: `scripts/schedules-e2e.mjs`.
 
+## ⇄ Mover y copiar entre proyectos
+
+- **Tareas** (menú «⋯» de la tarjeta o el modal, «⇄ Proyecto…»): solo las que no han empezado (Backlog, Por hacer, Descartada; sin agente ni rama). Toman un código nuevo con el prefijo del destino (`movedFrom` guarda el antiguo) y se sueltan las dependencias, el repo, la asignación y el enlace al tablero online que no existan allí. `POST /api/tasks/:id/move {projectId}` → `{task, dropped}`.
+- **Programadas** (⏰ Programadas, botones ⇄ y ⧉): mover se lleva también el webhook; copiar crea otra **pausada** y sin webhook. `POST /api/projects/:id/schedules/:sid/move|copy {projectId}`.
+- **Agentes** (cajón del agente o su tarjeta desplegada, «⇄ Proyecto…» / «⧉ Copiar…»): mover = sale de este equipo y entra en el otro (libre y con mesa; sus tareas fijas de aquí vuelven a la regla del rol); copiar = agente nuevo con el mismo rol, motor, modelo, MCP, skills y scripts. `POST /api/agents/:id/move|copy {from, projectId, name?}`.
+- Pruebas: `node --test tests/move-between-projects.test.mjs` y `node scripts/move-projects-e2e.mjs` (UI con Chrome headless y servidor temporal).
+
 ## 📁 Proyectos sin repo
 
 Un proyecto sin repos pero con carpeta en el workspace de flow-test (p. ej. «empresa»: documentación, flows y scripts) funciona igual: el agente trabaja **directamente en esa carpeta** (sin worktree ni rama, de una tarea en una para no pisarse) y «Aprobar» la da por hecha. Ejemplo real: el equipo de inversión de `empresa/` (estratega, contable y verificador), descrito en `empresa/inversion-revert-agentes.md` del workspace.

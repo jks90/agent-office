@@ -287,6 +287,10 @@ const routes = [
   ['POST', /^\/api\/projects\/(\w+)\/board\/sync-all$/, gated(([id]) => team.syncAll(id))],
   ['POST', /^\/api\/tasks\/archive$/, (_, b) => team.archiveTasks(b)], // archivar/desarchivar Hechas y Descartadas (no se borran)
   ['PATCH', /^\/api\/tasks\/([\w-]+)$/, ([id], b) => team.updateTask(id, b)],
+  // ⇄ Entre proyectos: tareas sin empezar (mover), programadas y agentes (mover o copiar)
+  ['POST', /^\/api\/tasks\/([\w-]+)\/move$/, ([id], b) => team.moveTask(id, b.projectId)],
+  ['POST', /^\/api\/projects\/(\w+)\/schedules\/(\w+)\/(move|copy)$/, ([id, sid, op], b) => team.moveSchedule(id, sid, b.projectId, { copy: op === 'copy' })],
+  ['POST', /^\/api\/agents\/(\w+)\/(move|copy)$/, ([id, op], b) => team.moveAgent(id, b.from || null, b.projectId, { copy: op === 'copy', name: b.name })],
   // Preguntas de los agentes al usuario (bin/ao-ask.mjs ↔ modal de la UI)
   ['GET', /^\/api\/questions$/, () => questions.list()],
   ['POST', /^\/api\/questions$/, (_, b) => questions.ask(b)],
