@@ -6,17 +6,19 @@
 //   --no-custom       solo se puede elegir una opción
 //   --context "…"     detalle que ayuda a decidir (se enseña bajo la pregunta)
 //   --timeout <min>   cuánto esperar como máximo (por defecto AO_ASK_TIMEOUT_MIN o 120)
+//   --focus-browser   antes de preguntar, trae al frente el navegador del usuario (logins en el navegador externo)
 //
 // Entorno (lo pone AgentOffice al lanzar al agente): AO_URL, AO_TASK, AO_TOKEN (opcional).
 // Si nadie responde a tiempo imprime «SIN RESPUESTA …» y sale con 0: el agente decide él y lo anota.
 const args = process.argv.slice(2);
 const opts = [];
-let question = '', context = '', allowCustom = true, timeoutMin = Number(process.env.AO_ASK_TIMEOUT_MIN || 120);
+let question = '', context = '', allowCustom = true, focusBrowser = false, timeoutMin = Number(process.env.AO_ASK_TIMEOUT_MIN || 120);
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   if (a === '--opt' || a === '-o') opts.push(args[++i]);
   else if (a === '--context' || a === '-c') context = args[++i];
   else if (a === '--no-custom') allowCustom = false;
+  else if (a === '--focus-browser') focusBrowser = true;
   else if (a === '--timeout') timeoutMin = Number(args[++i]) || timeoutMin;
   else if (a === '-h' || a === '--help') { console.log('uso: ao-ask "pregunta" [--opt A --opt B] [--no-custom] [--context "…"] [--timeout min]'); process.exit(0); }
   else question += (question ? ' ' : '') + a;
@@ -32,6 +34,11 @@ const call = async (method, path, body) => {
   if (!r.ok) throw new Error(j.error || `${r.status} ${path}`);
   return j;
 };
+if (focusBrowser) { // el login lo hace el usuario en SU navegador: que lo tenga delante
+  const { focusExternalBrowser } = await import('../server/browser/focus.js');
+  const f = focusExternalBrowser();
+  if (!f.ok) console.error(`(no he podido traer el navegador al frente: ${f.reason})`);
+}
 try {
   const { id } = await call('POST', '/api/questions', { taskId, question, options: opts, allowCustom, context });
   const deadline = Date.now() + timeoutMin * 60_000;

@@ -11,7 +11,7 @@ const PLAN_SHELL = ['ls *', 'cat *', 'head *', 'grep *', 'find *', 'wc *', 'sed 
 const TEST_SHELL = ['npm *', 'npx *', 'node *', 'python3 *', 'curl *', 'timeout *', 'mkdir *', 'cp *', 'touch *', 'sleep *', 'echo *', 'printf *', 'mvn *', './mvnw *', 'gradle *', './gradlew *', 'make *'];
 // Resolver un choque con la base es parte del trabajo de CUALQUIER rol que confirma cambios (si no, la tarea vuelve en bucle)
 const GIT_MERGE = ['git merge *', 'git add*', 'git commit*', 'git restore *', 'git checkout -- *'];
-const ASK_RULE = `node ${path.join(ROOT, 'bin', 'ao-ask.mjs')} *`; // preguntar al cliente (bin/ao-ask.mjs)
+export const ASK_RULE = `node ${path.join(ROOT, 'bin', 'ao-ask.mjs')} *`; // preguntar al cliente (bin/ao-ask.mjs)
 
 // builtin: herramientas integradas que se ENVÍAN al modelo (--tools); bash: reglas de `Bash(...)` permitidas; mcp: flow-test por MCP.
 const BY_KIND = {

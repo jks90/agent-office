@@ -8,10 +8,10 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 import { describeTool, toolSummary, toolKey, firstLine } from './describe.js';
 import { RTK_RULES } from './allowlist.js';
-import { claudeScope } from './toolscope.js';
+import { claudeScope, ASK_RULE } from './toolscope.js';
 import { claudeTracker } from '../usage.js';
 import { SERVER_NAME } from '../codeindex.js';
-import { playwrightMcp, pwOutputDir } from '../browser/playwright-mcp.js';
+import { playwrightMcp, pwOutputDir, extensionToken, externalBrowser } from '../browser/playwright-mcp.js';
 
 // Subagente explorador (FT-65): solo lectura (Read/Grep/Glob + shell de lectura de la lista blanca), modelo barato.
 export const EXPLORER = {
@@ -23,6 +23,15 @@ export const EXPLORER = {
     model: 'haiku',
   },
 };
+
+// Worker con el navegador EXTERNO: lo que cambia respecto a su rol (que puede hablar de browser_requestHuman o browser_readPage).
+const EXTERNAL_WORKER_NOTE = `
+
+NAVEGADOR (manda sobre lo que diga tu rol de browser_*): manejas el navegador REAL del usuario (su Brave/Chrome, con sus sesiones y su gestor de contraseñas) con las tools mcp__playwright__browser_* (browser_navigate, browser_snapshot para LEER, browser_find, browser_click, browser_type, browser_select_option, browser_tabs…). No existen browser_requestHuman, browser_readPage ni browser_evaluate.
+- Login, captcha o 2FA: navega a la página de acceso, deja tu pestaña delante (browser_tabs {action:"select"} con su índice) y pregunta con
+  node ${path.join(ROOT, 'bin', 'ao-ask.mjs')} "Inicia sesión en <sitio> en la pestaña que te he abierto y pulsa Listo" --opt "Listo" --opt "Saltar" --no-custom --focus-browser
+  (trae el navegador al frente y espera). Con «Listo», comprueba con browser_snapshot que la sesión está iniciada y sigue tú sin más preguntas; con «Saltar» o SIN RESPUESTA, sáltalo y dilo en el resumen.
+- Trabaja solo en las pestañas que abras tú; no cierres, recargues ni toques las del usuario, ni cierres el navegador. Al terminar, cierra solo tus pestañas (browser_tabs {action:"close"}).`;
 
 // RTK instalado → hook solo para los agentes (por --settings; no se toca ~/.claude/settings.json del usuario).
 const RTK_BIN = [process.env.AO_RTK_BIN, path.join(os.homedir(), '.local/bin/rtk'), '/usr/local/bin/rtk'].find((f) => f && fs.existsSync(f)) || null;
@@ -53,11 +62,21 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kin
     mcpServers['flow-test'] = { type: 'http', url: mcpUrl };
     tools.push('mcp__flow-test');
   }
-  if (scope.browser) { // FT-115: tools browser.* del Guía (solo ellas) por ao-mcp; la política y la auditoría viven en el servidor
+  // Navegador EXTERNO (token de «Playwright MCP Bridge» en este PC): las capacidades browser y playwright manejan TU navegador
+  const external = (scope.browser || scope.playwright) && !!extensionToken() && !!externalBrowser() && process.env.AO_BROWSER !== 'fake';
+  if (external) {
+    const ext = playwrightMcp({ task: extraEnv.AO_TASK, external: true });
+    if (ext) {
+      mcpServers.playwright = ext; tools.push('mcp__playwright');
+      args[args.indexOf('--append-system-prompt') + 1] = (system || '') + EXTERNAL_WORKER_NOTE;
+      tools.push(`Bash(${ASK_RULE})`); // el login se pide con ao-ask --focus-browser (aunque el rol no tenga más shell)
+    }
+  }
+  if (scope.browser && !external) { // FT-115: tools browser.* del Guía (solo ellas) por ao-mcp; la política y la auditoría viven en el servidor
     mcpServers['agentoffice-browser'] = { type: 'stdio', command: process.execPath, args: [path.join(ROOT, 'bin', 'ao-mcp.mjs')], env: { AO_URL: extraEnv.AO_URL || `http://127.0.0.1:${process.env.AO_PORT || 7420}`, AO_MCP_ONLY: 'browser', ...(extraEnv.AO_TASK ? { AO_CHAT_ID: `task:${extraEnv.AO_TASK}` } : {}) } };
     tools.push('mcp__agentoffice-browser');
   }
-  const pw = scope.playwright ? playwrightMcp({ task: extraEnv.AO_TASK }) : null;
+  const pw = scope.playwright && !external ? playwrightMcp({ task: extraEnv.AO_TASK }) : null;
   if (pw) { // Navegante: Playwright MCP por npx (versión fijada); su carpeta de salida (capturas, snapshots) se puede leer
     mcpServers.playwright = pw; tools.push('mcp__playwright');
     const out = pwOutputDir(extraEnv.AO_TASK);
@@ -72,7 +91,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kin
   for (const [n, d] of Object.entries(extraMcp)) { mcpServers[n] = d; tools.push(`mcp__${n}`); } // MCP del catálogo asignados al agente/rol
   // Con MCP del usuario la config lleva sus claves (env/cabeceras): va en un fichero 0600 y no en la línea de órdenes (visible en ps)
   let mcpFile = null;
-  if (Object.keys(extraMcp).length) {
+  if (Object.keys(extraMcp).length || external) { // con claves (MCP del usuario o el token de la extensión)
     mcpFile = path.join(os.tmpdir(), `ao-mcp-${process.pid}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}.json`);
     fs.writeFileSync(mcpFile, JSON.stringify({ mcpServers }), { mode: 0o600 });
   }
@@ -87,7 +106,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kin
     for (const x of ['Task', 'Agent']) { if (!builtin.includes(x)) builtin.push(x); tools.push(x); }
     args.push('--disallowedTools', 'Task(general-purpose)', 'Task(Explore)', 'Task(Plan)', 'Agent(general-purpose)', 'Agent(Explore)', 'Agent(Plan)');
   }
-  if (extraBash.length && !builtin.includes('Bash')) builtin.push('Bash');
+  if ((extraBash.length || external) && !builtin.includes('Bash')) builtin.push('Bash');
   args.push('--tools', builtin.join(','), '--allowedTools', ...tools);
 
   const env = { ...process.env, ...extraEnv, BROWSER: 'true', CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' };
