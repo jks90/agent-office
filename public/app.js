@@ -1204,13 +1204,18 @@ function memberCard(a, ts) {
     </div>`;
 }
 const stateLabel = (a) => a.status === 'paused' ? 'En pausa' : a.status === 'working' ? 'Trabajando' : 'Descansando';
-function orgCard(a, ts, { showRole = true } = {}) {
+// Columna de un rol en el organigrama (cabecera con el chip del rol y sus agentes)
+function orgColumn(role, list, ts) {
+  const r = S.roles[role];
+  return `<div class="org-col" style="--c:${r?.color || '#999'}"><div class="org-col-head"><button type="button" class="chip-link" data-goto-role="${esc(role)}" title="Ver el rol">${roleChip(role)}</button><span class="muted">${list.length}</span></div>${list.map((a) => orgCard(a, ts, { showRole: false })).join('')}</div>`;
+}
+function orgCard(a, ts, { showRole = true, badge = '' } = {}) {
   if (orgOpen.has(a.id)) return memberCard(a, ts);
   const task = ts.find((t) => t.id === a.taskId);
   const r = S.roles[a.role];
   return `<button type="button" class="member org-card ${a.id === drawerAgent ? 'sel' : ''}" style="--c:${r?.color || '#999'}" data-org-toggle="${a.id}" title="${esc(a.name)} · ${esc(r?.label || a.role)} — clic para ver el detalle">
       ${avatarHtml(a)}
-      <span class="org-main"><b>${esc(a.name)}</b>${bornHtml(a)}${showRole ? `<span class="org-role">${esc(r?.label || a.role)}</span>` : ''}${task ? `<span class="org-task">▶ ${esc(tcode(task))}</span>` : ''}</span>
+      <span class="org-main"><b>${esc(a.name)}</b>${bornHtml(a)}${badge ? `<span class="org-role">${esc(badge)}</span>` : ''}${showRole ? `<span class="org-role">${esc(r?.label || a.role)}</span>` : ''}${task ? `<span class="org-task">▶ ${esc(tcode(task))}</span>` : ''}</span>
       <span class="dot ${a.status}" title="${stateLabel(a)}"></span>
     </button>`;
 }
@@ -1224,14 +1229,21 @@ function renderTeam() {
   const sups = members.filter((a) => kind(a) === 'supervisor').sort(byName);
   const pos = members.filter((a) => kind(a) === 'planner').sort(byName);
   const rels = members.filter((a) => kind(a) === 'release').sort(byName);
-  const rest = members.filter((a) => !['supervisor', 'planner', 'release'].includes(kind(a)));
+  // 👔 Managers (p.managers): cada uno cuelga del coordinador con las columnas de SU equipo
+  const mgrMap = Object.fromEntries(Object.entries(project()?.managers || {}).filter(([mid]) => members.some((a) => a.id === mid)));
+  const managed = new Set(Object.values(mgrMap).flat());
+  const isMgr = (a) => a.id in mgrMap;
+  const rest = members.filter((a) => !['supervisor', 'planner', 'release'].includes(kind(a)) && !isMgr(a) && !managed.has(a.id));
+  const li = (inner, kids = []) => `<li>${inner}${kids.length ? `<ul>${kids.join('')}</ul>` : ''}</li>`;
+  const columnsOf = (list) => [...new Set(list.map((a) => a.role))].sort((x, y) => ((ORG_KIND_ORDER[S.roles[x]?.kind] ?? 3) - (ORG_KIND_ORDER[S.roles[y]?.kind] ?? 3)) || String(S.roles[x]?.label || x).localeCompare(String(S.roles[y]?.label || y)))
+    .map((role) => li(orgColumn(role, list.filter((a) => a.role === role).sort(byName), ts)));
+  const mgrNodes = members.filter(isMgr).sort(byName).map((m) => li(orgCard(m, ts, { badge: '👔 Manager' }), columnsOf(members.filter((a) => mgrMap[m.id].includes(a.id)))));
   // Columnas por rol: dev, luego QA, luego docs (y lo demás); dentro, por nombre.
   const cols = [...new Set(rest.map((a) => a.role))].sort((x, y) => ((ORG_KIND_ORDER[S.roles[x]?.kind] ?? 3) - (ORG_KIND_ORDER[S.roles[y]?.kind] ?? 3)) || String(S.roles[x]?.label || x).localeCompare(String(S.roles[y]?.label || y)));
-  const li = (inner, kids = []) => `<li>${inner}${kids.length ? `<ul>${kids.join('')}</ul>` : ''}</li>`;
-  const colNodes = cols.map((role) => { const list = rest.filter((a) => a.role === role).sort(byName); const r = S.roles[role]; return li(`<div class="org-col" style="--c:${r?.color || '#999'}"><div class="org-col-head"><button type="button" class="chip-link" data-goto-role="${esc(role)}" title="Ver el rol">${roleChip(role)}</button><span class="muted">${list.length}</span></div>${list.map((a) => orgCard(a, ts, { showRole: false })).join('')}</div>`); });
+  const colNodes = cols.map((role) => li(orgColumn(role, rest.filter((a) => a.role === role).sort(byName), ts)));
   // El nivel de dev/QA cuelga del primer PO; sin PO, del nivel de encima.
   const lvl2 = [...pos.map((a, i) => li(orgCard(a, ts), i === 0 ? colNodes : [])), ...rels.map((a) => li(orgCard(a, ts)))];
-  const under2 = pos.length ? lvl2 : [...lvl2, ...colNodes];
+  const under2 = [...mgrNodes, ...(pos.length ? lvl2 : [...lvl2, ...colNodes])];
   const lvl1 = sups.length ? sups.map((a, i) => li(orgCard(a, ts), i === 0 ? under2 : [])) : under2;
   const pending = ts.filter((t) => t.status === 'review' && !isHuman(t)).length;
   const mine = ts.filter((t) => isHuman(t) && !['done', 'discarded'].includes(t.status)).length;
@@ -2607,6 +2619,8 @@ Pasos, convenciones y ejemplos…</textarea>
     <select name="reviewPolicy">${[['', `Igual que la empresa (${REVIEW_LABEL[S.settings.reviewPolicy || 'manual']})`], ['manual', REVIEW_LABEL.manual], ['auto-qa', REVIEW_LABEL['auto-qa']], ['auto', REVIEW_LABEL.auto]].map(([v, l]) => `<option value="${v}" ${(project()?.reviewPolicy || '') === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
     <label title="Un agente del equipo, distinto del autor, hace la revisión automática (auto-qa) con su rol, su modelo y sus MCP. En proyectos sin repo comprueba el resultado en vez de un diff.">🔎 Revisor (auto-qa)</label>
     <select name="reviewerAgentId"><option value="">El revisor genérico de siempre</option>${S.agents.filter((a) => (project()?.team || []).includes(a.id)).map((a) => `<option value="${a.id}" ${project()?.reviewerAgentId === a.id ? 'selected' : ''}>${esc(a.name)} · ${esc(S.roles[a.role]?.label || a.role)}</option>`).join('')}</select>
+    <label title="El manager revisa (auto-qa) las tareas de su equipo en vez del revisor del proyecto, y en el organigrama su equipo cuelga de él. Un manager no puede tener manager.">👔 Manager de cada agente</label>
+    <div class="mgr-grid">${S.agents.filter((a) => (project()?.team || []).includes(a.id) && S.roles[a.role]?.kind !== 'supervisor').map((a) => { const cur = Object.entries(project()?.managers || {}).find(([, ms]) => ms.includes(a.id))?.[0] || ''; return `<label class="muted">${esc(a.name)} <select data-mgr-of="${a.id}"><option value="">— sin manager —</option>${S.agents.filter((m) => m.id !== a.id && (project()?.team || []).includes(m.id) && S.roles[m.role]?.kind !== 'supervisor').map((m) => `<option value="${m.id}" ${cur === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></label>`; }).join('')}</div>
     <label>🧑‍✈️ Coordinador del equipo de «${esc(project()?.name)}» (reglas fijas, sin IA: refuerza el rol que tiene trabajo listo y nadie libre, cambia a motor automático a quien se queda sin cuota y manda al banquillo a quien lleva rato sin nada que hacer)</label>
     <select name="coordinator">${[['', 'Apagado'], ['suggest', 'Solo sugerir (en 🔔 Para ti, con «Aplicar»)'], ['auto', 'Automático (lo hace solo y lo apunta en 🔔 Para ti)']].map(([v, l]) => `<option value="${v}" ${(project()?.coordinator || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
     <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="supervisorApproves" ${project()?.supervisorApproves ? 'checked' : ''}><span>🧑‍⚖️ Delegar en el Coordinador / Supervisor de «${esc(project()?.name)}» (FT-122): aprueba las tareas en revisión (también las de revisión obligatoria) si sus verificaciones pasan con la rama al día (y, con diffs de más de 30 líneas, un revisor barato lo confirma), y quita dependencias que sobran solo si la bloqueante falló. Sin marcar solo deja «✅ listo para aprobar» y avisa.</span></label>
@@ -2675,6 +2689,11 @@ Pasos, convenciones y ejemplos…</textarea>
     if ((f.coordinator || '') !== (project()?.coordinator || '')) await api('PATCH', `/api/projects/${projectId}`, { coordinator: f.coordinator || '' });
     if (!!f.supervisorApproves !== !!project()?.supervisorApproves) await api('PATCH', `/api/projects/${projectId}`, { supervisorApproves: !!f.supervisorApproves });
     if ((f.reviewPolicy || '') !== (project()?.reviewPolicy || '')) await api('PATCH', `/api/projects/${projectId}`, { reviewPolicy: f.reviewPolicy || '' });
+    { // 👔 managers: {manager: [miembros]} a partir de los selectores
+      const mg = {};
+      for (const el of document.querySelectorAll('[data-mgr-of]')) if (el.value) (mg[el.value] ||= []).push(el.dataset.mgrOf);
+      if (JSON.stringify(mg) !== JSON.stringify(project()?.managers || {}) && document.querySelector('[data-mgr-of]')) await api('PATCH', `/api/projects/${projectId}`, { managers: mg });
+    }
     if ((f.reviewerAgentId || '') !== (project()?.reviewerAgentId || '')) await api('PATCH', `/api/projects/${projectId}`, { reviewerAgentId: f.reviewerAgentId || '' });
   }),
 };

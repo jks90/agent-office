@@ -293,6 +293,32 @@ export async function createProject({ name, repoPath, repos, engine = 'demo', fo
   return project;
 }
 
+// 👔 Managers del proyecto: { managerId: [miembros] }. El manager es un agente del equipo que revisa (auto-qa) las tareas de
+// SUS miembros en vez del revisor del proyecto, y el organigrama los cuelga de él. Un miembro, un manager; nadie se gestiona a sí mismo.
+export function normalizeManagers(p, raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const team = new Set(p.team || []);
+  const out = {}, taken = new Set();
+  for (const [mid, list] of Object.entries(raw)) {
+    if (!team.has(mid)) throw fail(400, 'El manager tiene que estar fichado en el proyecto');
+    const ms = [...new Set(Array.isArray(list) ? list : [])];
+    for (const id of ms) {
+      if (!team.has(id)) throw fail(400, 'Los miembros de un manager tienen que estar fichados en el proyecto');
+      if (id === mid || raw[id]) throw fail(400, 'Un manager no puede estar en el equipo de otro manager');
+      if (taken.has(id)) throw fail(400, 'Cada miembro va con un solo manager');
+      taken.add(id);
+    }
+    out[mid] = ms;
+  }
+  return out;
+}
+// Manager de un agente en el proyecto (los dos fichados), o null.
+export function managerOf(p, agentId) {
+  const team = new Set(p?.team || []);
+  if (!team.has(agentId)) return null;
+  return Object.entries(p?.managers || {}).find(([mid, ms]) => team.has(mid) && ms.includes(agentId))?.[0] || null;
+}
+
 export async function updateProject(id, patch) {
   const p = findOr404(get().projects, id, 'Proyecto');
   if (patch.name?.trim()) p.name = patch.name.trim();
@@ -307,6 +333,7 @@ export async function updateProject(id, patch) {
     if (patch.reviewerAgentId && !(p.team || []).includes(patch.reviewerAgentId)) throw fail(400, 'El revisor tiene que estar fichado en el proyecto');
     p.reviewerAgentId = patch.reviewerAgentId || null;
   }
+  if (patch.managers !== undefined) p.managers = normalizeManagers(p, patch.managers); // 👔 managers: cada uno revisa a su equipo
   if (patch.reviewPolicy !== undefined) { // '' = la de la empresa · manual | auto-qa | auto
     p.reviewPolicy = review.POLICIES.includes(patch.reviewPolicy) ? patch.reviewPolicy : null;
     reviewPending(p);
@@ -782,7 +809,9 @@ async function runReviewer(p, t, repo, cwd, checks) {
     engineId = alt;
   }
   // 🔎 Revisor del proyecto (p.reviewerAgentId): un agente APARTE del equipo, con su rol, su modelo y sus MCP, que no sea el autor
-  const own = p.reviewerAgentId && p.reviewerAgentId !== t.agentId && (p.team || []).includes(p.reviewerAgentId) ? s.agents.find((a) => a.id === p.reviewerAgentId) : null;
+  // 👔 Con managers, revisa el manager del autor; si no tiene, el revisor del proyecto
+  const revId = managerOf(p, t.agentId) || p.reviewerAgentId;
+  const own = revId && revId !== t.agentId && (p.team || []).includes(revId) ? s.agents.find((a) => a.id === revId) : null;
   if (own && ENGINES[own.engine] && own.engine !== 'auto' && own.engine !== engineId && !quota.gate(own.engine).block) engineId = own.engine;
   // Sin autor ni equipo (tarea creada ya en revisión, proyecto sin plantilla) revisa un «Revisor» genérico en vez de fallar
   const agent = own || s.agents.find((a) => a.id === t.agentId) || teamOf(p)[0] || { id: 'revisor', name: 'Revisor', role: 'qa', engine: engineId, model: '' };

@@ -869,3 +869,7 @@ dialog.task-dlg textarea[name="description"] { min-height: 220px; resize: vertic
 .doll-fields { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; flex: 1; }
 .doll-fields > button { grid-column: 1 / -1; justify-self: start; }
 .doll-fields input[type=color] { width: 64px; height: 30px; padding: 2px; border-radius: 6px; cursor: pointer; }
+
+/* 👔 Managers en los ajustes del proyecto */
+.mgr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px 12px; margin-bottom: 8px; }
+.mgr-grid label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
