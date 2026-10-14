@@ -10,6 +10,7 @@ import * as store from './store.js';
 import * as team from './team.js';
 import * as skills from './skills.js';
 import { allRoles } from './roles.js';
+import * as identity from './identity.js'; // 🪪
 
 const TPL = path.join(store.ROOT, 'templates');
 const fail = (status, message, extra = {}) => Object.assign(new Error(message), { status, ...extra });
@@ -64,7 +65,7 @@ export function listTemplates() {
       const { spec, roles } = loadBuiltin(id);
       const labels = allRoles();
       return { id, mine: id.startsWith(MINE), name: spec.name, summary: spec.summary || '', icon: id.startsWith(MINE) ? '🔒' : spec.icon || '👥', coordinator: spec.coordinator !== false, savedAt: spec.savedAt || null,
-        members: spec.members.map((m) => ({ name: m.name, role: m.role, label: labels[m.role]?.label || m.role })), newRoles: Object.keys(roles).filter((r) => !labels[r]), skills: spec.skills || [] };
+        members: spec.members.map((m) => ({ name: m.name, role: m.role, label: labels[m.role]?.label || m.role, ...(m.identity ? { identity: m.identity } : {}) })), newRoles: Object.keys(roles).filter((r) => !labels[r]), skills: spec.skills || [] };
     } catch { return null; }
   }).filter(Boolean).sort((a, b) => (a.mine - b.mine) || a.name.localeCompare(b.name));
 }
@@ -161,12 +162,16 @@ export function applyTeam(src, projectId, { confirmCode = false, expandText = (t
   const inTeam = (a) => p.team.includes(a.id);
   const busyElsewhere = new Set(s.projects.flatMap((x) => x.team || []));
   for (const m of spec.members) {
-    if (s.agents.some((a) => inTeam(a) && a.role === m.role && a.name === m.name)) { out.skipped.push(m.name); continue; }
+    // 🪪 Miembro con identidad: es ESE agente (o un clon suyo), no «cualquiera con ese rol». Retocada → se rechaza.
+    const ident = m.identity ? identity.verify(m.identity) : null;
+    if (m.identity && !ident) throw fail(422, `La identidad de «${m.name}» no es válida o se ha modificado (fingerprint)`);
+    const same = (a) => ident ? a.identity?.uid === ident.uid : a.role === m.role;
+    if (s.agents.some((a) => inTeam(a) && (ident ? same(a) : a.role === m.role && a.name === m.name))) { out.skipped.push(m.name); continue; }
     if (p.team.length >= MAX_DESKS) { out.benched.push(m.name); continue; }
-    const bench = s.agents.find((a) => a.role === m.role && !busyElsewhere.has(a.id));
+    const bench = s.agents.find((a) => same(a) && !busyElsewhere.has(a.id));
     let agent;
     if (bench) { team.setTeam(p.id, { add: [bench.id] }); busyElsewhere.add(bench.id); agent = bench; out.fromBench.push(`${bench.name} (${m.role})`); }
-    else { agent = team.hire({ projectId: p.id, name: m.name, role: m.role, engine: 'auto' }); out.hired.push(`${agent.name} (${m.role})`); }
+    else { agent = team.hire({ projectId: p.id, name: m.name, role: m.role, engine: 'auto', identity: ident, baptisms: ident ? m.baptisms : [] }); out.hired.push(`${agent.name} (${m.role})`); }
     const give = [...(spec.roleSkills?.[m.role] || []), ...(spec.suggestedSkills?.[m.role] || [])].filter((n) => catalog.has(n));
     if (give.length) agent.skills = [...new Set([...(agent.skills || []), ...give])];
   }
@@ -195,7 +200,7 @@ export function teamSpecOf(projectId) {
   const roleSkills = {};
   for (const a of plain) if ((a.skills || []).length) roleSkills[a.role] = [...new Set([...(roleSkills[a.role] || []), ...a.skills])];
   const spec = { name: p.name, summary: `Equipo de «${p.name}»: ${plain.map((a) => `${a.name} (${roles[a.role]?.label || a.role})`).join(', ')}`,
-    members: plain.map((a) => ({ name: a.name, role: a.role })), coordinator: members.some((a) => roles[a.role]?.kind === 'supervisor'), skills: skillNames, roleSkills,
+    members: plain.map((a) => ({ name: a.name, role: a.role, ...identity.shareable(a) })), coordinator: members.some((a) => roles[a.role]?.kind === 'supervisor'), skills: skillNames, roleSkills,
     mcps: [...new Set(roleIds.flatMap((r) => roles[r].mcps || []))], scripts: [...new Set(roleIds.flatMap((r) => roles[r].scripts || []))] };
   return { project: p, spec, roleIds, skillNames };
 }

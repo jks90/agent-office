@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
+import { avatarOf, dress } from './avatar3d.js'; // 🪪 muñeco según la identidad inmutable del agente
 import { layoutFloor, recommendedFloorSize, toVisualState } from './office-layout.js';
 import { V3, pickLayout, zonesV3, layoutV3, routeV3, restSpotsV3 } from './office-v3.js';
 import OFFICE_DECOR from './office-decor.js'; // AO-5: catálogo estático de la referencia
@@ -1205,14 +1206,15 @@ export class Office3D {
 
   // Personaje real en miniatura, posado (sentado al PC, de pie…) sin animarlo cada frame: el mixer se avanza una vez.
   addMiniChar(g, visual, x, z, ry, own, sit) {
-    const file = CHAR_FILES[hash((visual.name || '') + visual.id) % CHAR_FILES.length];
-    const gltf = this.charCache.get(file);
+    const av = avatarOf(this.allAgents.find((x) => x.id === visual.id) || visual);
+    const gltf = this.charCache.get(av.base);
     if (!gltf) return this.addMiniAgent(g, visual, x, z, own, 0.9);
     const model = skeletonClone(gltf.scene);
+    const k = dress(model, av);
     const box = new THREE.Box3().setFromObject(model);
     const sc = (CHAR_H * 1.32) / (box.getSize(new THREE.Vector3()).y || 1); // en el edificio se mantiene la escala de FT-77 v2
-    model.scale.setScalar(sc);
-    model.position.set(x, SLAB_H - box.min.y * sc + (sit ? 0.05 : 0), z);
+    model.scale.set(sc * k.w, sc * k.h, sc * k.w);
+    model.position.set(x, SLAB_H - box.min.y * sc * k.h + (sit ? 0.05 : 0), z);
     model.rotation.y = ry;
     model.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = false; } });
     const mixer = new THREE.AnimationMixer(model);
@@ -1222,7 +1224,7 @@ export class Office3D {
     // Vivo como en la planta (teclear, respirar, mirar, gestos); quieto solo si su motor no tiene cuota
     const a = { mixer, actions: {}, current: clip ? mixer.clipAction(clip) : null, clip: clip?.name || null, bones: {}, sitSpot: !!sit, moving: false,
       phase: Math.random() * 10, nextGesture: Math.random() * 6, emote: null, wander: null, visual, base: clip?.name || null,
-      amp: 1.8, model, home: { x, z, ry, sit: !!sit, y: model.position.y }, standY: SLAB_H - box.min.y * sc, dot: null, ring: null,
+      amp: 1.8, model, home: { x, z, ry, sit: !!sit, y: model.position.y }, standY: SLAB_H - box.min.y * sc * k.h, dot: null, ring: null,
       walk: null, nextWalk: 3 + Math.random() * 8 };
     for (const c of gltf.animations) { const act = mixer.clipAction(c); if (/^emote|^pick-up|^jump|^interact/.test(c.name)) { act.loop = THREE.LoopOnce; act.clampWhenFinished = true; } a.actions[c.name] = act; }
     for (const n of BONES) { const b = model.getObjectByName(n); if (b) a.bones[n] = { b, rest: b.quaternion.clone() }; }
@@ -1463,8 +1465,8 @@ export class Office3D {
 
   // ── Personajes ──────────────────────────────────────────────────────────────
   spawnActor(agent, index, now) {
-    const file = CHAR_FILES[hash(agent.name + agent.id) % CHAR_FILES.length];
-    const gltf = this.charCache.get(file);
+    const av = avatarOf(agent); // 🪪 su físico no cambia al renombrarlo
+    const gltf = this.charCache.get(av.base);
     const group = new THREE.Group();
     const a = {
       group, x: this.entryPoint().x, z: this.entryPoint().z, corr: null, path: [], key: null, moving: false,
@@ -1475,11 +1477,12 @@ export class Office3D {
     };
     if (gltf) {
       const model = skeletonClone(gltf.scene);
+      const k = dress(model, av);
       const box = new THREE.Box3().setFromObject(model);
       const h = box.getSize(new THREE.Vector3()).y || 1;
       const scale = CHAR_H / h;
-      model.scale.setScalar(scale);
-      model.position.y = -box.min.y * scale;
+      model.scale.set(scale * k.w, scale * k.h, scale * k.w);
+      model.position.y = -box.min.y * scale * k.h;
       model.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.frustumCulled = false; } });
       group.add(model);
       a.mixer = new THREE.AnimationMixer(model);

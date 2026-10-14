@@ -3,6 +3,11 @@ const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 let S = { projects: [], agents: [], tasks: [], settings: {}, roles: {}, engines: [] };
+// 🪪 Avatar = su muñeco 3D isométrico (avatar3d.js lo rellena); mientras carga o sin WebGL, la inicial.
+const avatarHtml = (a, cls = '', style = '') => `<span class="avatar${cls ? ' ' + cls : ''}" data-avatar="${esc(a.id)}"${style ? ` style="${style}"` : ''}${a.identity ? ` title="${esc(a.name)}${bornAs(a) ? ` · ${esc(bornAs(a))}` : ''}"` : ''}>${esc(a.name).charAt(0).toUpperCase()}</span>`;
+// Bautizado: se ve con qué nombre nació (identity.birthName no cambia nunca).
+const bornAs = (a) => a.identity?.birthName && a.identity.birthName !== a.name ? `nació como «${a.identity.birthName}»` : '';
+const bornHtml = (a) => bornAs(a) ? ` <span class="born" title="Nombre de nacimiento: no cambia al renombrarlo">${esc(bornAs(a))}</span>` : '';
 let projectId = safeGet('ao:project');
 let drawerAgent = null;
 // ── ⭐ Puntuación de agentes (FT-153): datos de GET /api/scores; se piden cuando cambia el historial (llega por el SSE), sin polling ──
@@ -53,11 +58,13 @@ const statusSinceByAgent = new Map();
 const activityLoaded = new Set();
 
 import { Office } from './office3d.js';
+import { hydrateAvatars } from './avatar3d.js'; // 🪪 muñeco isométrico en los avatares (identidad inmutable)
 import { createOfficePanels } from './office-panels.js'; // paneles informativos en los márgenes de la planta (FT-125)
 let officePanels = null;
 import { dictationSupported, createDictation, insertAtCursor } from './dictation.js'; // dictado por voz (FT-43)
 const office = new Office($('#office'), { onAgentClick: (id) => enterAgent(id), onFloorClick: (id) => enterFloor(id), onGuideClick: () => showTab('guide'), onMineClick: (pid) => { inboxProject = pid || null; showTab('inbox'); renderInbox(); } }); // clic planta/agente → navegación continua (FT-47/FT-71)
-window.aoOffice = office; // para QA: aoOffice.debugState() / setMode() (FT-46)
+window.aoOffice = office;
+{ let raf = 0; new MutationObserver(() => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; hydrateAvatars(document, S.agents); }); }).observe(document.body, { childList: true, subtree: true }); } // para QA: aoOffice.debugState() / setMode() (FT-46)
 
 function safeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
 function safeSet(k, v) { try { localStorage.setItem(k, v); } catch { /* sin almacenamiento */ } }
@@ -1177,8 +1184,8 @@ function memberCard(a, ts) {
   return `
     <div class="member org-card open ${a.id === drawerAgent ? 'sel' : ''}" style="--c:${r?.color || '#999'}">
       <div class="top" data-agent="${a.id}">
-        <span class="avatar">${esc(a.name).charAt(0).toUpperCase()}</span>
-        <div class="member-main"><b>${esc(a.name)}</b><div class="act">${busy(a) ? esc(a.activity) : 'En la zona de descanso ☕'}</div></div>
+        ${avatarHtml(a)}
+        <div class="member-main"><b>${esc(a.name)}</b>${bornHtml(a)}<div class="act">${busy(a) ? esc(a.activity) : 'En la zona de descanso ☕'}</div></div>
         <span class="eng">${esc(a.engine)}${a.engine === 'auto' && a.activeEngine ? ' → ' + esc(a.activeEngine) : ''}${a.model ? ' · ' + esc(a.model) : ''}</span>
         <button type="button" class="org-fold" data-org-toggle="${a.id}" title="Plegar" aria-label="Plegar la tarjeta de ${esc(a.name)}">▴</button>
       </div>
@@ -1202,8 +1209,8 @@ function orgCard(a, ts, { showRole = true } = {}) {
   const task = ts.find((t) => t.id === a.taskId);
   const r = S.roles[a.role];
   return `<button type="button" class="member org-card ${a.id === drawerAgent ? 'sel' : ''}" style="--c:${r?.color || '#999'}" data-org-toggle="${a.id}" title="${esc(a.name)} · ${esc(r?.label || a.role)} — clic para ver el detalle">
-      <span class="avatar">${esc(a.name).charAt(0).toUpperCase()}</span>
-      <span class="org-main"><b>${esc(a.name)}</b>${showRole ? `<span class="org-role">${esc(r?.label || a.role)}</span>` : ''}${task ? `<span class="org-task">▶ ${esc(tcode(task))}</span>` : ''}</span>
+      ${avatarHtml(a)}
+      <span class="org-main"><b>${esc(a.name)}</b>${bornHtml(a)}${showRole ? `<span class="org-role">${esc(r?.label || a.role)}</span>` : ''}${task ? `<span class="org-task">▶ ${esc(tcode(task))}</span>` : ''}</span>
       <span class="dot ${a.status}" title="${stateLabel(a)}"></span>
     </button>`;
 }
@@ -1250,7 +1257,7 @@ function renderBench() {
   const card = (a) => {
     const r = S.roles[a.role];
     return `<div class="member bench" style="--c:${r?.color || '#999'}">
-      <div class="top" data-agent="${a.id}"><span class="avatar">${esc(a.name).charAt(0).toUpperCase()}</span><div class="member-main"><b>${esc(a.name)}</b><div class="act">${busy(a) ? esc(a.activity) : (projectsOf(a.id).length ? 'en ' + projectsOf(a.id).map(esc).join(', ') : 'disponible')}</div></div><span class="eng">${esc(a.engine)}${a.model ? ' · ' + esc(a.model) : ''}</span></div>
+      <div class="top" data-agent="${a.id}">${avatarHtml(a)}<div class="member-main"><b>${esc(a.name)}</b>${bornHtml(a)}<div class="act">${busy(a) ? esc(a.activity) : (projectsOf(a.id).length ? 'en ' + projectsOf(a.id).map(esc).join(', ') : 'disponible')}</div></div><span class="eng">${esc(a.engine)}${a.model ? ' · ' + esc(a.model) : ''}</span></div>
       <div class="member-foot"><button type="button" class="chip-link" data-goto-role="${esc(a.role)}" title="Ver el rol ${esc(r?.label || a.role)}">${roleChip(a.role)}</button><span class="state ${a.status}"><span class="dot ${a.status}"></span>${a.status === 'paused' ? 'En pausa' : a.status === 'working' ? 'Trabajando' : 'Libre'}</span></div>
       <div class="acts"><button class="small" data-sign="${a.id}">↑ Fichar</button><button class="small ghost" data-agent-edit="${a.id}">✎</button><button class="small danger" data-fire="${a.id}" title="Baja definitiva de la empresa">Despedir</button></div>
     </div>`;
@@ -2302,6 +2309,10 @@ function renderDrawer() {
   const activityHtml = recent.length ? recent.map((ev) => `<li class="${ev.type === 'AgentFailed' ? 'bad' : ''}"><span>${esc(eventText(ev))}</span><time>${ago(ev.ts)}</time></li>`).join('') : '<li><span class="muted">Sin actividad reciente en el stream.</span></li>';
   // Si ya está pintado, solo refrescamos lo que cambia (no perder el foco de los inputs).
   if (d.dataset.agent === a.id) {
+    d.querySelector('[data-f=name]').textContent = a.name; // 🪪 un bautizo se ve al momento
+    d.querySelector('[data-f=born]').innerHTML = bornHtml(a);
+    const idBox = d.querySelector('[data-f=identity]'), idSig = `${a.identity?.fingerprint}:${(a.baptisms || []).length}`;
+    if (idBox.dataset.sig !== idSig) { idBox.dataset.sig = idSig; idBox.innerHTML = identityHtml(a); } // sin repintar en cada SSE (cerraría los bautizos)
     d.querySelector('[data-f=status]').innerHTML = `<span class="dot" style="background:${meta.color};box-shadow:0 0 8px ${meta.color}"></span>${esc(meta.label)}<span class="muted">${durationSince(statusSince(a))}</span>`;
     d.querySelector('[data-f=activity]').innerHTML = activityHtml;
     d.querySelector('[data-f=tool]').textContent = activeTool(a);
@@ -2314,7 +2325,7 @@ function renderDrawer() {
   }
   d.dataset.agent = a.id;
   d.innerHTML = `
-    <div class="agent-panel-head"><span class="avatar big" style="--c:${role?.color || '#999'}">${esc(a.name).charAt(0).toUpperCase()}</span><div><h2>${esc(a.name)}</h2><div>${roleChip(a.role)}</div></div><div class="spacer"></div><button class="ghost small" data-close aria-label="Cerrar ficha">✕</button></div>
+    <div class="agent-panel-head">${avatarHtml(a, 'big', `--c:${role?.color || '#999'}`)}<div><h2 data-f="name">${esc(a.name)}</h2><div data-f="born">${bornHtml(a)}</div><div>${roleChip(a.role)}</div></div><div class="spacer"></div><button class="ghost small" data-close aria-label="Cerrar ficha">✕</button></div>
     <div class="agent-status" data-f="status"></div>
     <div class="agent-current" data-f="current"></div>
     <section class="agent-panel-card">
@@ -2328,6 +2339,10 @@ function renderDrawer() {
     <section class="agent-panel-card">
       <h3>Herramienta activa</h3>
       <div class="tool-line" data-f="tool"></div>
+    </section>
+    <section class="agent-panel-card">
+      <h3>🪪 Identidad</h3>
+      <div data-f="identity" data-sig="${a.identity?.fingerprint}:${(a.baptisms || []).length}">${identityHtml(a)}</div>
     </section>
     <section class="agent-panel-card">
       <h3>Motor y modelo</h3>
@@ -2743,7 +2758,7 @@ function teamModalBody(pid) {
   const groups = sumProjects(pid);
   const order = { asking: 0, working: 1, paused: 2, idle: 3 };
   const rows = groups.map((g) => `${groups.length > 1 ? `<tr class="sum-group"><td colspan="5">${esc(g.p.name)}</td></tr>` : ''}${g.team.map((a) => ({ a, s: agentState(a) })).sort((x, y) => order[x.s.cls] - order[y.s.cls] || x.a.name.localeCompare(y.a.name)).map(({ a, s }) => `
-    <tr data-sum-agent="${a.id}"><td><span class="avatar xs" style="--c:${S.roles[a.role]?.color}">${esc(a.name).charAt(0).toUpperCase()}</span> <b>${esc(a.name)}</b> ${roleChip(a.role)}</td>
+    <tr data-sum-agent="${a.id}"><td>${avatarHtml(a, 'xs', `--c:${S.roles[a.role]?.color}`)} <b>${esc(a.name)}</b> ${roleChip(a.role)}</td>
     <td class="sum-state ${s.cls}">${s.icon} ${s.label}</td><td class="muted sum-act" title="${esc(s.t?.title || '')}">${esc(a.status === 'idle' ? '' : a.activity || '')}${s.t ? `<div class="muted small">${esc(s.t.title.slice(0, 60))}${s.t.title.length > 60 ? '…' : ''}</div>` : ''}</td>
     <td class="muted">${esc(engineModel(a))}</td>
     <td class="sum-acts"><button type="button" class="small ghost" data-sum-open="${a.id}" title="Abrir el panel del agente (registro en vivo, motor, pausar…)">Abrir</button>${s.t ? `<button type="button" class="small ghost" data-sum-task="${s.t.id}" title="Abrir la tarea ${esc(tcode(s.t))}">Ir a la tarea</button>` : ''}</td></tr>`).join('')}`).join('');
@@ -2817,7 +2832,7 @@ function tokensCell(p, team, tokens) {
 }
 function teamCell(p, team) {
   if (!team.length) return '<span class="muted">sin equipo</span>';
-  const ini = team.slice(0, 3).map((a) => `<span class="avatar xs" style="--c:${S.roles[a.role]?.color}" title="${esc(a.name)}">${esc(a.name).charAt(0).toUpperCase()}</span>`).join('');
+  const ini = team.slice(0, 3).map((a) => avatarHtml(a, 'xs', `--c:${S.roles[a.role]?.color}`)).join('');
   return `<span class="avatars">${ini}</span>${team.length > 3 ? `<span class="muted">+${team.length - 3}</span> ` : ' '}${sumBtn('data-sum-team', p.id, `${team.length} agente${team.length === 1 ? '' : 's'}`, 'Ver equipo')}`;
 }
 function busyCell(busy) {
@@ -3248,6 +3263,25 @@ document.addEventListener('dragleave', (e) => { e.target.closest?.('#attach')?.c
 document.addEventListener('drop', (e) => { const a = e.target.closest?.('#attach'); if (a) { e.preventDefault(); a.classList.remove('drag'); uploadFiles(e.dataTransfer.files); } });
 
 // Editar un agente desde su tarjeta (nombre, rol, motor, modelo).
+// 🪪 Ficha: su muñeco (no cambia nunca), con qué nombre nació, cuándo y dónde, y sus bautizos.
+const ACCESSORY_LABEL = { none: 'sin accesorio', glasses: 'gafas', cap: 'gorra', headphones: 'cascos', beanie: 'gorro de lana', bowtie: 'pajarita', scarf: 'bufanda' };
+function identityHtml(a) {
+  const id = a.identity;
+  if (!id) return '<span class="muted">Sin identidad (agente anterior a 🪪)</span>';
+  const av = id.avatar || {};
+  const when = (t) => new Date(t).toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' });
+  const bap = (a.baptisms || []).slice().reverse().map((b) => `<li>«${esc(b.from)}» → <b>«${esc(b.to)}»</b> <time>${when(b.at)}</time></li>`).join('');
+  return `<div class="identity">
+    ${avatarHtml(a, 'doll')}
+    <div class="grid">
+      <span class="muted">Nació como</span><b>${esc(id.birthName)}</b>
+      <span class="muted">Nacimiento</span><span>${when(id.bornAt)}${id.bornIn ? ` · ${esc(id.bornIn)}` : ''}</span>
+      <span class="muted">Físico</span><span>${esc(av.base?.replace('character-', '') || '?')}${av.outfit ? ` · ropa <i class="swatch" style="background:${esc(av.outfit)}"></i>` : ''} · ${esc(ACCESSORY_LABEL[av.accessory] || av.accessory || '')}</span>
+      <span class="muted">ID</span><code title="Identificador global: el mismo en cualquier AgentOffice donde se comparta (y en sus clones)">${esc(id.uid.slice(3, 11))} · ${esc(id.fingerprint?.slice(0, 8) || '')}</code>
+    </div>
+  </div>
+  ${bap ? `<details class="baptisms"><summary>💧 ${a.baptisms.length} bautizo${a.baptisms.length === 1 ? '' : 's'}</summary><ul>${bap}</ul></details>` : ''}`;
+}
 function editAgent(id) {
   const a = S.agents.find((x) => x.id === id);
   if (!a) return;
@@ -3256,6 +3290,7 @@ function editAgent(id) {
   dialog(`
     <h3>✎ ${esc(a.name)}</h3>
     <label>Nombre</label><input name="name" value="${esc(a.name)}" required autofocus />
+    ${a.identity ? `<p class="muted">Cambiarle el nombre es un 💧 bautizo: se guarda en su historial y sigue constando que nació como «${esc(a.identity.birthName)}». Su muñeco no cambia.</p>` : ''}
     <label>Rol</label><select name="role">${roleOptions(a.role)}</select>
     <div class="grid2">
       <div><label>Motor</label><select name="engine">${engineOptions(a.engine)}</select></div>

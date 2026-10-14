@@ -15,6 +15,7 @@ import * as team from './team.js';
 import { allRoles, roleOf } from './roles.js';
 import { skillsDir, rolesDir, ensureCatalog, parseFrontmatter } from './skills.js';
 import { MAX_DESKS } from './coordinator.js';
+import * as identity from './identity.js'; // 🪪 identidad inmutable del agente
 import * as teams from './teams.js'; // 👥 paquetes de tipo «team» (plantilla de equipo)
 
 export const FORMAT = 'ao-pkg/1';
@@ -141,7 +142,7 @@ export function exportPackage(kind, id, scope = 'public', opts = {}) {
     if (!a) throw fail(404, 'Agente no encontrado');
     const { role, files: f } = roleFiles(a.role);
     files = f; name = slug(a.name) || a.id; summary = `${a.name} · ${role.label || a.role}`;
-    meta = { role: a.role, engine: a.engine, model: a.model || '', kindOfRole: role.kind, agentName: a.name };
+    meta = { role: a.role, engine: a.engine, model: a.model || '', kindOfRole: role.kind, agentName: a.name, ...identity.shareable(a) }; // 🪪 viaja su identidad
     const pid = opts.projectId || store.get().projects.find((p) => p.team.includes(a.id))?.id
       || store.get().projects.find((p) => memory.read(p.id, a.id))?.id;
     mem = { agent: pid ? memory.read(pid, a.id) : '' };
@@ -310,7 +311,10 @@ export function importPackage(pkg, opts = {}) {
   // Se ficha en el proyecto elegido si tiene mesa libre (tope 8); si no, al banquillo (Agentes) para ficharlo a mano.
   const proj = opts.projectId ? store.get().projects.find((p) => p.id === opts.projectId) : null;
   const seat = proj && proj.team.length < MAX_DESKS ? proj.id : null;
-  const agent = team.hire({ projectId: seat, name: opts.agentName || pkg.meta.agentName || pkg.name, role: roleId, engine: pkg.meta.engine, model: pkg.meta.model });
+  // 🪪 Conserva su identidad (uid, nombre de nacimiento, muñeco) si llega intacta; retocada → se rechaza.
+  let ident = null;
+  if (pkg.meta.identity) { ident = identity.verify(pkg.meta.identity); if (!ident) throw fail(422, 'La identidad del agente no es válida o se ha modificado (fingerprint)'); }
+  const agent = team.hire({ projectId: seat, name: opts.agentName || pkg.meta.agentName || pkg.name, role: roleId, engine: pkg.meta.engine, model: pkg.meta.model, identity: ident, baptisms: ident ? pkg.meta.baptisms : [] });
   if (pkg.memory) {
     if (pkg.memory.agent) memory.write(opts.projectId, agent.id, expandText(pkg.memory.agent));
     if (pkg.memory.project && (!memory.read(opts.projectId, null) || opts.overwrite)) memory.write(opts.projectId, null, expandText(pkg.memory.project));

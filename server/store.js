@@ -5,6 +5,7 @@ import { codexCostUsd } from './usage.js';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { migrate as migrateCodes } from './codes.js';
+import { legacyIdentity } from './identity.js';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const DATA_DIR = process.env.AO_DATA_DIR || path.join(ROOT, 'data');
@@ -50,6 +51,8 @@ function load() {
     for (const p of s.projects) if (!Array.isArray(p.team)) p.team = [];
     // Esquema 3: código legible por tarea (GL-7) — también para las tareas antiguas, por orden de creación.
     if (!s.schema || s.schema < 3) { migrateCodes(s); s.schema = 3; }
+    // 🪪 Agentes de antes de la identidad inmutable: nacen ahora con su muñeco de siempre (hash(name + id)).
+    for (const a of s.agents) { if (!a.identity) a.identity = legacyIdentity(a); if (!Array.isArray(a.baptisms)) a.baptisms = []; }
     for (const p of s.projects) if (p.board?.job?.running) { p.board.job.running = false; p.board.job.lastError = 'Exportación interrumpida (reinicio)'; }
     return s;
   } catch {

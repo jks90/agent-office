@@ -850,3 +850,16 @@ dialog.task-dlg textarea[name="description"] { min-height: 220px; resize: vertic
 
 /* 📮 Reporte del Guía */
 .g-report { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0; padding: 8px 10px; border: 1px solid var(--panel2); border-radius: 8px; background: var(--panel3); font-size: 13px; }
+
+/* 🪪 Identidad del agente: muñeco isométrico en el avatar, «nacido …» y ficha */
+.avatar.has-doll { overflow: hidden; padding: 0; }
+.avatar.has-doll img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 30%; transform: scale(1.35); transform-origin: 50% 25%; image-rendering: auto; pointer-events: none; }
+.avatar.doll { width: 84px; height: 84px; border-radius: 14px; font-size: 30px; }
+.avatar.doll.has-doll img { transform: none; object-position: 50% 50%; }
+.born { font-size: 11px; font-weight: 400; color: var(--muted, #8a8f98); font-style: italic; }
+.identity { display: flex; gap: 12px; align-items: center; }
+.identity .grid { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; font-size: 12px; align-items: center; }
+.identity .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: -1px; border: 1px solid rgba(0,0,0,.25); }
+.baptisms { margin-top: 8px; font-size: 12px; }
+.baptisms ul { margin: 6px 0 0; padding-left: 18px; }
+.baptisms time { color: var(--muted, #8a8f98); margin-left: 6px; }

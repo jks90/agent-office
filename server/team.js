@@ -27,6 +27,7 @@ import { cleanContext, describeContext } from './task-context.js';
 import * as quota from './quota.js';
 import * as ponytail from './ponytail.js'; // FT-86
 import { briefingFor } from './briefing.js';
+import * as identity from './identity.js'; // 🪪 identidad inmutable + bautizos
 import { detectQuotaHit } from './quota-pause.js';
 import * as memory from './memory.js';
 import * as codeindex from './codeindex.js';
@@ -351,18 +352,23 @@ export function repoOfTask(p, t) {
 }
 
 // ── Agentes ────────────────────────────────────────────────────────────────
-function newAgent({ name, role, engine = 'auto', model = '' }) {
-  return { id: newId(), name, role, engine, model: model || roleOf(role)?.model || '', status: 'idle', activity: '', taskId: null, createdAt: Date.now() };
+// 🪪 Nace con su identidad (uid, nombre de nacimiento, físico); si viene de fuera (paquete, copia) se respeta tal cual.
+function newAgent({ name, role, engine = 'auto', model = '', identity: given = null, baptisms = [] }) {
+  const a = { id: newId(), name, role, engine, model: model || roleOf(role)?.model || '', status: 'idle', activity: '', taskId: null, createdAt: Date.now() };
+  a.identity = given || identity.newIdentity(name, { bornIn: String(store.get().settings?.authorName || os.userInfo().username || '').slice(0, 80) });
+  a.baptisms = identity.cleanBaptisms(baptisms);
+  if (given && name !== (a.baptisms.at(-1)?.to ?? given.birthName)) a.baptisms.push({ from: a.baptisms.at(-1)?.to ?? given.birthName, to: name, at: Date.now() });
+  return a;
 }
 
 // Contratar = alta en la empresa (y, si se indica proyecto, fichaje directo en su plantilla).
-export function hire({ projectId = null, name, role, engine, model }) {
+export function hire({ projectId = null, name, role, engine, model, identity: given = null, baptisms = [] }) {
   const s = get();
   const p = projectId ? findOr404(s.projects, projectId, 'Proyecto') : null;
   if (!roleOf(role)) throw fail(400, 'Rol desconocido');
   if (!name?.trim()) throw fail(400, 'El agente necesita un nombre');
   if (p && p.team.length >= coord.MAX_DESKS) throw fail(400, `La oficina tiene ${coord.MAX_DESKS} mesas: no caben más agentes en este proyecto`);
-  const agent = newAgent({ name: name.trim(), role, engine: ENGINE_IDS.includes(engine) ? engine : 'auto', model: model || '' });
+  const agent = newAgent({ name: name.trim(), role, engine: ENGINE_IDS.includes(engine) ? engine : 'auto', model: model || '', identity: given, baptisms });
   s.agents.push(agent);
   if (p) p.team.push(agent.id);
   changed();
@@ -382,7 +388,9 @@ export function setTeam(projectId, { add = [], remove = [] }) {
 
 export function updateAgent(id, patch) {
   const a = findOr404(get().agents, id, 'Agente');
-  if (patch.name?.trim()) a.name = patch.name.trim();
+  const sameIdentity = (x) => x && typeof x === 'object' && x.fingerprint === a.identity?.fingerprint && identity.fingerprintOf(x) === a.identity?.fingerprint;
+  if (patch.identity !== undefined && !sameIdentity(patch.identity)) throw fail(409, 'La identidad de un agente no cambia nunca: renómbralo (bautizo) si quieres otro nombre');
+  if (patch.name?.trim()) identity.baptize(a, patch.name); // 🪪 bautizo: queda el original en identity.birthName
   if (ENGINE_IDS.includes(patch.engine)) a.engine = patch.engine;
   if (typeof patch.model === 'string') a.model = patch.model.trim();
   if (patch.role && roleOf(patch.role)) a.role = patch.role;
@@ -1365,8 +1373,9 @@ export function moveAgent(id, fromProjectId, toProjectId, { copy = false, name =
   const to = otherProject(from?.id, toProjectId);
   if (!copy && (to.team || []).includes(a.id)) throw fail(409, `${a.name} ya está fichado en ${to.name}`);
   if ((to.team || []).length >= coord.MAX_DESKS) throw fail(400, `${to.name} no tiene mesas libres (${coord.MAX_DESKS})`);
-  if (copy) { // agente nuevo con la misma configuración (rol, motor, modelo, MCP, skills, scripts…), sin su estado ni historial
-    const clone = { ...newAgent({ name: (name || `${a.name} (copia)`).trim(), role: a.role, engine: a.engine, model: a.model }) };
+  if (copy) { // agente nuevo con la misma configuración (rol, motor, modelo, MCP, skills, scripts…), sin su estado ni historial;
+    // 🪪 es un clon: misma identidad (uid, nombre de nacimiento y muñeco) y mismos bautizos
+    const clone = { ...newAgent({ name: (name || `${a.name} (copia)`).trim(), role: a.role, engine: a.engine, model: a.model, identity: a.identity, baptisms: a.baptisms }) };
     for (const k of ['ponytail', 'mcps', 'scripts', 'skills']) if (a[k] !== undefined) clone[k] = structuredClone(a[k]);
     s.agents.push(clone);
     to.team.push(clone.id);
