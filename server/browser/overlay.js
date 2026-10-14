@@ -92,7 +92,9 @@ export function createOverlay({ url, getState, listQuestions, spawn = nodeSpawn,
 
   function start() {
     if (child || dismissed || !enabled() || !hasDesktop() || now() - failedAt < RETRY_MS) return;
-    const args = ['--yes', ELECTRON, MAIN, `--ao-url=${url()}`];
+    // Linux: bajo systemd el sandbox SUID de Chromium aborta (chrome-sandbox de npx no es root) → --no-sandbox. La ventana
+    // solo carga la página local de AgentOffice (navegación y ventanas nuevas bloqueadas en overlay/main.cjs).
+    const args = ['--yes', ELECTRON, MAIN, `--ao-url=${url()}`, ...(process.platform === 'linux' ? ['--no-sandbox'] : [])];
     const { ELECTRON_RUN_AS_NODE, ...env } = process.env; // lo exporta VS Code: con él Electron arranca como Node y no hay ventana
     try {
       child = spawn(process.platform === 'win32' ? 'npx.cmd' : 'npx', args, { stdio: 'ignore', detached: process.platform !== 'win32', env: { ...env, ELECTRON_NO_ATTACH_CONSOLE: '1' } });
