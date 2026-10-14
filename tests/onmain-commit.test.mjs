@@ -1,52 +1,54 @@
-// FT-235 · Reproduce el fallo de commitOnMain/dirtyMap: repos git temporales (nunca los reales) con ficheros no ASCII y un renombrado.
-import { test } from 'node:test';
+// FT-233: «Documentar X.Y.Z» commitea lo del agente en el repo principal y en los onMainDirs (nombres no ASCII, renombrados).
+import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { dirtyMap, commitOnMain } from '../server/onmain-commit.js';
+import { dirtyMap, commitOnMain, parsePorcelainZ } from '../server/onmain.js';
 
-const sh = (cwd, ...a) => execFileSync('git', ['-C', cwd, ...a], { encoding: 'utf8' });
-const NOASCII = '00 Flow-test — Manual.md';
-
-function repo(dir, files) {
-  fs.mkdirSync(dir, { recursive: true });
-  sh(dir, 'init', '-q');
-  sh(dir, 'config', 'user.email', 't@t'); sh(dir, 'config', 'user.name', 't');
-  for (const [f, c] of Object.entries(files)) fs.writeFileSync(path.join(dir, f), c);
-  sh(dir, 'add', '-A'); sh(dir, 'commit', '-q', '-m', 'base');
+const sh = (d, ...a) => execFileSync('git', ['-C', d, ...a], { encoding: 'utf8' });
+function repo(root, name, files) {
+  const d = path.join(root, name);
+  fs.mkdirSync(d, { recursive: true });
+  sh(d, 'init', '-q');
+  for (const [f, c] of Object.entries(files)) { fs.writeFileSync(path.join(d, f), c); }
+  sh(d, 'add', '-A');
+  sh(d, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init');
+  return d;
 }
-const count = (d) => Number(sh(d, 'rev-list', '--count', 'HEAD').trim());
 
-test('FT-235: commitOnMain hace 1 commit en cada repo (principal + 2 onMainDirs, uno con ~)', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-ft235-'));
-  const main = path.join(home, 'main'), a = path.join(home, 'a'), b = path.join(home, 'b');
-  repo(main, { 'x.txt': '1', [NOASCII]: 'v1' });
-  repo(a, { 'old name.txt': 'contenido de a' });
-  repo(b, { 'y.txt': '1' });
-  // Como team.js: las rutas con ~ se expanden antes de calcular onMainBefore
-  const expand = (d) => d.replace(/^~(?=\/|$)/, home);
-  const dirs = [main, ...['~/a', '~/b'].map(expand)];
-  const onMainBefore = await dirtyMap(dirs);
-
-  // Cambia el agente: modifica (no ASCII) en el principal, renombra en a, crea en b
-  fs.writeFileSync(path.join(main, NOASCII), 'v2');
-  sh(a, 'mv', 'old name.txt', 'ñandú nuevo.txt');
-  fs.writeFileSync(path.join(b, 'z.txt'), 'nuevo');
-
-  const lines = await commitOnMain({ code: 'FT-235', title: 'prueba', onMainBefore }, { name: 'Test' });
-  assert.deepEqual(dirs.map(count), [2, 2, 2], lines.join('\n'));
-  for (const d of dirs) assert.equal(sh(d, 'status', '--porcelain').trim(), '', `árbol limpio en ${d}`);
-  fs.rmSync(home, { recursive: true, force: true });
+test('parsePorcelainZ: renombrados y nombres con espacios/unicode', () => {
+  assert.deepEqual(parsePorcelainZ(' M a b.md\0R  nuevo — x.md\0viejo.md\0?? z.md\0'), ['a b.md', 'nuevo — x.md', 'z.md']);
 });
 
-test('FT-235: dirtyMap devuelve rutas literales (sin comillas/octal) y la primera línea " M" no pierde su primera letra', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-ft235-d-'));
-  repo(dir, { 'abc.txt': '1', [NOASCII]: 'v1' });
-  fs.writeFileSync(path.join(dir, 'abc.txt'), '2');
-  fs.writeFileSync(path.join(dir, NOASCII), 'v2');
-  const m = await dirtyMap([dir]);
-  assert.deepEqual([...m[dir]].sort(), ['abc.txt', NOASCII].sort());
-  fs.rmSync(dir, { recursive: true, force: true });
+test('commitOnMain: 3 repos, tracked modificado primero, no ASCII y renombrado → 3 commits y nada sin commitear', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-onmain-'));
+  const a = repo(root, 'flow-test', { 'README.md': 'a\n' });
+  const b = repo(root, 'flow-test-public', { 'CHANGELOG.md': 'x\n', 'viejo.md': 'v\n' });
+  const c = repo(root, 'JksDocs', { '00 Flow-test — Manual.md': 'm\n' });
+  fs.writeFileSync(path.join(c, 'ya-sucio.md'), 'previo\n'); // sucio antes: no es de la tarea
+  const t = { code: 'FT-231', title: 'Documentar 5.30.1', releaseOf: '5.30.1' };
+  t.onMainBefore = await dirtyMap([a, b, c]);
+  fs.writeFileSync(path.join(a, 'README.md'), 'a2\n');
+  fs.writeFileSync(path.join(b, 'CHANGELOG.md'), 'x2\n');
+  sh(b, 'mv', 'viejo.md', 'renombrado — ñ.md');
+  fs.writeFileSync(path.join(c, '00 Flow-test — Manual.md'), 'm2\n');
+  fs.writeFileSync(path.join(c, '01 Nuevo — ñandú.md'), 'n\n');
+  const r = await commitOnMain(t, { name: 'Dora' });
+  assert.equal(r.commits.length, 3, JSON.stringify(r));
+  assert.ok(r.commits.every((x) => x.ok), JSON.stringify(r.commits));
+  for (const d of [a, b, c]) assert.match(sh(d, 'log', '-1', '--format=%s'), /FT-231/);
+  assert.deepEqual(r.left, { JksDocs: ['ya-sucio.md'] }); // solo lo que ya estaba sucio
+});
+
+test('commitOnMain: si git falla queda registrado y el resto sigue sin commitear (red de seguridad)', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-onmain-'));
+  const a = repo(root, 'r', { 'a.md': '1\n' });
+  const t = { code: 'FT-231', title: 'x', onMainBefore: await dirtyMap([a]) };
+  fs.writeFileSync(path.join(a, 'a.md'), '2\n');
+  fs.writeFileSync(path.join(a, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const r = await commitOnMain(t, { name: 'Dora' });
+  assert.equal(r.commits[0].ok, false);
+  assert.deepEqual(r.left, { r: ['a.md'] });
 });

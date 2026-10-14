@@ -11,7 +11,7 @@ import * as questions from './questions.js';
 import * as events from './events.js';
 import { classifyReject, REASONS, forCoordinator } from './scores.js'; // FT-152 · FT-154
 import * as git from './git.js';
-import { dirtyMap, commitOnMain } from './onmain-commit.js';
+import { dirtyMap, commitOnMain } from './onmain.js'; // FT-233
 import { allRoles, roleOf } from './roles.js';
 import { parseTasks } from './engines/describe.js';
 import { addUsage, codexCostUsd } from './usage.js';
@@ -2136,8 +2136,15 @@ async function runTask(p, agent, t) {
     if (!res.ok) { if (!res.stopped) agentError = true; throw new Error(res.error || 'El agente no terminó bien'); }
     t.summary = res.summary || '';
     if (t.onMain && t.onMainBefore) { // 🚀 commitea en cada repo SOLO lo que cambió el agente (no lo que ya estaba sin commitear)
-      for (const line of await commitOnMain(t, agent)) log(agent.id, line);
+      const co = await commitOnMain(t, agent); // FT-233: el resultado queda en la tarea (sobrevive a un reinicio)
+      for (const line of co.lines) log(agent.id, line);
+      t.commits = co.commits;
       delete t.onMainBefore;
+      const left = Object.entries(co.left);
+      if (t.releaseOf && left.length) { // red de seguridad: Publicar chocaría con el preflight «repo limpio»
+        const det = left.map(([r, f]) => `${r} (${f.slice(0, 3).join(', ')}${f.length > 3 ? '…' : ''})`).join('; ');
+        throw new Error(`FT-233: tras documentar quedan cambios sin commitear: ${det}. ${co.commits.filter((c) => !c.ok).map((c) => `${c.repo}: ${c.error}`).join('; ')}`.trim());
+      }
     }
     if (t.kind !== 'plan' && s.settings.agentMemory !== false) { // FT-75: el bloque «LECCIONES:» del resumen pasa a la memoria
       const h = memory.harvest(p.id, agent.id, t.summary, t.code || t.id);
