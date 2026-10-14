@@ -301,6 +301,10 @@ export async function updateProject(id, patch) {
   if (patch.prefix !== undefined) p.prefix = codes.normalizePrefix(patch.prefix) || null; // las tareas ya numeradas conservan su código
   if (patch.coordinator !== undefined) p.coordinator = ['suggest', 'auto'].includes(patch.coordinator) ? patch.coordinator : null; // 🧑‍✈️ apagado | sugerir | automático
   if (patch.supervisorApproves !== undefined) p.supervisorApproves = !!patch.supervisorApproves; // FT-122: delega aprobar y recortar dependencias
+  if (patch.reviewerAgentId !== undefined) { // 🔎 revisor del proyecto: un agente del equipo hace la revisión auto-qa (vacío = la de siempre)
+    if (patch.reviewerAgentId && !(p.team || []).includes(patch.reviewerAgentId)) throw fail(400, 'El revisor tiene que estar fichado en el proyecto');
+    p.reviewerAgentId = patch.reviewerAgentId || null;
+  }
   if (patch.reviewPolicy !== undefined) { // '' = la de la empresa · manual | auto-qa | auto
     p.reviewPolicy = review.POLICIES.includes(patch.reviewPolicy) ? patch.reviewPolicy : null;
     reviewPending(p);
@@ -749,21 +753,26 @@ async function runReviewer(p, t, repo, cwd, checks) {
     if (!alt) throw Object.assign(new Error(g.message || 'sin cuota para revisar'), { quotaWait: g.resetsAt || Date.now() + 10 * 60_000 });
     engineId = alt;
   }
+  // 🔎 Revisor del proyecto (p.reviewerAgentId): un agente APARTE del equipo, con su rol, su modelo y sus MCP, que no sea el autor
+  const own = p.reviewerAgentId && p.reviewerAgentId !== t.agentId && (p.team || []).includes(p.reviewerAgentId) ? s.agents.find((a) => a.id === p.reviewerAgentId) : null;
+  if (own && ENGINES[own.engine] && own.engine !== 'auto' && own.engine !== engineId && !quota.gate(own.engine).block) engineId = own.engine;
   // Sin autor ni equipo (tarea creada ya en revisión, proyecto sin plantilla) revisa un «Revisor» genérico en vez de fallar
-  const agent = s.agents.find((a) => a.id === t.agentId) || teamOf(p)[0] || { id: 'revisor', name: 'Revisor', role: 'qa', engine: engineId, model: '' };
-  const role = Object.values(allRoles()).find((r) => r.kind === 'qa') || roleOf(agent.role) || roleOf('back');
+  const agent = own || s.agents.find((a) => a.id === t.agentId) || teamOf(p)[0] || { id: 'revisor', name: 'Revisor', role: 'qa', engine: engineId, model: '' };
+  const role = (own && roleOf(own.role)) || Object.values(allRoles()).find((r) => r.kind === 'qa') || roleOf(agent.role) || roleOf('back');
+  const extraMcp = own ? toolcat.resolveMcps(toolcat.assignedMcps(own, role)).claude : {};
+  if (own) { own.status = 'working'; own.activity = `🔎 Revisando ${t.code || t.id}`; own.taskId = null; changed(); }
   // Visible en la tarjeta: quién revisa (motor/modelo), en qué paso va y en qué registro escribe (el del autor, líneas 🔎)
   Object.assign(t, { reviewBy: `${engineId}${modelFor(engineId, agent, role).model ? ' · ' + modelFor(engineId, agent, role).model : ''}`, reviewStep: 'el revisor lee el diff y ejecuta comprobaciones', reviewLogAgent: agent.id }); changed();
   const job = await ENGINES[engineId].start({
     agent, task: t, project: p, cwd, mode: engineId === 'demo' ? 'review' : 'work', goal: null, roles: teamRoles(p),
-    prompt: review.reviewPrompt(t, repo?.baseBranch || 'main', checks), system: role.system, model: modelFor(engineId, agent, role).model, // FT-60: modelFor devuelve {model, level, why}
-    kind: 'dev', roleTools: null, hasSkills: false, images: [], budgetUsd: Number(s.settings.maxTaskUsd) > 0 ? Number(s.settings.maxTaskUsd) : 3,
+    prompt: own && !t.branch ? review.verifyPrompt(t) : review.reviewPrompt(t, repo?.baseBranch || 'main', checks), system: role.system, model: modelFor(engineId, agent, role).model, // FT-60: modelFor devuelve {model, level, why}
+    kind: own ? role.kind || 'qa' : 'dev', roleTools: own ? role.tools : null, roleId: own ? own.role : undefined, extraMcp, hasSkills: false, images: [], budgetUsd: Number(s.settings.maxTaskUsd) > 0 ? Number(s.settings.maxTaskUsd) : 3,
     effort: ['low', 'medium', 'high'].includes(s.settings.agentEffort) ? s.settings.agentEffort : 'medium',
     env: { ...engineEnv(engineId), AO_URL: `http://127.0.0.1:${process.env.AO_PORT || 7420}`, AO_TASK: t.id, AO_AGENT: 'revisor' },
     onActivity: () => {}, onLog: (line) => log(agent.id, `🔎 ${line}`), onTool: () => {}, onUsage: () => {},
   });
   const timer = setTimeout(() => job.stop?.(), 15 * 60_000);
-  try { const res = await job.done; if (res.costUsd != null) t.costUsd = (t.costUsd || 0) + res.costUsd; return review.parseVerdict(res.summary); } finally { clearTimeout(timer); }
+  try { const res = await job.done; if (res.costUsd != null) t.costUsd = (t.costUsd || 0) + res.costUsd; return review.parseVerdict(res.summary); } finally { clearTimeout(timer); if (own) { own.status = 'idle'; own.activity = ''; changed(); } }
 }
 // Al llegar a «Revisión» (reviewPolicy auto-qa | auto). Nunca toca tareas reviewRequired, con tope/atasco, ni con ficheros sensibles.
 export async function autoReview(p, t) {

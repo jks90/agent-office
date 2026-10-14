@@ -87,6 +87,18 @@ export function reviewPrompt(t, base, checks) {
   ].join('\n');
 }
 
+// 🔎 Revisor del proyecto en una tarea sin rama (sin diff): comprueba el RESULTADO con sus herramientas (MCP…), según su rol.
+export function verifyPrompt(t) {
+  return [
+    `Eres el revisor (un agente distinto del autor) de la tarea ${t.code || t.id}: ${t.title}. No hay código que revisar: comprueba con TUS herramientas que el resultado que dice el autor es cierto, como manda tu rol. No modifiques nada salvo que tu rol lo permita expresamente.`,
+    '- APRUEBA (approve:true) solo si tu comprobación clave sale bien. Si no, DEVUELVE (approve:false) con "feedback": qué no cuadra, con cifras, y qué tiene que hacer el autor.',
+    '- Si el resumen del autor no trae los datos que necesitas para comprobarlo, devuélvelo pidiéndolos.',
+    `\nDescripción de la tarea:\n${t.description || '(sin descripción)'}`,
+    `\nResumen del autor:\n${(t.summary || '').slice(0, 6000)}`,
+    '\nAl terminar, la ÚLTIMA línea de tu respuesta debe ser un único objeto JSON: {"approve": true|false, "reasons": ["…"], "feedback": "qué debe corregir el autor (vacío si apruebas)", "pending": []}',
+  ].join('\n');
+}
+
 // Mensaje del «pendientes de revisión» que se añade al prompt del Guía.
 export function pendingBlock(tasks, now, minMin) {
   const lines = tasks.filter((t) => t.status === 'review' && t.assignedAgentId !== 'human' && (now - waitingSince(t)) / 60000 >= minMin)
