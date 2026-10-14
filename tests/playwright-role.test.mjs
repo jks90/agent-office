@@ -4,6 +4,12 @@ import assert from 'node:assert/strict';
 import { claudeScope } from '../server/engines/toolscope.js';
 import { playwrightMcp, PW_MCP_VERSION } from '../server/browser/playwright-mcp.js';
 import { ROLES } from '../server/roles.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+// Datos en una carpeta temporal: un token real en data/ cambiaría el modo del Guía
+process.env.AO_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-pw-test-'));
 
 test('playwright: el rol de serie «navegante» la lleva; en modo plan no', () => {
   assert.equal(ROLES.navegante.kind, 'docs');
@@ -30,7 +36,7 @@ test('playwright: npx con la versión fijada, perfil propio y salida por tarea; 
 
 test('playwright · Guía: claude-cli + navegador dedicado; con la extensión, otro proveedor o guideBrowserEngine=ao, browser.* de siempre', async () => {
   const { guideUsesPlaywright } = await import('../server/browser/playwright-mcp.js');
-  assert.equal(guideUsesPlaywright({ settings: {}, mode: 'dedicated', provider: 'claude-cli' }), true);
+  assert.equal(guideUsesPlaywright({ settings: {}, mode: 'dedicated', provider: 'claude-cli' }), 'cdp');
   assert.equal(guideUsesPlaywright({ settings: {}, mode: 'extension', provider: 'claude-cli' }), false);
   assert.equal(guideUsesPlaywright({ settings: {}, mode: 'dedicated', provider: 'anthropic-api' }), false);
   assert.equal(guideUsesPlaywright({ settings: { guideBrowserEngine: 'ao' }, mode: 'dedicated', provider: 'claude-cli' }), false);
@@ -43,4 +49,18 @@ test('playwright · Guía: se engancha al CDP de AgentOffice y sus tools se ven 
   const { toolName } = await import('../server/guide/providers/claude-cli.js');
   assert.equal(toolName('mcp__playwright__browser_navigate'), 'browser_navigate');
   assert.equal(toolName('mcp__agentoffice__task_create'), 'task.create');
+});
+
+test('playwright · navegador externo: con token de la extensión el Guía usa TU navegador; el token no va en los argumentos', async () => {
+  const m = await import('../server/browser/playwright-mcp.js');
+  process.env.AO_PLAYWRIGHT_TOKEN = 'tok-123'; process.env.AO_EXTERNAL_BROWSER = '/usr/bin/brave-browser';
+  try {
+    assert.equal(m.guideUsesPlaywright({ settings: {}, mode: 'dedicated' }), 'external');
+    assert.equal(m.guideUsesPlaywright({ settings: {}, mode: 'extension' }), 'external');
+    assert.equal(m.guideUsesPlaywright({ settings: { guideBrowserEngine: 'cdp' }, mode: 'dedicated' }), 'cdp');
+    const d = m.playwrightMcp({ task: 'guia-g1', external: true });
+    assert.deepEqual(d.args.slice(2, 5), ['--extension', '--executable-path', '/usr/bin/brave-browser']);
+    assert.equal(d.env.PLAYWRIGHT_MCP_EXTENSION_TOKEN, 'tok-123');
+    assert.ok(!d.args.join(' ').includes('tok-123'));
+  } finally { delete process.env.AO_PLAYWRIGHT_TOKEN; delete process.env.AO_EXTERNAL_BROWSER; }
 });

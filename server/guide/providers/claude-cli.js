@@ -8,6 +8,8 @@
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { estimateCost, sumUsage } from '../budget.js';
 import { playwrightMcp } from '../../browser/playwright-mcp.js';
@@ -30,13 +32,19 @@ export function create() {
 
   function spawnChild() {
     const aoUrl = `http://127.0.0.1:${process.env.AO_PORT || 7420}`;
-    const mcpServers = { [MCP_SERVER]: { command: process.execPath, args: [path.join(ROOT, 'bin/ao-mcp.mjs')], env: { AO_URL: aoUrl, ...(process.env.AO_TOKEN ? { AO_TOKEN: process.env.AO_TOKEN } : {}), ...(opts.chatId ? { AO_CHAT_ID: opts.chatId } : {}), ...(opts.playwright ? { AO_MCP_EXCLUDE: 'browser' } : {}) } } };
-    const pw = opts.playwright ? playwrightMcp({ task: `guia-${opts.chatId || 'chat'}`, cdpEndpoint: `${aoUrl}/api/browser/cdp` }) : null;
-    if (pw) mcpServers.playwright = pw; // se engancha al Chromium del panel 🌐 (lo arranca AgentOffice al conectar)
+    const mcpServers = { [MCP_SERVER]: { command: process.execPath, args: [path.join(ROOT, 'bin/ao-mcp.mjs')], env: { AO_URL: aoUrl, ...(process.env.AO_TOKEN ? { AO_TOKEN: process.env.AO_TOKEN } : {}), ...(opts.chatId ? { AO_CHAT_ID: opts.chatId } : {}), ...(opts.playwright ? { AO_MCP_EXCLUDE: opts.playwright === 'external' ? 'browser-all' : 'browser' } : {}) } } };
+    const pw = opts.playwright === 'external' ? playwrightMcp({ task: `guia-${opts.chatId || 'chat'}`, external: true }) // tu Brave/Chrome por la extensión
+      : opts.playwright ? playwrightMcp({ task: `guia-${opts.chatId || 'chat'}`, cdpEndpoint: `${aoUrl}/api/browser/cdp` }) : null; // Chromium del panel 🌐
+    if (pw) mcpServers.playwright = pw;
     const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--system-prompt', opts.system];
     args.push('--model', opts.model || 'sonnet');
     args.push('--tools', '', '--permission-mode', 'dontAsk', '--disable-slash-commands'); // sin Bash/Edit/Write: el Guide no es un worker
-    args.push('--strict-mcp-config', '--mcp-config', JSON.stringify({ mcpServers }));
+    let mcpArg = JSON.stringify({ mcpServers });
+    if (pw?.env?.PLAYWRIGHT_MCP_EXTENSION_TOKEN) { // con el token de la extensión: a un fichero 0600 (no visible en ps)
+      mcpArg = path.join(os.tmpdir(), `ao-guide-mcp-${process.pid}-${Date.now().toString(36)}.json`);
+      fs.writeFileSync(mcpArg, JSON.stringify({ mcpServers }), { mode: 0o600 });
+    }
+    args.push('--strict-mcp-config', '--mcp-config', mcpArg);
     args.push('--allowedTools', `mcp__${MCP_SERVER}`, ...(pw ? ['mcp__playwright'] : []));
     if (pw) args.push('--disallowedTools', 'mcp__playwright__browser_run_code_unsafe'); // código arbitrario en el navegador: no
     if (sessionId) args.push('--resume', sessionId);
@@ -45,6 +53,7 @@ export function create() {
     const c = spawn(process.env.AO_CLAUDE_BIN || 'claude', args, { cwd: opts.cwd || ROOT, env, stdio: ['pipe', 'pipe', 'pipe'] });
     c.on('error', (e) => { if (child === c) { child = null; queue?.push({ type: 'error', error: `No se pudo lanzar claude: ${e.message}` }); queue?.end(); } });
     c.on('close', (code) => {
+      if (mcpArg.endsWith('.json')) fs.rm(mcpArg, { force: true }, () => {}); // el fichero 0600 con el token solo vive lo que el proceso
       if (child !== c) return;
       child = null;
       if (queue) { queue.push({ type: 'error', error: stderr.slice(-5).join('\n') || `claude terminó con código ${code}` }); queue.end(); }

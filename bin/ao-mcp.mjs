@@ -48,6 +48,8 @@ async function tools() {
   const only = process.env.AO_MCP_ONLY === 'browser' ? (t) => t.name.startsWith('browser.') && t.name !== 'browser.open'
     // Guía con Playwright: las browser.* de AgentOffice sobran (las hace Playwright) salvo abrir en el escritorio y pasar el control
     : process.env.AO_MCP_EXCLUDE === 'browser' ? (t) => !t.name.startsWith('browser.') || ['browser.open', 'browser.requestHuman'].includes(t.name)
+    // Guía con TU navegador: sin panel 🌐 no hay requestHuman (el login lo hace el usuario en su pestaña y lo dice en el chat)
+    : process.env.AO_MCP_EXCLUDE === 'browser-all' ? (t) => !t.name.startsWith('browser.') || t.name === 'browser.open'
       : () => true;
   catalog = new Map((await api('GET', '/api/guide/tools')).filter(only).map((t) => [mcpName(t.name), t]));
   return [...catalog.entries()].map(([name, t]) => ({

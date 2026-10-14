@@ -8,7 +8,7 @@ import path from 'node:path';
 import * as store from '../store.js';
 import * as context from '../context.js';
 import * as activity from '../events.js';
-import { SYSTEM, PLAYWRIGHT_RULES } from './prompt.js';
+import { SYSTEM, PLAYWRIGHT_RULES, EXTERNAL_RULES } from './prompt.js';
 import { guideUsesPlaywright } from '../browser/playwright-mcp.js';
 import { getMode as browserMode } from '../browser/index.js';
 import { maxUsd } from './budget.js';
@@ -123,7 +123,7 @@ export async function* chat({ chatId, text, attachments, client = null }) {
   if (!slot || slot.model !== model || slot.name !== name || slot.playwright !== playwright) {
     slot?.provider.stop();
     const provider = PROVIDERS[name].create();
-    provider.start({ system: playwright ? SYSTEM + PLAYWRIGHT_RULES : SYSTEM, model, resume: c.provider === name ? c.sessionId : null, history: c.messages, cwd: store.DATA_DIR, chatId: c.id, playwright });
+    provider.start({ system: playwright ? SYSTEM + PLAYWRIGHT_RULES + (playwright === 'external' ? EXTERNAL_RULES : '') : SYSTEM, model, resume: c.provider === name ? c.sessionId : null, history: c.messages, cwd: store.DATA_DIR, chatId: c.id, playwright });
     slot = { provider, model, name, playwright };
     providers.set(c.id, slot);
   }
