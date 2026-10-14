@@ -139,6 +139,7 @@ function connectEvents() {
     const c = JSON.parse(e.data);
     if (c.client && c.client !== CLIENT_ID) return; // dirigida a otra pestaña
     if (c.type === 'remote.mic') return remoteMic(c); // antes del cierre del diálogo: parar no cierra «Nueva tarea»
+    if (c.type === 'remote.fields') return remoteFields(c);
     if ($('#dialog').open && c.type !== 'flowtest.show' && $('#dialog').className !== 'question') $('#dialog').close(); // FT-131: una 🛡/pregunta pendiente no se cierra porque el Guía navegue
     // Con proyecto y vista Oficina se entra directo a su planta (FT-47); sin proyecto se respeta el modo que haya.
     if (c.type === 'navigate' && c.view === 'office') { showTab('office'); goProject(c.projectId); if (c.projectId && S.projects.some((p) => p.id === c.projectId)) setOfficeMode('floor'); }
@@ -644,9 +645,19 @@ function remoteMic(c) {
     goProject(c.projectId); showTab('tasks');
     actions['new-task']();
   }
+  remoteFields(c);
   const btn = dlg.querySelector(c.field === 'title' ? '[name=title]' : 'textarea[name=description]')?.closest('.mic-wrap')?.querySelector('[data-mic]');
   if (!btn) return toast('Este navegador no puede dictar: el mando no tiene micro que pulsar', 'error');
   if (dictation?.btn !== btn) btn.click();
+}
+// Desplegables de «Nueva tarea» elegidos en el mando (role, repo, assignedAgentId, status): solo si la opción existe.
+function remoteFields(c) {
+  const dlg = $('#dialog');
+  if (document.hidden || !dlg.open || c.projectId !== projectId || dlg.querySelector('h3')?.textContent !== 'Nueva tarea') return;
+  for (const [k, v] of Object.entries(c.fields || {})) {
+    const sel = dlg.querySelector(`select[name=${k}]`);
+    if (sel && [...sel.options].some((o) => o.value === v)) { sel.value = v; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+  }
 }
 const guideVisibleRoot = () => guideRoots.find((r) => (activeTab === 'guide' ? !r.panel : r.panel))?.el;
 function voiceHotkey(down, opts) {

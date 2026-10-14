@@ -53,6 +53,26 @@ import * as claudeEngine from './engines/claude.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
 const remoteGate = () => { if (process.env.AO_REMOTE_MIC !== 'on') throw fail(404, 'No encontrado'); };
+// Opciones de los desplegables de «Nueva tarea» para el mando: las mismas que pinta la app (whoOptions de public/app.js).
+const REMOTE_FIELDS = ['role', 'repo', 'assignedAgentId', 'status'];
+function remoteTaskOptions(projectId) {
+  const st = store.get(), p = st.projects.find((x) => x.id === projectId);
+  if (!p) throw fail(404, 'Proyecto no encontrado');
+  const roles = allRoles(), mates = st.agents.filter((a) => (p.team || []).includes(a.id));
+  const planner = mates.find((a) => roles[a.role]?.kind === 'planner'), byRole = new Map();
+  for (const a of mates) if (roles[a.role]?.kind !== 'planner') byRole.set(a.role, [...(byRole.get(a.role) || []), a.name]);
+  const role = [...(planner ? [{ value: '__po', label: `Que lo decida ${planner.name} (PO)` }] : []),
+    ...[...byRole].map(([r, names]) => ({ value: r, label: `${names.join(' / ')} - ${roles[r]?.label || r}` }))];
+  if (!role.length) role.push({ value: 'back', label: '(sin plantilla: rol Backend)' });
+  const repos = p.repos || [];
+  return {
+    role,
+    repo: repos.length > 1 ? [{ value: '', label: '(el que diga el rol)' }, ...repos.map((r) => ({ value: r.key, label: r.key }))] : [],
+    assignedAgentId: [{ value: '', label: 'automatico: por rol' }, { value: 'human', label: 'Yo (humano)' }],
+    status: [{ value: 'todo', label: 'Por hacer' }, { value: 'backlog', label: 'Backlog (esperar)' }],
+  };
+}
+const remoteFields = (b) => Object.fromEntries(REMOTE_FIELDS.filter((k) => typeof b?.[k] === 'string').map((k) => [k, b[k]]));
 const PORT = Number(process.env.AO_PORT || 7420);
 const HOST = process.env.AO_HOST || '127.0.0.1'; // lanza procesos con tus permisos: solo local
 // Si se expone fuera del loopback (p. ej. para que el flow-test en Docker lo proxee), hace falta un token:
@@ -180,6 +200,13 @@ const routes = [
   // 🎛 Mando del micro (pantalla ESP32 en la LAN, uso personal): solo con AO_REMOTE_MIC=on. No graba nada: manda a las pestañas
   // abiertas (SSE `ui`) que abran el 🎤 del Guía o de «Nueva tarea» del proyecto, como si se pulsara en la app.
   ['GET', /^\/api\/remote\/projects$/, () => { remoteGate(); const hidden = new Set(store.get().settings?.hiddenProjects || []); return { projects: store.get().projects.filter((p) => !hidden.has(p.id)).map((p) => ({ id: p.id, name: p.name })), tabs: store.bus.listenerCount('ui') }; }],
+  ['GET', /^\/api\/remote\/task-options\/(\w+)$/, ([id]) => { remoteGate(); return remoteTaskOptions(id); }],
+  // Cambiar un desplegable desde el mando: se aplica a la «Nueva tarea» abierta de ese proyecto (si no hay, no pasa nada)
+  ['POST', /^\/api\/remote\/task-fields$/, (_, b) => {
+    remoteGate();
+    store.bus.emit('ui', { type: 'remote.fields', projectId: b.projectId || null, fields: remoteFields(b.fields), at: Date.now() });
+    return { sent: true, tabs: store.bus.listenerCount('ui') };
+  }],
   ['POST', /^\/api\/remote\/mic$/, (_, b) => {
     remoteGate();
     const target = b.target === 'guide' ? 'guide' : b.target === 'task' ? 'task' : null;
@@ -188,7 +215,7 @@ const routes = [
     const tabs = store.bus.listenerCount('ui');
     if (!tabs) throw fail(409, 'No hay ninguna pestaña de AgentOffice abierta');
     const field = b.field === 'title' ? 'title' : 'description'; // «Nueva tarea»: qué campo se dicta
-    store.bus.emit('ui', { type: 'remote.mic', target, field, on: !!b.on, projectId: b.projectId || null, at: Date.now() });
+    store.bus.emit('ui', { type: 'remote.mic', target, field, on: !!b.on, projectId: b.projectId || null, fields: remoteFields(b.fields), at: Date.now() });
     return { sent: true, tabs };
   }],
   // Cuentas de los motores de IA (login OAuth/clave API, logout)
