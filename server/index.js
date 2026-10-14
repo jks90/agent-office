@@ -72,6 +72,10 @@ function remoteTaskOptions(projectId) {
     status: [{ value: 'todo', label: 'Por hacer' }, { value: 'backlog', label: 'Backlog (esperar)' }],
   };
 }
+// Acciones del mando sobre la «Nueva tarea» abierta (peek = ver lo escrito, draft = ✨ Redactar con IA, create = Crear):
+// la pestaña las ejecuta y deja la respuesta aquí; el mando la recoge por reqId (GET). Memoria corta: 50 respuestas, 10 min.
+const remoteReplies = new Map();
+const remoteReply = (id, data) => { remoteReplies.set(id, { ...data, at: Date.now() }); for (const [k, v] of remoteReplies) if (remoteReplies.size > 50 || Date.now() - v.at > 600e3) remoteReplies.delete(k); };
 const remoteFields = (b) => Object.fromEntries(REMOTE_FIELDS.filter((k) => typeof b?.[k] === 'string').map((k) => [k, b[k]]));
 const PORT = Number(process.env.AO_PORT || 7420);
 const HOST = process.env.AO_HOST || '127.0.0.1'; // lanza procesos con tus permisos: solo local
@@ -207,6 +211,16 @@ const routes = [
     store.bus.emit('ui', { type: 'remote.fields', projectId: b.projectId || null, fields: remoteFields(b.fields), at: Date.now() });
     return { sent: true, tabs: store.bus.listenerCount('ui') };
   }],
+  ['POST', /^\/api\/remote\/action$/, (_, b) => {
+    remoteGate();
+    if (!['peek', 'draft', 'create'].includes(b.action)) throw fail(400, 'action: peek | draft | create');
+    if (!store.bus.listenerCount('ui')) throw fail(409, 'No hay ninguna pestaña de AgentOffice abierta');
+    const reqId = crypto.randomBytes(6).toString('hex');
+    store.bus.emit('ui', { type: 'remote.action', action: b.action, reqId, projectId: b.projectId || null, at: Date.now() });
+    return { reqId };
+  }],
+  ['POST', /^\/api\/remote\/reply\/(\w+)$/, ([id], b) => { remoteGate(); remoteReply(id, b || {}); return { ok: true }; }],
+  ['GET', /^\/api\/remote\/reply\/(\w+)$/, ([id]) => { remoteGate(); return remoteReplies.get(id) || { pending: true }; }],
   ['POST', /^\/api\/remote\/mic$/, (_, b) => {
     remoteGate();
     const target = b.target === 'guide' ? 'guide' : b.target === 'task' ? 'task' : null;

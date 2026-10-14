@@ -140,6 +140,7 @@ function connectEvents() {
     if (c.client && c.client !== CLIENT_ID) return; // dirigida a otra pestaña
     if (c.type === 'remote.mic') return remoteMic(c); // antes del cierre del diálogo: parar no cierra «Nueva tarea»
     if (c.type === 'remote.fields') return remoteFields(c);
+    if (c.type === 'remote.action') return remoteAction(c);
     if ($('#dialog').open && c.type !== 'flowtest.show' && $('#dialog').className !== 'question') $('#dialog').close(); // FT-131: una 🛡/pregunta pendiente no se cierra porque el Guía navegue
     // Con proyecto y vista Oficina se entra directo a su planta (FT-47); sin proyecto se respeta el modo que haya.
     if (c.type === 'navigate' && c.view === 'office') { showTab('office'); goProject(c.projectId); if (c.projectId && S.projects.some((p) => p.id === c.projectId)) setOfficeMode('floor'); }
@@ -663,6 +664,46 @@ function remoteFields(c) {
     const sel = dlg.querySelector(`select[name=${k}]`);
     if (sel && [...sel.options].some((o) => o.value === v)) { sel.value = v; sel.dispatchEvent(new Event('change', { bubbles: true })); }
   }
+}
+// 🎛 Acciones del mando sobre la «Nueva tarea» abierta: peek (lo escrito), draft (✨ Redactar con IA y luego peek) y create
+// (pulsa Crear y cuenta qué se creó y dónde). La respuesta vuelve por /api/remote/reply/<reqId>.
+let remoteCreated = null;
+const remoteDialog = (projectIdWanted) => { const d = $('#dialog'); return d.open && d.querySelector('h3')?.textContent === 'Nueva tarea' && (!projectIdWanted || projectIdWanted === projectId) ? d : null; };
+function remotePeek(d) {
+  const f = d.querySelector('form'), opt = (n) => { const s = f.querySelector(`select[name=${n}]`); return s ? s.selectedOptions[0]?.textContent.trim() || '' : null; };
+  return { title: f.title?.value || '', description: f.description?.value || '', ai: !!f.dataset.aiOrig, project: project()?.name || '',
+    role: opt('role'), repo: opt('repo'), assigned: opt('assignedAgentId'), status: opt('status') };
+}
+async function remoteAction(c) {
+  if (!remoteOwner()) return;
+  const reply = (data) => api('POST', `/api/remote/reply/${c.reqId}`, data).catch(() => {});
+  const d = remoteDialog(c.projectId);
+  if (!d) return reply({ error: 'No hay ninguna «Nueva tarea» abierta de ese proyecto' });
+  micStop({ keep: true });
+  const lastToast = () => [...document.querySelectorAll('.toast')].at(-1)?.textContent || '';
+  const until = async (ok, ms) => { for (const t0 = Date.now(); Date.now() - t0 < ms; await new Promise((r) => setTimeout(r, 300))) if (ok()) return true; return false; };
+  if (c.action === 'peek') return reply(remotePeek(d));
+  if (c.action === 'draft') {
+    await until(() => !dictation, 15000); // que entre la última frase dictada
+    const btn = d.querySelector('[data-ai-draft]'), prev = d.querySelector('.ai-preview');
+    btn?.click();
+    if (!btn?.disabled) return reply({ error: lastToast() || 'No se pudo redactar' });
+    await until(() => ![...d.querySelectorAll('[data-ai-draft]')].some((b) => b.disabled), 180000);
+    const fresh = d.querySelector('.ai-preview'); // la propuesta nueva sustituye a la anterior
+    return reply(fresh && fresh !== prev ? remotePeek(d) : { ...remotePeek(d), error: lastToast() || 'La IA no devolvió propuesta' });
+  }
+  // create
+  await until(() => !dictation, 15000);
+  let done = null;
+  remoteCreated = (t) => { done = t; };
+  d.querySelector('form').requestSubmit();
+  await until(() => done || !d.open, 30000);
+  remoteCreated = null;
+  if (!done) return reply({ error: lastToast() || 'No se creó: revisa el diálogo en el PC' });
+  if (done.po) return reply({ created: true, po: true, project: project()?.name || '' });
+  const agent = S.agents.find((a) => a.id === (done.agentId || done.assignedAgentId));
+  reply({ created: true, code: done.code || '#' + done.id, title: done.title, project: S.projects.find((p) => p.id === done.projectId)?.name || '',
+    role: S.roles[done.role]?.label || done.role, who: done.assignedAgentId === 'human' ? 'tu (humano)' : agent?.name || team().filter((a) => a.role === done.role).map((a) => a.name).join(' / ') || 'el equipo (por rol)', status: done.status });
 }
 const guideVisibleRoot = () => guideRoots.find((r) => (activeTab === 'guide' ? !r.panel : r.panel))?.el;
 function voiceHotkey(down, opts) {
@@ -2601,11 +2642,14 @@ Pasos, convenciones y ejemplos…</textarea>
       if (!goal.trim()) { toast('Cuenta qué quieres que se haga', 'error'); throw new Error('vacío'); }
       await api('POST', `/api/projects/${projectId}/goal`, { goal, title: f.title, attachments: pendingAttachments });
       toast('Encargado al PO: decidirá quién lo hace y creará la tarea');
+      remoteCreated?.({ po: true });
       return;
     }
     if (!f.title?.trim()) { toast('Pon un título o usa «Redactar con IA»', 'error'); throw new Error('sin título'); }
     if (!f.assignedAgentId) delete f.assignedAgentId;
-    return api('POST', '/api/tasks', { ...f, projectId, attachments: pendingAttachments });
+    const t = await api('POST', '/api/tasks', { ...f, projectId, attachments: pendingAttachments });
+    remoteCreated?.(t); // 🎛 el mando espera el resultado de «Crear»
+    return t;
   }, 'wide task-dlg'); },
   settings: () => dialog(`
     <h3>Ajustes</h3>
