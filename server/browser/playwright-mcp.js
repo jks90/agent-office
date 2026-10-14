@@ -20,10 +20,17 @@ function npxBin() {
   return fs.existsSync(near) ? near : 'npx';
 }
 
-/** Definición stdio del MCP para --mcp-config (o null si está apagado). */
-export function playwrightMcp({ task } = {}) {
+// Guía (proveedor claude-cli): usa Playwright enganchado al Chromium dedicado del panel 🌐 salvo settings.guideBrowserEngine='ao'
+// (vuelve a las tools browser.* de AgentOffice). Con la extensión (FT-118) o el driver falso sigue con browser.*.
+export const guideUsesPlaywright = ({ settings = {}, mode = 'dedicated', provider = 'claude-cli' } = {}) =>
+  playwrightEnabled() && provider === 'claude-cli' && mode === 'dedicated' && process.env.AO_BROWSER !== 'fake' && settings.guideBrowserEngine !== 'ao';
+
+/** Definición stdio del MCP para --mcp-config (o null si está apagado). Con `cdpEndpoint` se engancha a un navegador que ya existe. */
+export function playwrightMcp({ task, cdpEndpoint } = {}) {
   if (!playwrightEnabled()) return null;
   const pkg = `@playwright/mcp@${process.env.AO_PLAYWRIGHT_MCP || PW_MCP_VERSION}`;
+  const env = { PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH || ''}` };
+  if (cdpEndpoint) return { type: 'stdio', command: npxBin(), args: ['-y', pkg, '--cdp-endpoint', cdpEndpoint, '--output-dir', pwOutputDir(task)], env };
   const args = ['-y', pkg, '--user-data-dir', pwProfileDir(), '--output-dir', pwOutputDir(task)];
   const exe = findBrowser();
   if (exe) args.push('--executable-path', exe); // sin navegador en el PC, Playwright pide el suyo (npx playwright install chromium)
@@ -31,5 +38,5 @@ export function playwrightMcp({ task } = {}) {
   if (headless) args.push('--headless');
   if (process.env.AO_BROWSER_NO_SANDBOX === '1' || process.getuid?.() === 0) args.push('--no-sandbox');
   // PATH con la carpeta de node: npx lanza `node` por el shebang
-  return { type: 'stdio', command: npxBin(), args, env: { PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH || ''}` } };
+  return { type: 'stdio', command: npxBin(), args, env };
 }

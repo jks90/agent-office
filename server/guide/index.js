@@ -8,7 +8,9 @@ import path from 'node:path';
 import * as store from '../store.js';
 import * as context from '../context.js';
 import * as activity from '../events.js';
-import { SYSTEM } from './prompt.js';
+import { SYSTEM, PLAYWRIGHT_RULES } from './prompt.js';
+import { guideUsesPlaywright } from '../browser/playwright-mcp.js';
+import { getMode as browserMode } from '../browser/index.js';
 import { maxUsd } from './budget.js';
 import * as browserPanel from '../browser/panel.js';
 import * as review from '../review.js';
@@ -115,12 +117,14 @@ export async function* chat({ chatId, text, attachments, client = null }) {
   const model = modelFor(name);
   secrets.bind(c.id, () => (name === 'fake' ? c.messages.map((m) => ({ ...m, text: String(m.text || '').split(' ::[')[0] })) : c.messages)); // el fake lleva su guion en el mensaje: no cuenta como «dicho por el usuario» // FT-137: para saber qué contraseñas dio el usuario en este chat
 
+  // Navegador del Guía: Playwright MCP sobre el Chromium del panel 🌐 (claude-cli + modo dedicado) o las browser.* de siempre
+  const playwright = guideUsesPlaywright({ settings: store.get().settings, mode: browserMode(), provider: name });
   let slot = providers.get(c.id);
-  if (!slot || slot.model !== model || slot.name !== name) {
+  if (!slot || slot.model !== model || slot.name !== name || slot.playwright !== playwright) {
     slot?.provider.stop();
     const provider = PROVIDERS[name].create();
-    provider.start({ system: SYSTEM, model, resume: c.provider === name ? c.sessionId : null, history: c.messages, cwd: store.DATA_DIR, chatId: c.id });
-    slot = { provider, model, name };
+    provider.start({ system: playwright ? SYSTEM + PLAYWRIGHT_RULES : SYSTEM, model, resume: c.provider === name ? c.sessionId : null, history: c.messages, cwd: store.DATA_DIR, chatId: c.id, playwright });
+    slot = { provider, model, name, playwright };
     providers.set(c.id, slot);
   }
   const { provider } = slot;

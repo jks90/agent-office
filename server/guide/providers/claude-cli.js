@@ -10,6 +10,7 @@ import readline from 'node:readline';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { estimateCost, sumUsage } from '../budget.js';
+import { playwrightMcp } from '../../browser/playwright-mcp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 export const label = 'Claude Code (CLI)';
@@ -17,8 +18,9 @@ export const defaultModel = 'sonnet';
 export const ready = () => true; // usa la sesión del propio `claude` (suscripción o clave)
 const IDLE_MS = 10 * 60_000;
 const MCP_SERVER = 'agentoffice';
-// `mcp__agentoffice__task_create` → `task.create` (los nombres MCP no admiten «.»; ver bin/ao-mcp.mjs)
-export const toolName = (n) => String(n).replace(`mcp__${MCP_SERVER}__`, '').replace('_', '.');
+// `mcp__agentoffice__task_create` → `task.create` (los nombres MCP no admiten «.»; ver bin/ao-mcp.mjs).
+// Las de Playwright quedan como `browser_navigate` (con «_»: se distinguen de las browser.* de AgentOffice y cuentan para el tope FT-132).
+export const toolName = (n) => (String(n).startsWith('mcp__playwright__') ? String(n).slice(17) : String(n).replace(`mcp__${MCP_SERVER}__`, '').replace('_', '.'));
 
 export function create() {
   let child = null, opts = null, sessionId = null, idle = null;
@@ -27,12 +29,16 @@ export function create() {
   const turnUse = new Map(); // FT-132: usage por mensaje del turno en curso
 
   function spawnChild() {
-    const mcpServers = { [MCP_SERVER]: { command: process.execPath, args: [path.join(ROOT, 'bin/ao-mcp.mjs')], env: { AO_URL: `http://127.0.0.1:${process.env.AO_PORT || 7420}`, ...(process.env.AO_TOKEN ? { AO_TOKEN: process.env.AO_TOKEN } : {}), ...(opts.chatId ? { AO_CHAT_ID: opts.chatId } : {}) } } };
+    const aoUrl = `http://127.0.0.1:${process.env.AO_PORT || 7420}`;
+    const mcpServers = { [MCP_SERVER]: { command: process.execPath, args: [path.join(ROOT, 'bin/ao-mcp.mjs')], env: { AO_URL: aoUrl, ...(process.env.AO_TOKEN ? { AO_TOKEN: process.env.AO_TOKEN } : {}), ...(opts.chatId ? { AO_CHAT_ID: opts.chatId } : {}), ...(opts.playwright ? { AO_MCP_EXCLUDE: 'browser' } : {}) } } };
+    const pw = opts.playwright ? playwrightMcp({ task: `guia-${opts.chatId || 'chat'}`, cdpEndpoint: `${aoUrl}/api/browser/cdp` }) : null;
+    if (pw) mcpServers.playwright = pw; // se engancha al Chromium del panel 🌐 (lo arranca AgentOffice al conectar)
     const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--system-prompt', opts.system];
     args.push('--model', opts.model || 'sonnet');
     args.push('--tools', '', '--permission-mode', 'dontAsk', '--disable-slash-commands'); // sin Bash/Edit/Write: el Guide no es un worker
     args.push('--strict-mcp-config', '--mcp-config', JSON.stringify({ mcpServers }));
-    args.push('--allowedTools', `mcp__${MCP_SERVER}`);
+    args.push('--allowedTools', `mcp__${MCP_SERVER}`, ...(pw ? ['mcp__playwright'] : []));
+    if (pw) args.push('--disallowedTools', 'mcp__playwright__browser_run_code_unsafe'); // código arbitrario en el navegador: no
     if (sessionId) args.push('--resume', sessionId);
     const env = { ...process.env, ...(opts.env || {}) };
     delete env.CLAUDECODE;

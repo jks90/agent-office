@@ -45,7 +45,10 @@ function api(method, path, body) {
 let catalog = null; // nombre MCP → tool de AgentOffice
 async function tools() {
   // FT-115 · AO_MCP_ONLY=browser (agentes worker con la capacidad «browser»): solo browser.* salvo browser.open (xdg-open en el escritorio del usuario)
-  const only = process.env.AO_MCP_ONLY === 'browser' ? (t) => t.name.startsWith('browser.') && t.name !== 'browser.open' : () => true;
+  const only = process.env.AO_MCP_ONLY === 'browser' ? (t) => t.name.startsWith('browser.') && t.name !== 'browser.open'
+    // Guía con Playwright: las browser.* de AgentOffice sobran (las hace Playwright) salvo abrir en el escritorio y pasar el control
+    : process.env.AO_MCP_EXCLUDE === 'browser' ? (t) => !t.name.startsWith('browser.') || ['browser.open', 'browser.requestHuman'].includes(t.name)
+      : () => true;
   catalog = new Map((await api('GET', '/api/guide/tools')).filter(only).map((t) => [mcpName(t.name), t]));
   return [...catalog.entries()].map(([name, t]) => ({
     name, description: `[${t.policy}] ${t.description}`, inputSchema: t.input,

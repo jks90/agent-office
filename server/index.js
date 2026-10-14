@@ -159,6 +159,15 @@ const routes = [
   ['POST', /^\/api\/browser\/nav$/, (_, b) => browserPanel.nav(b)],
   ['POST', /^\/api\/browser\/tab$/, (_, b) => browserPanel.tab(b)],
   ['POST', /^\/api\/browser\/input$/, (_, b) => browserPanel.input(b)],
+  // Guía con Playwright MCP (--cdp-endpoint http://127.0.0.1:<puerto>/api/browser/cdp): arranca el Chromium dedicado y da su ws. Solo loopback.
+  ['GET', /^\/api\/browser\/cdp\/json\/version\/?$/, async (_, __, ___, req) => {
+    if (!isLoopback(req)) throw Object.assign(new Error('Solo desde este PC'), { status: 403 });
+    const d = browser.getDriver();
+    if (!d.cdpEndpoint) throw Object.assign(new Error('El navegador actual no admite CDP (modo extensión)'), { status: 409 });
+    const ws = await d.cdpEndpoint();
+    browserPanel.refresh().catch(() => {});
+    return { Browser: 'AgentOffice', webSocketDebuggerUrl: ws };
+  }],
   // Activity Stream tipado (FT-1)
   ['GET', /^\/api\/events$/, (_, __, q) => activity.list(q)],
   // Contexto de la UI (FT-2): lo que el usuario está viendo, por cliente (cabecera `x-ao-client`)

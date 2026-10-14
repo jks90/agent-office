@@ -59,7 +59,13 @@ export function createCdpDriver() {
       if (e) { e.status = r.status(); e.responseHeaders = maskHeaders(r.headers()); }
     });
     page.on('requestfailed', (r) => { tab.pending.delete(r); const e = tab.reqs.get(r); if (e) e.failed = r.failure()?.errorText || 'failed'; });
-    page.on('framenavigated', (f) => { if (f === page.mainFrame()) { tab.refs.clear(); tab.rev.clear(); } }); // los backendNodeId mueren con el documento
+    page.on('framenavigated', (f) => {
+      if (f !== page.mainFrame()) return;
+      tab.refs.clear(); tab.rev.clear(); // los backendNodeId mueren con el documento
+      // Guía con Playwright (por /api/browser/cdp): navega en SU pestaña; el panel 🌐 la sigue (el usuario solo actúa en la activa)
+      if (tabs.has(tab.id) && active !== tab) active = tab;
+      touch();
+    });
     page.on('close', () => {
       tabs.delete(tab.id);
       if (active === tab) active = [...tabs.values()].at(-1) || null;
@@ -87,7 +93,7 @@ export function createCdpDriver() {
           const page = await t.page();
           if (!page) return;
           const tab = register(page);
-          if (t.opener()) active = tab; // popup abierto por la página: pasa a ser la activa
+          active = tab; // popup de la página o pestaña que abre Playwright (Guía): pasa a ser la activa
         } catch { /* pestaña ya cerrada */ }
       });
       for (const p of await browser.pages()) register(p);
@@ -455,6 +461,10 @@ export function createCdpDriver() {
 
     // FT-117 · Screencast en vivo de la pestaña activa (Page.startScreencast), ≤10 fps; sigue a la pestaña activa.
     // onFrame({mime, data(base64), w, h, tabId, url}); devuelve stop().
+    // Guía con Playwright MCP: URL ws del CDP de ESTE Chromium (lo arranca si hace falta); Playwright se engancha a él y el
+    // panel 🌐 sigue viendo y controlando lo mismo. Solo para loopback (GET /api/browser/cdp/json/version).
+    async cdpEndpoint() { await launch(); return browser.wsEndpoint(); },
+
     async screencast(onFrame, { fps = 10 } = {}) {
       await ready();
       const gap = 1000 / Math.min(10, Math.max(1, fps));
