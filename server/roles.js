@@ -161,6 +161,23 @@ export function setRoleTools(id, key, names) {
   fs.writeFileSync(r.file, text.replace(m[0], `---\n${fm.join('\n')}\n---`));
   return allRoles()[id];
 }
+// 🌐 Navegador de un rol del catálogo: añade o quita `browser` en la línea `tools:` del frontmatter (sin más herramientas en
+// esa línea, `tools: browser` mantiene las de su tipo). Solo roles del catálogo.
+export function setRoleBrowser(id, on) {
+  const r = allRoles()[id];
+  if (!r) throw Object.assign(new Error(`No existe el rol «${id}»`), { status: 404 });
+  if (!r.custom || !r.file?.startsWith(rolesDir())) throw Object.assign(new Error('Solo se edita en los roles del catálogo (los de serie y los de un repo no)'), { status: 403 });
+  const text = fs.readFileSync(r.file, 'utf8');
+  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!m) throw Object.assign(new Error('El rol no tiene frontmatter'), { status: 400 });
+  const lines = m[1].split(/\r?\n/);
+  const cur = (lines.find((l) => /^tools:/.test(l)) || 'tools:').slice(6).split(',').map((t) => t.trim()).filter(Boolean).filter((t) => t !== 'browser' && t !== 'playwright');
+  if (on) cur.push('browser');
+  const fm = lines.filter((l) => !/^tools:/.test(l));
+  if (cur.length) fm.push(`tools: ${cur.join(', ')}`);
+  fs.writeFileSync(r.file, text.replace(m[0], `---\n${fm.join('\n')}\n---`));
+  return allRoles()[id];
+}
 // 🧭 Modelo por defecto de un rol del catálogo (Guía · role.update): cambia SOLO la línea `model:` del frontmatter.
 export function setRoleModel(id, model) {
   const m0 = String(model || '').trim();

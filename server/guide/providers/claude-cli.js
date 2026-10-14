@@ -32,9 +32,9 @@ export function create() {
 
   function spawnChild() {
     const aoUrl = `http://127.0.0.1:${process.env.AO_PORT || 7420}`;
-    const mcpServers = { [MCP_SERVER]: { command: process.execPath, args: [path.join(ROOT, 'bin/ao-mcp.mjs')], env: { AO_URL: aoUrl, ...(process.env.AO_TOKEN ? { AO_TOKEN: process.env.AO_TOKEN } : {}), ...(opts.chatId ? { AO_CHAT_ID: opts.chatId } : {}), ...(opts.playwright ? { AO_MCP_EXCLUDE: opts.playwright === 'external' ? 'browser-all' : 'browser' } : {}) } } };
-    const pw = opts.playwright === 'external' ? playwrightMcp({ task: `guia-${opts.chatId || 'chat'}`, external: true }) // tu Brave/Chrome por la extensión
-      : opts.playwright ? playwrightMcp({ task: `guia-${opts.chatId || 'chat'}`, cdpEndpoint: `${aoUrl}/api/browser/cdp` }) : null; // Chromium del panel 🌐
+    const mcpServers = { [MCP_SERVER]: { command: process.execPath, args: [path.join(ROOT, 'bin/ao-mcp.mjs')], env: { AO_URL: aoUrl, ...(process.env.AO_TOKEN ? { AO_TOKEN: process.env.AO_TOKEN } : {}), ...(opts.chatId ? { AO_CHAT_ID: opts.chatId } : {}) } } };
+    // tu Brave/Chrome por la extensión («external») o un Chromium propio de Playwright (perfil en data/browser/pw-profile)
+    const pw = opts.playwright ? playwrightMcp({ task: `guia-${opts.chatId || 'chat'}`, external: opts.playwright === 'external' }) : null;
     if (pw) mcpServers.playwright = pw;
     const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--system-prompt', opts.system];
     args.push('--model', opts.model || 'sonnet');

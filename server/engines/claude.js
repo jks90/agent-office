@@ -24,10 +24,17 @@ export const EXPLORER = {
   },
 };
 
-// Worker con el navegador EXTERNO: lo que cambia respecto a su rol (que puede hablar de browser_requestHuman o browser_readPage).
+// Worker con navegador (Playwright): lo que cambia respecto a su rol (que puede hablar de tools antiguas como browser_requestHuman).
 const EXTERNAL_WORKER_NOTE = `
 
 NAVEGADOR (manda sobre lo que diga tu rol de browser_*): manejas el navegador REAL del usuario (su Brave/Chrome, con sus sesiones y su gestor de contraseñas) con las tools mcp__playwright__browser_* (browser_navigate, browser_snapshot para LEER, browser_find, browser_click, browser_type, browser_select_option, browser_tabs…). No existen browser_requestHuman, browser_readPage ni browser_evaluate.
+- Login, código SMS, captcha o 2FA: SIEMPRE, justo antes de preguntar, pon tu pestaña delante con browser_tabs {action:"list"} y browser_tabs {action:"select", index:<la tuya>} (el usuario tiene varias pestañas y si no, no la encuentra). Luego pregunta con
+  node ${path.join(ROOT, 'bin', 'ao-ask.mjs')} "Inicia sesión en <sitio> en la pestaña que te he abierto y pulsa Listo" --opt "Listo" --opt "Saltar" --no-custom --focus-browser
+  (trae el navegador al frente y espera). Con «Listo», comprueba con browser_snapshot que la sesión está iniciada y sigue tú sin más preguntas; con «Saltar» o SIN RESPUESTA, sáltalo y dilo en el resumen.
+- Trabaja solo en las pestañas que abras tú; no cierres, recargues ni toques las del usuario, ni cierres el navegador. Al terminar, cierra solo tus pestañas (browser_tabs {action:"close"}).`;
+const OWN_WORKER_NOTE = `
+
+NAVEGADOR (manda sobre lo que diga tu rol de browser_*): manejas un navegador Chromium en una ventana del escritorio del usuario (perfil propio de AgentOffice; el usuario lo ve) con las tools mcp__playwright__browser_* (browser_navigate, browser_snapshot para LEER, browser_find, browser_click, browser_type, browser_select_option, browser_tabs…). No existen browser_requestHuman, browser_readPage ni browser_evaluate.
 - Login, código SMS, captcha o 2FA: SIEMPRE, justo antes de preguntar, pon tu pestaña delante con browser_tabs {action:"list"} y browser_tabs {action:"select", index:<la tuya>} (el usuario tiene varias pestañas y si no, no la encuentra). Luego pregunta con
   node ${path.join(ROOT, 'bin', 'ao-ask.mjs')} "Inicia sesión en <sitio> en la pestaña que te he abierto y pulsa Listo" --opt "Listo" --opt "Saltar" --no-custom --focus-browser
   (trae el navegador al frente y espera). Con «Listo», comprueba con browser_snapshot que la sesión está iniciada y sigue tú sin más preguntas; con «Saltar» o SIN RESPUESTA, sáltalo y dilo en el resumen.
@@ -62,24 +69,16 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kin
     mcpServers['flow-test'] = { type: 'http', url: mcpUrl };
     tools.push('mcp__flow-test');
   }
-  // Navegador EXTERNO (token de «Playwright MCP Bridge» en este PC): las capacidades browser y playwright manejan TU navegador
-  const external = (scope.browser || scope.playwright) && !!extensionToken() && !!externalBrowser() && process.env.AO_BROWSER !== 'fake';
-  if (external) {
-    const ext = playwrightMcp({ task: extraEnv.AO_TASK, external: true });
-    if (ext) {
-      mcpServers.playwright = ext; tools.push('mcp__playwright');
-      args[args.indexOf('--append-system-prompt') + 1] = (system || '') + EXTERNAL_WORKER_NOTE;
-      tools.push(`Bash(${ASK_RULE})`); // el login se pide con ao-ask --focus-browser (aunque el rol no tenga más shell)
-    }
-  }
-  if (scope.browser && !external) { // FT-115: tools browser.* del Guía (solo ellas) por ao-mcp; la política y la auditoría viven en el servidor
-    mcpServers['agentoffice-browser'] = { type: 'stdio', command: process.execPath, args: [path.join(ROOT, 'bin', 'ao-mcp.mjs')], env: { AO_URL: extraEnv.AO_URL || `http://127.0.0.1:${process.env.AO_PORT || 7420}`, AO_MCP_ONLY: 'browser', ...(extraEnv.AO_TASK ? { AO_CHAT_ID: `task:${extraEnv.AO_TASK}` } : {}) } };
-    tools.push('mcp__agentoffice-browser');
-  }
-  const pw = scope.playwright && !external ? playwrightMcp({ task: extraEnv.AO_TASK }) : null;
-  if (pw) { // Navegante: Playwright MCP por npx (versión fijada); su carpeta de salida (capturas, snapshots) se puede leer
+  // 🌐 Navegador (capacidad browser/playwright): Playwright MCP sobre TU navegador (token de «Playwright MCP Bridge» en este PC)
+  // o, sin token, un Chromium propio en ventana visible. El login se pide con ao-ask --focus-browser.
+  const wantsBrowser = scope.browser || scope.playwright;
+  const external = wantsBrowser && !!extensionToken() && !!externalBrowser();
+  const pw = wantsBrowser ? playwrightMcp({ task: extraEnv.AO_TASK, external }) : null;
+  if (pw) {
     mcpServers.playwright = pw; tools.push('mcp__playwright');
-    const out = pwOutputDir(extraEnv.AO_TASK);
+    args[args.indexOf('--append-system-prompt') + 1] = (system || '') + (external ? EXTERNAL_WORKER_NOTE : OWN_WORKER_NOTE);
+    tools.push(`Bash(${ASK_RULE})`); // aunque el rol no tenga más shell
+    const out = pwOutputDir(extraEnv.AO_TASK); // capturas y snapshots: el agente las puede leer
     fs.mkdirSync(out, { recursive: true });
     args.push('--add-dir', out);
   }
@@ -106,7 +105,7 @@ export function start({ cwd, prompt, system, model, mode, mcpUrl, codeIndex, kin
     for (const x of ['Task', 'Agent']) { if (!builtin.includes(x)) builtin.push(x); tools.push(x); }
     args.push('--disallowedTools', 'Task(general-purpose)', 'Task(Explore)', 'Task(Plan)', 'Agent(general-purpose)', 'Agent(Explore)', 'Agent(Plan)');
   }
-  if ((extraBash.length || external) && !builtin.includes('Bash')) builtin.push('Bash');
+  if ((extraBash.length || pw) && !builtin.includes('Bash')) builtin.push('Bash');
   args.push('--tools', builtin.join(','), '--allowedTools', ...tools);
 
   const env = { ...process.env, ...extraEnv, BROWSER: 'true', CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' };

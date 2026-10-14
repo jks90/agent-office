@@ -20,11 +20,7 @@ import { gate, audit, summarize, getPolicy, POLICIES } from './policy.js';
 import { parseKeys } from '../desktop/input.js';
 import { flowTestUrl } from '../suite.js';
 import fs from 'node:fs';
-import { getDriver, renderSnapshot } from '../browser/index.js';
-import { agentDriver, addHandoff, resolveHandoff, setControl, status as browserStatus } from '../browser/panel.js';
-import * as bpolicy from '../browser/policy.js';
 import * as questions from '../questions.js';
-import * as secrets from './secrets.js'; // FT-137
 import * as mpCloud from '../marketplace-cloud.js'; // FT-142
 import { resolveRefs } from '../uploads.js'; // FT-130
 import * as guideReport from './report.js'; // 📮 reportar al admin lo que el Guía no puede hacer
@@ -140,135 +136,6 @@ const LAST = 'ÚLTIMO RECURSO: antes ui.find/ui.act. Entrada «ciega» sin ver e
 const OUTSIDE = 'Si la ventana activa es flow-test/AgentOffice responde {inside:true} sin tocar nada. Desactivada de serie (Ajustes ▸ Guide Agent): con el ajuste apagado responde 403.';
 const xy = { x: { type: 'integer', description: 'Coordenada X en píxeles de pantalla' }, y: { type: 'integer', description: 'Coordenada Y en píxeles de pantalla' } };
 
-
-// ── Navegador del agente (FT-115) · regla «solo fuera»: ni se navega ni se actúa sobre la UI de AgentOffice/flow-test ──
-const urlInside = (u) => {
-  if (INSIDE_RE().test(String(u))) return true;
-  try { return new URL(u).host === new URL(flowTestUrl()).host; } catch { return false; }
-};
-// Si el navegador está abierto y la pestaña activa es nuestra UI → {inside:true} sin tocar nada.
-// FT-116: además, la pestaña activa debe pasar la política de dominios (403 si está bloqueada, p. ej. tras una redirección).
-async function browserPrecheck() {
-  const d = getDriver();
-  if (!d.isOpen()) return null;
-  const tab = (await d.tabs.list()).find((t) => t.active);
-  if (tab && urlInside(tab.url)) return INSIDE;
-  if (tab?.url) await bpolicy.guard(tab.url);
-  return null;
-}
-// URL a la que apunta la llamada (navigate/tabs new) o, si no, la de la pestaña activa: inside → INSIDE; si no, política de dominios.
-const urlPrecheck = async (a) => {
-  if (a.url) { if (urlInside(a.url)) return INSIDE; await bpolicy.guard(a.url); return null; }
-  return browserPrecheck();
-};
-// URL (sin query) de la página sobre la que actúa una tool, para el audit
-const pageUrl = async (args) => { try { if (args?.url) return bpolicy.auditUrl(args.url); const d = getDriver(); return d.isOpen() ? bpolicy.auditUrl((await d.tabs.list()).find((t) => t.active)?.url) : null; } catch { return null; } };
-// Último snapshot visto por pestaña: permite saber el nombre del control antes de pulsarlo (política dinámica).
-const seenNodes = new Map();
-const remember = (s) => { for (const k of [...seenNodes.keys()]) if (k.startsWith(`${s.tabId}:`)) seenNodes.delete(k); for (const n of s.nodes) seenNodes.set(`${s.tabId}:${n.ref}`, n); };
-const nodeOf = (ref) => { if (!ref) return null; for (const [k, n] of seenNodes) if (k.endsWith(`:${ref}`)) return n; return null; };
-const nodeInfo = (ref) => { const n = nodeOf(ref); return n ? `Control: «${n.name}» (${n.role}) [${ref}]` : `Control: ${ref || 'elemento con foco'}`; };
-// click: control destructivo → irreversible (confirmación siempre), como ui.act
-const refDynamic = async (a0) => {
-  const a = fromShot(a0);
-  let n = nodeOf(a.ref), byPoint = false;
-  if (!n && !a.ref && ['click', 'dblclick', 'rightclick', undefined].includes(a.action)) { n = await pointNode(a); byPoint = !!n; } // FT-132: por coordenadas también se mira qué hay debajo
-  const ctx = `Navegador del agente\n${n && byPoint ? `Bajo (${a.x},${a.y}): «${n.name}» (${n.role})` : nodeInfo(a.ref)}\nAcción: ${a.action || 'click'}`;
-  if (byPoint && n.submit) return { policy: 'irreversible', context: `⚠ Botón de envío de formulario pulsado por coordenadas\n${ctx}` };
-  if (n && isDestructive(n)) return { policy: 'irreversible', context: `⚠ Control potencialmente destructivo\n${ctx}` };
-  // FT-116: botón/enlace en una página con campos de contraseña o tarjeta → puede enviar credenciales o un pago
-  if (n && n.role === 'button' && pageHasSensitiveField(n)) return { policy: 'irreversible', context: `⚠ Página con campos de contraseña/pago: esto puede enviar el formulario\n${ctx}` };
-  return { policy: 'execute', context: ctx };
-};
-// ¿El último snapshot de la pestaña del nodo tiene un campo de contraseña/tarjeta?
-const pageHasSensitiveField = (n) => { const key = [...seenNodes].find(([, v]) => v === n)?.[0]; const tab = key?.slice(0, key.lastIndexOf(':')); for (const [k, x] of seenNodes) if (k.startsWith(`${tab}:`) && ['textbox', 'searchbox'].includes(x.role) && (x.states?.includes('protected') || bpolicy.SENSITIVE_FIELD.test(x.name || ''))) return true; return false; };
-
-// FT-137 · ¿browser.type apunta a un campo de contraseña (según el último snapshot)? Lo usa también guide/index.js para enmascarar el chat.
-export const isPasswordTarget = (name, args) => /^browser[._]type$/.test(name) && !!args?.ref && bpolicy.isPasswordNode(nodeOf(args.ref));
-// Política de browser.type: pago → 403 (requestHuman); contraseña → solo si la dio el usuario en este chat y con 🛡 siempre.
-async function typeDynamic(a, ctx) {
-  const n = nodeOf(a.ref);
-  if (bpolicy.isPaymentNode(n)) throw fail(403, `«${n.name}» es un campo de pago: no se teclea. Usa browser.requestHuman para que lo rellene el usuario`);
-  if (!a.ref) { // sin ref escribe donde esté el foco: si es una contraseña, exige el ref para poder tratarla
-    try { if ((await agentDriver().evaluate({ expression: `document.activeElement?.type === 'password'` })).value) throw fail(403, 'El foco está en un campo de contraseña: indica su ref para poder pedir la 🛡. Si no, usa browser.requestHuman'); } catch (e) { if (e.status === 403) throw e; }
-  }
-  if (!bpolicy.isPasswordNode(n)) return a.submit ? { policy: 'irreversible', context: `⚠ Escribir y pulsar Enter (puede enviar el formulario)\n${nodeInfo(a.ref)}` } : null;
-  if (!secrets.authorize(ctx.chatId, a.text)) throw fail(403, `«${n.name}» es un campo de contraseña y solo puedo teclear una que el usuario me haya dado en esta conversación. Usa browser.requestHuman para que la escriba él`);
-  const host = await pageUrl({}).then((u) => { try { return new URL(u).host; } catch { return '(página)'; } });
-  return {
-    policy: 'irreversible',
-    question: `¿Escribir la contraseña en «${host}» (campo ${n.name})?`,
-    context: `🔑 Contraseña que diste en esta conversación. Valor: ${secrets.MASK}${a.submit ? '\n⚠ Además pulsa Enter (puede enviar el formulario)' : ''}\n${nodeInfo(a.ref)}`,
-    args: { ref: a.ref, text: secrets.MASK, ...(a.clear ? { clear: true } : {}), ...(a.submit ? { submit: true } : {}) },
-    denied: 'El usuario no autoriza escribir la contraseña: ofrécele browser.requestHuman para que la escriba él',
-  };
-}
-
-// FT-132 · Coordenadas sobre la última captura: la captura guarda escala y origen (zoom de región) y `shot:true` los deshace.
-let lastShot = null;
-const fromShot = (a) => {
-  if (!a.shot) return a;
-  if (!lastShot) throw fail(409, 'No hay captura previa: haz browser.screenshot antes de actuar por coordenadas (o quita «shot»)');
-  const cx = (v) => lastShot.originX + Number(v) / lastShot.scale, cy = (v) => lastShot.originY + Number(v) / lastShot.scale;
-  const { shot, ...r } = a;
-  if (r.x != null) r.x = Math.round(cx(r.x)); if (r.y != null) r.y = Math.round(cy(r.y));
-  if (r.toX != null) r.toX = Math.round(cx(r.toX)); if (r.toY != null) r.toY = Math.round(cy(r.toY));
-  return r;
-};
-// Sin ref (coordenadas): mira qué elemento hay bajo el punto para aplicar la misma política que con ref (destructivo / envío de formulario)
-const pointNode = async (a) => {
-  if (a.x == null || a.y == null) return null;
-  try {
-    const r = await agentDriver().evaluate({ expression: `(() => { const e = document.elementFromPoint(${Number(a.x)}, ${Number(a.y)}); if (!e) return null; const b = e.closest('button,a,input,[role=button]') || e; return { tag: b.tagName, type: b.type || '', name: (b.getAttribute('aria-label') || b.value || b.innerText || b.title || '').replace(/\\s+/g, ' ').trim().slice(0, 120) }; })()` });
-    const v = r.value;
-    if (!v) return null;
-    return { role: v.tag === 'BUTTON' || v.type === 'submit' || v.type === 'button' ? 'button' : v.tag === 'A' ? 'link' : 'generic', name: v.name || `(${v.tag.toLowerCase()})`, submit: v.type === 'submit' };
-  } catch { return null; }
-};
-// FT-132 · find en lenguaje natural: tokens de la consulta (sin artículos), palabras de rol y sinónimos es/en → puntuación
-const NL_STOP = new Set('el la los las un una unos unas de del al en para que the a an of to and y o con por hacer haz click clic pulsar pulsa'.split(' '));
-const NL_ROLE = { boton: 'button', button: 'button', enlace: 'link', link: 'link', campo: 'textbox', caja: 'textbox', textbox: 'textbox', input: 'textbox', casilla: 'checkbox', checkbox: 'checkbox', opcion: 'option', desplegable: 'combobox', select: 'combobox', pestana: 'tab', tab: 'tab', imagen: 'img', titulo: 'heading', encabezado: 'heading', menu: 'menuitem', radio: 'radio', interruptor: 'switch' };
-const NL_SYN = [['anadir', 'agregar', 'add', 'meter'], ['carrito', 'cesta', 'cart', 'basket', 'bag'], ['comprar', 'buy', 'purchase', 'pedir', 'order', 'checkout'], ['enviar', 'send', 'submit', 'mandar'], ['buscar', 'search', 'busqueda', 'find'], ['cerrar', 'close', 'dismiss', 'x'], ['aceptar', 'accept', 'agree', 'ok', 'vale', 'allow'], ['rechazar', 'reject', 'decline', 'deny'], ['siguiente', 'next', 'continuar', 'continue'], ['anterior', 'previous', 'back', 'volver'], ['entrar', 'login', 'sign', 'iniciar', 'acceder'], ['correo', 'email', 'mail'], ['nombre', 'name'], ['telefono', 'phone', 'tel'], ['direccion', 'address'], ['guardar', 'save'], ['eliminar', 'borrar', 'delete', 'remove', 'quitar'], ['cookies', 'cookie', 'consentimiento']];
-const stem = (w) => (w.length > 4 && w.endsWith('s') ? w.slice(0, -1) : w);
-export function findByQuery(nodes, query, limit = 8) {
-  const toks = plain(query).split(/[^a-z0-9]+/).filter(Boolean);
-  const roles = new Set(toks.map((t) => NL_ROLE[t]).filter(Boolean));
-  const words = toks.filter((t) => !NL_STOP.has(t) && !NL_ROLE[t]).map(stem);
-  const groups = words.map((w) => new Set([w, ...(NL_SYN.find((g) => g.some((x) => stem(x) === w)) || []).map(stem)]));
-  const scored = [];
-  for (const n of nodes) {
-    const name = plain(n.name), val = plain(n.value);
-    let score = 0, hit = 0;
-    for (const g of groups) {
-      let best = 0;
-      for (const w of g) {
-        const exact = new RegExp(`(^|[^a-z0-9])${w.replace(/[^a-z0-9]/g, '')}s?([^a-z0-9]|$)`).test(name);
-        best = Math.max(best, exact ? 3 : name.includes(w) ? 2 : val.includes(w) ? 1 : 0);
-      }
-      if (best) { hit++; score += best; }
-    }
-    if (words.length && !hit) continue;
-    if (roles.size) { if (roles.has(n.role)) score += 2; else if (!words.length) continue; }
-    if (INTERACTIVE_ROLES.has(n.role)) score += 0.5;
-    score -= Math.min(1, n.name.length / 400); // a igualdad, el nombre más corto gana
-    if (score > 0) scored.push({ n, score });
-  }
-  return scored.sort((a, b) => b.score - a.score).slice(0, limit).map(({ n, score }) => ({ ...n, score: Math.round(score * 10) / 10 }));
-}
-const INTERACTIVE_ROLES = new Set(['button', 'link', 'textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'switch', 'menuitem', 'tab', 'option']);
-// FT-132 · snapshot incremental: por pestaña se guardan las líneas del último snapshot y solo se devuelve lo nuevo/cambiado
-const lastLines = new Map();
-const nodeLine = (s, n) => renderSnapshot({ ...s, nodes: [n], truncated: false }).split('\n')[1];
-function diffSnapshot(s) {
-  const lines = new Map(s.nodes.map((n) => [n.ref, nodeLine(s, n)]));
-  const prev = lastLines.get(s.tabId);
-  lastLines.set(s.tabId, { url: s.url, lines });
-  if (!prev || prev.url !== s.url) return null;
-  const add = [...lines].filter(([r, l]) => prev.lines.get(r) !== l).map(([, l]) => `+ ${l}`);
-  const gone = [...prev.lines.keys()].filter((r) => !lines.has(r));
-  const same = lines.size - add.length;
-  return [`# ${s.title || '(sin título)'} — ${s.url} (cambios respecto al snapshot anterior)`, ...add, ...(gone.length ? [`- desaparecen: ${gone.join(' ')}`] : []), `= ${same} nodos sin cambios${s.truncated ? ` · truncado: faltan ${s.omitted}` : ''}`].join('\n');
-}
 
 // ── Workspace de flow-test (los flows NO están en los repos: viven en flows/ de flow-test, con enlaces a cada repo) ──
 async function ftGet(pathAndQuery) {
@@ -438,99 +305,7 @@ export const tools = [
       return { policy: 'irreversible', context: `Instalar ${item.kind} «${item.name}» v${item.version} (${item.scope === 'team' ? 'mi team' : 'público'} · ${item.orgName || item.author?.name || '—'})\n${info.hasCode ? '⚠ Trae código ejecutable\n' : ''}${info.hasMemory ? '🧠 Trae memoria\n' : ''}${info.exists ? '⚠ Ya existe: se sobrescribirá si overwrite\n' : ''}Ficheros (${files.length}):\n${files.slice(0, 40).map((f) => `- ${f.path} (${f.size} B)`).join('\n')}` };
     } }),
   T('terminal.execute','Ejecuta un comando en la raíz de un repo/worktree, sin shell (nada de ; & | > $ ni sustituciones). Solo la lista blanca de los workers (npm, node, git status/diff/log/add/commit…, ls, cat, grep…; sin rm, sudo, docker, ssh ni git push). Timeout 60 s y salida recortada.', obj({ repo: str('Clave del repo (o «proyecto/clave» si varios proyectos la usan)'), task: str('Código de la tarea (corre en su worktree)'), cmd: str('Comando, p. ej. «git status --short»') }, ['cmd']), 'execute', (a) => integ.terminalExecute(a)),
-  T('browser.open', 'Abre una URL http(s) en el navegador NORMAL del usuario (xdg-open) para que ÉL la vea; no devuelve nada ni se puede controlar. Para leer o manejar una web tú mismo usa browser.navigate + browser.snapshot (navegador dedicado del agente).', obj({ url: str('URL') }, ['url']), 'navigate', (a) => integ.browserOpen(a)),
-
-  // — Navegador del agente (FT-115, sobre el driver de FT-114): Chromium dedicado por CDP. Flujo: snapshot → actuar por ref → snapshot —
-  T('browser.tabs', 'Pestañas del navegador del agente (Chromium dedicado, no el del usuario). action: list (por defecto) | new (url opcional) | select | close (con id). Abre el navegador si hace falta. Nunca sobre flow-test/AgentOffice ({inside:true}).',
-    obj({ action: { type: 'string', enum: ['list', 'new', 'select', 'close'] }, id: str('Id de pestaña (select/close)'), url: str('URL http(s) (new)') }), 'read',
-    async ({ action = 'list', id, url }) => { const b = agentDriver().tabs; return action === 'new' ? b.new({ url }) : action === 'select' ? b.select({ id }) : action === 'close' ? b.close({ id }) : b.list(); },
-    { precheck: urlPrecheck }),
-  T('browser.navigate', 'Navega la pestaña activa del navegador del agente a una URL http(s), o con action=back|forward|reload. Después haz browser.snapshot. Para mostrar una web al usuario usa browser.open. Nunca flow-test/AgentOffice ({inside:true}).',
-    obj({ url: str('URL http(s)'), action: { type: 'string', enum: ['back', 'forward', 'reload'] } }), 'navigate',
-    async ({ url, action }) => { const d = agentDriver(); if (action) return d[action](); if (!url) throw fail(400, 'Falta «url» o «action»'); return d.navigate({ url }); },
-    { precheck: urlPrecheck }),
-  T('browser.snapshot', 'PRIMERO SIEMPRE: árbol de accesibilidad compacto de la pestaña activa, una línea por nodo `[e12] button "Enviar"`. Usa esas refs en click/type/select/scroll. No gasta tokens de imagen: usa browser.screenshot solo si necesitas VER el aspecto (gráficos, maquetación).',
-    obj({ diff: { type: 'boolean', description: 'FT-132: solo los cambios respecto al snapshot anterior de esta pestaña (mucho más barato tras actuar)' } }), 'read',
-    async ({ diff } = {}) => {
-      const s = await agentDriver().snapshot(); remember(s);
-      // FT-137: el valor de un campo de contraseña nunca vuelve al modelo (ni al chat guardado); solo se indica que está relleno
-      const safe = { ...s, nodes: s.nodes.map((n) => (n.value && bpolicy.isPasswordNode(n) ? { ...n, value: secrets.MASK } : n)) };
-      const d = diffSnapshot(safe); // siempre actualiza la base, se pida diff o no
-      return bpolicy.untrusted({ tabId: s.tabId, url: s.url, title: s.title, total: s.total, truncated: s.truncated, mode: diff && d ? 'diff' : 'full', snapshot: bpolicy.wrapUntrusted(diff && d ? d : renderSnapshot(safe)) });
-    },
-    { precheck: browserPrecheck }),
-  T('browser.readPage', 'FT-132 · Texto legible de la página (modo lectura: encabezados, párrafos, listas, tablas; sin menús ni scripts), paginado. Úsalo para LEER artículos, resultados o listados en vez del snapshot completo. Devuelve «next» (offset de la página siguiente) y las secciones (encabezados) para saltar con «section».',
-    obj({ offset: { type: 'integer', description: 'Carácter desde el que leer (0)' }, max: { type: 'integer', description: 'Caracteres por página (6000, máx. 20000)' }, section: str('Salta al encabezado que contenga este texto'), selector: str('Selector CSS de la zona a leer (opcional)') }), 'read',
-    async (a) => { const r = await agentDriver().readPage(a); return bpolicy.untrusted({ ...r, text: bpolicy.wrapUntrusted(r.text) }); },
-    { precheck: browserPrecheck }),
-  T('browser.find', 'Busca nodos de la pestaña activa. Con «query» en lenguaje natural («el botón de añadir al carrito», «campo del correo») devuelve hasta 8 candidatos con puntuación; con role/text, filtro exacto por rol y subcadena. Devuelve refs; más barato que leer todo el snapshot.',
-    obj({ query: str('Descripción en lenguaje natural del control'), role: str('Rol, p. ej. «button»'), text: str('Texto del nombre o valor') }), 'read',
-    async ({ query, role, text }) => {
-      if (!role && !text && !query) throw fail(400, 'Indica «query», «role» y/o «text»');
-      const s = await agentDriver().snapshot(); remember(s);
-      if (query) {
-        const nodes = findByQuery(s.nodes.filter((n) => !role || n.role === role), query);
-        return bpolicy.untrusted({ tabId: s.tabId, url: s.url, count: nodes.length, truncated: s.truncated, nodes, ...(nodes.length ? {} : { hint: 'Sin candidatos: prueba con otras palabras, browser.readPage o haz scroll' }) });
-      }
-      const q = plain(text);
-      const nodes = s.nodes.filter((n) => (!role || n.role === role) && (!q || plain(`${n.name} ${n.value}`).includes(q))).slice(0, 50);
-      return bpolicy.untrusted({ tabId: s.tabId, url: s.url, count: nodes.length, truncated: s.truncated, nodes });
-    }, { precheck: browserPrecheck }),
-  T('browser.click', 'Clic (o dblclick / rightclick / hover / focus / drag) en un nodo por su ref de browser.snapshot/find. Si el nombre del control parece destructivo (eliminar, enviar, pagar, confirmar…) pide confirmación SIEMPRE. Sin ref (canvas, mapas, widgets sin accesibilidad) usa x,y: con shot=true son píxeles de la ÚLTIMA browser.screenshot (también con zoom de región); drag arrastra hasta toRef o toX,toY. Devuelve cuándo se asentó la página (settle).',
-    obj({ ref: str('ref del nodo'), action: { type: 'string', enum: ['click', 'dblclick', 'rightclick', 'hover', 'focus', 'drag'] }, x: { type: 'integer' }, y: { type: 'integer' }, shot: { type: 'boolean', description: 'x,y (y toX,toY) están en píxeles de la última captura' }, toRef: str('Destino del drag (ref)'), toX: { type: 'integer' }, toY: { type: 'integer' } }), 'execute',
-    async (a) => agentDriver().act({ ...fromShot(a), action: a.action || 'click' }),
-    { precheck: browserPrecheck, dynamic: refDynamic }),
-  T('browser.type', 'Escribe texto en un campo por su ref (lo enfoca antes); rellena date/time/datetime-local/range/color/contenteditable según su tipo (formato nativo, p. ej. 2026-10-08, 19:30). El resultado trae {navigated,url,title} y, si un envío no se produjo, validation con el motivo. clear=true lo vacía antes; submit=true pulsa Enter después (irreversible: confirmación SIEMPRE). El texto NUNCA se guarda en el audit. Contraseñas (FT-137): solo una que el usuario te dio en ESTA conversación (si no, 403); pide 🛡 siempre y el valor no se registra en ningún sitio. Tarjetas/pagos (número, CVV, IBAN): 403, usa browser.requestHuman.',
-    obj({ ref: str('ref del campo'), text: str('Texto'), clear: { type: 'boolean' }, submit: { type: 'boolean' } }, ['text']), 'execute',
-    async (a) => agentDriver().type(a),
-    { precheck: browserPrecheck, auditArgs: ({ text, ...r }) => ({ ...r, chars: [...String(text ?? '')].length }),
-      dynamic: typeDynamic }),
-  T('browser.select', 'Elige una opción de un <select> por su ref (value o texto visible). En <select multiple> varias separadas por «|» (p. ej. «Bacon|Onion»).',
-    obj({ ref: str('ref del select'), value: str('Valor o texto de la opción (varias con «|» si es múltiple)') }, ['ref', 'value']), 'execute',
-    async ({ ref, value }) => agentDriver().act({ ref, action: 'select', value }), { precheck: browserPrecheck }),
-  T('browser.upload', 'FT-130 · Adjunta ficheros a un <input type=file> por su ref (dispara input/change). «paths»: rutas absolutas dentro de data/uploads (adjuntos del chat o de la tarea). Pide confirmación. Después, snapshot.',
-    obj({ ref: str('ref del campo de fichero'), paths: { type: 'array', items: { type: 'string' }, description: 'Rutas absolutas de data/uploads' } }, ['ref', 'paths']), 'execute',
-    async ({ ref, paths }) => agentDriver().upload({ ref, files: resolveRefs((Array.isArray(paths) ? paths : [paths]).map((p) => ({ path: p }))).map((f) => f.path) }),
-    { precheck: browserPrecheck, auditArgs: ({ paths, ...r }) => ({ ...r, files: [].concat(paths || []).map((p) => String(p).split('/').pop()) }),
-      dynamic: async (a) => ({ policy: 'execute', context: `Subir ${[].concat(a.paths || []).length} fichero(s) a la página\n${nodeInfo(a.ref)}` }) }),
-  T('browser.scroll', 'Desplaza la rueda sobre un nodo (por ref) o el centro de la página: dy>0 baja, dx>0 a la derecha (píxeles). Devuelve la posición. Después, snapshot si buscas algo más abajo.',
-    obj({ ref: str('ref del nodo (opcional)'), dx: { type: 'integer' }, dy: { type: 'integer' }, x: { type: 'integer' }, y: { type: 'integer' }, shot: { type: 'boolean', description: 'x,y en píxeles de la última captura' } }), 'navigate',
-    async (a) => agentDriver().scroll(fromShot(a)), { precheck: browserPrecheck }),
-  T('browser.press', 'Pulsa una tecla (p. ej. «Tab», «Escape», «ArrowDown») en el elemento con foco o en el de «ref». Enter y Delete son irreversibles (confirmación SIEMPRE).',
-    obj({ key: str('Nombre de tecla de puppeteer, p. ej. «Tab»'), ref: str('ref a enfocar antes (opcional)') }, ['key']), 'execute',
-    async ({ key, ref }) => agentDriver().type({ ref, key }),
-    { precheck: browserPrecheck, dynamic: async ({ key, ref }) => (/^(enter|delete|numpadenter)$/i.test(key) ? { policy: 'irreversible', context: `⚠ Tecla «${key}»\n${nodeInfo(ref)}` } : null) }),
-  T('browser.waitFor', 'Espera a que aparezca un texto, un selector CSS o una URL (subcadena), o simplemente ms. timeout en ms (10 s por defecto); 408 si no ocurre.',
-    obj({ text: str('Texto visible'), selector: str('Selector CSS'), url: str('Subcadena de URL'), ms: { type: 'integer' }, timeout: { type: 'integer' } }), 'read',
-    async (a) => agentDriver().waitFor(a), { precheck: browserPrecheck }),
-  T('browser.screenshot', 'Captura la pestaña activa y DEVUELVE LA IMAGEN (además de la ruta en data/browser/captures; máx. 1280 px de ancho). Cuesta más que browser.snapshot: úsala solo cuando necesites VER el aspecto o actuar por coordenadas. Prefiere actuar por ref; si no hay ref, pulsa con browser.click {x,y,shot:true} sobre píxeles de ESTA captura. detail=low (JPEG ≤800 px) es mucho más barata; region {x,y,w,h} (px de la página visible) hace zoom a esa zona y las coordenadas posteriores con shot=true siguen valiendo.',
-    obj({ fullPage: { type: 'boolean', description: 'Toda la página, no solo lo visible' }, format: { type: 'string', enum: ['png', 'jpeg'] }, detail: { type: 'string', enum: ['low', 'high'], description: 'low = JPEG reducido (barato)' }, region: { type: 'object', description: 'Zoom: {x,y,w,h} en px de la página visible', properties: { x: { type: 'integer' }, y: { type: 'integer' }, w: { type: 'integer' }, h: { type: 'integer' } } } }), 'read',
-    async (a, ctx) => {
-      const r = await agentDriver().screenshot(a);
-      lastShot = { scale: r.scale || 1, originX: r.originX || 0, originY: r.originY || 0 };
-      // por MCP la imagen viaja en base64 (ao-mcp la convierte en contenido `image`); por la API normal solo la ruta
-      return { path: r.path, width: r.width, height: r.height, bytes: r.bytes, format: r.format, scale: r.scale, ...(ctx?.via === 'mcp' ? { image: { mimeType: r.format === 'jpeg' ? 'image/jpeg' : 'image/png', data: fs.readFileSync(r.path).toString('base64') } } : {}) };
-    }, { precheck: browserPrecheck }),
-  T('browser.console', 'Mensajes de consola de la pestaña activa (anillo de 200): {ts, level, text}. limit (50 por defecto); clear=true los vacía.',
-    obj({ limit: { type: 'integer' }, clear: { type: 'boolean' } }), 'read', async (a) => bpolicy.untrusted(await agentDriver().console(a)), { precheck: browserPrecheck }),
-  T('browser.network', 'Peticiones de red de la pestaña activa (anillo de 200): método, URL, estado, tipo; cabeceras sensibles enmascaradas. limit (50 por defecto); clear=true las vacía.',
-    obj({ limit: { type: 'integer' }, clear: { type: 'boolean' } }), 'read', async (a) => bpolicy.untrusted(await agentDriver().network(a)), { precheck: browserPrecheck }),
-  T('browser.evaluate', 'Ejecuta una expresión JavaScript en la página activa y devuelve el valor (recortado a 20 KB). Puede hacer cualquier cosa en la página: pide confirmación. Prefiere snapshot/click/type.',
-    obj({ expression: str('Expresión JS') }, ['expression']), 'execute',
-    async ({ expression }) => { const r = await agentDriver().evaluate({ expression }); const v = typeof r.value === 'string' ? r.value : JSON.stringify(r.value); return bpolicy.untrusted({ value: String(v ?? '').slice(0, 20_000) }); },
-    { precheck: browserPrecheck, auditArgs: ({ expression }) => ({ expression: /pass|contrase|token|secret|card|tarjeta/i.test(expression) ? `(oculta: ${String(expression).length} car.)` : summarize(expression) }),
-      dynamic: async ({ expression }) => ({ policy: 'irreversible', context: `⚠ JavaScript arbitrario en la página: SIEMPRE pide confirmación\n\n\`\`\`js\n${String(expression).slice(0, 600)}\n\`\`\`` }) }),
-  T('browser.requestHuman', 'Pasa el control al usuario cuando necesitas algo que no debes hacer tú: captcha, login, 2FA, datos personales o de pago. Pausa tu trabajo, avisa al usuario (🛡 con «Listo»/«Cancelar») y vuelve cuando pulse «Listo» (done:true); después haz browser.snapshot. No pidas contraseñas: solo puedes teclear (browser.type, con 🛡) una que el usuario te dio en esta conversación (FT-137).',
-    obj({ motivo: str('Qué tiene que hacer el usuario, en una frase') }, ['motivo']), 'navigate',
-    async ({ motivo }) => {
-      if (!getDriver().isOpen()) throw fail(409, 'El navegador del agente está cerrado: ábrelo con browser.navigate antes');
-      await addHandoff({ reason: String(motivo).slice(0, 300) });
-      await setControl('user');
-      let a = null;
-      try { a = await questions.choose({ question: `🤝 El agente del navegador necesita que lo hagas tú: ${String(motivo).slice(0, 300)}`, options: ['Listo', 'Cancelar'], context: 'Tienes el control del navegador (pestaña Navegador). Haz lo que haga falta —captcha, login, 2FA…— y pulsa «Listo» para que el agente continúe. Sus acciones están en pausa.' }); }
-      finally { for (const h of browserStatus().handoffs.filter((x) => x.reason === String(motivo).slice(0, 300))) await resolveHandoff(h.id); await setControl('agent').catch(() => {}); }
-      return a === 'Listo' ? { done: true } : { done: false, cancelled: a === 'Cancelar', timeout: a == null };
-    }, { precheck: browserPrecheck }),
+  T('browser.open', 'Abre una URL http(s) en el navegador NORMAL del usuario (xdg-open) para que ÉL la vea; no devuelve nada ni se puede controlar. Para leer o manejar una web tú mismo usa las tools de Playwright (browser_navigate, browser_snapshot…).', obj({ url: str('URL') }, ['url']), 'navigate', (a) => integ.browserOpen(a)),
 
   // — Escritorio (FT-22): delegan en server/desktop/ —
   T('window.getActive', 'Ventana activa del escritorio del usuario (id, título, app, pid). Si es flow-test/AgentOffice responde {inside:true} y hay que usar app.getContext.', obj(), 'read',
@@ -651,7 +426,6 @@ async function runTool(name, args = {}, ctx = {}) {
   const done = (result, extra = {}) => audit({ ...entry, result, ms: Date.now() - t0, ...extra });
   try {
     if (!args || typeof args !== 'object' || Array.isArray(args)) throw fail(400, 'args debe ser un objeto');
-    if (name.startsWith('browser.') && name !== 'browser.open') entry.page = await pageUrl(args); // FT-116
     validate(tool.input, args);
     if (tool.pending) return tool.handler(args, ctx);
     if (tool.precheck) { const early = await tool.precheck(args, ctx); if (early) { done('ok'); return early; } }

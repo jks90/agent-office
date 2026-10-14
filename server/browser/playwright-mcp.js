@@ -1,13 +1,37 @@
-// Navegante · Playwright MCP (@playwright/mcp de Microsoft) para los agentes con la capacidad «playwright».
-// Va por `npx` con la versión FIJADA: no es una dependencia del repo, así que llega a las instalaciones que ya existen con el
-// `git pull` de la autoactualización (que no hace `npm install`). La primera vez npx lo descarga (hace falta red) y queda en caché.
-// Usa el Chromium/Chrome/Brave del PC (el mismo que busca cdp.js) con un perfil PROPIO: el driver CDP bloquea el suyo
-// (data/browser/profile) mientras está abierto. Ojo: estas tools no pasan por la política ni la auditoría de browser.* (FT-116).
-// Env: AO_PLAYWRIGHT=off (no se monta) · AO_PLAYWRIGHT_MCP (otra versión) · AO_BROWSER_PATH · AO_BROWSER_HEADLESS=0 · AO_BROWSER_NO_SANDBOX=1
+// Navegador de AgentOffice = Playwright MCP (@playwright/mcp de Microsoft) para el Guía y los agentes con la capacidad
+// «browser» (o «playwright»). Va por `npx` con la versión FIJADA: no es una dependencia del repo, así que llega a las
+// instalaciones que ya existen con el `git pull` de la autoactualización (que no hace `npm install`).
+// Dos modos: «external» = TU navegador (Brave/Chrome con la extensión «Playwright MCP Bridge» y su token) · «own» = un
+// Chromium/Chrome del PC lanzado por Playwright con perfil propio (data/browser/pw-profile), en ventana visible si hay escritorio.
+// Estas tools no tienen 🛡 por acción: los límites van en el prompt (preguntar antes de enviar, pagar o borrar).
+// Env: AO_PLAYWRIGHT=off · AO_PLAYWRIGHT_MCP (otra versión) · AO_PLAYWRIGHT_TOKEN · AO_EXTERNAL_BROWSER · AO_BROWSER_PATH ·
+//      AO_BROWSER_HEADLESS=1 · AO_BROWSER_NO_SANDBOX=1 · AO_BROWSER_UA
 import fs from 'node:fs';
 import path from 'node:path';
-import { findBrowser, normalUserAgent } from './cdp.js';
+import { execFileSync } from 'node:child_process';
 import { dataDir } from './util.js';
+
+// Chromium/Chrome/Brave del PC para el modo «own» (Playwright lo lanza con su perfil propio). AO_BROWSER_PATH lo fuerza.
+const CANDIDATES = {
+  linux: ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium', '/usr/bin/chromium-browser', '/snap/bin/chromium', '/usr/bin/brave-browser'],
+  darwin: ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium', '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser'],
+  win32: ['C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe', 'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe'],
+};
+// Oculto, Chrome se anuncia como «HeadlessChrome» y bastantes webs (bancos: MyInvestor da 403) lo rechazan: se lanza con el
+// user-agent de un Chrome normal de la misma versión. AO_BROWSER_UA lo fuerza.
+const UA_OS = { linux: 'X11; Linux x86_64', darwin: 'Macintosh; Intel Mac OS X 10_15_7', win32: 'Windows NT 10.0; Win64; x64' };
+export function normalUserAgent(exe) {
+  if (process.env.AO_BROWSER_UA) return process.env.AO_BROWSER_UA;
+  let major = '';
+  try { major = (execFileSync(exe, ['--version'], { encoding: 'utf8', timeout: 5000 }).match(/(\d+)\.\d+/) || [])[1] || ''; } catch { /* sin versión */ }
+  if (!major) return null;
+  return `Mozilla/5.0 (${UA_OS[process.platform] || UA_OS.linux}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`;
+}
+export function findBrowser() {
+  const forced = process.env.AO_BROWSER_PATH;
+  if (forced) return fs.existsSync(forced) ? forced : null;
+  return (CANDIDATES[process.platform] || []).find((p) => fs.existsSync(p)) || null;
+}
 
 export const PW_MCP_VERSION = '0.0.83';
 export const pwProfileDir = () => path.join(dataDir(), 'pw-profile');
@@ -55,16 +79,15 @@ export function externalBrowser() {
   return runningBrowser() || (EXTERNAL[process.platform] || []).find((p) => fs.existsSync(p)) || null;
 }
 
-// Guía (proveedor claude-cli) → 'external' (tu navegador, si hay token) · 'cdp' (Chromium del panel 🌐) · false (browser.* de siempre).
-// settings.guideBrowserEngine: 'ao' fuerza lo de siempre; 'cdp' fuerza el panel aunque haya token.
-export function guideUsesPlaywright({ settings = {}, mode = 'dedicated', provider = 'claude-cli' } = {}) {
-  if (!playwrightEnabled() || provider !== 'claude-cli' || settings.guideBrowserEngine === 'ao' || process.env.AO_BROWSER === 'fake') return false;
-  if (settings.guideBrowserEngine !== 'cdp' && extensionToken() && externalBrowser()) return 'external';
-  return mode === 'dedicated' ? 'cdp' : false;
+// Guía: 'external' (tu navegador, si hay token) · 'own' (Chromium propio de Playwright) · false (proveedor sin MCP: sin navegador).
+// settings.guideBrowserEngine='off' lo apaga.
+export function guideUsesPlaywright({ settings = {}, provider = 'claude-cli' } = {}) {
+  if (!playwrightEnabled() || provider !== 'claude-cli' || settings.guideBrowserEngine === 'off') return false;
+  return extensionToken() && externalBrowser() ? 'external' : 'own';
 }
 
-/** Definición stdio del MCP para --mcp-config (o null si está apagado). Con `cdpEndpoint` se engancha a un navegador que ya existe. */
-export function playwrightMcp({ task, cdpEndpoint, external = false } = {}) {
+/** Definición stdio del MCP para --mcp-config (o null si está apagado): `external` = tu navegador por la extensión; si no, Chromium propio. */
+export function playwrightMcp({ task, external = false } = {}) {
   if (!playwrightEnabled()) return null;
   const pkg = `@playwright/mcp@${process.env.AO_PLAYWRIGHT_MCP || PW_MCP_VERSION}`;
   const env = { PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH || ''}` };
@@ -73,11 +96,11 @@ export function playwrightMcp({ task, cdpEndpoint, external = false } = {}) {
     if (!token || !exe) return null;
     return { type: 'stdio', command: npxBin(), args: ['-y', pkg, '--extension', '--executable-path', exe, '--output-dir', pwOutputDir(task)], env: { ...env, PLAYWRIGHT_MCP_EXTENSION_TOKEN: token } };
   }
-  if (cdpEndpoint) return { type: 'stdio', command: npxBin(), args: ['-y', pkg, '--cdp-endpoint', cdpEndpoint, '--output-dir', pwOutputDir(task)], env };
   const args = ['-y', pkg, '--user-data-dir', pwProfileDir(), '--output-dir', pwOutputDir(task)];
   const exe = findBrowser();
   if (exe) args.push('--executable-path', exe); // sin navegador en el PC, Playwright pide el suyo (npx playwright install chromium)
-  const headless = process.env.AO_BROWSER_HEADLESS !== '0' || (process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY);
+  // Ventana VISIBLE si hay escritorio (el usuario ve lo que hace y puede hacer el login ahí); oculto sin escritorio o con AO_BROWSER_HEADLESS=1
+  const headless = process.env.AO_BROWSER_HEADLESS === '1' || (process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY);
   if (headless) {
     args.push('--headless');
     const ua = exe && normalUserAgent(exe); // sin «HeadlessChrome»: hay webs que lo rechazan (403)

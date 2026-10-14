@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import puppeteer from 'puppeteer-core';
-import { findBrowser } from '../server/browser/cdp.js';
+import { findBrowser } from '../server/browser/playwright-mcp.js';
 const PORT = 7400 + Math.floor(Math.random() * 300);
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-move-e2e-'));
 const srv = spawn(process.execPath, ['server/index.js'], { cwd: path.resolve(path.dirname(new URL(import.meta.url).pathname), '..'), env: { ...process.env, AO_PORT: String(PORT), AO_DATA_DIR: dataDir, AO_AUTOUPDATE: 'off', AO_TEST_ALLOW_UNLINKED: '1' }, stdio: 'ignore' });

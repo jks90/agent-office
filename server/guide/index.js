@@ -8,11 +8,9 @@ import path from 'node:path';
 import * as store from '../store.js';
 import * as context from '../context.js';
 import * as activity from '../events.js';
-import { SYSTEM, PLAYWRIGHT_RULES, EXTERNAL_RULES } from './prompt.js';
+import { SYSTEM, PLAYWRIGHT_RULES, EXTERNAL_RULES, OWN_RULES } from './prompt.js';
 import { guideUsesPlaywright } from '../browser/playwright-mcp.js';
-import { getMode as browserMode } from '../browser/index.js';
 import { maxUsd } from './budget.js';
-import * as browserPanel from '../browser/panel.js';
 import * as review from '../review.js';
 import { resolveRefs, dirOf } from '../uploads.js'; // FT-95
 import * as claudeCli from './providers/claude-cli.js';
@@ -21,7 +19,6 @@ import * as openaiApi from './providers/openai-api.js';
 import { provider as localApi } from './providers/local-api.js';
 import * as fakeProvider from './providers/fake.js';
 import * as secrets from './secrets.js'; // FT-137
-import { isPasswordTarget } from './tools.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
 const PROVIDERS = { 'claude-cli': claudeCli, 'anthropic-api': anthropicApi, 'openai-api': openaiApi, 'local-api': localApi, ...(process.env.AO_GUIDE_FAKE === '1' ? { fake: fakeProvider } : {}) }; // `fake` (FT-11): solo para pruebas e2e
@@ -118,12 +115,12 @@ export async function* chat({ chatId, text, attachments, client = null }) {
   secrets.bind(c.id, () => (name === 'fake' ? c.messages.map((m) => ({ ...m, text: String(m.text || '').split(' ::[')[0] })) : c.messages)); // el fake lleva su guion en el mensaje: no cuenta como «dicho por el usuario» // FT-137: para saber qué contraseñas dio el usuario en este chat
 
   // Navegador del Guía: Playwright MCP sobre el Chromium del panel 🌐 (claude-cli + modo dedicado) o las browser.* de siempre
-  const playwright = guideUsesPlaywright({ settings: store.get().settings, mode: browserMode(), provider: name });
+  const playwright = guideUsesPlaywright({ settings: store.get().settings, provider: name });
   let slot = providers.get(c.id);
   if (!slot || slot.model !== model || slot.name !== name || slot.playwright !== playwright) {
     slot?.provider.stop();
     const provider = PROVIDERS[name].create();
-    provider.start({ system: playwright ? SYSTEM + PLAYWRIGHT_RULES + (playwright === 'external' ? EXTERNAL_RULES : '') : SYSTEM, model, resume: c.provider === name ? c.sessionId : null, history: c.messages, cwd: store.DATA_DIR, chatId: c.id, playwright });
+    provider.start({ system: playwright ? SYSTEM + PLAYWRIGHT_RULES + (playwright === 'external' ? EXTERNAL_RULES : OWN_RULES) : SYSTEM, model, resume: c.provider === name ? c.sessionId : null, history: c.messages, cwd: store.DATA_DIR, chatId: c.id, playwright });
     slot = { provider, model, name, playwright };
     providers.set(c.id, slot);
   }
@@ -161,8 +158,7 @@ export async function* chat({ chatId, text, attachments, client = null }) {
       }
       if (/^browser[._]/.test(ev.name || '') && ev.type === 'tool_call') browserCalls++;
       // FT-137: el valor de una contraseña no sale por SSE ni se guarda (ni en tool_call, ni en resultados, ni si el modelo lo repite)
-      if (ev.type === 'tool_call' && isPasswordTarget(ev.name, ev.args)) { secrets.authorize(c.id, ev.args.text); ev = { ...ev, args: { ...ev.args, text: secrets.MASK } }; }
-      else if (secrets.has(c.id) && (ev.type === 'text' || ev.type === 'tool_result' || ev.type === 'tool_call')) ev = JSON.parse(secrets.mask(c.id, JSON.stringify(ev)));
+      if (secrets.has(c.id) && (ev.type === 'text' || ev.type === 'tool_result' || ev.type === 'tool_call')) ev = JSON.parse(secrets.mask(c.id, JSON.stringify(ev)));
       if (capHit && ev.type === 'error') ev = { type: 'done', sessionId: provider.sessionId, costUsd: estUsd, usage: estUsage, capped: true }; // el «Parado» lo provoca el tope
       if (ev.type === 'text') { reply += (reply ? '\n\n' : '') + ev.text; }
       else if (ev.type === 'tool_call') { flush(); c.messages.push({ role: 'tool', ts: Date.now(), id: ev.id, name: ev.name, args: ev.args, ok: null, result: null }); }
@@ -170,10 +166,9 @@ export async function* chat({ chatId, text, attachments, client = null }) {
       else if (ev.type === 'error') { flush(); c.messages.push({ role: 'error', ts: Date.now(), text: ev.error, stopped: !!ev.stopped }); }
       else if (ev.type === 'done') {
         flush();
-        if (browserCalls) { // FT-132: tokens y coste de la petición con navegador → evento done y panel 🌐
+        if (browserCalls) { // FT-132: tokens y coste de la petición con navegador → evento done
           const info = { calls: browserCalls, costUsd: ev.costUsd ?? (estUsd || null), usage: ev.usage || estUsage || null, maxUsd: capUsd, capped: capHit, ms: Date.now() - turnStart };
           ev = { ...ev, browser: info };
-          browserPanel.setLastRequest({ ...info, at: Date.now() });
         }
         if (ev.costUsd != null || ev.usage) c.messages.push({ role: 'meta', ts: Date.now(), provider: name, model, costUsd: ev.costUsd ?? null, usage: ev.usage || null, ...(ev.browser ? { browser: ev.browser } : {}) });
       }

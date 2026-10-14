@@ -53,13 +53,6 @@ test('tools/list publica los nombres sin punto y con la política en la descripc
   assert.match(r.result.tools[0].description, /^\[write\]/);
 });
 
-test('AO_MCP_ONLY=browser: solo browser.*, sin browser.open', async () => {
-  const [r] = await talk([{ jsonrpc: '2.0', id: 1, method: 'tools/list' }], { AO_MCP_ONLY: 'browser' });
-  assert.deepEqual(r.result.tools.map((t) => t.name), ['browser_screenshot', 'browser_click']);
-  const [c] = await talk([call(2, 'task_create', { title: 'x' })], { AO_MCP_ONLY: 'browser' });
-  assert.equal(c.error.code, -32602, 'una tool fuera del ámbito no se puede llamar');
-});
-
 test('tool desconocida o sin nombre → error -32602', async () => {
   const rs = await talk([call(1, 'no_existe', {}), call(2, undefined, {}), call(3, 42, {}), { jsonrpc: '2.0', id: 4, method: 'tools/call' }]);
   assert.equal(rs.length, 4);

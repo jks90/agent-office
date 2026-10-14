@@ -22,23 +22,20 @@ import * as boards from './boards/index.js';
 import * as skills from './skills.js';
 import { draftTask } from './ai-draft.js';
 import crypto2 from 'node:crypto';
-import { saveRole, deleteRole, setRoleTools } from './roles.js';
+import { saveRole, deleteRole, setRoleTools, setRoleBrowser } from './roles.js';
 import * as toolkit from './toolkit.js'; // 🧰 uso de herramientas y avisos
 import * as proposals from './proposals.js';
 import * as git from './git.js';
 import { ladders, normalizeLadder } from './model-ladder.js'; // FT-60
 import * as activity from './events.js';
-import * as browserPanel from './browser/panel.js'; // FT-117
 import { serveSseOverWs } from './ws-sse.js';
-import * as browser from './browser/index.js'; // FT-118
-import * as browserExt from './browser/extension.js';
+import { extensionToken, externalBrowser, findBrowser, playwrightEnabled } from './browser/playwright-mcp.js';
 import * as releaseTrigger from './release-trigger.js'; // FT-174
 import * as telegram from './telegram.js'; // avisos al móvil (ReviewPending, bloqueos, fallos)
 import * as selfupdate from './selfupdate.js'; // se pone al día solo con GitHub cuando no hay nadie trabajando
 import * as context from './context.js';
 import * as guideTools from './guide/tools.js';
 import * as guidePolicy from './guide/policy.js';
-import * as browserPolicy from './browser/policy.js';
 import * as guide from './guide/index.js';
 import * as guideReport from './guide/report.js'; // 📮 reportes del Guía al admin
 import { getProvider as desktopProvider } from './desktop/index.js';
@@ -121,7 +118,7 @@ const inputStatus = () => {
   return inputCache.v;
 };
 // FT-50: cada tarea sin empezar lleva `plannedAgentId`/`plannedReason` (calculados en cada snapshot, no persistidos).
-const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), tasks: review.decorate(team.withPlannedAgents(st)), modelLadders: ladders(st.settings), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), costEstimates: team.costEstimates(), rtk: claudeEngine.rtkAvailable(), codeIndexInstalled: codeindex.available(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot(), browser: { ...browserPanel.status(), mode: browser.getMode(), modes: browser.MODES, ext: browserExt.status() } }; };
+const snapshot = () => { const st = store.get(); return { ...st, projects: st.projects.map((p) => ({ ...p, prefixDefault: prefixOf(p) })), tasks: review.decorate(team.withPlannedAgents(st)), modelLadders: ladders(st.settings), roles: allRoles(), engines: team.ENGINE_IDS, suite: suiteInfo(), costEstimates: team.costEstimates(), rtk: claudeEngine.rtkAvailable(), codeIndexInstalled: codeindex.available(), questions: questions.list(), guidePolicy: { ...guidePolicy.getPolicy(), input: inputStatus() }, guideProviders: guide.providerInfo(), quota: quota.snapshot(), browser: browserInfo() }; };
 
 async function readBody(req) {
   const limit = req.url.startsWith('/api/upload') ? 40e6 : req.url.startsWith('/api/guide/stt') ? 12e6 : 1e6; // adjuntos y audio del Guide (FT-9) en base64
@@ -141,33 +138,14 @@ const gated = (fn) => async (m, b) => {
 const findProject = (id) => store.get().projects.find((p) => p.id === id) || (() => { throw Object.assign(new Error('Proyecto no encontrado'), { status: 404 }); })();
 const repoPath = (id, key) => { const rs = findProject(id).repos || []; const r = rs.find((x) => x.key === key) || (!key && rs[0]); if (!r) throw Object.assign(new Error('Repo no encontrado'), { status: 404 }); return r.path; };
 
-browser.setMode(store.get().settings.browserMode); // FT-118
-browserExt.onChange(() => store.changed());
+// 🌐 Navegador de los agentes y del Guía (Playwright MCP): tu navegador con la extensión o un Chromium propio
+const browserInfo = () => ({ enabled: playwrightEnabled(), mode: extensionToken() && externalBrowser() ? 'external' : 'own', external: externalBrowser(), token: !!extensionToken(), own: findBrowser() });
 const routes = [
-  ['POST', /^\/api\/browser\/pair$/, () => browserExt.newPairingCode()], // FT-118: código de un solo uso para la extensión
-  ['POST', /^\/api\/browser\/forget$/, () => browserExt.forget()],
   ['GET', /^\/api\/state$/, () => snapshot()],
 // FT-152: ficha de rendimiento por agente, rol y modelo (?projectId=&days=)
 ['GET', /^\/api\/scores$/, (_, __, q) => scores.cached(store.get(), { projectId: q.projectId || '', days: q.days, estimates: team.costEstimates(), events: activity.list({ projectId: q.projectId || undefined }) })],
   // Cuota restante de las suscripciones de Claude y Codex (FT-45); ?force=1 se salta la caché de 60 s
   ['GET', /^\/api\/quota$/, (_, __, q) => quota.readAll({ force: q.force === '1' })],
-  // Panel del navegador del agente (FT-117): estado, abrir/cerrar, control agente↔usuario, navegación, pestañas y entrada (el vídeo va por /api/browser/stream)
-  ['GET', /^\/api\/browser$/, () => browserPanel.refresh()],
-  ['POST', /^\/api\/browser\/open$/, () => browserPanel.open()],
-  ['POST', /^\/api\/browser\/close$/, () => browserPanel.close()],
-  ['POST', /^\/api\/browser\/control$/, (_, b) => browserPanel.setControl(b.mode)],
-  ['POST', /^\/api\/browser\/nav$/, (_, b) => browserPanel.nav(b)],
-  ['POST', /^\/api\/browser\/tab$/, (_, b) => browserPanel.tab(b)],
-  ['POST', /^\/api\/browser\/input$/, (_, b) => browserPanel.input(b)],
-  // Guía con Playwright MCP (--cdp-endpoint http://127.0.0.1:<puerto>/api/browser/cdp): arranca el Chromium dedicado y da su ws. Solo loopback.
-  ['GET', /^\/api\/browser\/cdp\/json\/version\/?$/, async (_, __, ___, req) => {
-    if (!isLoopback(req)) throw Object.assign(new Error('Solo desde este PC'), { status: 403 });
-    const d = browser.getDriver();
-    if (!d.cdpEndpoint) throw Object.assign(new Error('El navegador actual no admite CDP (modo extensión)'), { status: 409 });
-    const ws = await d.cdpEndpoint();
-    browserPanel.refresh().catch(() => {});
-    return { Browser: 'AgentOffice', webSocketDebuggerUrl: ws };
-  }],
   // Activity Stream tipado (FT-1)
   ['GET', /^\/api\/events$/, (_, __, q) => activity.list(q)],
   // Contexto de la UI (FT-2): lo que el usuario está viendo, por cliente (cabecera `x-ao-client`)
@@ -271,6 +249,7 @@ const routes = [
   ['POST', /^\/api\/proposals\/(\w+)\/accept$/, ([id]) => proposals.accept(id, { projectDir: team.projectDir, repoOf: (p, key) => (p.repos || []).find((r) => r.key === key) || (p.repos || [])[0] || null, addScript: toolcat.addScript, roleOf: (id2) => allRoles()[id2], setRoleTools })], // 🧰
   ['GET', /^\/api\/proposals\/(\w+)$/, ([id]) => proposals.view(id, { projectDir: team.projectDir, worktreeOf: (p, t, r) => [git.worktreeDir(p, t), git.extraWorktreeDir(p, t, r)], repoOf: (p, key) => (p.repos || []).find((r) => r.key === key) || (p.repos || [])[0] || null })], // 🧰 ver antes de aceptar
   ['POST', /^\/api\/proposals\/(\w+)\/reject$/, ([id]) => proposals.reject(id)], // 🧰
+  ['POST', /^\/api\/roles\/([\w-]+)\/browser$/, ([id], b) => { const r = setRoleBrowser(id, !!b.on); store.changed(); return r; }], // 🌐 activar/desactivar el navegador del rol
   ['POST', /^\/api\/roles\/([\w-]+)\/tools$/, ([id], b) => { const r = setRoleTools(id, b.kind, b.names); store.changed(); return r; }], // 🧰
   ['POST', /^\/api\/roles$/, (_, b) => { const r = saveRole(b); store.changed(); return r; }],
   ['DELETE', /^\/api\/roles\/([\w-]+)$/, ([id]) => { deleteRole(id); store.changed(); }],
@@ -362,7 +341,6 @@ const routes = [
     if (Array.isArray(b.hiddenWarnings)) st.hiddenWarnings = [...new Set(b.hiddenWarnings.map(String))].slice(0, 300); // 🧰 avisos de Herramientas ocultados (p. ej. roles que se usan en otra máquina)
     if (Array.isArray(b.hiddenProjects)) st.hiddenProjects = b.hiddenProjects.map(String).filter((id) => /^\w+$/.test(id)).slice(0, 500); // proyectos ocultos en la UI (siguen funcionando)
     if (typeof b.codeIndex === 'boolean') st.codeIndex = b.codeIndex; // FT-58
-    if (browser.MODES.includes(b.browserMode)) { st.browserMode = b.browserMode; browser.setMode(b.browserMode); } // FT-118
     if (typeof b.cacheAffinity === 'boolean') st.cacheAffinity = b.cacheAffinity; // FT-64
     if (b.maxTaskUsd !== undefined) st.maxTaskUsd = Math.max(0.5, Math.min(50, Number(b.maxTaskUsd) || 3)); // tope de gasto por intento de tarea
     if (b.compactAt !== undefined) st.compactAt = Number(b.compactAt) > 0 ? Math.min(90, Math.max(30, Number(b.compactAt))) / 100 : 0; // FT-63: % de contexto que dispara la compactación (0 = apagada)
@@ -391,7 +369,6 @@ const routes = [
     }
     if (b.guidePolicy && typeof b.guidePolicy === 'object') guidePolicy.setPolicy(b.guidePolicy);
     if (typeof b.guideInputFallback === 'boolean') guidePolicy.setPolicy({ guideInputFallback: b.guideInputFallback }); // FT-30
-    if (b.browserPolicy && typeof b.browserPolicy === 'object') browserPolicy.setBrowserPolicy(b.browserPolicy); // FT-116
     store.changed();
     return st;
   }],
@@ -410,7 +387,6 @@ function events(req, res) {
   const onUi = (cmd) => send('ui', cmd); // FT-4: órdenes del Guide a la UI (navegar, abrir tarea…)
   store.bus.on('activity', onActivity);
   store.bus.on('ui', onUi);
-  if (new URL(req.url, 'http://x').searchParams.get('browser') === '1') browserPanel.attach(req, res); // vídeo del 🌐 por el mismo SSE
   const ping = setInterval(() => res.write(': ping\n\n'), 20000);
   req.on('close', () => { clearInterval(ping); store.bus.off('state', onState); store.bus.off('log', onLog); store.bus.off('activity', onActivity); store.bus.off('ui', onUi); });
 }
@@ -473,7 +449,6 @@ const server = http.createServer(async (req, res) => {
   }
   if (pathname === '/events') return events(req, res);
   if (pathname === '/api/file') return serveUpload(req, res);
-  if (pathname === '/api/browser/stream') return browserPanel.subscribe(req, res); // FT-117
   if (!pathname.startsWith('/api/')) return serveStatic(req, res);
   if (pathname === '/api/guide/chat' && req.method === 'POST') return guideChat(req, res);
   if (pathname === '/api/guide/tts' && req.method === 'POST') return guideTts(req, res);
@@ -486,11 +461,10 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(e.status || 500, { 'content-type': 'application/json' }).end(JSON.stringify({ error: e.message, gated: e.gated, suite: e.suite, missing: e.missing, retryAfterMs: e.retryAfterMs, needsConfirm: e.needsConfirm, hasCode: e.hasCode, target: e.target, findings: e.findings, unlinked: e.unlinked, linkUrl: e.linkUrl }));
   }
 });
-server.on('upgrade', (req, socket) => { // FT-118: WebSocket de la extensión (solo loopback; se autentica con código/clave)
+server.on('upgrade', (req, socket) => {
   const p = new URL(req.url, 'http://x').pathname;
-  if (p === '/api/browser/ext') browserExt.handleUpgrade(req, socket);
   // /events también por WebSocket (no cuenta en el cupo de 6 conexiones del navegador); pasa por el manejador HTTP normal (token incluido)
-  else if (p === '/events') serveSseOverWs(req, socket, (rq, rs) => server.emit('request', rq, rs));
+  if (p === '/events') serveSseOverWs(req, socket, (rq, rs) => server.emit('request', rq, rs));
   else socket.destroy();
 });
 server.listen(PORT, HOST, () => {

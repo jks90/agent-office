@@ -1,4 +1,4 @@
-// FT-118 · Mínimo servidor WebSocket (RFC 6455) sin dependencias: solo lo que necesita la extensión.
+// Mínimo servidor WebSocket (RFC 6455) sin dependencias (lo usa ws-sse.js para los eventos por WebSocket).
 // Mensajes de texto, ping/pong y cierre; sin extensiones ni fragmentación saliente.
 import crypto from 'node:crypto';
 

@@ -91,13 +91,11 @@ function toast(text, kind = '') {
 // suelta (Chrome solo admite 6 conexiones HTTP/1.1 por servidor; con varias pestañas de flow-test se agotaban).
 let esRetry = 1000;
 let settingsEmbedOpened = false;
-let evES = null, evBrowser = false, evHiddenT = 0;
+let evES = null, evHiddenT = 0;
 function connectEvents() {
   if (evES) { evES.close(); evES = null; }
-  const es = openEventStream(BASE + 'events' + (evBrowser ? '?browser=1' : '')); // WebSocket si se puede (no gasta del cupo de 6 conexiones)
+  const es = openEventStream(BASE + 'events'); // WebSocket si se puede (no gasta del cupo de 6 conexiones)
   evES = es;
-  es.addEventListener('frame', (e) => brOnFrame(e));
-  es.addEventListener('mark', (e) => brOnMark(e));
   es.addEventListener('open', () => { esRetry = 1000; });
   es.addEventListener('state', (e) => {
     const was = new Set(S.tasks.filter((t) => t.status === 'review').map((t) => t.id)), hadState = S.tasks.length > 0;
@@ -345,6 +343,7 @@ async function roleView(id) {
       <div><b>🧩 Skills</b>${items(r.skills || [], skillsData?.catalog, '🧩')}</div>
       <div><b>🔌 MCP</b>${items(r.mcps || [], toolsData?.mcp?.catalog, '🔌')}</div>
       <div><b>📜 Scripts</b>${items(r.scripts || [], toolsData?.scripts?.catalog, '📜')}</div>
+      <div><b>🌐 Navegador</b><p><label title="${BROWSER_BUILTIN.includes(id) ? 'Rol de serie: siempre lo lleva' : 'Maneja tu navegador (o un Chromium propio) con Playwright'}"><input type="checkbox" data-role-browser="${esc(id)}" ${roleHasBrowser(id, r) ? 'checked' : ''} ${editable && !BROWSER_BUILTIN.includes(id) ? '' : 'disabled'}> activado</label></p></div>
       <div><b>🔧 Herramientas permitidas</b>${r.tools?.length ? `<p class="rv-tools-allowed">${r.tools.map((t) => `<code>${esc(t)}</code>`).join(' ')}</p>` : '<p class="muted">Las de su tipo (por defecto).</p>'}</div>
     </div>
     <h4>📝 Prompt de sistema</h4>
@@ -1032,101 +1031,8 @@ document.addEventListener('click', async (e) => {
   document.querySelectorAll('.model-pick').forEach((w) => repaintModel(w, w.dataset.engine, modelPickValue(w)));
 });
 const pickModel = (f) => (f.model === '__other' ? (f.model_other || '').trim() : f.model || '');
-// ── Navegador del agente (FT-117) ───────────────────────────────────────────
-// Vista en vivo: el estado (control, pestañas, url, handoffs) llega en `S.browser` (SSE de estado); los fotogramas y la marca
-// del elemento sobre el que actúa el agente, por el mismo SSE de eventos con ?browser=1 (solo mientras la vista está a la vista).
-let brFrame = null, brMarkT = 0, brLastWheel = 0;
-const brCall = (p, body) => api('POST', 'api/browser/' + p, body || {}).then((r) => r, () => null);
-function brOnFrame(e) {
-    brFrame = JSON.parse(e.data);
-    const img = $('#br-img');
-    img.src = `data:${brFrame.mime};base64,${brFrame.data}`;
-    img.dataset.fw = brFrame.w; img.dataset.fh = brFrame.h; // tamaño del viewport del fotograma (px CSS)
-    img.hidden = false;
-    $('#br-empty').hidden = true;
-}
-function brOnMark(e) {
-    const m = JSON.parse(e.data), img = $('#br-img');
-    if (!brFrame || !img.clientWidth) return;
-    const k = img.clientWidth / brFrame.w, el = $('#br-mark');
-    Object.assign(el.style, { left: img.offsetLeft + m.x * k + 'px', top: img.offsetTop + m.y * k + 'px', width: Math.max(8, m.w * k) + 'px', height: Math.max(8, m.h * k) + 'px' });
-    el.hidden = false;
-    clearTimeout(brMarkT);
-    brMarkT = setTimeout(() => { el.hidden = true; }, m.ms || 1000);
-}
-function brShow() {
-  renderBrowser();
-  if (!evBrowser) { evBrowser = true; connectEvents(); }
-}
-function brHide() { if (evBrowser) { evBrowser = false; connectEvents(); } }
-function renderBrowser() {
-  const b = S.browser;
-  if (!b || $('#view-browser').hidden) return;
-  const mine = b.control === 'user';
-  $('#br-who').textContent = mine ? '🧑 Controlas tú' : '🤖 Controla el agente';
-  if (mine && b.waiting) $('#br-who').textContent = '🧑 Controlas tú · ⏳ el agente espera a que le devuelvas el control'; // FT-135
-  $('#br-who').className = 'br-who ' + (mine ? 'user' : 'agent');
-  const ctl = $('#br-control');
-  ctl.textContent = mine ? '↩ Devolver al agente' : '✋ Tomar el control';
-  ctl.disabled = !b.open;
-  ctl.title = mine ? 'El agente reanuda' : 'El agente queda en pausa y tus clics y teclas van a la página';
-  const op = $('#br-open');
-  op.textContent = b.open ? 'Cerrar navegador' : 'Abrir navegador';
-  op.disabled = !b.open && !b.available;
-  for (const id of ['br-back', 'br-fwd', 'br-reload']) $('#' + id).disabled = !(b.open && mine);
-  const u = $('#br-url');
-  u.disabled = !(b.open && mine);
-  if (document.activeElement !== u) u.value = b.url || '';
-  $('#br-tabs').innerHTML = b.open
-    ? b.tabs.map((t) => `<span class="br-tab ${t.active ? 'on' : ''}"><button data-brtab="${esc(t.id)}" ${mine ? '' : 'disabled'} title="${esc(t.url)}">${esc((t.title || t.url || 'nueva pestaña').slice(0, 28))}</button><button class="x" data-brclose="${esc(t.id)}" ${mine ? '' : 'disabled'} title="Cerrar pestaña">✕</button></span>`).join('') + `<button class="br-new" data-brnew ${mine ? '' : 'disabled'} title="Nueva pestaña">+</button>`
-    : '';
-  if (!b.open) { brFrame = null; $('#br-img').hidden = true; }
-  $('#br-empty').hidden = !!b.open && !!brFrame;
-  $('#br-empty').textContent = b.open ? 'Esperando imagen…' : b.available ? 'El navegador del agente está cerrado. Ábrelo o espera a que el agente lo use.' : 'No hay navegador disponible: ' + (b.missing || []).join(', ');
-  $('#br-stage').classList.toggle('user', mine);
-  const hs = b.handoffs || [];
-  $('#br-side').innerHTML = `<h4>🤝 Peticiones del agente</h4>` + (hs.length
-    ? hs.map((h) => {
-      const q = (S.questions || []).find((x) => isHandoffQ(x) && x.question.includes(String(h.reason || '').slice(0, 120)));
-      return `<div class="br-handoff"><div>${esc(h.reason || 'El agente necesita que lo hagas tú')}</div>${mine ? '' : `<button class="small" data-brhand="${esc(h.id)}">Tomar el control</button>`}${q ? `<button class="small primary" data-hqa="${esc(q.id)}" data-answer="Listo">✅ Listo</button> <button class="small ghost" data-hqa="${esc(q.id)}" data-answer="Cancelar">Cancelar</button>` : ''}</div>`;
-    }).join('')
-    : `<p class="muted">Sin peticiones. Cuando el agente necesite ayuda (login, captcha…) aparecerá aquí.</p>`)
-    + (b.lastRequest ? `<h4>💸 Última petición (FT-132)</h4><p class="muted">${b.lastRequest.calls} acciones · ${b.lastRequest.costUsd != null ? '$' + Number(b.lastRequest.costUsd).toFixed(3) : 'coste n/d'}${b.lastRequest.usage ? ` · ${(b.lastRequest.usage.input || 0) + (b.lastRequest.usage.cacheRead || 0) + (b.lastRequest.usage.cacheWrite || 0)} tok entrada / ${b.lastRequest.usage.output || 0} salida` : ''} · ${Math.round(b.lastRequest.ms / 1000)} s${b.lastRequest.capped ? ` · ⚠ tope de $${b.lastRequest.maxUsd} alcanzado` : ''}</p>` : '');
-}
-// Entrada del usuario → driver (solo con el control tomado); x,y en px CSS del viewport según el tamaño del fotograma
-const brPoint = (e) => { const r = $('#br-img').getBoundingClientRect(); return brFrame && r.width ? { x: ((e.clientX - r.left) / r.width) * brFrame.w, y: ((e.clientY - r.top) / r.height) * brFrame.h } : null; };
-const brMine = () => S.browser?.control === 'user' && S.browser.open;
-$('#br-stage').addEventListener('click', (e) => { $('#br-stage').focus(); const p = brMine() && brPoint(e); if (p) brCall('input', { type: 'click', ...p }); });
-$('#br-stage').addEventListener('dblclick', (e) => { const p = brMine() && brPoint(e); if (p) brCall('input', { type: 'dblclick', ...p }); });
-$('#br-stage').addEventListener('wheel', (e) => {
-  const p = brMine() && brPoint(e);
-  if (!p) return;
-  e.preventDefault();
-  if (Date.now() - brLastWheel < 60) return;
-  brLastWheel = Date.now();
-  brCall('input', { type: 'wheel', ...p, dx: e.deltaX, dy: e.deltaY });
-}, { passive: false });
-$('#br-stage').addEventListener('keydown', (e) => {
-  if (!brMine() || e.ctrlKey || e.metaKey || e.altKey) return;
-  e.preventDefault();
-  brCall('input', e.key.length === 1 ? { type: 'text', text: e.key } : { type: 'key', key: e.key });
-});
-$('#br-control').addEventListener('click', () => brCall('control', { mode: brMine() ? 'agent' : 'user' }).then(() => $('#br-stage').focus()));
-$('#br-open').addEventListener('click', () => brCall(S.browser?.open ? 'close' : 'open').then(() => brShow()));
-$('#br-back').addEventListener('click', () => brCall('nav', { op: 'back' }));
-$('#br-fwd').addEventListener('click', () => brCall('nav', { op: 'forward' }));
-$('#br-reload').addEventListener('click', () => brCall('nav', { op: 'reload' }));
-$('#br-url-form').addEventListener('submit', (e) => { e.preventDefault(); let u = $('#br-url').value.trim(); if (u && !/^[a-z]+:/i.test(u)) u = 'https://' + u; if (u) brCall('nav', { op: 'go', url: u }); });
-$('#view-browser').addEventListener('click', (e) => {
-  const t = e.target.closest('[data-brtab],[data-brclose],[data-brnew],[data-brhand]');
-  if (!t) return;
-  if (t.dataset.brtab) brCall('tab', { op: 'select', id: t.dataset.brtab });
-  else if (t.dataset.brclose) brCall('tab', { op: 'close', id: t.dataset.brclose });
-  else if (t.dataset.brnew !== undefined) brCall('tab', { op: 'new', url: 'about:blank' });
-  else if (t.dataset.brhand) brCall('control', { mode: 'user' });
-});
 const VIEW_PARAM = new URLSearchParams(location.search).get('view'); // ?view=guide (botón «Guía» de flow-test, FT-3)
-let activeTab = ['office', 'tasks', 'agents', 'tools', 'guide', 'browser', 'marketplace'].includes(VIEW_PARAM) ? VIEW_PARAM : (safeGet('ao:tab') === 'guide' ? 'office' : safeGet('ao:tab')) || 'office'; // FT-204: Guía ya no está en el menú; una pestaña guardada «guide» vuelve a la oficina
+let activeTab = ['office', 'tasks', 'agents', 'tools', 'guide', 'marketplace'].includes(VIEW_PARAM) ? VIEW_PARAM : (safeGet('ao:tab') === 'guide' ? 'office' : safeGet('ao:tab')) || 'office'; // FT-204: Guía ya no está en el menú; una pestaña guardada «guide» vuelve a la oficina
 function showTab(tab) {
   const prev = activeTab;
   activeTab = tab;
@@ -1141,7 +1047,6 @@ function showTab(tab) {
   if (tab === 'tools') setTimeout(() => renderToolsView()); // 🧰 skills, MCP y scripts (diferido por lo mismo)
   if (tab === 'marketplace') setTimeout(renderMarketplace); // FT-142 (diferido: su estado se declara al final)
   if (tab === 'inbox') setTimeout(renderInbox); // al arrancar con «Para ti» guardada, su código aún no está definido: después de cargar
-  if (tab === 'browser') brShow(); else brHide();
   if (tab === 'guide' && G.panelOpen) guideToggle(false); // FT-204: el cajón no convive con la vista Guía
   if (tab === 'guide') guideShow(); else guideRender();
   publishContext();
@@ -1213,7 +1118,6 @@ function render() {
   renderWelcome(); // 👋 sin proyectos
   renderSummary();
   renderInbox();
-  renderBrowser();
   renderQuotaChip();
   const ts = tasks();
   const working = team().filter((a) => a.status === 'working');
@@ -2489,15 +2393,6 @@ function logKind(line) {
 }
 
 // ── Diálogos ───────────────────────────────────────────────────────────────
-// FT-118: estado de la extensión y emparejamiento (Ajustes ▸ Navegador)
-function browserExtBlock() {
-  const x = S.browser?.ext || {};
-  const state = x.connected ? `🟢 conectada · ${x.tabs?.length || 0} pestaña(s) cedida(s)` : x.paired ? '⚪ emparejada, sin conexión (abre el navegador con la extensión)' : '⚪ sin emparejar';
-  return `<p class="muted" style="margin:2px 0 8px">Extensión «Mi navegador» (carpeta <code>extension/</code>): ${state}.
-    <button type="button" class="small" data-browser-pair>Generar código de emparejamiento</button>
-    ${x.paired ? '<button type="button" class="small" data-browser-forget>Olvidar extensión</button>' : ''}
-    <span id="bx-code" style="font-weight:600">${x.pairing ? `Código: ${esc(x.pairing.code)} (caduca en 5 min; un solo uso)` : ''}</span></p>`;
-}
 // ⇄ Elegir el proyecto de destino (todos menos el actual) y ejecutar `go(projectId, campos)`.
 function pickProject(title, extra, go) {
   const opts = S.projects.filter((p) => p.id !== projectId).map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
@@ -2724,20 +2619,14 @@ Pasos, convenciones y ejemplos…</textarea>
     ${(S.guidePolicy?.always || []).length ? checkList('guideAlways', S.guidePolicy.always.map((n) => ({ value: n, label: n })), S.guidePolicy.always, '', 'cols') : '<p class="muted">Ninguna. En una confirmación del Guide, «Sí, siempre» deja de preguntar por esa acción.</p>'}
     <label><input type="checkbox" name="guideInputFallback" ${S.guidePolicy?.guideInputFallback ? 'checked' : ''} /> Permitir ratón y teclado (último recurso)</label>
     <p class="muted">Entrada «ciega» del Guide cuando ni la API interna, ni ui.find/ui.act ni application.open bastan. Apagado de serie; las teclas destructivas siempre piden confirmación (FT-30, FT-32).${S.guidePolicy?.input && !S.guidePolicy.input.ok ? ` <span class="bad">Faltan herramientas: ${esc(S.guidePolicy.input.missing.join(', ') || 'xdotool (X11) / ydotool (Wayland)')}. Instálalas para que funcione.</span>` : ''}</p>
-    <div class="section-title" data-group="Seguridad" title="FT-114 · FT-116 · FT-118">🌐 Navegador del agente</div>
-    <label>Navegador del agente (FT-114 · FT-118)</label>
-    <select name="browserMode">${[['dedicated', 'Chromium dedicado (perfil propio de AgentOffice)'], ['extension', 'Mi navegador (extensión de extension/)']].map(([v, t]) => `<option value="${v}" ${(S.browser?.mode || 'dedicated') === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
-    ${browserExtBlock()}
-    <label>Dominio sin regla</label>
-    <select name="browserDefault">${[['ask', 'Preguntar la 1.ª vez por dominio y sesión'], ['allow', 'Permitir'], ['block', 'Bloquear']].map(([v, l]) => `<option value="${v}" ${(S.settings.browserPolicy?.default || 'ask') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
-    <label>Reglas por dominio (una por línea: <code>dominio allow|block|ask</code>)</label>
-    <textarea name="browserDomains" rows="4" placeholder="example.com allow&#10;banco.es block&#10;localhost allow">${esc(Object.entries(S.settings.browserPolicy?.domains || {}).map(([d, m]) => `${d} ${m}`).join('\n'))}</textarea>
-    <p class="muted">file://, chrome:// y similares se bloquean siempre; localhost y la red local, salvo que los permitas aquí de forma explícita. Enviar, pagar, borrar, <code>evaluate</code> y formularios con contraseña/tarjeta siempre piden confirmación. El texto de las páginas se trata como datos no confiables.</p>
+    <div class="section-title" data-group="Seguridad">🌐 Navegador de los agentes</div>
+    <p class="muted">${S.browser?.mode === 'external' ? `🟢 Tu navegador (<code>${esc(S.browser.external || '')}</code>) con la extensión «Playwright MCP Bridge».` : `⚪ Chromium propio de AgentOffice${S.browser?.own ? ` (<code>${esc(S.browser.own)}</code>)` : ''}, en una ventana visible. Para usar <b>tu</b> navegador (sesiones, gestor de contraseñas): instala «Playwright MCP Bridge» en Brave/Chrome y guarda su token en <code>data/playwright-extension-token</code>.`}
+    Lo usan el Guía y los roles con «🌐 Navegador» activado.</p>
     ${buttons()}`, async (f) => {
     safeSet('ao:voice-review', f.voiceReview ? '1' : '0'); safeSet('ao:voice-tts', f.voiceTts ? '1' : '0'); (SETTINGS_EMBED ? safeSet('ao:voice-wake', f.voiceWake ? '1' : '0') : wakeSet(!!f.voiceWake)); // en el panel de flow-test no se abre el micro: el iframe principal lo recoge por el evento `storage`
     refreshSttLocal();
     ttsStop();
-    await api('POST', '/api/settings', { ...f, ponytailRoles: Object.fromEntries(Object.keys(S.roles).map((id) => [id, !!f['pt_' + id]])), quotaGuard: !!f.quotaGuard, officePanels: !!f.officePanels, officeAmbient: !!f.officeAmbient, stuckGuard: !!f.stuckGuard, cacheAffinity: !!f.cacheAffinity, agentMemory: !!f.agentMemory, claudeMemory: !!f.claudeMemory, modelLadder: { claude: f.ladder_claude || '', codex: f.ladder_codex || '' }, codeIndex: !!f.codeIndex, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite, ...(() => { const els = [...document.querySelectorAll('[name="guideAlways"]')]; return els.length ? { always: els.filter((el) => el.checked).map((el) => el.value) } : {}; })() }, guideInputFallback: !!f.guideInputFallback, browserPolicy: { default: f.browserDefault, domains: Object.fromEntries(String(f.browserDomains || '').split('\n').map((l) => l.trim().split(/\s+/)).filter((p) => p[0]).map((p) => [p[0], p[1] || 'allow'])) } });
+    await api('POST', '/api/settings', { ...f, ponytailRoles: Object.fromEntries(Object.keys(S.roles).map((id) => [id, !!f['pt_' + id]])), quotaGuard: !!f.quotaGuard, officePanels: !!f.officePanels, officeAmbient: !!f.officeAmbient, stuckGuard: !!f.stuckGuard, cacheAffinity: !!f.cacheAffinity, agentMemory: !!f.agentMemory, claudeMemory: !!f.claudeMemory, modelLadder: { claude: f.ladder_claude || '', codex: f.ladder_codex || '' }, codeIndex: !!f.codeIndex, guideModel: pickModel({ model: f.guideModel, model_other: f.guideModel_other }), guideModels: Object.fromEntries((S.guideProviders || []).filter((p) => p.id !== 'claude-cli').map((p) => [p.id, f['gm_' + p.id] || ''])), guidePolicy: { execute: f.guideExecute, write: f.guideWrite, ...(() => { const els = [...document.querySelectorAll('[name="guideAlways"]')]; return els.length ? { always: els.filter((el) => el.checked).map((el) => el.value) } : {}; })() }, guideInputFallback: !!f.guideInputFallback });
     ttsInfoLoad();
     const repos = parseRepos(f.repos);
     const cur = (project()?.repos || []).map((r) => `${r.key}=${r.path}@${(r.roles || []).join(',')}`).join('|');
@@ -3065,9 +2954,6 @@ document.addEventListener('click', async (e) => {
 // opciones (o respuesta libre); si lo cierras sin contestar queda un aviso fijo arriba para volver a abrirlo.
 const qSnoozed = new Set();
 let qOpen = null;
-// 🤝 browser.requestHuman: no se abre como modal (taparía el navegador); se salta a 🌐 Navegador y se responde allí
-const isHandoffQ = (q) => String(q?.question || '').startsWith('🤝 El agente del navegador');
-const handoffSeen = new Set();
 function renderQuestions() {
   const qs = S.questions || [];
   const bar = $('#questions-bar');
@@ -3076,9 +2962,7 @@ function renderQuestions() {
     bar.hidden = !qs.length;
   }
   if (qOpen && !qs.some((q) => q.id === qOpen)) { qOpen = null; if ($('#dialog').open && $('#dialog').className === 'question') $('#dialog').close(); }
-  const hand = qs.find((q) => isHandoffQ(q) && !handoffSeen.has(q.id));
-  if (hand) { handoffSeen.add(hand.id); if (qOpen && $('#dialog').open) $('#dialog').close(); showTab('browser'); toast('🤝 El agente te pasa el control del navegador: hazlo y pulsa «Listo»'); }
-  const next = qs.find((q) => !qSnoozed.has(q.id) && !isHandoffQ(q));
+  const next = qs.find((q) => !qSnoozed.has(q.id));
   if (next && !qOpen && !$('#dialog').open) openQuestion(next.id);
 }
 function openQuestion(id) {
@@ -3102,12 +2986,17 @@ function openQuestion(id) {
   dlg.querySelectorAll('.q-opt').forEach((b) => { b.onclick = async () => { await api('POST', `/api/questions/${id}/answer`, { answer: b.dataset.answer }); qOpen = null; dlg.close(); toast(`Respuesta enviada a ${q.agentName}`); }; });
   dlg.addEventListener('close', () => { if (qOpen === id) { qSnoozed.add(id); qOpen = null; } }, { once: true });
 }
+// 🌐 Activar/desactivar el navegador de un rol del catálogo (línea `tools:` de su fichero)
+const BROWSER_BUILTIN = ['navegante', 'qa-suite', 'office-flowtest'];
+const roleHasBrowser = (id, r) => BROWSER_BUILTIN.includes(id) || ['browser', 'playwright'].some((t) => r?.tools?.includes(t));
+document.addEventListener('change', (e) => {
+  const cb = e.target.closest?.('[data-role-browser]');
+  if (!cb) return;
+  api('POST', `/api/roles/${cb.dataset.roleBrowser}/browser`, { on: cb.checked }).then(() => toast(cb.checked ? '🌐 Navegador activado en el rol' : 'Navegador desactivado en el rol'), () => { cb.checked = !cb.checked; });
+});
 document.addEventListener('click', (e) => {
-  const h = e.target.closest('[data-hqa]'); // 🤝 «Listo»/«Cancelar» del panel 🌐
-  if (h) { api('POST', `/api/questions/${h.dataset.hqa}/answer`, { answer: h.dataset.answer }).then(() => toast(h.dataset.answer === 'Listo' ? 'El agente sigue' : 'Cancelado')).catch(() => {}); return; }
   const b = e.target.closest('[data-q]');
   if (!b) return;
-  if (isHandoffQ((S.questions || []).find((q) => q.id === b.dataset.q))) { showTab('browser'); return; }
   qSnoozed.delete(b.dataset.q); openQuestion(b.dataset.q);
 });
 // Código legible de la tarea (GL-7); las muy antiguas sin código enseñan el id.
@@ -3689,12 +3578,6 @@ document.addEventListener('click', async (e) => {
       ${buttons(t.status === 'failed' ? 'Reintentar' : 'Devolver')}`, (f) => api('POST', `/api/tasks/${t.id}/reject`, { ...f, ...rateBody(f), attachments: pendingAttachments }));
   }
   if (d.diff) return openDiff(d.diff, d.file || '');
-  if (d.browserPair !== undefined) { // FT-118: código de un solo uso para emparejar la extensión
-    const r = await api('POST', '/api/browser/pair');
-    const el = $('#bx-code'); if (el) el.textContent = `Código: ${r.code} (caduca en 5 min; un solo uso)`;
-    return;
-  }
-  if (d.browserForget !== undefined) { await api('POST', '/api/browser/forget'); return toast('Extensión olvidada: tendrás que emparejarla de nuevo'); }
   if (d.addSupervisor !== undefined) { await api('POST', `/api/projects/${projectId}/supervisor`); return toast('Coordinador añadido al equipo'); } // FT-122
   if (d.depProposal !== undefined) { const [tid, acc] = d.depProposal.split(':'); await api('POST', `/api/tasks/${tid}/dep-proposal`, { accept: acc === '1' }); return toast(acc === '1' ? 'Dependencia quitada' : 'Dependencia mantenida'); }
   if (d.importFlow !== undefined) {

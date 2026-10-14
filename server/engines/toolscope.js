@@ -25,9 +25,9 @@ const BY_KIND = {
   release: { builtin: ['Read', 'Glob', 'Grep', 'Bash'], bash: RELEASE_RULES, mcp: false },
 };
 
-// FT-115 · capacidad «browser»: tools browser.* del Guía por ao-mcp (Chromium dedicado). Solo estos roles; otro rol la activa con `tools: …, browser`.
+// 🌐 capacidad «browser» (= «playwright»): Playwright MCP sobre tu navegador o un Chromium propio (server/browser/playwright-mcp.js).
+// La llevan estos roles; otro rol la activa con `tools: …, browser` en su frontmatter.
 export const BROWSER_ROLES = ['qa-suite', 'office-flowtest'];
-// Navegante · capacidad «playwright»: Playwright MCP (server/browser/playwright-mcp.js). Rol de serie «navegante»; otro rol la activa con `tools: …, playwright`.
 export const PLAYWRIGHT_ROLES = ['navegante'];
 
 // → { builtin (para --tools), allowed (para --allowedTools, sin MCP ni RTK), mcp, browser, playwright }
