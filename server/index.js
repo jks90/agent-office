@@ -77,6 +77,30 @@ function remoteTaskOptions(projectId) {
 const remoteReplies = new Map();
 const remoteReply = (id, data) => { remoteReplies.set(id, { ...data, at: Date.now() }); for (const [k, v] of remoteReplies) if (remoteReplies.size > 50 || Date.now() - v.at > 600e3) remoteReplies.delete(k); };
 const remoteFields = (b) => Object.fromEntries(REMOTE_FIELDS.filter((k) => typeof b?.[k] === 'string').map((k) => [k, b[k]]));
+// ES-4 · Tareas compactas para el mando: lista paginada y detalle recortado (sin adjuntos ni campos pesados).
+const REMOTE_STATUSES = ['todo', 'doing', 'review', 'done']; // los 4 estados de la pestaña Tareas
+const clip = (v, n) => { const t = String(v || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
+function remoteProject(projectId) {
+  const st = store.get(), hidden = new Set(st.settings?.hiddenProjects || []), p = st.projects.find((x) => x.id === projectId);
+  if (!p || hidden.has(p.id)) throw fail(404, 'Proyecto no encontrado');
+  return st;
+}
+const remoteAgentName = (st, t) => { const id = t.agentId || t.assignedAgentId; return id === 'human' ? 'humano' : st.agents.find((a) => a.id === id)?.name || null; };
+function remoteTaskList(projectId, q) {
+  const st = remoteProject(projectId);
+  if (q.status && !REMOTE_STATUSES.includes(q.status)) throw fail(400, `status debe ser: ${REMOTE_STATUSES.join(', ')}`);
+  const num = (v, def) => (v === undefined || v === '' ? def : Number.isFinite(Number(v)) && Number(v) >= 0 ? Math.floor(Number(v)) : NaN);
+  const offset = num(q.offset, 0), limit = num(q.limit, 10);
+  if (Number.isNaN(offset) || Number.isNaN(limit)) throw fail(400, 'offset/limit inválidos');
+  const all = st.tasks.filter((t) => t.projectId === projectId && !t.archived && REMOTE_STATUSES.includes(t.status) && (!q.status || t.status === q.status))
+    .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+  return { total: all.length, tasks: all.slice(offset, offset + Math.min(limit, 20)).map((t) => ({ id: t.id, code: t.code || null, title: clip(t.title, 80), status: t.status, agent: remoteAgentName(st, t) })) };
+}
+function remoteTaskDetail(projectId, taskId) {
+  const st = remoteProject(projectId), t = st.tasks.find((x) => x.projectId === projectId && (x.id === taskId || (x.code && x.code === taskId.toUpperCase())));
+  if (!t) throw fail(404, 'Tarea no encontrada');
+  return { id: t.id, code: t.code || null, title: clip(t.title, 80), status: t.status, agent: remoteAgentName(st, t), role: t.role || null, description: clip(t.description, 1500), summary: clip(t.summary, 800) };
+}
 const PORT = Number(process.env.AO_PORT || 7420);
 const HOST = process.env.AO_HOST || '127.0.0.1'; // lanza procesos con tus permisos: solo local
 // Si se expone fuera del loopback (p. ej. para que el flow-test en Docker lo proxee), hace falta un token:
@@ -204,6 +228,8 @@ const routes = [
   // 🎛 Mando del micro (pantalla ESP32 en la LAN, uso personal): solo con AO_REMOTE_MIC=on. No graba nada: manda a las pestañas
   // abiertas (SSE `ui`) que abran el 🎤 del Guía o de «Nueva tarea» del proyecto, como si se pulsara en la app.
   ['GET', /^\/api\/remote\/projects$/, () => { remoteGate(); const hidden = new Set(store.get().settings?.hiddenProjects || []); return { projects: store.get().projects.filter((p) => !hidden.has(p.id)).map((p) => ({ id: p.id, name: p.name })), tabs: store.bus.listenerCount('ui') }; }],
+  ['GET', /^\/api\/remote\/tasks\/(\w+)$/, ([id], _, q) => { remoteGate(); return remoteTaskList(id, q); }], // ES-4
+  ['GET', /^\/api\/remote\/tasks\/(\w+)\/([\w-]+)$/, ([id, tid]) => { remoteGate(); return remoteTaskDetail(id, tid); }], // ES-4
   ['GET', /^\/api\/remote\/task-options\/(\w+)$/, ([id]) => { remoteGate(); return remoteTaskOptions(id); }],
   // Cambiar un desplegable desde el mando: se aplica a la «Nueva tarea» abierta de ese proyecto (si no hay, no pasa nada)
   ['POST', /^\/api\/remote\/task-fields$/, (_, b) => {
