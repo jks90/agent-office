@@ -6,7 +6,7 @@
 // Env: AO_PLAYWRIGHT=off (no se monta) · AO_PLAYWRIGHT_MCP (otra versión) · AO_BROWSER_PATH · AO_BROWSER_HEADLESS=0 · AO_BROWSER_NO_SANDBOX=1
 import fs from 'node:fs';
 import path from 'node:path';
-import { findBrowser } from './cdp.js';
+import { findBrowser, normalUserAgent } from './cdp.js';
 import { dataDir } from './util.js';
 
 export const PW_MCP_VERSION = '0.0.83';
@@ -35,7 +35,11 @@ export function playwrightMcp({ task, cdpEndpoint } = {}) {
   const exe = findBrowser();
   if (exe) args.push('--executable-path', exe); // sin navegador en el PC, Playwright pide el suyo (npx playwright install chromium)
   const headless = process.env.AO_BROWSER_HEADLESS !== '0' || (process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY);
-  if (headless) args.push('--headless');
+  if (headless) {
+    args.push('--headless');
+    const ua = exe && normalUserAgent(exe); // sin «HeadlessChrome»: hay webs que lo rechazan (403)
+    if (ua) args.push('--user-agent', ua);
+  }
   if (process.env.AO_BROWSER_NO_SANDBOX === '1' || process.getuid?.() === 0) args.push('--no-sandbox');
   // PATH con la carpeta de node: npx lanza `node` por el shebang
   return { type: 'stdio', command: npxBin(), args, env };

@@ -1,6 +1,7 @@
 // FT-114 · BrowserDriver sobre Chromium/Chrome/Brave dedicado, controlado por CDP con puppeteer-core.
 // puppeteer-core se importa en el primer launch(): sin él el resto de AgentOffice arranca igual (503 claro).
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { bad, checkUrl, maskHeaders, ringPush, profileDir, saveShot, MAX_SHOT_WIDTH, readPageExpr, paginateRead } from './util.js';
 
 const CANDIDATES = {
@@ -8,6 +9,16 @@ const CANDIDATES = {
   darwin: ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium', '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser'],
   win32: ['C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe', 'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe'],
 };
+// Oculto, Chrome se anuncia como «HeadlessChrome» y bastantes webs (bancos: MyInvestor da 403) lo rechazan: se lanza con el
+// user-agent de un Chrome normal de la misma versión. AO_BROWSER_UA lo fuerza.
+const UA_OS = { linux: 'X11; Linux x86_64', darwin: 'Macintosh; Intel Mac OS X 10_15_7', win32: 'Windows NT 10.0; Win64; x64' };
+export function normalUserAgent(exe) {
+  if (process.env.AO_BROWSER_UA) return process.env.AO_BROWSER_UA;
+  let major = '';
+  try { major = (execFileSync(exe, ['--version'], { encoding: 'utf8', timeout: 5000 }).match(/(\d+)\.\d+/) || [])[1] || ''; } catch { /* sin versión */ }
+  if (!major) return null;
+  return `Mozilla/5.0 (${UA_OS[process.platform] || UA_OS.linux}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`;
+}
 export function findBrowser() {
   const forced = process.env.AO_BROWSER_PATH;
   if (forced) return fs.existsSync(forced) ? forced : null;
@@ -84,7 +95,11 @@ export function createCdpDriver() {
       fs.mkdirSync(profileDir(), { recursive: true });
       const args = ['--no-first-run', '--no-default-browser-check', '--disable-features=Translate'];
       if (process.env.AO_BROWSER_NO_SANDBOX === '1' || process.getuid?.() === 0) args.push('--no-sandbox');
-      if (headless()) args.push(`--window-size=${process.env.AO_BROWSER_SIZE || '1366,860'}`); // oculto: tamaño de portátil para el panel (si no, 800×600)
+      if (headless()) {
+        args.push(`--window-size=${process.env.AO_BROWSER_SIZE || '1366,860'}`); // oculto: tamaño de portátil para el panel (si no, 800×600)
+        const ua = normalUserAgent(exe);
+        if (ua) args.push(`--user-agent=${ua}`);
+      }
       browser = await puppeteer.launch({ executablePath: exe, userDataDir: profileDir(), headless: headless(), defaultViewport: null, args });
       browser.on('disconnected', () => { browser = null; tabs.clear(); active = null; });
       browser.on('targetcreated', async (t) => {
