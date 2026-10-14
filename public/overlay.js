@@ -91,3 +91,5 @@ function connect() {
 }
 
 connect();
+// Abierta sin nadie a quien enseñar (el agente acabó mientras arrancaba Electron): no se queda invisible encima de todo
+setTimeout(() => { if (!had) host?.close(); }, 15_000);
