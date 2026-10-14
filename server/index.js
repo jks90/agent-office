@@ -30,6 +30,7 @@ import { ladders, normalizeLadder } from './model-ladder.js'; // FT-60
 import * as activity from './events.js';
 import { serveSseOverWs } from './ws-sse.js';
 import { extensionToken, externalBrowser, findBrowser, playwrightEnabled } from './browser/playwright-mcp.js';
+import { overlay } from './browser/overlay-instance.js'; // 🫧 burbuja del agente fuera de la app mientras usa el navegador
 import * as releaseTrigger from './release-trigger.js'; // FT-174
 import * as telegram from './telegram.js'; // avisos al móvil (ReviewPending, bloqueos, fallos)
 import * as selfupdate from './selfupdate.js'; // se pone al día solo con GitHub cuando no hay nadie trabajando
@@ -287,6 +288,13 @@ const routes = [
     if (!isLoopback(req)) throw Object.assign(new Error('Solo desde este PC'), { status: 403 });
     return (await import('./browser/focus.js')).focusExternalBrowser();
   }],
+  // 🫧 Burbuja del agente: su estado y «✕ Ocultar» (vuelve la próxima vez que se use el navegador). Solo loopback.
+  ['GET', /^\/api\/overlay$/, () => overlay.view()],
+  ['POST', /^\/api\/overlay\/dismiss$/, (_, __, ___, req) => {
+    if (!isLoopback(req)) throw Object.assign(new Error('Solo desde este PC'), { status: 403 });
+    overlay.dismiss();
+    return { ok: true };
+  }],
   ['POST', /^\/api\/questions\/(\w+)\/wait$/, ([id], b) => questions.wait(id, Math.min(55_000, Number(b.ms) || 50_000))],
   ['POST', /^\/api\/questions\/(\w+)\/answer$/, ([id], b) => questions.answer(id, b.answer)],
   ['POST', /^\/api\/projects\/(\w+)\/run$/, gated(([id], b) => team.setRunning(id, b.running))],
@@ -369,6 +377,7 @@ const routes = [
     if (typeof b.guideModel === 'string') st.guideModel = b.guideModel.trim();
     if (guide.providerNames().includes(b.guideProvider)) st.guideProvider = b.guideProvider;
     if (typeof b.releaseDryRun === 'boolean') st.releaseDryRun = b.releaseDryRun; // FT-175: false = «Publicar» publica de verdad (run-all sin --dry-run)
+    if (typeof b.agentOverlay === 'boolean') st.agentOverlay = b.agentOverlay; // 🫧 burbuja del agente al usar el navegador (false = apagada)
     if (b.guideBrowserMaxUsd !== undefined) st.guideBrowserMaxUsd = Math.max(0, Math.min(100, Number(b.guideBrowserMaxUsd) || 0)); // FT-132: tope de coste por petición del Guía con navegador (0 = sin tope)
     if (stt.providerNames().includes(b.sttProvider)) st.sttProvider = b.sttProvider; // FT-9
     if (tts.providerNames().includes(b.ttsProvider)) st.ttsProvider = b.ttsProvider; // FT-52
@@ -400,6 +409,14 @@ function events(req, res) {
   store.bus.on('ui', onUi);
   const ping = setInterval(() => res.write(': ping\n\n'), 20000);
   req.on('close', () => { clearInterval(ping); store.bus.off('state', onState); store.bus.off('log', onLog); store.bus.off('activity', onActivity); store.bus.off('ui', onUi); });
+}
+
+// 🫧 SSE de la burbuja del agente: solo su estado (agentes navegando + sus preguntas), no el snapshot entero.
+function overlayEvents(req, res) {
+  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+  const off = overlay.subscribe((v) => res.write(`event: overlay\ndata: ${JSON.stringify(v)}\n\n`));
+  const ping = setInterval(() => res.write(': ping\n\n'), 20000);
+  req.on('close', () => { clearInterval(ping); off(); });
 }
 
 // Adjuntos subidos (data/uploads) e imágenes de feedback (data/feedback, FT-28) para verlos desde la tarjeta.
@@ -459,6 +476,7 @@ const server = http.createServer(async (req, res) => {
     return res.writeHead(401, { 'content-type': 'application/json' }).end('{"error":"AgentOffice: falta el token (x-ao-token)"}');
   }
   if (pathname === '/events') return events(req, res);
+  if (pathname === '/overlay/events') return overlayEvents(req, res);
   if (pathname === '/api/file') return serveUpload(req, res);
   if (!pathname.startsWith('/api/')) return serveStatic(req, res);
   if (pathname === '/api/guide/chat' && req.method === 'POST') return guideChat(req, res);

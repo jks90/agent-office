@@ -362,6 +362,17 @@ El Guía y los agentes con navegador manejan la web con **Playwright MCP** (`@pl
 - **Rol de serie `navegante`** («Navegante web», kind `docs`, `sonnet`): demos guiadas, consultas y extracción de datos en webs, con informe en Markdown.
 - **Pruebas:** `node --test tests/playwright-role.test.mjs`.
 
+### 🫧 Burbuja del agente (fuera de la app)
+
+Mientras un agente o el Guía usa el navegador, sale una ventanita **siempre encima de todas las ventanas** (Electron sin marco y transparente, abajo a la derecha). Muestra quién es, la tarea y lo que está haciendo. Sus preguntas (`ao-ask`, también las de login con «🌐 Ir al navegador») y las 🛡 del Guía salen ahí con una opción por botón y respuesta libre. Así se contesta sin volver a AgentOffice.
+
+- **Cuándo sale y cuándo se va** (`server/browser/overlay.js`): sale con la primera tool `mcp__playwright__*` de un worker (evento `AgentToolStarted`), con un `browser_*` del Guía o con una pregunta `browser:true`. Se va cuando la tarea sale de «doing» o el agente acaba, falla o se pausa, o tras `AO_OVERLAY_IDLE_MS` (90 s) sin usar el navegador, salvo que haya una pregunta abierta. El ✕ la oculta hasta la próxima vez que se navegue. Se puede arrastrar.
+- **Sin instalar nada:** `npx --yes electron@31.7.7 overlay/main.cjs` (versión fijada en `ELECTRON`; `AO_OVERLAY_ELECTRON` la cambia). Igual que Playwright, llega con el `git pull` de la autoactualización. La 1.ª vez npx descarga el binario (~100 MB) a su caché. Se lanza en su propio grupo de procesos y se mata el grupo entero, porque npx no reenvía la señal. Se quita `ELECTRON_RUN_AS_NODE`, que exporta VS Code.
+- **Página:** `public/overlay.html` + `overlay.js`, con el SSE `/overlay/events`, que solo lleva los agentes navegando y sus preguntas. `GET /api/overlay` y `POST /api/overlay/dismiss` (solo loopback). Si AgentOffice cae, la ventana se cierra sola (~45 s sin SSE).
+- **Dónde funciona:** en el PC donde corre AgentOffice y con escritorio (`DISPLAY`/`WAYLAND_DISPLAY`; X11 probado). Da igual que flow-test vaya en Docker o en el cloud. Con AgentOffice en otra máquina saldría en la pantalla de esa máquina. Si Electron no arranca, no se reintenta hasta pasados 5 min y las preguntas siguen en la app y en Telegram.
+- **Apagarla:** Ajustes ▸ 🌐 Navegador de los agentes ▸ «🫧 Burbuja del agente» (`settings.agentOverlay`) o `AO_OVERLAY=off`.
+- **Pruebas:** `node --test tests/agent-overlay.test.mjs`.
+
 ## Estructura
 
 ```

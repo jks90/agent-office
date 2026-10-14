@@ -19,6 +19,7 @@ import * as openaiApi from './providers/openai-api.js';
 import { provider as localApi } from './providers/local-api.js';
 import * as fakeProvider from './providers/fake.js';
 import * as secrets from './secrets.js'; // FT-137
+import { overlay, GUIDE } from '../browser/overlay-instance.js'; // 🫧 burbuja del Guía mientras navega
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
 const PROVIDERS = { 'claude-cli': claudeCli, 'anthropic-api': anthropicApi, 'openai-api': openaiApi, 'local-api': localApi, ...(process.env.AO_GUIDE_FAKE === '1' ? { fake: fakeProvider } : {}) }; // `fake` (FT-11): solo para pruebas e2e
@@ -156,7 +157,7 @@ export async function* chat({ chatId, text, attachments, client = null }) {
         }
         continue;
       }
-      if (/^browser[._]/.test(ev.name || '') && ev.type === 'tool_call') browserCalls++;
+      if (/^browser[._]/.test(ev.name || '') && ev.type === 'tool_call') { browserCalls++; overlay.touch(GUIDE, { activity: `🌐 ${ev.name}` }); }
       // FT-137: el valor de una contraseña no sale por SSE ni se guarda (ni en tool_call, ni en resultados, ni si el modelo lo repite)
       if (secrets.has(c.id) && (ev.type === 'text' || ev.type === 'tool_result' || ev.type === 'tool_call')) ev = JSON.parse(secrets.mask(c.id, JSON.stringify(ev)));
       if (capHit && ev.type === 'error') ev = { type: 'done', sessionId: provider.sessionId, costUsd: estUsd, usage: estUsage, capped: true }; // el «Parado» lo provoca el tope
