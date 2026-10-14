@@ -53,6 +53,18 @@ test('escalera: modelo barato de Codex desde models_cache.json', () => {
   assert.equal(codexCheapModel(home), null);
 });
 
+test('escalera Codex: modelo del config.toml y sin los modelos retirados de la cuenta', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-codexhome-'));
+  fs.mkdirSync(path.join(home, '.codex'));
+  fs.writeFileSync(path.join(home, '.codex', 'models_cache.json'), JSON.stringify({ models: [{ slug: 'gpt-6.1-sol' }, { slug: 'gpt-6-luna' }, { slug: 'codex-auto-review' }] }));
+  fs.writeFileSync(path.join(home, '.codex', 'config.toml'), 'model = "gpt-6-luna"\nmodel_reasoning_effort = "low"\n');
+  assert.deepEqual(ladderFor('codex', {}, home), ['gpt-6-luna'], 'el del config.toml');
+  assert.deepEqual(ladderFor('codex', { modelLadder: { codex: ['gpt-5.5'] } }, home), ['gpt-6-luna'], 'gpt-5.5 retirado: vuelve a la de serie');
+  assert.deepEqual(ladderFor('codex', { modelLadder: { codex: 'gpt-5.5 > gpt-6.1-sol' } }, home), ['gpt-6.1-sol']);
+  fs.writeFileSync(path.join(home, '.codex', 'config.toml'), 'model = "gpt-5.5"\n');
+  assert.deepEqual(ladderFor('codex', {}, home), ['gpt-6.1-sol'], 'config con un modelo retirado: el primero de la cuenta');
+});
+
 test('pick: empieza barato, planificación arriba, minModel y escalado con tope', () => {
   const lad = ['haiku', 'sonnet'];
   assert.deepEqual(pick('claude', lad), { model: 'haiku', level: 0, why: 'barato' });
