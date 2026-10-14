@@ -11,6 +11,7 @@ import * as questions from './questions.js';
 import * as events from './events.js';
 import { classifyReject, REASONS, forCoordinator } from './scores.js'; // FT-152 · FT-154
 import * as git from './git.js';
+import { dirtyMap, commitOnMain } from './onmain-commit.js';
 import { allRoles, roleOf } from './roles.js';
 import { parseTasks } from './engines/describe.js';
 import { addUsage, codexCostUsd } from './usage.js';
@@ -1841,28 +1842,6 @@ function economyBlock(codeIndexOn) {
     '- Para explorar más de 3 ficheros (entender un módulo, buscar todos los usos de algo), delega en el subagente «explorador» (herramienta Task/Agent, si tu motor la tiene) y trabaja con su resumen; lee tú solo los tramos que vayas a editar.',
     '- Si te acercas al tope de gasto de la tarea, deja el trabajo en un estado coherente y resume qué falta.',
   ].join('\n');
-}
-
-// 🚀 Ficheros con cambios sin commitear por repo: {dir: [ruta…]} (para commitear después solo lo nuevo de la tarea).
-async function dirtyMap(dirs) {
-  const out = {};
-  for (const d of dirs) { try { out[d] = (await git.git(d, 'status', '--porcelain', '--untracked-files=all')).split('\n').filter(Boolean).map((l) => l.slice(3)); } catch { out[d] = null; } }
-  return out;
-}
-async function commitOnMain(t, agent) {
-  const lines = [];
-  const now = await dirtyMap(Object.keys(t.onMainBefore));
-  for (const [d, before] of Object.entries(t.onMainBefore)) {
-    if (!before || !now[d]) continue;
-    const mine = now[d].filter((f) => !before.includes(f) && !/^"?\.\.?\//.test(f));
-    if (!mine.length) continue;
-    try {
-      await git.git(d, 'add', '--', ...mine.map((f) => f.replace(/^"|"$/g, '').split(' -> ').pop()));
-      await git.git(d, '-c', `user.name=${agent.name} (AgentOffice)`, '-c', 'user.email=agentoffice@local', 'commit', '-q', '-m', `${t.code || t.id}: ${t.title}\n\nCo-Authored-By: AgentOffice <noreply@agentoffice.local>`);
-      lines.push(`📝 Commit en ${path.basename(d)}: ${mine.length} fichero(s)`);
-    } catch (e) { lines.push(`⚠ No pude commitear en ${path.basename(d)}: ${String(e.message).split('\n')[0]}`); }
-  }
-  return lines;
 }
 
 // 🚀 «Publicar X.Y.Z»: AgentOffice ejecuta scripts/release/run-all.sh en nombre del agente de Release (sin IA ni tope de
