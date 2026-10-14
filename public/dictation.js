@@ -43,7 +43,7 @@ function createBrowserDictation({ lang = 'es-ES', onText, onState, onError }) {
 
 // Servidor: micro abierto mientras dura el dictado; cada frase (el VAD corta por silencio, tope `maxMs`) se transcribe y se inserta.
 function createServerDictation({ record, transcribe, maxMs = 12000, onText, onState, onError }) {
-  let stream = null, cur = null, stopping = false;
+  let stream = null, cur = null, stopping = false, keepLast = false;
   return {
     get active() { return !!stream; },
     async start() {
@@ -51,13 +51,13 @@ function createServerDictation({ record, transcribe, maxMs = 12000, onText, onSt
       let mine;
       try { mine = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
       catch (e) { onError?.(/Permission|NotAllowed/i.test(e.name + e.message) ? ERRORS['not-allowed'] : 'No puedo usar el micrófono: ' + e.message); return; }
-      stream = mine; stopping = false;
+      stream = mine; stopping = false; keepLast = false;
       onState?.(true);
       while (stream === mine && !stopping) {
         let r;
         try { cur = await record({ stream: mine, gate: true, maxMs }); r = await cur.result; } catch (e) { onError?.('Error al grabar: ' + e.message); break; }
         cur = null;
-        if (stopping || stream !== mine || !r.spoke) continue; // sin voz en el segmento: se sigue escuchando
+        if ((stopping && !keepLast) || stream !== mine || !r.spoke) continue; // sin voz en el segmento: se sigue escuchando
         try { const j = await transcribe(r); if (j?.text) onText?.(String(j.text).trim()); }
         catch { break; } // `api()` ya avisa del error (p. ej. 503 sin STT): se para el dictado
       }
@@ -66,7 +66,8 @@ function createServerDictation({ record, transcribe, maxMs = 12000, onText, onSt
       cur = null;
       onState?.(false);
     },
-    stop() { stopping = true; cur?.stop(); },
+    // { keep: true }: la frase que se estaba diciendo al parar también se transcribe (el mando remoto para a media frase)
+    stop({ keep = false } = {}) { stopping = true; keepLast = keep; cur?.stop(); },
   };
 }
 

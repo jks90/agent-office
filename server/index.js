@@ -52,6 +52,7 @@ import * as codeindex from './codeindex.js'; // FT-58
 import * as claudeEngine from './engines/claude.js';
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
+const remoteGate = () => { if (process.env.AO_REMOTE_MIC !== 'on') throw fail(404, 'No encontrado'); };
 const PORT = Number(process.env.AO_PORT || 7420);
 const HOST = process.env.AO_HOST || '127.0.0.1'; // lanza procesos con tus permisos: solo local
 // Si se expone fuera del loopback (p. ej. para que el flow-test en Docker lo proxee), hace falta un token:
@@ -176,6 +177,19 @@ const routes = [
     return wake.wake(Buffer.from(b.audio, 'base64'), b.mime, b.durationMs);
   }],
   ['POST', /^\/api\/guide\/stop$/, (_, b) => guide.stop(String(b.chatId || ''))],
+  // 🎛 Mando del micro (pantalla ESP32 en la LAN, uso personal): solo con AO_REMOTE_MIC=on. No graba nada: manda a las pestañas
+  // abiertas (SSE `ui`) que abran el 🎤 del Guía o de «Nueva tarea» del proyecto, como si se pulsara en la app.
+  ['GET', /^\/api\/remote\/projects$/, () => { remoteGate(); const hidden = new Set(store.get().settings?.hiddenProjects || []); return { projects: store.get().projects.filter((p) => !hidden.has(p.id)).map((p) => ({ id: p.id, name: p.name })), tabs: store.bus.listenerCount('ui') }; }],
+  ['POST', /^\/api\/remote\/mic$/, (_, b) => {
+    remoteGate();
+    const target = b.target === 'guide' ? 'guide' : b.target === 'task' ? 'task' : null;
+    if (!target) throw fail(400, 'target: guide | task');
+    if (b.on && !store.get().projects.some((p) => p.id === b.projectId)) throw fail(404, 'Proyecto no encontrado');
+    const tabs = store.bus.listenerCount('ui');
+    if (!tabs) throw fail(409, 'No hay ninguna pestaña de AgentOffice abierta');
+    store.bus.emit('ui', { type: 'remote.mic', target, on: !!b.on, projectId: b.projectId || null, at: Date.now() });
+    return { sent: true, tabs };
+  }],
   // Cuentas de los motores de IA (login OAuth/clave API, logout)
   ['GET', /^\/api\/engines$/, () => auth.enginesStatus()],
   ['GET', /^\/api\/engines\/models$/, () => auth.enginesModels()],

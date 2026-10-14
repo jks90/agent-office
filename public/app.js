@@ -138,6 +138,7 @@ function connectEvents() {
   es.addEventListener('ui', (e) => {
     const c = JSON.parse(e.data);
     if (c.client && c.client !== CLIENT_ID) return; // dirigida a otra pestaña
+    if (c.type === 'remote.mic') return remoteMic(c); // antes del cierre del diálogo: parar no cierra «Nueva tarea»
     if ($('#dialog').open && c.type !== 'flowtest.show' && $('#dialog').className !== 'question') $('#dialog').close(); // FT-131: una 🛡/pregunta pendiente no se cierra porque el Guía navegue
     // Con proyecto y vista Oficina se entra directo a su planta (FT-47); sin proyecto se respeta el modo que haya.
     if (c.type === 'navigate' && c.view === 'office') { showTab('office'); goProject(c.projectId); if (c.projectId && S.projects.some((p) => p.id === c.projectId)) setOfficeMode('floor'); }
@@ -625,12 +626,34 @@ $('#guide-fab').addEventListener('click', (e) => { if (e.target.closest('.fab-ea
 document.addEventListener('keydown', (e) => { if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'g') { e.preventDefault(); guideToggle(); } });
 // Hablar desde cualquier sitio: mantener Ctrl+Espacio (abre el Guía si está cerrado); al soltar se envía como el 🎤.
 // Embebido en flow-test, el padre reenvía la tecla por postMessage (`flowtest:voice`) cuando el foco no está en el iframe.
+// 🎛 Mando del micro (POST /api/remote/mic, pantalla ESP32): pulsa el 🎤 del Guía (sin corte por silencio, hasta el stop) o
+// abre «Nueva tarea» del proyecto y dicta la descripción. Solo la pestaña visible; el micro ya tiene que estar permitido.
+function remoteMic(c) {
+  if (document.hidden) return;
+  if (c.target === 'guide') {
+    if (!c.on) return voiceHotkey(false);
+    goProject(c.projectId);
+    return voiceHotkey(true, { hold: true, maxMs: 5 * 60e3 });
+  }
+  if (!c.on) return micStop({ keep: true });
+  const dlg = $('#dialog'), isNew = () => dlg.open && dlg.querySelector('textarea[name=description]') && dlg.querySelector('h3')?.textContent === 'Nueva tarea';
+  if (!isNew() || c.projectId !== projectId) {
+    const blank = isNew() && !dlg.querySelector('[name=title]').value.trim() && !dlg.querySelector('[name=description]').value.trim();
+    if (dlg.open && !blank) return toast('🎛 Mando: cierra antes el diálogo abierto (no lo piso)', 'error'); // ni 🛡/preguntas ni una tarea a medias
+    if (dlg.open) dlg.close();
+    goProject(c.projectId); showTab('tasks');
+    actions['new-task']();
+  }
+  const btn = dlg.querySelector('textarea[name=description]')?.closest('.mic-wrap')?.querySelector('[data-mic]');
+  if (!btn) return toast('Este navegador no puede dictar: el mando no tiene micro que pulsar', 'error');
+  if (dictation?.btn !== btn) btn.click();
+}
 const guideVisibleRoot = () => guideRoots.find((r) => (activeTab === 'guide' ? !r.panel : r.panel))?.el;
-function voiceHotkey(down) {
+function voiceHotkey(down, opts) {
   if (!down) { if (V.holding) voiceHold(false); return; }
   if (activeTab !== 'guide' && !G.panelOpen) guideToggle(true);
   const el = guideVisibleRoot();
-  if (el) voiceHold(true, el);
+  if (el) voiceHold(true, el, opts);
 }
 document.addEventListener('keydown', (e) => { if (e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'Space') { e.preventDefault(); if (!e.repeat) voiceHotkey(true); } });
 document.addEventListener('keyup', (e) => { if (V.holding && (e.code === 'Space' || e.key === 'Control')) { e.preventDefault(); voiceHotkey(false); } });
@@ -737,7 +760,7 @@ async function voiceRecord(onLevel, opts = {}) {
     if (rms > VAD.threshold) { spoke = true; lastVoice = now; }
     if (opts.gate && !started) { if (!spoke) return; started = true; t1 = now; rec.start(); } // primera voz: empieza el segmento
     onLevel?.(rms);
-    if ((spoke && now - lastVoice > VAD.silenceMs) || now - t1 > maxMs) stop();
+    if ((spoke && !opts.hold && now - lastVoice > VAD.silenceMs) || now - t1 > maxMs) stop(); // hold: solo para con stop() (mando remoto)
   }, 50);
   if (!opts.gate) rec.start();
   return { stop, result };
@@ -747,13 +770,13 @@ const voiceTranscribe = async (r) => api('POST', '/api/guide/stt', { audio: awai
 const voiceLevel = (rms) => guideRoots.forEach((r) => r.el.querySelector('.g-vlevel')?.style.setProperty('--lv', Math.min(1, rms * 8).toFixed(2)));
 
 // on=true empieza a grabar en el chat `el`; on=false lo termina (soltar 🎤 / espacio) y manda el audio a transcribir.
-async function voiceHold(on, el) {
+async function voiceHold(on, el, opts) {
   if (!on) { V.holding = false; V.wantStop = true; V.rec?.stop(); return; }
   if (V.state !== 'idle' || G.busy) return;
   V.holding = true; V.wantStop = false; V.state = 'rec'; V.root = el;
   voiceSpeak(null);
   guideRender();
-  try { V.rec = await voiceRecord(voiceLevel); }
+  try { V.rec = await voiceRecord(voiceLevel, opts); }
   catch (e) { V.state = 'idle'; V.holding = false; guideRender(); return toast(/Permission|NotAllowed/i.test(e.name + e.message) ? 'Sin permiso de micrófono: concédelo al sitio en el navegador' : 'No puedo usar el micrófono: ' + e.message, 'error'); }
   if (V.wantStop) V.rec.stop(); // soltó antes de que el navegador diera el micro
   const r = await V.rec.result;
@@ -2472,7 +2495,7 @@ function ensureGoalMic() {
   w.insertAdjacentHTML('beforeend', MIC_BTN);
 }
 let dictation = null; // { btn, dict }: un solo dictado a la vez
-function micStop() { dictation?.dict.stop(); }
+function micStop(opts) { dictation?.dict.stop(opts); }
 document.addEventListener('click', (e) => {
   const btn = e.target.closest?.('[data-mic]');
   if (!btn) return;
