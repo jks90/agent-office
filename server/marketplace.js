@@ -265,6 +265,14 @@ function installRole(pkg, org, overwrite, files = pkg.files) {
   return target;
 }
 
+// 🪪 uids de los agentes que lleva un paquete (agente o equipo): al publicarlo se sellan.
+export function identityUids(pkg) {
+  if (pkg?.kind === 'agent') return [pkg.meta?.identity?.uid].filter(Boolean);
+  if (pkg?.kind !== 'team') return [];
+  const f = (pkg.files || []).find((x) => x.path === 'team.json');
+  try { return JSON.parse(Buffer.from(f.content, 'base64').toString('utf8')).members.map((m) => m.identity?.uid).filter(Boolean); } catch { return []; }
+}
+
 export function importPackage(pkg, opts = {}) {
   const info = inspect(pkg, opts);
   if (info.secrets.length) throw fail(422, `Paquete rechazado: contiene posibles secretos (${info.secrets.map((s) => `${s.kind} en ${s.where}`).join('; ')})`, { findings: info.secrets });

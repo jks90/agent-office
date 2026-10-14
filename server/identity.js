@@ -1,4 +1,6 @@
-// 🪪 Identidad del agente: nace con él y NO cambia nunca (ni al renombrarlo, ni al copiarlo, ni al compartirlo).
+// 🪪 Identidad del agente: nace con él y no cambia al renombrarlo, copiarlo ni compartirlo. Su dueño puede retocar el
+// físico (🎨) mientras NO se haya publicado nunca en el marketplace; al publicarlo queda sellada (sealedAt) para siempre.
+// Lo que llega de fuera (importado) llega ya sellado.
 // Lleva un uid global, su nombre de nacimiento y su físico (el muñeco 3D de la oficina). Renombrar es un «bautizo»:
 // cambia agent.name y queda en agent.baptisms, pero identity.birthName sigue siendo el original.
 // El fingerprint (sha256 de lo anterior) delata un paquete o un state.json retocado a mano.
@@ -39,7 +41,7 @@ const canon = (v) => Array.isArray(v) ? `[${v.map(canon).join(',')}]`
 const core = (id) => ({ v: id.v, uid: id.uid, birthName: id.birthName, bornAt: id.bornAt, bornIn: id.bornIn || '', avatar: id.avatar });
 export const fingerprintOf = (id) => crypto.createHash('sha256').update(canon(core(id))).digest('hex').slice(0, 24);
 
-const seal = (id) => Object.freeze({ ...id, avatar: Object.freeze({ ...id.avatar }), fingerprint: fingerprintOf(id) });
+const seal = (id) => Object.freeze({ ...core(id), ...(id.sealedAt ? { sealedAt: id.sealedAt } : {}), avatar: Object.freeze({ ...id.avatar }), fingerprint: fingerprintOf(id) });
 
 export function newIdentity(birthName, { bornIn = '', seed = crypto.randomBytes(4).readUInt32LE(0), now = Date.now() } = {}) {
   return seal({ v: VERSION, uid: `ag_${crypto.randomUUID()}`, birthName: String(birthName || '').trim(), bornAt: new Date(now).toISOString(), bornIn, avatar: avatarFromSeed(seed) });
@@ -52,19 +54,32 @@ export function legacyIdentity(agent) {
 }
 
 const HEX = /^(#[0-9a-f]{6})?$/i;
+const validAvatar = (a) => !!a && CHARACTERS.includes(a.base) && HEX.test(a.outfit ?? '') && HEX.test(a.accent ?? '') && ACCESSORIES.includes(a.accessory)
+  && Number.isInteger(a.seed) && a.seed >= 0 && [a.height, a.build].every((n) => typeof n === 'number' && n >= 0.8 && n <= 1.2);
+const cleanAvatar = (a) => ({ seed: a.seed >>> 0, base: a.base, outfit: (a.outfit || '').toLowerCase(), accessory: a.accessory, accent: (a.accent || '').toLowerCase(), height: round2(a.height), build: round2(a.build) });
 // Identidad que llega de fuera (paquete): solo se acepta con la forma correcta y el fingerprint intacto.
 export function verify(x) {
   if (!x || typeof x !== 'object') return null;
   const a = x.avatar || {};
   const ok = x.v === VERSION && /^ag_[0-9a-f-]{36}$/.test(x.uid || '') && typeof x.birthName === 'string' && x.birthName.trim() && x.birthName.length <= 80
     && !Number.isNaN(Date.parse(x.bornAt)) && typeof (x.bornIn ?? '') === 'string' && String(x.bornIn ?? '').length <= 80
-    && CHARACTERS.includes(a.base) && HEX.test(a.outfit ?? '') && HEX.test(a.accent ?? '') && ACCESSORIES.includes(a.accessory)
-    && Number.isInteger(a.seed) && [a.height, a.build].every((n) => typeof n === 'number' && n >= 0.8 && n <= 1.2);
+    && validAvatar(a);
   if (!ok) return null;
   const clean = { v: x.v, uid: x.uid, birthName: x.birthName, bornAt: x.bornAt, bornIn: x.bornIn || '',
     avatar: { seed: a.seed, base: a.base, outfit: a.outfit || '', accessory: a.accessory, accent: a.accent || '', height: a.height, build: a.build } };
-  return fingerprintOf(clean) === x.fingerprint ? seal(clean) : null;
+  // Lo que llega de fuera ya se publicó (o lo hará el autor): sellado.
+  return fingerprintOf(clean) === x.fingerprint ? seal({ ...clean, sealedAt: Date.parse(x.sealedAt) ? x.sealedAt : new Date().toISOString() }) : null;
 }
+
+// 🎨 Nuevo físico (solo si aún no está sellada). { random: true } → otro al azar.
+export function withAvatar(id, input) {
+  if (id.sealedAt) throw Object.assign(new Error('Este agente ya se publicó en el marketplace: su físico no cambia'), { status: 409 });
+  const av = input?.random ? avatarFromSeed(crypto.randomBytes(4).readUInt32LE(0)) : { ...id.avatar, ...input, seed: Number.isInteger(input?.seed) ? input.seed : id.avatar.seed };
+  if (!validAvatar(av)) throw Object.assign(new Error('Físico no válido'), { status: 400 });
+  return seal({ ...core(id), avatar: cleanAvatar(av) });
+}
+// 🔒 Al publicar: sellada desde ya (sealedAt no entra en el fingerprint: el sello no la altera).
+export const sealed = (id) => id.sealedAt ? id : seal({ ...core(id), sealedAt: new Date().toISOString() });
 
 export function cleanBaptisms(list) {
   return (Array.isArray(list) ? list : []).filter((b) => b && typeof b.to === 'string' && b.to.trim())

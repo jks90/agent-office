@@ -324,6 +324,7 @@ const routes = [
   ['POST', /^\/api\/agents$/, (_, b) => team.hire(b)],
   ['PATCH', /^\/api\/projects\/(\w+)\/team$/, ([id], b) => team.setTeam(id, b)],
   ['PATCH', /^\/api\/agents\/(\w+)$/, ([id], b) => team.updateAgent(id, b)],
+  ['PATCH', /^\/api\/agents\/(\w+)\/avatar$/, ([id], b) => team.setAvatar(id, b)], // 🎨 físico: solo hasta publicarlo en el marketplace
   ['DELETE', /^\/api\/agents\/(\w+)$/, ([id]) => team.fire(id)],
   ['POST', /^\/api\/agents\/(\w+)\/stop$/, ([id]) => team.stopAgent(id)],
   ['POST', /^\/api\/agents\/(\w+)\/pause$/, ([id]) => team.pauseAgent(id)],

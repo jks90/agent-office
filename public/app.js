@@ -58,7 +58,7 @@ const statusSinceByAgent = new Map();
 const activityLoaded = new Set();
 
 import { Office } from './office3d.js';
-import { hydrateAvatars } from './avatar3d.js'; // 🪪 muñeco isométrico en los avatares (identidad inmutable)
+import { hydrateAvatars, thumbnail, CHAR_FILES } from './avatar3d.js'; // 🪪 muñeco isométrico en los avatares (identidad inmutable)
 import { createOfficePanels } from './office-panels.js'; // paneles informativos en los márgenes de la planta (FT-125)
 let officePanels = null;
 import { dictationSupported, createDictation, insertAtCursor } from './dictation.js'; // dictado por voz (FT-43)
@@ -2311,7 +2311,7 @@ function renderDrawer() {
   if (d.dataset.agent === a.id) {
     d.querySelector('[data-f=name]').textContent = a.name; // 🪪 un bautizo se ve al momento
     d.querySelector('[data-f=born]').innerHTML = bornHtml(a);
-    const idBox = d.querySelector('[data-f=identity]'), idSig = `${a.identity?.fingerprint}:${(a.baptisms || []).length}`;
+    const idBox = d.querySelector('[data-f=identity]'), idSig = `${a.identity?.fingerprint}:${a.identity?.sealedAt || ''}:${(a.baptisms || []).length}`;
     if (idBox.dataset.sig !== idSig) { idBox.dataset.sig = idSig; idBox.innerHTML = identityHtml(a); } // sin repintar en cada SSE (cerraría los bautizos)
     d.querySelector('[data-f=status]').innerHTML = `<span class="dot" style="background:${meta.color};box-shadow:0 0 8px ${meta.color}"></span>${esc(meta.label)}<span class="muted">${durationSince(statusSince(a))}</span>`;
     d.querySelector('[data-f=activity]').innerHTML = activityHtml;
@@ -2342,7 +2342,7 @@ function renderDrawer() {
     </section>
     <section class="agent-panel-card">
       <h3>🪪 Identidad</h3>
-      <div data-f="identity" data-sig="${a.identity?.fingerprint}:${(a.baptisms || []).length}">${identityHtml(a)}</div>
+      <div data-f="identity" data-sig="${a.identity?.fingerprint}:${a.identity?.sealedAt || ''}:${(a.baptisms || []).length}">${identityHtml(a)}</div>
     </section>
     <section class="agent-panel-card">
       <h3>Motor y modelo</h3>
@@ -3280,7 +3280,51 @@ function identityHtml(a) {
       <span class="muted">ID</span><code title="Identificador global: el mismo en cualquier AgentOffice donde se comparta (y en sus clones)">${esc(id.uid.slice(3, 11))} · ${esc(id.fingerprint?.slice(0, 8) || '')}</code>
     </div>
   </div>
+  <div class="identity-seal">${id.sealedAt
+    ? `🔒 Sellada el ${when(id.sealedAt)}: ya está en el marketplace y su físico no cambia nunca.`
+    : `<button type="button" class="small ghost" data-doll-edit="${esc(a.id)}">🎨 Personalizar físico</button> <span class="muted">Hasta que lo publiques en el marketplace; entonces queda fijo.</span>`}</div>
   ${bap ? `<details class="baptisms"><summary>💧 ${a.baptisms.length} bautizo${a.baptisms.length === 1 ? '' : 's'}</summary><ul>${bap}</ul></details>` : ''}`;
+}
+// 🎨 Editor del físico (solo sin sellar): vista previa en vivo con la misma miniatura isométrica; 🎲 tira otro al azar.
+const ACC_KEYS = ['none', 'glasses', 'cap', 'headphones', 'beanie', 'bowtie', 'scarf'];
+function editDoll(id) {
+  const a = S.agents.find((x) => x.id === id);
+  if (!a?.identity || a.identity.sealedAt) return;
+  const av = { ...a.identity.avatar };
+  dialog(`
+    <h3>🎨 Físico de ${esc(a.name)}</h3>
+    <div class="doll-editor">
+      <div class="doll-preview"><img data-doll-img alt="Vista previa" /></div>
+      <div class="doll-fields">
+        <label>Cuerpo</label><select name="base">${CHAR_FILES.map((c) => `<option value="${c}" ${c === av.base ? 'selected' : ''}>${c.replace('character-', '').replace('female', 'A').replace('male', 'B')}</option>`).join('')}</select>
+        <label><input type="checkbox" name="tint" ${av.outfit ? 'checked' : ''} /> Ropa teñida</label><input type="color" name="outfit" value="${av.outfit || '#4f86d9'}" />
+        <label>Accesorio</label><select name="accessory">${ACC_KEYS.map((k) => `<option value="${k}" ${k === av.accessory ? 'selected' : ''}>${ACCESSORY_LABEL[k]}</option>`).join('')}</select>
+        <label>Color del accesorio</label><input type="color" name="accent" value="${av.accent || '#2f3441'}" />
+        <label>Altura</label><input type="range" name="height" min="0.85" max="1.15" step="0.01" value="${av.height}" />
+        <label>Complexión</label><input type="range" name="build" min="0.85" max="1.15" step="0.01" value="${av.build}" />
+        <button type="button" class="small ghost" data-doll-dice>🎲 Otro al azar</button>
+      </div>
+    </div>
+    <p class="muted">Puedes cambiarlo cuantas veces quieras hasta que lo publiques en el marketplace; desde entonces queda sellado. Sus clones cambian a la vez.</p>
+    ${buttons('Guardar físico')}`, async (f) => {
+    const r = await api('PATCH', `/api/agents/${id}/avatar`, pickDoll(f));
+    toast(`🎨 Nuevo físico para ${r.name}`);
+  });
+  const form = $('#dialog form'), img = form.querySelector('[data-doll-img]');
+  const pickDoll = (f) => ({ base: f.base, outfit: f.tint ? f.outfit : '', accessory: f.accessory, accent: f.accent, height: Number(f.height), build: Number(f.build) });
+  let n = 0;
+  const preview = () => {
+    const d = pickDoll(Object.fromEntries(new FormData(form))), k = ++n;
+    thumbnail({ id: 'preview', name: a.name, identity: { fingerprint: 'preview:' + JSON.stringify(d), avatar: d } }).then((url) => { if (url && k === n) img.src = url; });
+  };
+  form.addEventListener('input', preview);
+  form.querySelector('[data-doll-dice]').onclick = () => {
+    const pick = (arr) => arr[Math.floor(Math.random() * arr.length)], hex = () => '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
+    form.base.value = pick(CHAR_FILES); form.tint.checked = true; form.outfit.value = hex(); form.accessory.value = pick(ACC_KEYS); form.accent.value = hex();
+    form.height.value = (0.92 + Math.random() * 0.16).toFixed(2); form.build.value = (0.92 + Math.random() * 0.16).toFixed(2);
+    preview();
+  };
+  preview();
 }
 function editAgent(id) {
   const a = S.agents.find((x) => x.id === id);
@@ -3599,6 +3643,7 @@ document.addEventListener('click', async (e) => {
   if (d.cmemEdit !== undefined) return editClaudeMemory(d.cmemRepo, d.cmemEdit);
   if (d.cmemDel) { if (confirm(`¿Borrar la memoria «${d.cmemDel}»? (también su línea del índice)`)) api('DELETE', cmemUrl(d.cmemRepo, d.cmemDel)).then(() => { toast('Memoria borrada'); renderClaudeMemory(true); }); return; }
   if (d.agentEdit) return editAgent(d.agentEdit);
+  if (d.dollEdit) return editDoll(d.dollEdit); // 🎨
   if (d.nomove) return moveTask(d.nomove, 'backlog');
   // ⇄ Entre proyectos
   if (d.xproj) { const t = S.tasks.find((x) => x.id === d.xproj); return pickProject(`⇄ Llevar ${esc(tcode(t))} a otro proyecto`, '<p class="muted">Toma un código nuevo de allí. Se sueltan las dependencias, el repo y la asignación que no existan en el destino.</p>', (to) => api('POST', `/api/tasks/${d.xproj}/move`, { projectId: to }).then((r) => toast(`${tcode(t)} → ${r.task.code}${r.dropped.length ? ` (sin ${r.dropped.join(', ')})` : ''}`))); }

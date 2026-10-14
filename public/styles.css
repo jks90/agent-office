@@ -863,3 +863,9 @@ dialog.task-dlg textarea[name="description"] { min-height: 220px; resize: vertic
 .baptisms { margin-top: 8px; font-size: 12px; }
 .baptisms ul { margin: 6px 0 0; padding-left: 18px; }
 .baptisms time { color: var(--muted, #8a8f98); margin-left: 6px; }
+.identity-seal { margin-top: 8px; font-size: 12px; }
+.doll-editor { display: flex; gap: 16px; align-items: flex-start; }
+.doll-preview img { width: 180px; height: 180px; border-radius: 14px; background: var(--panel3, #2a3245); display: block; }
+.doll-fields { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; flex: 1; }
+.doll-fields > button { grid-column: 1 / -1; justify-self: start; }
+.doll-fields input[type=color] { width: 64px; height: 30px; padding: 2px; border-radius: 6px; cursor: pointer; }

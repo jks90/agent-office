@@ -940,6 +940,11 @@ export class Office3D {
     const activeChanged = projectId !== undefined && projectId !== this.activeProjectId;
     if (projectId !== undefined) this.activeProjectId = projectId || null;
     for (const [id, a] of this.actors) if (!this.agents.some((g) => g.id === id)) { this.scene.remove(a.group); this.actors.delete(id); this.removeLabel(id); }
+    // 🎨 Físico retocado (fingerprint nuevo): se cambia el muñeco en el mismo sitio, sin volver a entrar por la puerta.
+    for (const [id, a] of this.actors) {
+      const g = this.agents.find((x) => x.id === id);
+      if (g && (g.identity?.fingerprint || '') !== a.fp) { this.scene.remove(a.group); this.actors.delete(id); (this.respawnAt ||= new Map()).set(id, { x: a.x, z: a.z, angle: a.angle }); }
+    }
     this.visualAgents = this.agents.map((a) => toVisualState(a, this.tasks, this.questions));
     const lay3 = pickLayout(this.visualAgents.length);
     if (lay3) this.floorLayout = layoutV3(this.visualAgents, new Map(this.agents.map((a) => [a.id, a.role])), lay3, this.floorLayout);
@@ -1473,8 +1478,10 @@ export class Office3D {
       loungeSpot: index, enterAt: now + this.queuedCount(now) * 0.9, nextWander: Infinity,
       angle: Math.PI, targetAngle: Math.PI, mixer: null, actions: {}, clip: null, current: null,
       emote: null, lastEmote: null, sitSpot: false,
-      wander: null, nextGesture: 0, phase: Math.random() * 10, bones: null,
+      wander: null, nextGesture: 0, phase: Math.random() * 10, bones: null, fp: agent.identity?.fingerprint || '',
     };
+    const prev = this.respawnAt?.get(agent.id);
+    if (prev) { this.respawnAt.delete(agent.id); Object.assign(a, { x: prev.x, z: prev.z, angle: prev.angle, targetAngle: prev.angle, enterAt: now }); }
     if (gltf) {
       const model = skeletonClone(gltf.scene);
       const k = dress(model, av);

@@ -3,6 +3,7 @@
 import * as store from './store.js';
 import { flowTestUrl } from './suite.js';
 import * as mp from './marketplace.js';
+import * as team from './team.js';
 
 const fail = (status, msg, extra = {}) => Object.assign(new Error(msg), { status, ...extra });
 const SCOPES = ['team', 'public'];
@@ -73,6 +74,7 @@ export async function publish(b = {}) {
   const pkg = mp.exportPackage(b.kind, b.id, scope, opts);
   if (b.summary) pkg.summary = String(b.summary).slice(0, 300);
   const r = await call('POST', '', { scope, package: pkg });
+  team.sealIdentities(mp.identityUids(pkg)); // 🔒 ya está en el marketplace: su físico queda fijo
   return { ...r, scope, name: pkg.name, version: pkg.version, pending: scope === 'public' };
 }
 

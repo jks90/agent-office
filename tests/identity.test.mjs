@@ -109,3 +109,44 @@ test('equipo: los miembros llevan su identidad y se reutiliza al mismo agente (n
   const E = await team.createProject({ name: 'Eps', engine: 'demo', coordinator: false, defaultTeam: false });
   rejects(() => teams.applyTeam({ spec: json, roles: {}, skills: {}, origin: 'marketplace' }, E.id, { coordinator: false }), 422);
 });
+
+test('🎨 el físico se puede retocar hasta publicarlo; publicado queda sellado (y sus clones también)', async () => {
+  const P = await team.createProject({ name: 'Delta', engine: 'demo', coordinator: false, defaultTeam: false });
+  const Q = await team.createProject({ name: 'Delta2', engine: 'demo', coordinator: false, defaultTeam: false });
+  const a = team.hire({ projectId: P.id, name: 'Vega', role: 'qa', engine: 'demo' });
+  const clone = team.moveAgent(a.id, P.id, Q.id, { copy: true });
+  const fp0 = a.identity.fingerprint;
+  team.setAvatar(a.id, { base: 'character-male-b', outfit: '#112233', accessory: 'cap', accent: '#445566', height: 1.05, build: 0.95 });
+  assert.equal(a.identity.avatar.base, 'character-male-b');
+  assert.notEqual(a.identity.fingerprint, fp0);
+  assert.equal(a.identity.uid, clone.identity.uid);
+  assert.equal(get().agents.find((x) => x.id === clone.id).identity.fingerprint, a.identity.fingerprint, 'el clon cambia a la vez');
+  assert.equal(a.identity.birthName, 'Vega');
+  rejects(() => team.setAvatar(a.id, { base: 'robot' }), 400);
+  team.setAvatar(a.id, { random: true });
+  // Publicar = sellar (paquete de agente)
+  const pkg = JSON.parse(JSON.stringify(mp.exportPackage('agent', a.id, 'team')));
+  assert.deepEqual(mp.identityUids(pkg), [a.identity.uid]);
+  const fp = a.identity.fingerprint;
+  assert.equal(team.sealIdentities(mp.identityUids(pkg)), 2);
+  assert.ok(a.identity.sealedAt);
+  assert.equal(a.identity.fingerprint, fp, 'el sello no altera la identidad');
+  assert.ok(get().agents.find((x) => x.id === clone.id).identity.sealedAt);
+  rejects(() => team.setAvatar(a.id, { random: true }), 409);
+  assert.ok(identity.verify(JSON.parse(JSON.stringify(a.identity))));
+});
+
+test('lo importado llega sellado; un clon local de un agente sin sellar sigue editable', async () => {
+  const P = await team.createProject({ name: 'Épsilon', engine: 'demo', coordinator: false, defaultTeam: false });
+  const a = team.hire({ projectId: P.id, name: 'Ona', role: 'back', engine: 'demo' });
+  const pkg = JSON.parse(JSON.stringify(mp.exportPackage('agent', a.id, 'team')));
+  // Aquí existe Ona sin sellar: el clon usa la identidad local
+  const r = mp.importPackage(pkg, { projectId: P.id });
+  assert.equal(r.agent.identity.sealedAt, undefined);
+  // Sin el original en esta máquina, llega sellado
+  const v = identity.verify(pkg.meta.identity);
+  assert.ok(v.sealedAt);
+  const { spec } = teams.teamSpecOf(P.id);
+  const T = mp.identityUids({ kind: 'team', files: [{ path: 'team.json', content: Buffer.from(JSON.stringify(spec)).toString('base64') }] });
+  assert.ok(T.includes(a.identity.uid));
+});

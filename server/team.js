@@ -355,7 +355,8 @@ export function repoOfTask(p, t) {
 // 🪪 Nace con su identidad (uid, nombre de nacimiento, físico); si viene de fuera (paquete, copia) se respeta tal cual.
 function newAgent({ name, role, engine = 'auto', model = '', identity: given = null, baptisms = [] }) {
   const a = { id: newId(), name, role, engine, model: model || roleOf(role)?.model || '', status: 'idle', activity: '', taskId: null, createdAt: Date.now() };
-  a.identity = given || identity.newIdentity(name, { bornIn: String(store.get().settings?.authorName || os.userInfo().username || '').slice(0, 80) });
+  // Si ya hay aquí un agente con ese uid (clon, plantilla 🔒), manda su identidad local (puede seguir sin sellar).
+  a.identity = (given && store.get().agents.find((x) => x.identity?.uid === given.uid)?.identity) || given || identity.newIdentity(name, { bornIn: String(store.get().settings?.authorName || os.userInfo().username || '').slice(0, 80) });
   a.baptisms = identity.cleanBaptisms(baptisms);
   if (given && name !== (a.baptisms.at(-1)?.to ?? given.birthName)) a.baptisms.push({ from: a.baptisms.at(-1)?.to ?? given.birthName, to: name, at: Date.now() });
   return a;
@@ -400,6 +401,24 @@ export function updateAgent(id, patch) {
   if (Array.isArray(patch.skills)) a.skills = [...new Set(patch.skills.map(String).filter(Boolean))].slice(0, 30); // 🧰 skills del catálogo además de las del rol
   changed();
   return a;
+}
+
+// 🎨 Retocar el físico mientras no se haya publicado; los clones (mismo uid) son el mismo agente y cambian a la vez.
+export function setAvatar(id, input) {
+  const s = get();
+  const a = findOr404(s.agents, id, 'Agente');
+  const next = identity.withAvatar(a.identity, input);
+  for (const x of s.agents) if (x.identity?.uid === next.uid) x.identity = next;
+  changed();
+  return a;
+}
+// 🔒 Publicado en el marketplace: su identidad (y la de sus clones) queda sellada.
+export function sealIdentities(uids) {
+  const set = new Set(uids.filter(Boolean));
+  let n = 0;
+  for (const x of get().agents) if (set.has(x.identity?.uid) && !x.identity.sealedAt) { x.identity = identity.sealed(x.identity); n++; }
+  if (n) changed();
+  return n;
 }
 
 export function fire(id) {

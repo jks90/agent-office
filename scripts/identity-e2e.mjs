@@ -124,6 +124,22 @@ try {
   await sleep(1200);
   await page.screenshot({ path: path.join(outDir, 'identity-drawer.png') });
 
+  // 🎨 Personalizar (aún no publicado): vista previa, 🎲 y guardar → nuevo muñeco en la ficha y en la oficina
+  const dollBefore = await page.evaluate(() => document.querySelector('#drawer [data-f=identity] .avatar img')?.src || '');
+  await page.click('#drawer [data-doll-edit]');
+  await page.waitForFunction(() => document.querySelector('#dialog [data-doll-img]')?.src?.startsWith('data:'), { timeout: 10000 }).catch(() => {});
+  await page.click('#dialog [data-doll-dice]');
+  await page.evaluate(() => { const f = document.querySelector('#dialog form'); f.accessory.value = 'headphones'; f.tint.checked = true; f.outfit.value = '#e05d5d'; f.dispatchEvent(new Event('input', { bubbles: true })); });
+  await sleep(1200);
+  await page.screenshot({ path: path.join(outDir, 'identity-editor.png') });
+  await page.evaluate(() => [...document.querySelectorAll('#dialog button')].find((b) => /Guardar físico/.test(b.textContent)).click());
+  await page.waitForFunction((src) => { const i = document.querySelector('#drawer [data-f=identity] .avatar img'); return i && i.src !== src; }, { timeout: 10000 }, dollBefore).catch(() => {});
+  const after2 = (await api('GET', '/api/state')).agents.find((a) => a.id === berta.id);
+  check('🎨 se guarda el nuevo físico', after2.identity.avatar.accessory === 'headphones' && after2.identity.avatar.outfit === '#e05d5d' && after2.identity.uid === berta.identity.uid, JSON.stringify(after2.identity.avatar));
+  check('🎨 la ficha muestra el muñeco nuevo', (await page.evaluate(() => document.querySelector('#drawer [data-f=identity] .avatar img')?.src || '')) !== dollBefore);
+  await sleep(800);
+  const fpOffice = await page.evaluate((id) => window.aoOffice.actors.get(id)?.fp, berta.id);
+  check('🎨 la oficina cambia el muñeco', fpOffice === after2.identity.fingerprint, `${fpOffice} vs ${after2.identity.fingerprint}`);
   check('consola limpia', !errors.length, errors.slice(0, 3).join(' | '));
 } catch (e) {
   failed++; console.error(e);
