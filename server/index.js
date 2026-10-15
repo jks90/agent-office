@@ -15,7 +15,7 @@ import * as ponytail from './ponytail.js'; // FT-86
 import * as scores from './scores.js'; // FT-152
 import * as uploads from './uploads.js'; // FT-95
 import { allRoles } from './roles.js';
-import { teamView, agentView } from './remote-team.js'; // ES-16
+import { teamView, agentView, officeView } from './remote-team.js'; // ES-16, ES-34
 import { checkSuite, suiteInfo } from './suite.js';
 import * as auth from './engines/auth.js';
 import * as localServer from './engines/local-server.js';
@@ -235,6 +235,11 @@ const routes = [
   ['GET', /^\/api\/remote\/tasks\/(\w+)\/([\w-]+)$/, ([id, tid]) => { remoteGate(); return remoteTaskDetail(id, tid); }], // ES-4
   ['GET', /^\/api\/remote\/agents\/(\w+)\/(\w+)$/, ([id, aid]) => { remoteGate(); return remoteAgent(id, aid); }], // ES-17
   ['GET', /^\/api\/remote\/team\/(\w+)$/, ([id]) => { remoteGate(); return remoteTeam(id); }], // ES-16
+  ['GET', /^\/api\/remote\/office$/, (_, __, ___, req) => { // ES-34: token también desde loopback
+    remoteGate();
+    if (!TOKEN || req.headers['x-ao-token'] !== TOKEN) throw fail(401, 'AgentOffice: falta el token (x-ao-token)');
+    return officeView(store.get(), allRoles());
+  }],
   ['GET', /^\/api\/remote\/task-options\/(\w+)$/, ([id]) => { remoteGate(); return remoteTaskOptions(id); }],
   // Cambiar un desplegable desde el mando: se aplica a la «Nueva tarea» abierta de ese proyecto (si no hay, no pasa nada)
   ['POST', /^\/api\/remote\/task-fields$/, (_, b) => {
@@ -559,7 +564,8 @@ async function guideTts(req, res) {
 
 const server = http.createServer(async (req, res) => {
   const { pathname } = new URL(req.url, 'http://x');
-  if (TOKEN && !isLoopback(req) && req.headers['x-ao-token'] !== TOKEN && !/^\/api\/hooks\/[\w-]{16,}$/.test(pathname)) { // 🪝 el webhook se autentica con el token de su URL
+  // ES-34: /office autentica en su ruta después de remoteGate, también en loopback (flag apagado → 404).
+  if (TOKEN && !isLoopback(req) && req.headers['x-ao-token'] !== TOKEN && !(req.method === 'GET' && pathname === '/api/remote/office') && !/^\/api\/hooks\/[\w-]{16,}$/.test(pathname)) { // 🪝 el webhook se autentica con el token de su URL
     return res.writeHead(401, { 'content-type': 'application/json' }).end('{"error":"AgentOffice: falta el token (x-ao-token)"}');
   }
   if (pathname === '/events') return events(req, res);
