@@ -25,6 +25,37 @@ const scrub = (s) => String(s || '')
 const clean = (v, n) => clip(scrub(v), n);
 const taskOf = (t) => ({ code: t.code, title: clean(t.title, 80) });
 
+// ES-34 · Oficina global: orden de plantas, solo campos de pantalla y máximo 12 000 bytes UTF-8.
+export function officeView(st, roles) {
+  const hidden = new Set(st.settings?.hiddenProjects || []);
+  const out = { projects: st.projects.filter((p) => p.team?.length && !hidden.has(p.id))
+    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+    .map((p) => ({
+      id: p.id, name: clean(p.name, 60), running: !!p.running,
+      agents: teamView(st, p, roles).agents.map((a) => {
+        const source = st.agents.find((x) => x.id === a.id);
+        return { id: a.id, name: clean(source.name, 40), status: a.status,
+          activity: clean(source.activity, 60), taskCode: a.taskCode == null ? null : clean(a.taskCode, 40) };
+      }),
+    })) };
+  let bytes = Buffer.byteLength(JSON.stringify(out));
+  if (bytes <= 12000) return out;
+  out.truncated = true;
+  bytes += ',"truncated":true'.length;
+  // Recortar primero agentes desde las plantas más nuevas; conservar sus cabeceras si caben.
+  for (let i = out.projects.length - 1; i >= 0 && bytes > 12000; i--) {
+    const agents = out.projects[i].agents;
+    while (agents.length && bytes > 12000) {
+      bytes -= Buffer.byteLength(JSON.stringify(agents.pop())) + (agents.length ? 1 : 0);
+    }
+  }
+  // También acotar oficinas con tantas plantas que ni las cabeceras caben.
+  while (bytes > 12000 && out.projects.length) {
+    bytes -= Buffer.byteLength(JSON.stringify(out.projects.pop())) + (out.projects.length ? 1 : 0);
+  }
+  return out;
+}
+
 export function agentView(st, p, roles, agentId) {
   const a = (p.team || []).includes(agentId) && st.agents.find((x) => x.id === agentId);
   if (!a) return null;
